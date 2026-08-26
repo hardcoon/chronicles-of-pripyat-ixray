@@ -1,3 +1,5 @@
+<img width="1024" height="408" alt="logo" src="https://github.com/user-attachments/assets/227bfa1d-fe52-4465-9092-7513cd6053bd" />
+
 # Chronicles of Pripyat 4.26 — IX-Ray
 
 ## О проекте
