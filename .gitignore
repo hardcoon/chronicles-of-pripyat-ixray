@@ -7,7 +7,6 @@
 !/.gitattributes
 !/README.md
 !/fsgame.ltx
-!/*START*.bat
 
 # Runtime is generated per installation and is never source material.
 /userdata/
@@ -16,23 +15,9 @@
 # Internal project documentation stays local and is never published.
 /docs/
 
-# Only compact, reproducible tools live here. Heavy workspaces belong in the
-# sibling C:\GPT_Project\Stalker\.ixray-local\workspace tree.
-!/tools/
-!/tools/**
-/tools/**/__pycache__/
-/tools/**/*.py[cod]
-/tools/**/*.log
-/tools/**/*candidate*
-!/tools/build_engine_candidate.ps1
-
-# Launcher source is versioned; build output and per-install updater state are
-# local/release artifacts, not Git source.
-!/launcher/
-!/launcher/**
-/launcher/**/bin/
-/launcher/**/obj/
-/launcher/**/.vs/
+# Development tools and launcher source stay local outside the public product tree.
+/tools/
+/launcher/
 /.launcher/
 /.launcher-cache/
 
