@@ -5,9 +5,7 @@
 
 !/.gitignore
 !/.gitattributes
-!/AGENTS.md
 !/fsgame.ltx
-!/fsgame.dev.ltx
 !/*START*.bat
 
 # Runtime is generated per installation and is never source material.
@@ -27,6 +25,16 @@
 /tools/**/*.log
 /tools/**/*candidate*
 !/tools/build_engine_candidate.ps1
+
+# Launcher source is versioned; build output and per-install updater state are
+# local/release artifacts, not Git source.
+!/launcher/
+!/launcher/**
+/launcher/**/bin/
+/launcher/**/obj/
+/launcher/**/.vs/
+/.launcher/
+/.launcher-cache/
 
 !/gamedata/
 /gamedata/*
