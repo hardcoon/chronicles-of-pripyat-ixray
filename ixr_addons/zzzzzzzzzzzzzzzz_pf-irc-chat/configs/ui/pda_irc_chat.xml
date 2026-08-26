@@ -1,0 +1,170 @@
+<w>
+    <frame1 x="35" y="41" width="955" height="90" stretch="1">
+        <texture>ui_inGame2_pda_buttons_background</texture>
+    </frame1>
+    <frame2 x="35" y="137" width="955" height="571" stretch="1">
+        <texture>ui_inGame2_pda_buttons_background</texture>
+    </frame2>
+    <border x="53" y="190" width="922" height="492" stretch="1">
+        <auto_frameline x="0" y="0" width="922" height="1" vertical="0"><texture>ui_inGame2_pda_line_horizontal</texture></auto_frameline>
+        <auto_frameline x="0" y="492" width="922" height="1" vertical="0"><texture>ui_inGame2_pda_line_horizontal</texture></auto_frameline>
+        <auto_frameline x="0" y="1" width="1" height="491" vertical="1"><texture>ui_inGame2_pda_line_vertical</texture></auto_frameline>
+        <auto_frameline x="921" y="1" width="1" height="491" vertical="1"><texture>ui_inGame2_pda_line_vertical</texture></auto_frameline>
+    </border>
+    <settings_button x="925" y="150" width="32" height="32" hint="pf_irc_settings_hint">
+        <texture_e>ui_pf_irc_gear_e</texture_e><texture_h>ui_pf_irc_gear_h</texture_h>
+        <texture_t>ui_pf_irc_gear_t</texture_t><texture_d>ui_pf_irc_gear_d</texture_d>
+    </settings_button>
+
+    <login x="327" y="246" width="370" height="282">
+        <hint x="25" y="45" width="320" height="26"><text font="letterica16" align="c" r="185" g="185" b="185">pf_irc_login_hint</text></hint>
+        <nick x="35" y="96" width="300" height="31" max_symb_count="30" stretch="1">
+            <text font="letterica18" align="c" vert_align="c" color="ui_5"/><texture a="242" r="20" g="20" b="20">ui\ui_noise</texture>
+        </nick>
+        <nick_hitbox x="35" y="96" width="300" height="31"/>
+        <remember x="35" y="132" width="300" height="22"><text font="letterica16" align="c" r="135" g="150" b="155">pf_irc_login_remember</text></remember>
+        <authorize x="80" y="161" width="210" height="30" stretch="1">
+            <text font="letterica16" align="c" vert_align="c">pf_irc_authorize</text>
+            <texture_e>ui\ui_pf_irc_authorize_e</texture_e><texture_h>ui\ui_pf_irc_authorize_h</texture_h>
+            <texture_t>ui\ui_pf_irc_authorize_t</texture_t><texture_d>ui\ui_pf_irc_authorize_d</texture_d>
+        </authorize>
+        <auto_login_label x="0" y="198" width="370" height="29" hint="pf_irc_auto_login_hint"><text font="letterica16" align="c" vert_align="c" r="185" g="185" b="185">pf_irc_auto_login</text></auto_login_label>
+        <auto_login x="103" y="198" width="44" height="29" hint="pf_irc_auto_login_hint"><texture>ui_inGame2_checkbox</texture></auto_login>
+        <result x="25" y="234" width="320" height="30"><text font="letterica16" complex_mode="1" align="c" r="225" g="105" b="75"/></result>
+    </login>
+
+    <chat x="0" y="0" width="1024" height="768">
+        <disconnect x="55" y="150" width="32" height="32" hint="pf_irc_disconnect_hint">
+            <texture_e>ui_pf_irc_disconnect_e</texture_e><texture_h>ui_pf_irc_disconnect_h</texture_h>
+            <texture_t>ui_pf_irc_disconnect_t</texture_t><texture_d>ui_pf_irc_disconnect_d</texture_d>
+        </disconnect>
+        <status_label x="89" y="149" width="92" height="24"><text font="letterica16" r="185" g="185" b="185">pf_irc_status_label</text></status_label>
+        <status_value x="184" y="149" width="303" height="24"><text font="letterica16" r="220" g="170" b="65"/></status_value>
+        <actual_nick x="89" y="171" width="398" height="24"><text font="letterica16" r="165" g="175" b="180"/></actual_nick>
+        <topic x="505" y="176" width="390" height="24"><text font="letterica16" align="r" r="150" g="160" b="165"/></topic>
+        <private_divider x="221" y="190" width="1" height="492" vertical="1"><texture a="95">ui_inGame2_pda_line_vertical</texture></private_divider>
+        <users_divider x="788" y="190" width="1" height="492" vertical="1"><texture a="95">ui_inGame2_pda_line_vertical</texture></users_divider>
+        <input_divider x="221" y="640" width="567" height="1" vertical="0"><texture a="95">ui_inGame2_pda_line_horizontal</texture></input_divider>
+        <private_panel x="51" y="195" width="168" height="481"/>
+        <private_caption x="58" y="202" width="154" height="25"><text font="letterica16" align="c" color="ui_5">pf_irc_dialogs</text></private_caption>
+        <private_dialogs x="58" y="231" width="161" height="445" right_ident="2" vert_interval="1" always_show_scroll="0" scroll_profile="pf_irc_compact"/>
+        <message_panel x="225" y="195" width="560" height="421"/>
+        <messages x="232" y="201" width="553" height="409" right_ident="4" vert_interval="0" always_show_scroll="0" scroll_profile="pf_irc_compact"/>
+        <user_panel x="791" y="195" width="168" height="481"/>
+        <users_caption x="798" y="202" width="154" height="25"><text font="letterica16" align="c" color="ui_5"/></users_caption>
+        <users x="798" y="231" width="161" height="445" right_ident="2" vert_interval="1" always_show_scroll="0" scroll_profile="pf_irc_compact"/>
+        <input x="225" y="648" width="406" height="33" max_symb_count="500" stretch="1">
+            <text font="letterica18" vert_align="c" color="ui_5"/><texture a="242" r="20" g="20" b="20">ui\ui_noise</texture>
+        </input>
+        <input_hitbox x="225" y="648" width="406" height="33"/>
+        <input_layout_divider x="633" y="648" width="1" height="33" vertical="1"><texture a="95">ui_inGame2_pda_line_vertical</texture></input_layout_divider>
+        <layout x="635" y="650" width="28" height="29"><text font="letterica16" align="c" vert_align="c" r="205" g="146" b="41"/></layout>
+        <layout_send_divider x="665" y="648" width="1" height="33" vertical="1"><texture a="95">ui_inGame2_pda_line_vertical</texture></layout_send_divider>
+        <send x="667" y="648" width="32" height="32" hint="pf_irc_enter">
+            <texture_e>ui_pf_irc_send_e</texture_e><texture_h>ui_pf_irc_send_h</texture_h>
+            <texture_t>ui_pf_irc_send_t</texture_t><texture_d>ui_pf_irc_send_d</texture_d>
+        </send>
+        <send_commands_divider x="701" y="648" width="1" height="33" vertical="1"><texture a="95">ui_inGame2_pda_line_vertical</texture></send_commands_divider>
+        <commands x="703" y="648" width="82" height="32" stretch="1">
+            <text font="letterica16" align="c" vert_align="c">pf_irc_commands</text>
+            <texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h>
+            <texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d>
+        </commands>
+    </chat>
+
+    <message_row x="0" y="0" width="522" height="38">
+        <time x="0" y="0" width="42" height="18"><text font="letterica16" vert_align="c" r="110" g="115" b="118"/></time>
+        <nick x="44" y="0" width="474" height="18"><text font="letterica16" vert_align="c" r="210" g="165" b="65"/></nick>
+        <body x="44" y="18" width="474" height="20"><text font="letterica16" complex_mode="1" vert_align="c" r="210" g="210" b="210"/></body>
+        <system_body x="44" y="0" width="474" height="22"><text font="letterica16" complex_mode="1" align="c" vert_align="c" r="190" g="195" b="192"/></system_body>
+    </message_row>
+    <user_row x="0" y="0" width="148" height="28">
+        <presence x="3" y="10" width="8" height="8" stretch="1"><texture>ui_pf_irc_presence_dot</texture></presence>
+        <nick x="16" y="2" width="74" height="24"><text font="letterica16" vert_align="c"/></nick>
+        <mute x="98" y="2" width="22" height="24" hint="pf_irc_mute">
+            <texture_e>ui_pf_irc_unmute_e</texture_e><texture_h>ui_pf_irc_unmute_h</texture_h>
+            <texture_t>ui_pf_irc_unmute_t</texture_t><texture_d>ui_pf_irc_unmute_d</texture_d>
+        </mute>
+        <unmute x="98" y="2" width="22" height="24" hint="pf_irc_unmute">
+            <texture_e>ui_pf_irc_mute_e</texture_e><texture_h>ui_pf_irc_mute_h</texture_h>
+            <texture_t>ui_pf_irc_mute_t</texture_t><texture_d>ui_pf_irc_mute_d</texture_d>
+        </unmute>
+        <query x="124" y="2" width="24" height="24" hint="pf_irc_query_hint">
+            <texture_e>ui_pf_irc_query_e</texture_e><texture_h>ui_pf_irc_query_h</texture_h>
+            <texture_t>ui_pf_irc_query_t</texture_t><texture_d>ui_pf_irc_query_d</texture_d>
+        </query>
+    </user_row>
+    <dialog_row x="0" y="0" width="148" height="50">
+        <selection x="0" y="0" width="148" height="47" stretch="1"><texture a="58" r="145" g="148" b="145">ui\ui_noise</texture></selection>
+        <title x="6" y="2" width="136" height="21"><text font="letterica16" align="l" vert_align="c"/></title>
+        <preview x="6" y="24" width="136" height="21"><text font="letterica16" align="l" vert_align="c"/></preview>
+        <separator x="0" y="47" width="148" height="2" stretch="1"><texture a="255" r="0" g="0" b="0">ui_inGame2_pda_line_horizontal</texture></separator>
+        <select x="0" y="0" width="148" height="48"/>
+    </dialog_row>
+
+    <settings_shade x="35" y="137" width="955" height="571" stretch="1"><texture a="165" r="0" g="0" b="0">ui\ui_noise</texture></settings_shade>
+    <settings x="143" y="143" width="739" height="549" stretch="1">
+        <texture>ui_pf_irc_settings_panel</texture>
+        <caption x="20" y="13" width="699" height="28"><text font="letterica18" align="c" color="ui_5">pf_irc_connection_settings</text></caption>
+        <caption_line x="24" y="42" width="691" height="1" vertical="0"><texture a="125">ui_inGame2_pda_line_horizontal</texture></caption_line>
+        <connection_panel x="24" y="49" width="691" height="313" stretch="1">
+            <texture a="128" r="10" g="14" b="14">ui\ui_noise</texture>
+            <auto_frameline x="0" y="0" width="691" height="1" vertical="0"><texture a="105">ui_inGame2_pda_line_horizontal</texture></auto_frameline>
+            <auto_frameline x="0" y="312" width="691" height="1" vertical="0"><texture a="105">ui_inGame2_pda_line_horizontal</texture></auto_frameline>
+            <auto_frameline x="0" y="1" width="1" height="311" vertical="1"><texture a="105">ui_inGame2_pda_line_vertical</texture></auto_frameline>
+            <auto_frameline x="690" y="1" width="1" height="311" vertical="1"><texture a="105">ui_inGame2_pda_line_vertical</texture></auto_frameline>
+        </connection_panel>
+        <profile_label x="43" y="57" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_profile</text></profile_label>
+        <profile x="248" y="57" width="442" height="27" max_symb_count="32" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></profile><profile_hitbox x="248" y="57" width="442" height="27"/>
+        <address_label x="43" y="91" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_address</text></address_label>
+        <address x="248" y="91" width="442" height="27" max_symb_count="253" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></address><address_hitbox x="248" y="91" width="442" height="27"/>
+        <channel_label x="43" y="125" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_channel</text></channel_label>
+        <channel x="248" y="125" width="310" height="27" max_symb_count="64" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></channel>
+        <channel_mask x="248" y="125" width="310" height="27" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></channel_mask>
+        <channel_show x="565" y="124" width="44" height="29" hint="pf_irc_show_channel_hint"><texture>ui_inGame2_checkbox</texture></channel_show>
+        <channel_show_label x="609" y="125" width="81" height="27" hint="pf_irc_show_channel_hint"><text font="letterica16" vert_align="c">pf_irc_show_value</text></channel_show_label>
+        <channel_hitbox x="248" y="125" width="310" height="27"/>
+        <port_label x="43" y="159" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_port</text></port_label>
+        <port x="248" y="159" width="155" height="27" max_symb_count="5" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></port><port_hitbox x="248" y="159" width="155" height="27"/>
+        <tls_label x="441" y="159" width="105" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_tls</text></tls_label><tls x="558" y="158" width="44" height="29"><texture>ui_inGame2_checkbox</texture></tls>
+        <key_label x="43" y="193" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_key</text></key_label>
+        <key x="248" y="193" width="310" height="27" max_symb_count="64" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></key>
+        <key_mask x="248" y="193" width="310" height="27" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></key_mask>
+        <key_show x="565" y="192" width="44" height="29" hint="pf_irc_show_key_hint"><texture>ui_inGame2_checkbox</texture></key_show>
+        <key_show_label x="609" y="193" width="81" height="27" hint="pf_irc_show_key_hint"><text font="letterica16" vert_align="c">pf_irc_show_value</text></key_show_label>
+        <key_hitbox x="248" y="193" width="310" height="27"/>
+        <encoding_label x="43" y="227" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_encoding</text></encoding_label>
+        <encoding x="248" y="227" width="442" height="27" max_symb_count="20" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></encoding><encoding_hitbox x="248" y="227" width="442" height="27"/>
+        <nick_label x="43" y="261" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_nick</text></nick_label>
+        <nick x="248" y="261" width="442" height="27" max_symb_count="30" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></nick><nick_hitbox x="248" y="261" width="442" height="27"/>
+        <guard_label x="43" y="295" width="503" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_registered_guard</text></guard_label><guard x="558" y="294" width="44" height="29"><texture>ui_inGame2_checkbox</texture></guard>
+        <modes_label x="43" y="329" width="190" height="27"><text font="letterica16" align="r" vert_align="c">pf_irc_required_modes</text></modes_label>
+        <modes x="248" y="329" width="442" height="27" max_symb_count="20" stretch="1"><text font="letterica16" vert_align="c" color="ui_5"/><texture a="215" r="24" g="32" b="29">ui\ui_noise</texture></modes><modes_hitbox x="248" y="329" width="442" height="27"/>
+        <note x="46" y="365" width="647" height="18"><text font="letterica16" align="c" r="155" g="160" b="160">pf_irc_settings_note</text></note>
+        <public_panel x="24" y="388" width="333" height="82" stretch="1"><texture a="120" r="10" g="14" b="14">ui\ui_noise</texture><auto_frameline x="0" y="0" width="333" height="1" vertical="0"><texture a="105">ui_inGame2_pda_line_horizontal</texture></auto_frameline><auto_frameline x="0" y="81" width="333" height="1" vertical="0"><texture a="105">ui_inGame2_pda_line_horizontal</texture></auto_frameline><auto_frameline x="0" y="1" width="1" height="80" vertical="1"><texture a="105">ui_inGame2_pda_line_vertical</texture></auto_frameline><auto_frameline x="332" y="1" width="1" height="80" vertical="1"><texture a="105">ui_inGame2_pda_line_vertical</texture></auto_frameline></public_panel>
+        <private_panel x="382" y="388" width="333" height="82" stretch="1"><texture a="120" r="10" g="14" b="14">ui\ui_noise</texture><auto_frameline x="0" y="0" width="333" height="1" vertical="0"><texture a="105">ui_inGame2_pda_line_horizontal</texture></auto_frameline><auto_frameline x="0" y="81" width="333" height="1" vertical="0"><texture a="105">ui_inGame2_pda_line_horizontal</texture></auto_frameline><auto_frameline x="0" y="1" width="1" height="80" vertical="1"><texture a="105">ui_inGame2_pda_line_vertical</texture></auto_frameline><auto_frameline x="332" y="1" width="1" height="80" vertical="1"><texture a="105">ui_inGame2_pda_line_vertical</texture></auto_frameline></private_panel>
+        <public_notifications_caption x="36" y="393" width="309" height="22"><text font="letterica16" align="c" r="195" g="190" b="170">pf_irc_notifications_public</text></public_notifications_caption>
+        <private_notifications_caption x="394" y="393" width="309" height="22"><text font="letterica16" align="c" r="195" g="190" b="170">pf_irc_notifications_private</text></private_notifications_caption>
+        <public_notify_label x="50" y="416" width="225" height="24"><text font="letterica16" align="l" vert_align="c">pf_irc_notifications_show</text></public_notify_label><public_notify x="300" y="414" width="44" height="29"><texture>ui_inGame2_checkbox</texture></public_notify>
+        <public_sound_label x="50" y="443" width="225" height="24"><text font="letterica16" align="l" vert_align="c">pf_irc_notifications_sound</text></public_sound_label><public_sound x="300" y="441" width="44" height="29"><texture>ui_inGame2_checkbox</texture></public_sound>
+        <private_notify_label x="408" y="416" width="225" height="24"><text font="letterica16" align="l" vert_align="c">pf_irc_notifications_show</text></private_notify_label><private_notify x="658" y="414" width="44" height="29"><texture>ui_inGame2_checkbox</texture></private_notify>
+        <private_sound_label x="408" y="443" width="225" height="24"><text font="letterica16" align="l" vert_align="c">pf_irc_notifications_sound</text></private_sound_label><private_sound x="658" y="441" width="44" height="29"><texture>ui_inGame2_checkbox</texture></private_sound>
+        <result x="46" y="475" width="647" height="22"><text font="letterica16" align="c" r="220" g="150" b="60"/></result>
+        <save x="45" y="507" width="205" height="32" stretch="1"><text font="letterica16" align="c" vert_align="c"/><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></save>
+        <reset x="267" y="507" width="250" height="32" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_irc_reset_connection</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></reset>
+        <close x="534" y="507" width="160" height="32" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_irc_close</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></close>
+    </settings>
+
+    <command_popup x="600" y="443" width="185" height="194" stretch="1">
+        <texture a="235" r="16" g="22" b="23">ui\ui_noise</texture>
+        <clear x="3" y="163" width="179" height="28" stretch="1">
+            <text font="letterica16" align="c" vert_align="c">pf_irc_command_clear</text>
+            <texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d>
+        </clear>
+        <query x="3" y="131" width="179" height="29" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_irc_command_query</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></query>
+        <mute x="3" y="99" width="179" height="29" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_irc_command_mute</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></mute>
+        <unmute x="3" y="67" width="179" height="29" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_irc_command_unmute</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></unmute>
+        <close x="3" y="35" width="179" height="29" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_irc_command_close</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></close>
+        <channel x="3" y="3" width="179" height="29" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_irc_command_channel</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></channel>
+    </command_popup>
+</w>

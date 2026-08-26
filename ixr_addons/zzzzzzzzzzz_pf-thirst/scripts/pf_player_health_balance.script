@@ -1,0 +1,93 @@
+-- Scale only positive passive health restoration from satiety and thirst.
+-- Their engine settings are intentionally left unchanged so critical hunger
+-- and dehydration keep the original damage rate.
+
+local settings = {
+	initialized = false,
+	passive_scale = 0.10,
+	satiety_health_v = 0,
+	satiety_critical = 0,
+	thirst_health_v = 0,
+	thirst_critical = 0
+}
+
+local state = {
+	previous_health = nil,
+	previous_game_time = nil
+}
+
+local function clamp(value, minimum, maximum)
+	return math.max(minimum, math.min(maximum, value))
+end
+
+local function positive_need_coefficient(value, critical)
+	if value <= critical or critical >= 1 then
+		return 0
+	end
+	return clamp((value - critical) / (1 - critical), 0, 1)
+end
+
+local function initialize()
+	if settings.initialized then return end
+
+	local ini = system_ini()
+	settings.passive_scale = clamp(ini:r_float("actor_condition", "pf_passive_health_scale"), 0, 1)
+	settings.satiety_health_v = ini:r_float("actor_condition", "satiety_health_v")
+	settings.satiety_critical = ini:r_float("actor_condition", "satiety_critical")
+	settings.thirst_health_v = ini:r_float("actor_condition", "thirst_health_v")
+	settings.thirst_critical = ini:r_float("actor_condition", "thirst_critical")
+	settings.initialized = true
+
+	printf("~ pf_player_health_balance: positive passive scale = %.2f", settings.passive_scale)
+end
+
+function positive_need_restore_per_game_second(satiety, thirst)
+	initialize()
+	return settings.satiety_health_v * positive_need_coefficient(satiety, settings.satiety_critical)
+		+ settings.thirst_health_v * positive_need_coefficient(thirst, settings.thirst_critical)
+end
+
+function reset()
+	state.previous_health = nil
+	state.previous_game_time = nil
+end
+
+function update()
+	local actor = db.actor
+	if not actor then
+		reset()
+		return
+	end
+
+	initialize()
+
+	local current_health = tonumber(actor.health)
+	local current_game_time = game.get_game_time()
+	if not current_health or not current_game_time then
+		reset()
+		return
+	end
+
+	if state.previous_health and state.previous_game_time then
+		local gained_health = current_health - state.previous_health
+		local elapsed_game_seconds = current_game_time:diffSec(state.previous_game_time)
+
+		-- A large discontinuity means loading or a scripted time jump. Condition
+		-- updates are not simulated consistently across those transitions.
+		if gained_health > 0 and elapsed_game_seconds > 0 and elapsed_game_seconds <= 60 then
+			local need_restore = positive_need_restore_per_game_second(
+				tonumber(actor.satiety) or 0,
+				tonumber(actor.thirst) or 0
+			) * elapsed_game_seconds
+			local reduction = math.min(gained_health, need_restore * (1 - settings.passive_scale))
+
+			if reduction > 0 then
+				current_health = clamp(current_health - reduction, 0, 1)
+				actor:set_health_ex(current_health)
+			end
+		end
+	end
+
+	state.previous_health = current_health
+	state.previous_game_time = current_game_time
+end

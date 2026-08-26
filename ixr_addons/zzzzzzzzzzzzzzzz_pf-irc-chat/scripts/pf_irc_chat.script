@@ -1,0 +1,1260 @@
+local MAX_MESSAGES = 120
+local MAX_PRIVATE_DIALOGS = 64
+local UPDATE_INTERVAL_MS = 100
+
+-- Network state is process-owned by pf_irc_bridge.exe and never serialized into
+-- a game save. Conversation history is stored separately under $app_data_root$
+-- so both F9 and a full game restart can restore it without touching saves.
+local RUNTIME_KEY = "__pf_irc_chat_process_runtime_v2"
+local runtime = rawget(_G, RUNTIME_KEY)
+if type(runtime) ~= "table" then
+    runtime = {
+        status = "stopped",
+        detail = "",
+        topic = "",
+        messages = {},
+        private_dialogs = {},
+        private_order = {},
+        active_conversation = "channel",
+        users = {},
+        user_snapshot = nil,
+        revision = 0,
+        callbacks_registered = false,
+        next_update_ms = 0,
+        next_user_sync_ms = 0,
+        next_start_attempt_ms = 0,
+        next_resume_probe_ms = 0,
+        resume_probe_until_ms = 0,
+        restoring_session = false,
+        last_error = nil,
+        last_error_code = nil,
+        authorized = false,
+        chat_open = false,
+        ready = false,
+        requested_nick = "",
+        effective_nick = "",
+        presence = "away",
+        presence_dirty = true,
+        auto_login_pda_opened = false,
+        auto_login_attempted = false,
+        history_loaded = false,
+        history_loading = false,
+        history_last_error = nil
+    }
+    rawset(_G, RUNTIME_KEY, runtime)
+end
+runtime.presence = runtime.presence == "online" and "online" or "away"
+if runtime.presence_dirty == nil then runtime.presence_dirty = true end
+if type(runtime.private_dialogs) ~= "table" then runtime.private_dialogs = {} end
+if type(runtime.private_order) ~= "table" then runtime.private_order = {} end
+if type(runtime.active_conversation) ~= "string" then runtime.active_conversation = "channel" end
+if runtime.history_loaded == nil then runtime.history_loaded = false end
+if runtime.history_loading == nil then runtime.history_loading = false end
+if runtime.next_user_sync_ms == nil then runtime.next_user_sync_ms = 0 end
+if runtime.auto_login_pda_opened == nil then runtime.auto_login_pda_opened = false end
+if runtime.auto_login_attempted == nil then runtime.auto_login_attempted = false end
+
+local function trim(value)
+    return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local IRC_CASEMAP = {
+    ["["] = "{",
+    ["]"] = "}",
+    ["\\"] = "|",
+    ["^"] = "~"
+}
+
+local IRC_NICK_EXTRA_BYTES = {
+    [45] = true,  -- -
+    [91] = true,  -- [
+    [92] = true,  -- \
+    [93] = true,  -- ]
+    [94] = true,  -- ^
+    [95] = true,  -- _
+    [96] = true,  -- `
+    [123] = true, -- {
+    [124] = true, -- |
+    [125] = true  -- }
+}
+
+local function irc_casefold(value)
+    value = tostring(value or ""):lower()
+    local result = {}
+    for index = 1, #value do
+        local character = value:sub(index, index)
+        result[#result + 1] = IRC_CASEMAP[character] or character
+    end
+    return table.concat(result)
+end
+
+local function is_irc_nick_byte(byte)
+    if byte == nil then return false end
+    return (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or
+        (byte >= 97 and byte <= 122) or IRC_NICK_EXTRA_BYTES[byte] == true
+end
+
+local function contains_self_mention(text)
+    local effective_nick = trim(runtime.effective_nick)
+    if effective_nick == "" then return false end
+    local folded_nick = irc_casefold(effective_nick)
+    local folded_text = irc_casefold(text)
+    local search_from = 1
+    while true do
+        local nick_start = folded_text:find(folded_nick, search_from, true)
+        if not nick_start then return false end
+        local nick_end = nick_start + #effective_nick - 1
+        local marker_at = nick_start > 1 and text:byte(nick_start - 1) == 64
+        local boundary_at = marker_at and nick_start - 2 or nick_start - 1
+        local before_ok = boundary_at < 1 or not is_irc_nick_byte(text:byte(boundary_at))
+        local after_ok = nick_end == #text or not is_irc_nick_byte(text:byte(nick_end + 1))
+        if before_ok and after_ok then return true end
+        search_from = nick_start + 1
+    end
+end
+
+local function touch()
+    runtime.revision = runtime.revision + 1
+end
+
+local save_history = nil
+
+local function notify_chat_message(nick, text, mentioned)
+    if runtime.presence ~= "away" or not db or not db.actor then return end
+    local settings = pf_irc_chat_config.get_notification_settings() or {
+        notify_public_messages = true,
+        sound_public_messages = false,
+        notify_private_messages = true,
+        sound_private_messages = true
+    }
+    local show_notification = mentioned and settings.notify_private_messages or
+        (not mentioned and settings.notify_public_messages)
+    local play_sound = mentioned and settings.sound_private_messages or
+        (not mentioned and settings.sound_public_messages)
+    if play_sound then
+        pcall(function()
+            if xr_sound and xr_sound.set_sound_play then
+                xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+            end
+        end)
+    end
+    if show_notification then
+        pcall(function()
+            local title_key = mentioned and "pf_irc_mention_title" or "pf_irc_public_title"
+            local title = string.format(game.translate_string(title_key), trim(nick))
+            local icon = mentioned and "pf_irc_private_notification" or
+                "pf_irc_message_notification"
+            db.actor:give_game_news(title, text, icon, 0, 7000, 0)
+        end)
+    end
+end
+
+local function add_message(kind, nick, identity, text, own)
+    text = trim(text)
+    if text == "" then return end
+    identity = trim(identity):lower()
+    if kind == "chat" and not own and pf_irc_chat_config.is_muted(identity) then return end
+    nick = trim(nick)
+    local alertable = kind == "chat" and not own and irc_casefold(nick) ~= "chanserv"
+    local mentioned = alertable and contains_self_mention(text)
+    table.insert(runtime.messages, {
+        kind = kind,
+        nick = nick,
+        identity = identity,
+        text = text,
+        own = own == true,
+        mentioned = mentioned,
+        time = os.date("%H:%M"),
+        date = os.date("%Y-%m-%d")
+    })
+    while #runtime.messages > MAX_MESSAGES do table.remove(runtime.messages, 1) end
+    touch()
+    if save_history then save_history() end
+    if alertable then notify_chat_message(nick, text, mentioned) end
+end
+
+local function private_key(nick)
+    return "private:" .. irc_casefold(trim(nick))
+end
+
+local function ensure_private_dialog(nick, identity)
+    nick = trim(nick)
+    if nick == "" then return nil end
+    local key = private_key(nick)
+    local dialog = runtime.private_dialogs[key]
+    if not dialog then
+        dialog = {
+            key = key,
+            nick = nick,
+            identity = trim(identity):lower(),
+            messages = {},
+            unread = 0,
+            closed = false
+        }
+        runtime.private_dialogs[key] = dialog
+        table.insert(runtime.private_order, key)
+    else
+        dialog.nick = nick
+        if trim(identity) ~= "" then dialog.identity = trim(identity):lower() end
+    end
+    return dialog
+end
+
+local function promote_private_dialog(key)
+    if runtime.private_order[1] == key then return end
+    local reordered = { key }
+    local seen = { [key] = true }
+    for _, current_key in ipairs(runtime.private_order) do
+        if not seen[current_key] then
+            seen[current_key] = true
+            reordered[#reordered + 1] = current_key
+        end
+    end
+    runtime.private_order = reordered
+end
+
+local function add_private_message(nick, identity, text, own)
+    text = trim(text)
+    identity = trim(identity):lower()
+    if text == "" then return end
+    if not own and pf_irc_chat_config.is_muted(identity) then return end
+    local dialog = ensure_private_dialog(nick, identity)
+    if not dialog then return end
+    dialog.closed = false
+    if not own then promote_private_dialog(dialog.key) end
+    local own_profile = pf_irc_chat_config.get_identity()
+    local own_install_id = own_profile and tostring(own_profile.install_id or "") or ""
+    table.insert(dialog.messages, {
+        kind = "chat",
+        nick = own and trim(runtime.effective_nick) or trim(nick),
+        identity = own and ("install:" .. own_install_id):lower() or identity,
+        text = text,
+        own = own == true,
+        -- A direct message uses the private notification settings below, but
+        -- it is not an @mention and must keep the ordinary chat-row colours.
+        mentioned = false,
+        time = os.date("%H:%M"),
+        date = os.date("%Y-%m-%d")
+    })
+    while #dialog.messages > MAX_MESSAGES do table.remove(dialog.messages, 1) end
+    if not own and (runtime.active_conversation ~= dialog.key or runtime.presence == "away") then
+        dialog.unread = math.min(99, (tonumber(dialog.unread) or 0) + 1)
+    end
+    touch()
+    if save_history then save_history() end
+    if not own then notify_chat_message(nick, text, true) end
+end
+
+local function rename_private_dialog(old_nick, new_nick, identity)
+    local old_key = private_key(old_nick)
+    local new_key = private_key(new_nick)
+    local dialog = runtime.private_dialogs[old_key]
+    if not dialog then return end
+    dialog.nick = trim(new_nick)
+    if trim(identity) ~= "" then dialog.identity = trim(identity):lower() end
+    if old_key == new_key then
+        if save_history then save_history() end
+        return
+    end
+    local existing = runtime.private_dialogs[new_key]
+    if existing then
+        for _, message in ipairs(dialog.messages or {}) do
+            table.insert(existing.messages, message)
+        end
+        while #existing.messages > MAX_MESSAGES do table.remove(existing.messages, 1) end
+        existing.unread = math.min(99, (tonumber(existing.unread) or 0) + (tonumber(dialog.unread) or 0))
+        existing.nick = trim(new_nick)
+        existing.closed = existing.closed == true and dialog.closed == true
+        if dialog.identity ~= "" then existing.identity = dialog.identity end
+    else
+        dialog.key = new_key
+        runtime.private_dialogs[new_key] = dialog
+    end
+    runtime.private_dialogs[old_key] = nil
+    local new_order = {}
+    local seen = {}
+    for _, key in ipairs(runtime.private_order) do
+        if key == old_key then key = new_key end
+        if not seen[key] then
+            seen[key] = true
+            table.insert(new_order, key)
+        end
+    end
+    runtime.private_order = new_order
+    if runtime.active_conversation == old_key then runtime.active_conversation = new_key end
+    if save_history then save_history() end
+end
+
+local HISTORY_HEADER = "PF_IRC_CHAT_HISTORY\t1"
+
+local function history_encode(value)
+    return tostring(value or ""):gsub("%%", "%%25"):gsub("\t", "%%09")
+        :gsub("\r", "%%0D"):gsub("\n", "%%0A")
+end
+
+local function history_decode(value)
+    return tostring(value or ""):gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+    end)
+end
+
+local function history_fields(line)
+    local result = {}
+    for field in (tostring(line or "") .. "\t"):gmatch("(.-)\t") do
+        result[#result + 1] = field
+    end
+    return result
+end
+
+local function history_message(fields, offset)
+    local kind = history_decode(fields[offset])
+    local nick = history_decode(fields[offset + 1])
+    local identity = history_decode(fields[offset + 2]):lower()
+    local text = history_decode(fields[offset + 3])
+    local shown_time = history_decode(fields[offset + 6])
+    local date = history_decode(fields[offset + 7])
+    if text == "" or #text > 4096 or #nick > 128 or #identity > 240 or
+        #kind > 32 or not kind:match("^[%a_]+$") then return nil end
+    if not shown_time:match("^%d%d:%d%d$") then shown_time = "" end
+    if not date:match("^%d%d%d%d%-%d%d%-%d%d$") then date = "" end
+    return {
+        kind = kind,
+        nick = nick,
+        identity = identity,
+        text = text,
+        own = fields[offset + 4] == "1",
+        mentioned = fields[offset + 5] == "1",
+        time = shown_time,
+        date = date
+    }
+end
+
+local function append_history_message(lines, tag, key, message)
+    local fields = { tag }
+    if key then fields[#fields + 1] = history_encode(key) end
+    fields[#fields + 1] = history_encode(message.kind)
+    fields[#fields + 1] = history_encode(message.nick)
+    fields[#fields + 1] = history_encode(message.identity)
+    fields[#fields + 1] = history_encode(message.text)
+    fields[#fields + 1] = message.own == true and "1" or "0"
+    fields[#fields + 1] = message.mentioned == true and "1" or "0"
+    fields[#fields + 1] = history_encode(message.time)
+    fields[#fields + 1] = history_encode(message.date)
+    lines[#lines + 1] = table.concat(fields, "\t")
+end
+
+save_history = function()
+    if runtime.history_loading then return true end
+    local lines = {
+        HISTORY_HEADER,
+        "# User-owned UTF-8 history. Connection keys and passwords are never stored here."
+    }
+    for _, message in ipairs(runtime.messages or {}) do
+        append_history_message(lines, "C", nil, message)
+    end
+    for _, key in ipairs(runtime.private_order or {}) do
+        local dialog = runtime.private_dialogs[key]
+        if dialog then
+            lines[#lines + 1] = table.concat({
+                "D", history_encode(key), history_encode(dialog.nick), history_encode(dialog.identity),
+                tostring(math.max(0, math.min(99, tonumber(dialog.unread) or 0))),
+                dialog.closed == true and "1" or "0"
+            }, "\t")
+            for _, message in ipairs(dialog.messages or {}) do
+                append_history_message(lines, "P", key, message)
+            end
+        end
+    end
+    local ok, error_code = pf_irc_chat_config.write_history(table.concat(lines, "\r\n") .. "\r\n")
+    if ok then
+        runtime.history_loaded = true
+        runtime.history_last_error = nil
+    else
+        runtime.history_last_error = tostring(error_code or "history_write_failed")
+    end
+    return ok, error_code
+end
+
+local function load_history()
+    runtime.history_loading = true
+    local content, error_code = pf_irc_chat_config.read_history()
+    if not content then
+        runtime.history_loading = false
+        runtime.history_loaded = error_code == "history_missing"
+        if runtime.history_loaded then runtime.history_last_error = nil
+        else runtime.history_last_error = error_code end
+        return runtime.history_loaded, error_code
+    end
+    local channel_messages = {}
+    local dialogs = {}
+    local order = {}
+    local stored_keys = {}
+    local valid_header = false
+    for raw_line in content:gmatch("[^\r\n]+") do
+        local fields = history_fields(raw_line)
+        local tag = fields[1]
+        if raw_line == HISTORY_HEADER then
+            valid_header = true
+        elseif valid_header and tag == "C" and #channel_messages < MAX_MESSAGES then
+            local message = history_message(fields, 2)
+            if message then channel_messages[#channel_messages + 1] = message end
+        elseif valid_header and tag == "D" and #order < MAX_PRIVATE_DIALOGS then
+            local stored_key = history_decode(fields[2])
+            local nick = trim(history_decode(fields[3]))
+            local identity = trim(history_decode(fields[4])):lower()
+            if nick ~= "" and #nick <= 128 and #identity <= 240 then
+                local key = private_key(nick)
+                if not dialogs[key] then
+                    dialogs[key] = {
+                        key = key,
+                        nick = nick,
+                        identity = identity,
+                        messages = {},
+                        unread = math.max(0, math.min(99, tonumber(fields[5]) or 0)),
+                        closed = fields[6] == "1"
+                    }
+                    order[#order + 1] = key
+                end
+                stored_keys[stored_key] = key
+            end
+        elseif valid_header and tag == "P" then
+            local key = stored_keys[history_decode(fields[2])]
+            local dialog = key and dialogs[key] or nil
+            if dialog and #dialog.messages < MAX_MESSAGES then
+                local message = history_message(fields, 3)
+                if message then
+                    -- Older history versions marked every incoming private
+                    -- message as mentioned, which painted the whole row amber.
+                    message.mentioned = false
+                    dialog.messages[#dialog.messages + 1] = message
+                end
+            end
+        end
+    end
+    runtime.history_loading = false
+    if not valid_header then
+        runtime.history_loaded = false
+        runtime.history_last_error = "history_format_invalid"
+        return false, runtime.history_last_error
+    end
+    runtime.messages = channel_messages
+    runtime.private_dialogs = dialogs
+    runtime.private_order = order
+    runtime.active_conversation = "channel"
+    runtime.history_loaded = true
+    runtime.history_last_error = nil
+    touch()
+    return true
+end
+
+local function initialize_history()
+    if runtime.history_loaded then return true end
+    if #(runtime.messages or {}) > 0 or next(runtime.private_dialogs or {}) ~= nil then
+        runtime.history_loaded = true
+        return save_history()
+    end
+    return load_history()
+end
+
+local function set_status(status, detail)
+    status = trim(status)
+    detail = trim(detail)
+    if runtime.status == status and runtime.detail == detail then return end
+    runtime.status = status
+    runtime.detail = detail
+    touch()
+end
+
+local function flush_presence()
+    if not runtime.presence_dirty or not runtime.authorized or not runtime.ready or
+        not pf_irc_chat_transport.is_started() then return true end
+    local sent, error_code = pf_irc_chat_transport.send({ "SET_PRESENCE", runtime.presence })
+    if sent then runtime.presence_dirty = false end
+    return sent, error_code
+end
+
+local function user_key(nick)
+    return irc_casefold(trim(nick))
+end
+
+local function make_user(nick, identity, prefix, presence)
+    nick = trim(nick)
+    return {
+        nick = nick,
+        identity = trim(identity):lower(),
+        prefix = trim(prefix),
+        presence = trim(presence) == "away" and "away" or "online",
+        muted = pf_irc_chat_config.is_muted(identity)
+    }
+end
+
+local function upsert_user(nick, identity, prefix, presence, target, silent)
+    nick = trim(nick)
+    if nick == "" then return end
+    target = target or runtime.users
+    local key = user_key(nick)
+    local current = target[key] or make_user(nick, identity, prefix, presence)
+    current.nick = nick
+    if trim(identity) ~= "" then current.identity = trim(identity):lower() end
+    if prefix ~= nil then current.prefix = trim(prefix) end
+    if presence ~= nil and trim(presence) ~= "" then
+        current.presence = trim(presence) == "away" and "away" or "online"
+    end
+    current.muted = pf_irc_chat_config.is_muted(current.identity)
+    target[key] = current
+    if not silent then touch() end
+end
+
+local function remove_user(nick)
+    local key = user_key(nick)
+    if runtime.users[key] then
+        runtime.users[key] = nil
+        touch()
+    end
+    if runtime.user_snapshot then runtime.user_snapshot[key] = nil end
+end
+
+local function clear_session_state()
+    runtime.users = {}
+    runtime.user_snapshot = nil
+    runtime.topic = ""
+    runtime.ready = false
+end
+
+local function stop_transport(send_quit)
+    if pf_irc_chat_transport.is_started() then pf_irc_chat_transport.stop(send_quit ~= false) end
+    clear_session_state()
+end
+
+local function first_connection_failed(error_code, detail)
+    runtime.last_error_code = trim(error_code)
+    runtime.last_error = trim(detail) ~= "" and trim(detail) or runtime.last_error_code
+    runtime.authorized = false
+    runtime.chat_open = false
+    stop_transport(false)
+    set_status("error", runtime.last_error)
+end
+
+local function connection_failed(error_code, detail)
+    if not runtime.chat_open then
+        first_connection_failed(error_code, detail)
+        return
+    end
+    runtime.last_error_code = trim(error_code)
+    runtime.last_error = trim(detail) ~= "" and trim(detail) or runtime.last_error_code
+    runtime.ready = false
+    stop_transport(false)
+    runtime.next_start_attempt_ms = (time_global and time_global() or 0) + 5000
+    set_status("reconnecting", runtime.last_error)
+end
+
+local function mark_ready(detail)
+    runtime.ready = true
+    runtime.chat_open = true
+    runtime.last_error = nil
+    runtime.last_error_code = nil
+    runtime.presence_dirty = true
+    set_status("ready", detail)
+    local saved, save_error = pf_irc_chat_config.save_active_nick(runtime.requested_nick)
+    if not saved then
+        add_message("warning", "", "", "nick_save_failed: " .. tostring(save_error or "unknown"), false)
+    end
+    pcall(flush_presence)
+    pcall(function() pf_irc_chat_transport.send({ "SYNC_USERS" }) end)
+end
+
+local function handle_event(fields)
+    if type(fields) ~= "table" or type(fields[1]) ~= "string" then return true end
+    local command = fields[1]
+    if command == "STATE" then
+        local state = trim(fields[2])
+        if state == "ready" then mark_ready(fields[3]) else set_status(state, fields[3]) end
+    elseif command == "WARNING" then
+        runtime.last_error_code = trim(fields[2])
+        runtime.last_error = trim(fields[3])
+        add_message("warning", "", "", runtime.last_error, false)
+    elseif command == "ERROR" then
+        if not runtime.chat_open then
+            first_connection_failed(fields[2], fields[3])
+            return false
+        end
+        local error_code = trim(fields[2])
+        if error_code == "rate_limited" then
+            runtime.last_error_code = error_code
+            runtime.last_error = trim(fields[3])
+            add_message("error", "", "", runtime.last_error, false)
+            return true
+        end
+        runtime.ready = false
+        runtime.last_error_code = error_code
+        runtime.last_error = trim(fields[3])
+        set_status("reconnecting", runtime.last_error)
+        add_message("error", "", "", runtime.last_error, false)
+    elseif command == "SESSION" then
+        if fields[2] == "active" then
+            runtime.authorized = true
+            runtime.chat_open = true
+            runtime.requested_nick = trim(fields[3])
+            runtime.effective_nick = trim(fields[4])
+            runtime.ready = fields[7] == "true"
+            runtime.last_error = nil
+            runtime.last_error_code = nil
+            runtime.restoring_session = false
+            runtime.resume_probe_until_ms = 0
+            runtime.presence_dirty = true
+            set_status(trim(fields[5]) ~= "" and fields[5] or
+                (runtime.ready and "ready" or "reconnecting"), fields[6])
+        elseif runtime.restoring_session then
+            runtime.authorized = false
+            runtime.chat_open = false
+            runtime.ready = false
+            runtime.requested_nick = ""
+            runtime.effective_nick = ""
+            runtime.restoring_session = false
+            runtime.resume_probe_until_ms = 0
+            pf_irc_chat_transport.stop(true)
+            set_status("stopped", "")
+        end
+    elseif command == "MESSAGE" then
+        add_message("chat", fields[2], fields[3], fields[4], fields[5] == "true")
+    elseif command == "PRIVATE_MESSAGE" then
+        add_private_message(fields[2], fields[3], fields[4], fields[5] == "true")
+    elseif command == "NOTICE" then
+        add_message("system", fields[2], fields[3], fields[4], false)
+    elseif command == "USERS_CLEAR" or command == "USERS_SNAPSHOT_BEGIN" then
+        runtime.user_snapshot = {}
+    elseif command == "USERS_SNAPSHOT_END" then
+        runtime.users = runtime.user_snapshot or {}
+        runtime.user_snapshot = nil
+        touch()
+    elseif command == "USER" then
+        if fields[2] == "remove" then
+            remove_user(fields[3])
+        else
+            local target = runtime.user_snapshot or runtime.users
+            upsert_user(fields[3], fields[4], fields[5], fields[6], target, runtime.user_snapshot ~= nil)
+        end
+    elseif command == "PRESENCE" then
+        local action, nick, identity = fields[2], trim(fields[3]), trim(fields[4])
+        if not pf_irc_chat_config.is_muted(identity) then
+            local format_id = action == "join" and "pf_irc_user_joined" or "pf_irc_user_left"
+            add_message("system", "", "", string.format(game.translate_string(format_id), nick), false)
+        end
+    elseif command == "NICK" then
+        local old_nick, new_nick, identity = trim(fields[2]), trim(fields[3]), trim(fields[4])
+        runtime.users[user_key(old_nick)] = nil
+        if runtime.user_snapshot then runtime.user_snapshot[user_key(old_nick)] = nil end
+        upsert_user(new_nick, identity, fields[5], fields[6], runtime.users, true)
+        if runtime.user_snapshot then
+            upsert_user(new_nick, identity, fields[5], fields[6], runtime.user_snapshot, true)
+        end
+        rename_private_dialog(old_nick, new_nick, identity)
+        add_message("system", "", "", string.format(game.translate_string("pf_irc_user_renamed"), old_nick, new_nick), false)
+    elseif command == "TOPIC" then
+        runtime.topic = trim(fields[2])
+        touch()
+    elseif command == "SELF_NICK" then
+        runtime.effective_nick = trim(fields[2])
+        touch()
+    elseif command == "NICK_FALLBACK" then
+        runtime.effective_nick = trim(fields[3])
+        add_message("system", "", "", string.format(game.translate_string("pf_irc_nick_in_use"), runtime.effective_nick), false)
+    end
+    return true
+end
+
+local function nick_validation(nick)
+    nick = trim(nick)
+    if nick == "" then return false, "nick_required" end
+    if not nick:match("^[A-Za-z%[%]\\`_^{|}][A-Za-z0-9%-%[%]\\`_^{|}]*$") or #nick > 30 then
+        return false, "nick_invalid"
+    end
+    return true
+end
+
+local function profile_validation(profile, require_nick)
+    if type(profile) ~= "table" then return false, "profile_missing" end
+    local address = trim(profile.address)
+    local channel = trim(profile.channel)
+    local nick = trim(profile.nick)
+    local key = trim(profile.key)
+    local port = tonumber(profile.port)
+    local encoding = trim(profile.encoding):lower()
+    local required_modes = trim(profile.required_modes)
+    if address == "" or #address > 253 or address:find("%s") or address:find("[;=\r\n]") then
+        return false, "address_invalid"
+    end
+    if not port or port < 1 or port > 65535 or port ~= math.floor(port) then return false, "port_invalid" end
+    if not channel:match("^#[^%s,:;=]+$") or #channel > 64 then return false, "channel_invalid" end
+    if require_nick or nick ~= "" then
+        local valid_nick, nick_error = nick_validation(nick)
+        if not valid_nick then return false, nick_error end
+    end
+    if #key > 64 or key:find("%s") or key:find("[;=\r\n]") then return false, "key_invalid" end
+    if encoding ~= "utf-8" and encoding ~= "utf8" and encoding ~= "windows-1251" and encoding ~= "cp1251" then
+        return false, "encoding_invalid"
+    end
+    if #required_modes > 20 or (required_modes ~= "" and not required_modes:match("^[A-Za-z]+$")) then
+        return false, "required_modes_invalid"
+    end
+    return true
+end
+
+local function same_connection_profile(left, right)
+    if type(left) ~= "table" or type(right) ~= "table" then return false end
+    return trim(left.address):lower() == trim(right.address):lower() and
+        trim(left.channel):lower() == trim(right.channel):lower() and
+        tonumber(left.port) == tonumber(right.port) and
+        (left.tls == true) == (right.tls == true) and
+        trim(left.key) == trim(right.key) and
+        trim(left.encoding):lower() == trim(right.encoding):lower() and
+        trim(left.nick) == trim(right.nick) and
+        (left.require_registered_channel == true) == (right.require_registered_channel == true) and
+        trim(left.required_modes):lower() == trim(right.required_modes):lower()
+end
+
+local function connect_current_profile()
+    local source, profile_name, error_code = pf_irc_chat_config.get_active_profile()
+    if not source then connection_failed(error_code or "profile_unavailable", error_code) return false end
+    local profile = {}
+    for key, value in pairs(source) do profile[key] = value end
+    profile.nick = runtime.requested_nick
+    local valid, validation_error = profile_validation(profile, true)
+    if not valid then connection_failed(validation_error, validation_error) return false end
+    local identity, identity_error = pf_irc_chat_config.get_identity()
+    if not identity then connection_failed(identity_error, identity_error) return false end
+    local started, start_error = pf_irc_chat_transport.start(identity.install_id)
+    if not started then connection_failed(start_error, start_error) return false end
+
+    if start_error == "attached" then
+        runtime.chat_open = true
+        runtime.ready = false
+        runtime.restoring_session = true
+        runtime.resume_probe_until_ms = 0
+        set_status("reconnecting", "restoring_session")
+        pf_irc_chat_transport.send({ "RESUME" })
+        return true
+    end
+
+    clear_session_state()
+    runtime.effective_nick = runtime.requested_nick
+    set_status("starting", profile_name)
+    local sent, send_error = pf_irc_chat_transport.send({
+        "CONNECT", profile.address, tostring(profile.port), tostring(profile.tls == true),
+        profile.encoding, profile.nick, profile.channel, profile.key,
+        tostring(profile.require_registered_channel == true), profile.required_modes,
+        identity.install_id
+    })
+    if not sent then
+        connection_failed(send_error, send_error)
+        return false
+    end
+    runtime.next_start_attempt_ms = 0
+    return true
+end
+
+local function update_impl()
+    if not pf_irc_chat_config.is_enabled() then
+        if pf_irc_chat_transport.is_started() then stop_transport(true) end
+        return
+    end
+    if not db or not db.actor then return end
+    local now = time_global and time_global() or 0
+    if not runtime.authorized then
+        if runtime.resume_probe_until_ms > 0 and now <= runtime.resume_probe_until_ms and
+            now >= runtime.next_resume_probe_ms then
+            runtime.next_resume_probe_ms = now + 100
+            local identity = pf_irc_chat_config.get_identity()
+            if identity then
+                local attached = pf_irc_chat_transport.attach(identity.install_id)
+                if attached then
+                    runtime.authorized = true
+                    runtime.chat_open = true
+                    runtime.ready = false
+                    runtime.restoring_session = true
+                    runtime.resume_probe_until_ms = 0
+                    set_status("reconnecting", "restoring_session")
+                end
+            end
+        elseif runtime.resume_probe_until_ms > 0 and now > runtime.resume_probe_until_ms then
+            runtime.resume_probe_until_ms = 0
+            runtime.restoring_session = false
+        end
+        if not runtime.authorized and runtime.auto_login_pda_opened and
+            type(try_auto_login) == "function" then
+            pcall(try_auto_login)
+        end
+        if not runtime.authorized then return end
+    end
+    if not pf_irc_chat_transport.is_started() then
+        if runtime.chat_open and now >= runtime.next_start_attempt_ms then
+            runtime.next_start_attempt_ms = now + 5000
+            set_status("reconnecting", "")
+            connect_current_profile()
+        end
+        return
+    end
+    for _, fields in ipairs(pf_irc_chat_transport.poll(64)) do
+        if not handle_event(fields) then break end
+    end
+end
+
+local function pulse_ui()
+    local pda_ui = rawget(_G, "pf_irc_chat_pda")
+    if pda_ui and pda_ui.pulse then pcall(pda_ui.pulse) end
+end
+
+function update()
+    local now = time_global and time_global() or 0
+    if now < runtime.next_update_ms then return end
+    runtime.next_update_ms = now + UPDATE_INTERVAL_MS
+    local ok, error_message = pcall(update_impl)
+    if not ok then
+        runtime.last_error = tostring(error_message)
+        runtime.last_error_code = "addon_internal_error"
+        if runtime.chat_open then set_status("reconnecting", runtime.last_error)
+        else first_connection_failed(runtime.last_error_code, runtime.last_error) end
+    end
+    pulse_ui()
+end
+
+function on_game_load()
+    local pda_ui = rawget(_G, "pf_irc_chat_pda")
+    if pda_ui and pda_ui.on_game_load then pcall(pda_ui.on_game_load) end
+    -- A save/load invalidates both C++ UI wrappers and the level Lua context.
+    -- The external helper owns
+    -- the IRC socket and waits for this freshly-created Lua VM to reattach.
+    -- Probe only the local named pipe: never send CONNECT or QUIT from here.
+    local now = time_global and time_global() or 0
+    runtime.next_update_ms = 0
+    runtime.next_resume_probe_ms = 0
+    runtime.resume_probe_until_ms = now + 8000
+    runtime.restoring_session = false
+    runtime.presence = "away"
+    runtime.presence_dirty = true
+    if not runtime.history_loaded then initialize_history() end
+    touch()
+end
+
+local function prepare_ui_for_game_reload()
+    local pda_ui = rawget(_G, "pf_irc_chat_pda")
+    if not pda_ui or not pda_ui.before_game_reload then return true end
+    local ok, detached = pcall(pda_ui.before_game_reload)
+    return ok and detached ~= false
+end
+
+function on_key_press(dik)
+    if type(dik_to_bind) == "function" and key_bindings and
+        dik_to_bind(dik) == key_bindings.kQUICK_LOAD then
+        prepare_ui_for_game_reload()
+    end
+    return false
+end
+
+function on_actor_net_destroy()
+    return prepare_ui_for_game_reload()
+end
+
+function is_enabled()
+    return pf_irc_chat_config.is_enabled()
+end
+
+function set_enabled(enabled)
+    local ok, error_code = pf_irc_chat_config.set_enabled(enabled == true)
+    if not ok then return false, error_code end
+    if not enabled then disconnect() end
+    local pda_ui = rawget(_G, "pf_irc_chat_pda")
+    if pda_ui and pda_ui.refresh_visibility then pcall(pda_ui.refresh_visibility) end
+    touch()
+    return true
+end
+
+function authorize(nick)
+    if not is_enabled() then return false, "chat_disabled" end
+    local valid, error_code = nick_validation(nick)
+    if not valid then return false, error_code end
+    stop_transport(true)
+    runtime.authorized = true
+    runtime.chat_open = false
+    runtime.requested_nick = trim(nick)
+    runtime.effective_nick = runtime.requested_nick
+    runtime.last_error = nil
+    runtime.last_error_code = nil
+    runtime.resume_probe_until_ms = 0
+    runtime.restoring_session = false
+    runtime.presence_dirty = true
+    runtime.active_conversation = "channel"
+    set_status("authorizing", "")
+    return connect_current_profile()
+end
+
+function get_auto_login()
+    return pf_irc_chat_config.is_auto_login_enabled()
+end
+
+function set_auto_login(enabled)
+    local ok, error_code = pf_irc_chat_config.set_auto_login(enabled == true)
+    if ok then touch() end
+    return ok, error_code
+end
+
+function try_auto_login()
+    if runtime.auto_login_attempted then return false, "auto_login_already_checked" end
+    if not runtime.auto_login_pda_opened then return false, "pda_not_opened" end
+    if runtime.authorized or runtime.chat_open then
+        runtime.auto_login_attempted = true
+        return true
+    end
+
+    -- F5/F9 may recreate Lua while the process-owned helper still holds the
+    -- IRC socket. Give the local RESUME probe priority so automatic login can
+    -- never terminate and replace that surviving session.
+    local now = time_global and time_global() or 0
+    if runtime.restoring_session or
+        (runtime.resume_probe_until_ms > 0 and now <= runtime.resume_probe_until_ms) then
+        return false, "resume_pending"
+    end
+
+    runtime.auto_login_attempted = true
+    if not is_enabled() or not pf_irc_chat_config.is_auto_login_enabled() then
+        return false, "auto_login_disabled"
+    end
+    local profile, _, error_code = pf_irc_chat_config.get_active_profile()
+    if not profile then return false, error_code or "profile_unavailable" end
+    local nick = trim(profile.nick)
+    if nick == "" then return false, "nick_empty" end
+    return authorize(nick)
+end
+
+function note_pda_opened()
+    if not db or not db.actor then return false, "actor_unavailable" end
+    if not runtime.auto_login_pda_opened then
+        runtime.auto_login_pda_opened = true
+        touch()
+    end
+    return try_auto_login()
+end
+
+function disconnect()
+    runtime.authorized = false
+    runtime.chat_open = false
+    runtime.requested_nick = ""
+    runtime.effective_nick = ""
+    runtime.last_error = nil
+    runtime.last_error_code = nil
+    runtime.next_start_attempt_ms = 0
+    runtime.resume_probe_until_ms = 0
+    runtime.restoring_session = false
+    runtime.active_conversation = "channel"
+    stop_transport(true)
+    set_status("stopped", "")
+    touch()
+    return true
+end
+
+function reconnect()
+    if not is_enabled() then return false, "chat_disabled" end
+    if not runtime.authorized then return true end
+    stop_transport(true)
+    runtime.next_start_attempt_ms = 0
+    set_status(runtime.chat_open and "reconnecting" or "authorizing", "")
+    return connect_current_profile()
+end
+
+function clear_messages()
+    if runtime.active_conversation == "channel" then
+        runtime.messages = {}
+    else
+        local dialog = runtime.private_dialogs[runtime.active_conversation]
+        if dialog then dialog.messages = {} end
+    end
+    touch()
+    save_history()
+    return true
+end
+
+function open_query(nick, identity)
+    local valid, error_code = nick_validation(nick)
+    if not valid then return false, error_code end
+    if irc_casefold(nick) == irc_casefold(runtime.effective_nick) then
+        return false, "private_target_self"
+    end
+    local dialog = ensure_private_dialog(nick, identity)
+    if not dialog then return false, "nick_invalid" end
+    dialog.closed = false
+    runtime.active_conversation = dialog.key
+    dialog.unread = 0
+    touch()
+    save_history()
+    return true
+end
+
+function select_conversation(key)
+    key = tostring(key or "")
+    if key == "channel" then
+        runtime.active_conversation = key
+        touch()
+        return true
+    end
+    local dialog = runtime.private_dialogs[key]
+    if not dialog or dialog.closed == true then return false, "private_dialog_missing" end
+    runtime.active_conversation = key
+    dialog.unread = 0
+    touch()
+    save_history()
+    return true
+end
+
+function close_query()
+    if runtime.active_conversation == "channel" then return false, "private_dialog_required" end
+    local closing_key = runtime.active_conversation
+    local dialog = runtime.private_dialogs[closing_key]
+    if dialog then
+        dialog.closed = true
+        dialog.unread = 0
+    end
+    runtime.active_conversation = "channel"
+    touch()
+    save_history()
+    return true
+end
+
+local function set_mute_by_nick(nick, muted)
+    local user = runtime.users[user_key(nick)]
+    local dialog = runtime.private_dialogs[private_key(nick)]
+    local identity = user and user.identity or (dialog and dialog.identity or "")
+    local shown_nick = user and user.nick or (dialog and dialog.nick or "")
+    if not user and not dialog then return false, "user_not_found" end
+    if trim(identity) == "" then return false, "identity_missing" end
+    if muted then return mute(identity, shown_nick) end
+    return unmute(identity)
+end
+
+function send_message(text)
+    text = trim(text)
+    if text == "" then return true end
+    local command, argument = text:match("^/([^%s]+)%s*(.-)%s*$")
+    if command then
+        command = command:lower()
+        if command == "clear" and argument == "" then return clear_messages() end
+        if command == "query" and argument ~= "" then return open_query(argument, "") end
+        if command == "mute" and argument ~= "" then return set_mute_by_nick(argument, true) end
+        if command == "unmute" and argument ~= "" then return set_mute_by_nick(argument, false) end
+        if command == "close" and argument == "" then return close_query() end
+        if command == "channel" and argument == "" then
+            if runtime.active_conversation == "channel" then return false, "private_dialog_required" end
+            return select_conversation("channel")
+        end
+        return false, "command_unsupported"
+    end
+    if #text > 500 then return false, "message_too_long" end
+    if not runtime.ready then return false, "channel_not_ready" end
+    if runtime.active_conversation ~= "channel" then
+        local dialog = runtime.private_dialogs[runtime.active_conversation]
+        if not dialog then return false, "private_dialog_missing" end
+        return pf_irc_chat_transport.send({ "SEND_PRIVATE", dialog.nick, text })
+    end
+    return pf_irc_chat_transport.send({ "SEND", text })
+end
+
+function request_user_sync()
+    if not runtime.ready or not pf_irc_chat_transport.is_started() then return false, "channel_not_ready" end
+    local now = time_global and time_global() or 0
+    if now < runtime.next_user_sync_ms then return true, "sync_throttled" end
+    local sent, error_code = pf_irc_chat_transport.send({ "SYNC_USERS" })
+    if sent then runtime.next_user_sync_ms = now + 3000 end
+    return sent, error_code
+end
+
+function set_presence(presence)
+    presence = presence == "online" and "online" or "away"
+    if runtime.presence ~= presence then
+        runtime.presence = presence
+        runtime.presence_dirty = true
+        touch()
+    end
+    return flush_presence()
+end
+
+function save_profile(name, profile, notification_settings)
+    local valid, error_code = profile_validation(profile, false)
+    if not valid then return false, error_code end
+    if runtime.authorized then
+        local valid_nick, nick_error = nick_validation(profile.nick)
+        if not valid_nick then return false, nick_error end
+    end
+    local previous_profile, previous_name = pf_irc_chat_config.get_active_profile()
+    local connection_changed = trim(name):lower() ~= trim(previous_name):lower() or
+        not same_connection_profile(previous_profile, profile)
+    local ok, save_error = pf_irc_chat_config.save_profile(
+        name, profile, true, notification_settings)
+    if not ok then return false, save_error end
+    if runtime.authorized and connection_changed then
+        runtime.requested_nick = trim(profile.nick)
+        local reconnected, reconnect_error = reconnect()
+        return reconnected, reconnect_error, true
+    end
+    return true, nil, false
+end
+
+function reset_profile(name)
+    local requested_nick = runtime.requested_nick
+    local ok, error_code = pf_irc_chat_config.reset_profile(name)
+    if not ok then return false, error_code end
+    if runtime.authorized then
+        runtime.requested_nick = requested_nick
+        return reconnect()
+    end
+    return true
+end
+
+function mute(identity, nick)
+    local ok, error_code = pf_irc_chat_config.mute(identity, nick)
+    if not ok then return false, error_code end
+    for _, user in pairs(runtime.users) do
+        if user.identity == trim(identity):lower() then user.muted = true end
+    end
+    touch()
+    return true
+end
+
+function unmute(identity)
+    local ok, error_code = pf_irc_chat_config.unmute(identity)
+    if not ok then return false, error_code end
+    for _, user in pairs(runtime.users) do
+        if user.identity == trim(identity):lower() then user.muted = false end
+    end
+    touch()
+    return true
+end
+
+function get_state()
+    local count = 0
+    for _ in pairs(runtime.users) do count = count + 1 end
+    return {
+        status = runtime.status,
+        detail = runtime.detail,
+        topic = runtime.topic,
+        revision = runtime.revision,
+        last_error = runtime.last_error,
+        last_error_code = runtime.last_error_code,
+        authorized = runtime.authorized,
+        chat_open = runtime.chat_open,
+        ready = runtime.ready,
+        presence = runtime.presence,
+        requested_nick = runtime.requested_nick,
+        effective_nick = runtime.effective_nick,
+        active_conversation = runtime.active_conversation,
+        private_dialog_active = runtime.active_conversation ~= "channel",
+        participant_count = count,
+        history_loaded = runtime.history_loaded == true,
+        history_error = runtime.history_last_error
+    }
+end
+
+function get_messages()
+    if runtime.active_conversation ~= "channel" then
+        local dialog = runtime.private_dialogs[runtime.active_conversation]
+        return dialog and dialog.messages or {}
+    end
+    return runtime.messages
+end
+
+function get_conversations()
+    local function last_chat_text(messages)
+        for index = #(messages or {}), 1, -1 do
+            local message = messages[index]
+            if message and message.kind == "chat" and trim(message.text) ~= "" then
+                return trim(message.text):gsub("%s+", " ")
+            end
+        end
+        return ""
+    end
+    local result = {
+        {
+            key = "channel",
+            nick = "",
+            last_message = last_chat_text(runtime.messages),
+            unread = 0,
+            active = runtime.active_conversation == "channel",
+            public = true
+        }
+    }
+    for _, key in ipairs(runtime.private_order) do
+        local dialog = runtime.private_dialogs[key]
+        if dialog and dialog.closed ~= true then
+            table.insert(result, {
+                key = key,
+                nick = dialog.nick,
+                identity = dialog.identity,
+                last_message = last_chat_text(dialog.messages),
+                unread = tonumber(dialog.unread) or 0,
+                active = runtime.active_conversation == key,
+                public = false
+            })
+        end
+    end
+    return result
+end
+
+function get_users()
+    local result = {}
+    for _, user in pairs(runtime.users) do table.insert(result, user) end
+    local rank = { ["@"] = 1, ["+"] = 2, [""] = 3 }
+    table.sort(result, function(a, b)
+        local a_rank = rank[a.prefix or ""] or 3
+        local b_rank = rank[b.prefix or ""] or 3
+        if a_rank ~= b_rank then return a_rank < b_rank end
+        return a.nick:lower() < b.nick:lower()
+    end)
+    return result
+end
+
+function get_visible_users()
+    if runtime.active_conversation == "channel" then return get_users() end
+
+    local result = {}
+    local self_nick = trim(runtime.effective_nick)
+    if self_nick == "" then self_nick = trim(runtime.requested_nick) end
+    if self_nick ~= "" then
+        local self_user = runtime.users[user_key(self_nick)]
+        if not self_user then
+            local profile = pf_irc_chat_config.get_identity()
+            local install_id = profile and trim(profile.install_id) or ""
+            local identity = install_id ~= "" and ("install:" .. install_id) or ""
+            self_user = make_user(self_nick, identity, "", runtime.presence)
+        end
+        result[#result + 1] = self_user
+    end
+
+    local dialog = runtime.private_dialogs[runtime.active_conversation]
+    if dialog and irc_casefold(dialog.nick) ~= irc_casefold(self_nick) then
+        local peer = runtime.users[user_key(dialog.nick)]
+        if not peer then
+            peer = make_user(dialog.nick, dialog.identity, "", "away")
+            peer.presence = "offline"
+        end
+        result[#result + 1] = peer
+    end
+    return result
+end
+
+function get_active_profile()
+    return pf_irc_chat_config.get_active_profile()
+end
+
+function list_profiles()
+    return pf_irc_chat_config.list_profiles()
+end
+
+function on_game_start()
+    if runtime.callbacks_registered then return true end
+    if type(RegisterScriptCallback) ~= "function" then return false end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_game_load)
+    runtime.callbacks_registered = true
+    return true
+end
+
+initialize_history()
+on_game_start()

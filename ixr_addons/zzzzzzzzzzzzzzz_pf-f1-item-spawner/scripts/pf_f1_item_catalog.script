@@ -1,0 +1,463 @@
+local REGISTRY_SECTION = "inventory_sort_registry"
+local GROUP_ORDER_SECTION = "inventory_sort_groups"
+local DEFAULT_ICON_TEXTURE = "ui\\ui_icon_equipment"
+local PLACEHOLDER_ICON_TEXTURE = "ui\\ui_noise"
+local ICON_CELL_SIZE = 50
+local MAX_WORLD_DISTANCE = 5
+local FALLBACK_WORLD_DISTANCE = 2
+local VEHICLE_WORLD_DISTANCE = 10
+local INVALID_LEVEL_VERTEX_ID = 4294967295
+local WEAPON_GROUP = 10
+local WEAPON_ADDON_GROUP = 40
+local SCOPE_CLASS = "WP_SCOPE"
+
+local GROUP_LABELS = {
+	[10] = "pf_f1_group_10",
+	[20] = "pf_f1_group_20",
+	[30] = "pf_f1_group_30",
+	[40] = "pf_f1_group_40",
+	[50] = "pf_f1_group_50",
+	[60] = "pf_f1_group_60",
+	[70] = "pf_f1_group_70",
+	[80] = "pf_f1_group_80",
+	[90] = "pf_f1_group_90",
+	[100] = "pf_f1_group_100",
+	[110] = "pf_f1_group_110",
+	[120] = "pf_f1_group_120",
+	[130] = "pf_f1_group_130",
+	[140] = "pf_f1_group_140",
+	[900] = "pf_f1_group_900",
+}
+
+local GROUP_NAMES = {
+	[10] = "weapons",
+	[20] = "ammo_explosives",
+	[30] = "armor",
+	[40] = "weapon_addons",
+	[50] = "electronics",
+	[60] = "artefacts",
+	[70] = "medicine",
+	[80] = "food",
+	[90] = "repair_tools",
+	[100] = "materials",
+	[110] = "mutant_parts",
+	[120] = "quest_items",
+	[130] = "containers",
+	[140] = "misc",
+	[900] = "qa",
+	[990] = "technical",
+}
+
+local GROUP_CODES = {
+	weapons = 10,
+	ammo_explosives = 20,
+	armor = 30,
+	weapon_addons = 40,
+	electronics = 50,
+	artefacts = 60,
+	medicine = 70,
+	food = 80,
+	repair_tools = 90,
+	materials = 100,
+	mutant_parts = 110,
+	quest_items = 120,
+	containers = 130,
+	misc = 140,
+	qa = 900,
+	technical = 990,
+}
+
+local DEFAULT_GROUP_ORDER = {
+	10, 20, 30, 40, 50, 60, 70, 80, 90,
+	100, 110, 120, 130, 140, 900,
+}
+
+local VEHICLE_SECTIONS = {
+	"veh_btr", "veh_kamaz", "veh_niva_g", "veh_niva_w",
+	"veh_dcp_niva", "veh_dcp_niva_green", "veh_dcp_zaz968_2", "veh_dcp_lada_2101",
+	"veh_dcp_uaz_van_broken", "veh_dcp_uaz_broken",
+	"veh_dcp_gaz24", "veh_dcp_moskvich_412", "veh_dcp_raf", "veh_dcp_moskvich_2715", "veh_dcp_uaz",
+	"veh_dcp_zil", "veh_dcp_zil131",
+	"veh_dcp_mercedes_w123", "veh_dcp_lada_2107", "veh_dcp_lada_2108",
+	"veh_dcp_niva_2329", "veh_dcp_brdm", "veh_dcp_btr",
+	"veh_dcp_kamaz_army_tent", "veh_dcp_kamaz_army",
+	"veh_tr13", "veh_uaz", "veh_zaz",
+}
+
+local RU_UPPER = {
+	"А", "Б", "В", "Г", "Д", "Е", "Ё", "Ж", "З", "И", "Й",
+	"К", "Л", "М", "Н", "О", "П", "Р", "С", "Т", "У", "Ф",
+	"Х", "Ц", "Ч", "Ш", "Щ", "Ъ", "Ы", "Ь", "Э", "Ю", "Я",
+}
+
+local RU_LOWER = {
+	"а", "б", "в", "г", "д", "е", "ё", "ж", "з", "и", "й",
+	"к", "л", "м", "н", "о", "п", "р", "с", "т", "у", "ф",
+	"х", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я",
+}
+
+local function read_string(ini, section, key, fallback)
+	if not ini:line_exist(section, key) then return fallback end
+	local value = ini:r_string(section, key)
+	if value == nil or value == "" then return fallback end
+	return value
+end
+
+local function read_number(ini, section, key, fallback)
+	return tonumber(read_string(ini, section, key, "")) or fallback
+end
+
+local function read_bool(ini, section, key)
+	local value = string.lower(tostring(read_string(ini, section, key, "false")))
+	return value == "true" or value == "on" or value == "1" or value == "yes"
+end
+
+local function translate_or(value, fallback)
+	if value == nil or value == "" then return fallback end
+	local translated = game.translate_string(value)
+	if translated == nil or translated == "" then return fallback end
+	return translated
+end
+
+local function valid_level_vertex(vertex_id)
+	return vertex_id ~= nil and vertex_id ~= INVALID_LEVEL_VERTEX_ID and
+		level.valid_vertex_id(vertex_id)
+end
+
+local function resolve_group(raw_group)
+	local value = string.lower(tostring(raw_group or ""))
+	value = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	local legacy_group = tonumber(value)
+	if legacy_group ~= nil then return legacy_group end
+	return GROUP_CODES[value]
+end
+
+local function group_position_from_code(ini, group)
+	local group_name = GROUP_NAMES[group]
+	if group_name == nil or not ini:section_exist(GROUP_ORDER_SECTION) or
+		not ini:line_exist(GROUP_ORDER_SECTION, group_name) then
+		return group
+	end
+	return tonumber(ini:r_string(GROUP_ORDER_SECTION, group_name)) or group
+end
+
+local function registered_group(ini, section)
+	if not ini:section_exist(REGISTRY_SECTION) or
+		not ini:line_exist(REGISTRY_SECTION, section) then
+		return nil
+	end
+	return resolve_group(ini:r_string(REGISTRY_SECTION, section))
+end
+
+local function allowed_group(group, developer_enabled)
+	if GROUP_LABELS[group] == nil then return false end
+	if group == 900 then return developer_enabled == true end
+	return group >= 10 and group <= 140
+end
+
+local function collect_scope_variant_context(ini)
+	local weapon_sections = {}
+	local scope_sections = {}
+	for index = 0, ini:line_count(REGISTRY_SECTION) - 1 do
+		local result, section, raw_group = ini:r_line(REGISTRY_SECTION, index, "", "")
+		local group = result and resolve_group(raw_group) or nil
+		if result and section and ini:section_exist(section) then
+			if group == WEAPON_GROUP then
+				weapon_sections[section] = true
+			elseif group == WEAPON_ADDON_GROUP and
+				string.upper(read_string(ini, section, "class", "")) == SCOPE_CLASS then
+				table.insert(scope_sections, section)
+			end
+		end
+	end
+	table.sort(scope_sections, function(left, right)
+		if #left == #right then return left < right end
+		return #left > #right
+	end)
+	return weapon_sections, scope_sections
+end
+
+local function is_scoped_weapon_variant(section, weapon_sections, scope_sections)
+	for _, scope_section in ipairs(scope_sections) do
+		local suffix = "_" .. scope_section
+		if #section > #suffix and string.sub(section, -#suffix) == suffix then
+			local base_section = string.sub(section, 1, #section - #suffix)
+			if weapon_sections[base_section] then return true end
+		end
+	end
+	return false
+end
+
+local function item_from_section(ini, section, group)
+	local name_id = read_string(ini, section, "inv_name", section)
+	local description_id = read_string(ini, section, "description", "")
+	local scale = math.max(read_number(ini, section, "inv_scale", 1), 0.01)
+	local grid_x = read_number(ini, section, "inv_grid_x", nil)
+	local grid_y = read_number(ini, section, "inv_grid_y", nil)
+	local grid_width = read_number(ini, section, "inv_grid_width", nil)
+	local grid_height = read_number(ini, section, "inv_grid_height", nil)
+	local icon_valid = grid_x ~= nil and grid_y ~= nil and
+		grid_width ~= nil and grid_height ~= nil and
+		grid_width > 0 and grid_height > 0
+	local name = translate_or(name_id, section)
+	local description = translate_or(description_id, "")
+	local texture = read_string(ini, section, "icons_texture", DEFAULT_ICON_TEXTURE)
+	local item = {
+		section = section,
+		group = group,
+		name = name,
+		description = description,
+		texture = icon_valid and texture or PLACEHOLDER_ICON_TEXTURE,
+		icon_valid = icon_valid,
+		quest = group == 120 or read_bool(ini, section, "quest_item"),
+	}
+	if icon_valid then
+		item.icon_x = grid_x * ICON_CELL_SIZE * scale
+		item.icon_y = grid_y * ICON_CELL_SIZE * scale
+		item.icon_width = grid_width * ICON_CELL_SIZE * scale
+		item.icon_height = grid_height * ICON_CELL_SIZE * scale
+	else
+		item.icon_x = 0
+		item.icon_y = 0
+		item.icon_width = ICON_CELL_SIZE
+		item.icon_height = ICON_CELL_SIZE
+	end
+	item.search = fold_text(name .. " " .. section)
+	item.sort_name = fold_text(name)
+	return item
+end
+
+local function write_catalog_diagnostics(missing_sections, hidden_scope_variants)
+	local ok_path, path = pcall(function()
+		return getFS():update_path("$logs$", "pf_f1_item_spawner_catalog.log")
+	end)
+	if not ok_path or not path then return end
+	local file = io.open(path, "w")
+	if not file then return end
+	file:write("PF F1 item spawner runtime catalog diagnostics\n")
+	file:write("registry_lines=" .. tostring(
+		system_ini():line_count(REGISTRY_SECTION)) .. "\n")
+	file:write("missing_count=" .. tostring(#missing_sections) .. "\n")
+	file:write("hidden_scope_variants=" .. tostring(hidden_scope_variants) .. "\n")
+	for _, section in ipairs(missing_sections) do
+		file:write("missing=" .. tostring(section) .. "\n")
+	end
+	file:close()
+end
+
+local function crosshair_world_position(actor)
+	local origin = vector():set(device().cam_pos)
+	local direction = vector():set(device().cam_dir):normalize()
+	local ray = ray_pick()
+	ray:set_flags(3)
+	ray:set_range(MAX_WORLD_DISTANCE)
+	ray:set_ignore_object(actor)
+	ray:set_position(origin)
+	ray:set_direction(direction)
+	if not ray:query() then return nil, nil end
+	local distance = ray:get_distance()
+	if distance == nil or distance < 0.25 or distance > MAX_WORLD_DISTANCE then
+		return nil, nil
+	end
+	local position = vector():set(origin)
+	position:mad(origin, direction, math.max(distance - 0.10, 0.15))
+	local level_vertex_id = level.vertex_id(position)
+	if not valid_level_vertex(level_vertex_id) then return nil, nil end
+	return position, level_vertex_id
+end
+
+local function fallback_world_position(actor)
+	local direction = vector():set(device().cam_dir)
+	direction.y = 0
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	if length < 0.00001 then
+		direction = vector():set(actor:direction())
+		direction.y = 0
+		length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	end
+	if length < 0.00001 then return nil, nil end
+	direction:mul(1 / length)
+	local level_vertex_id = level.vertex_in_direction(
+		actor:level_vertex_id(), direction, FALLBACK_WORLD_DISTANCE)
+	if not valid_level_vertex(level_vertex_id) then return nil, nil end
+	local position = vector():set(level.vertex_position(level_vertex_id))
+	position.y = position.y + 0.12
+	return position, level_vertex_id
+end
+
+function fold_text(value)
+	value = string.lower(tostring(value or ""))
+	for index = 1, #RU_UPPER do
+		value = string.gsub(value, RU_UPPER[index], RU_LOWER[index])
+	end
+	return value
+end
+
+function developer_mode()
+	if not pf_stash_qa or not pf_stash_qa.is_developer_mode then return false end
+	local ok, enabled = pcall(pf_stash_qa.is_developer_mode)
+	return ok and enabled == true
+end
+
+function group_order()
+	local ini = system_ini()
+	local order = {}
+	for _, group in ipairs(DEFAULT_GROUP_ORDER) do
+		table.insert(order, group)
+	end
+	table.sort(order, function(left, right)
+		local left_position = group_position_from_code(ini, left)
+		local right_position = group_position_from_code(ini, right)
+		if left_position == right_position then return left < right end
+		return left_position < right_position
+	end)
+	return order
+end
+
+function group_label_id(group)
+	return GROUP_LABELS[group]
+end
+
+function group_position(group)
+	return group_position_from_code(system_ini(), group)
+end
+
+function build_vehicle_catalog()
+	local ini = system_ini()
+	local catalog = {}
+	for _, section in ipairs(VEHICLE_SECTIONS) do
+		if ini:section_exist(section) then
+			local name_id = read_string(ini, section, "inv_name", "")
+			local description_id = read_string(ini, section, "description", "")
+			table.insert(catalog, {
+				section = section,
+				name = name_id ~= "" and translate_or(name_id, section) or
+					translate_or("pf_f1_vehicle_" .. section, section),
+				description = description_id ~= "" and translate_or(description_id, "") or "",
+				texture = PLACEHOLDER_ICON_TEXTURE,
+				icon_x = 0,
+				icon_y = 0,
+				icon_width = ICON_CELL_SIZE,
+				icon_height = ICON_CELL_SIZE,
+				icon_valid = false,
+			})
+		end
+	end
+	return catalog
+end
+
+function is_sensitive(item)
+	if not item or not item.section then return false end
+	local ini = system_ini()
+	local group = registered_group(ini, item.section)
+	if group == 120 then return true end
+	return ini:section_exist(item.section) and read_bool(ini, item.section, "quest_item")
+end
+
+function build_catalog()
+	local ini = system_ini()
+	local catalog = {}
+	local counts = {}
+	local skipped = 0
+	local missing_sections = {}
+	local hidden_scope_variants = 0
+	local developer_enabled = developer_mode()
+	if not ini:section_exist(REGISTRY_SECTION) then
+		return catalog, counts, 0, "pf_f1_status_registry_missing"
+	end
+	local weapon_sections, scope_sections = collect_scope_variant_context(ini)
+	for index = 0, ini:line_count(REGISTRY_SECTION) - 1 do
+		local result, section, raw_group = ini:r_line(REGISTRY_SECTION, index, "", "")
+		local group = result and resolve_group(raw_group) or nil
+		if result and section and allowed_group(group, developer_enabled) then
+			if ini:section_exist(section) then
+				if group == WEAPON_GROUP and
+					is_scoped_weapon_variant(section, weapon_sections, scope_sections) then
+					hidden_scope_variants = hidden_scope_variants + 1
+				else
+					local item = item_from_section(ini, section, group)
+					table.insert(catalog, item)
+					counts[group] = (counts[group] or 0) + 1
+				end
+			else
+				skipped = skipped + 1
+				table.insert(missing_sections, section)
+				printf("pf_f1_item_spawner: registry section [%s] is absent; skipped", section)
+			end
+		end
+	end
+	table.sort(catalog, function(left, right)
+		if left.sort_name == right.sort_name then return left.section < right.section end
+		return left.sort_name < right.sort_name
+	end)
+	write_catalog_diagnostics(missing_sections, hidden_scope_variants)
+	return catalog, counts, skipped, nil
+end
+
+function spawn(item, mode)
+	local actor = db.actor
+	if not actor or not actor:alive() then return nil, "pf_f1_status_actor_missing" end
+	if not item or not item.section then return nil, "pf_f1_status_no_selection" end
+	local ini = system_ini()
+	local section = item.section
+	if not ini:section_exist(section) then return nil, "pf_f1_status_section_missing" end
+	local group = registered_group(ini, section)
+	if group == nil or GROUP_LABELS[group] == nil or group == 990 then
+		return nil, "pf_f1_status_not_allowed"
+	end
+	if group == 900 and not developer_mode() then
+		return nil, "pf_f1_status_dev_denied"
+	end
+	if group ~= 900 and not (group >= 10 and group <= 140) then
+		return nil, "pf_f1_status_not_allowed"
+	end
+	local object
+	if mode == "world" then
+		local position, level_vertex_id = crosshair_world_position(actor)
+		if not position then position, level_vertex_id = fallback_world_position(actor) end
+		if not position or not valid_level_vertex(level_vertex_id) then
+			return nil, "pf_f1_status_world_invalid"
+		end
+		object = alife():create(
+			section, position, level_vertex_id, actor:game_vertex_id())
+	else
+		object = alife():create(
+			section, actor:position(), actor:level_vertex_id(),
+			actor:game_vertex_id(), actor:id())
+	end
+	if not object then return nil, "pf_f1_status_create_failed" end
+	printf("pf_f1_item_spawner: created [%s] id=[%s] target=[%s]",
+		section, tostring(object.id), tostring(mode))
+	return object, nil
+end
+
+function spawn_vehicle(item)
+	local actor = db.actor
+	if not actor or not actor:alive() then return nil, "pf_f1_status_actor_missing" end
+	if not item or not item.section then return nil, "pf_f1_status_no_vehicle" end
+	local allowed = false
+	for _, section in ipairs(VEHICLE_SECTIONS) do
+		if section == item.section then allowed = true break end
+	end
+	if not allowed or not system_ini():section_exist(item.section) then
+		return nil, "pf_f1_status_vehicle_missing"
+	end
+	local direction = vector():set(actor:direction())
+	direction.y = 0
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	if length < 0.00001 then return nil, "pf_f1_status_world_invalid" end
+	direction:mul(1 / length)
+	local level_vertex_id = level.vertex_in_direction(
+		actor:level_vertex_id(), direction, VEHICLE_WORLD_DISTANCE)
+	if not valid_level_vertex(level_vertex_id) then
+		return nil, "pf_f1_status_world_invalid"
+	end
+	local position = vector():set(level.vertex_position(level_vertex_id))
+	position.y = position.y + 0.25
+	local object = alife():create(
+		item.section, position, level_vertex_id, actor:game_vertex_id())
+	if not object then return nil, "pf_f1_status_create_failed" end
+	printf("pf_f1_item_spawner: vehicle created [%s] id=[%s]",
+		item.section, tostring(object.id))
+	return object, nil
+end

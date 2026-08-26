@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xml>
+	<specific_character id="pf_guide" team_default="1">
+		<name>pf_guide_name</name>
+		<icon>ui_inGame2_neutral_2_mask</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_guide_bio</bio>
+		<class>pf_guide</class>
+		<community>stalker</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\stalker\</snd_config>
+		<rank>45</rank>
+		<reputation>0</reputation>
+		<visual>actors\stalker_neutral\stalker_neutral_2_mask</visual>
+		<supplies>
+			[spawn] \n
+		</supplies>
+		<start_dialog>pf_guide_dialog</start_dialog>
+	</specific_character>
+
+	<specific_character id="pf_story_preacher" team_default="1">
+		<name>pf_story_preacher_name</name>
+		<icon>ui_inGame2_monolit_2</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_story_preacher_bio</bio>
+		<class>pf_story_preacher</class>
+		<community>monolith</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\monolith\</snd_config>
+		<rank>45</rank>
+		<reputation>0</reputation>
+		<visual>actors\stalker_monolith\stalker_monolith_2</visual>
+		<supplies>
+			[spawn] \n
+			wpn_l85 \n
+			ammo_5.56x45_ap = 2 \n
+			grenade_rgd5 = 1 \n
+			bandage = 2 \n
+			medkit = 1 \n
+			pf_story_brother_pendant = 1 \n
+		</supplies>
+		<start_dialog>pf_story_preacher_spare_dialog</start_dialog>
+	</specific_character>
+
+	<specific_character id="pf_monolith_guardian" team_default="1">
+		<name>pf_monolith_guardian_name</name>
+		<icon>ui_inGame2_monolit_4</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_monolith_guardian_bio</bio>
+		<class>pf_monolith_guardian</class>
+		<community>monolith</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\monolith\</snd_config>
+		<rank>80</rank>
+		<reputation>0</reputation>
+		<visual>actors\stalker_monolith\stalker_monolith_4</visual>
+		<supplies>
+			[spawn] \n
+			wpn_groza \n
+			ammo_9x39_ap = 2 \n
+		</supplies>
+		<start_dialog>pf_monolith_guardian_dialog</start_dialog>
+	</specific_character>
+
+	<specific_character id="pf_bunker_novikov" team_default="1">
+		<name>jup_b6_scientist_novikov</name>
+		<icon>ui_inGame2_Novikov</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_bunker_scientist_bio</bio>
+		<class>pf_bunker_novikov</class>
+		<community>ecolog</community>
+		<mechanic_mode>1</mechanic_mode>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_02\stalker\</snd_config>
+		<rank>50</rank>
+		<reputation>0</reputation>
+		<money min="10000" max="10000" infinitive="0" />
+		<visual>actors\pripyat_full\pf_bunker_novikov</visual>
+		<supplies>
+			[spawn] \n
+		</supplies>
+		<start_dialog>pf_bunker_novikov_dialog</start_dialog>
+	</specific_character>
+
+	<specific_character id="pf_bunker_hermann" team_default="1">
+		<name>jup_b6_scientist_nuclear_physicist</name>
+		<icon>ui_inGame2_German</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_bunker_scientist_bio</bio>
+		<class>pf_bunker_hermann</class>
+		<community>ecolog</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_02\stalker\</snd_config>
+		<rank>50</rank>
+		<reputation>0</reputation>
+		<money min="100000" max="100000" infinitive="1" />
+		<visual>actors\stalker_ucheniy\stalker_ucheniy_1_face_1</visual>
+		<supplies>
+			[spawn] \n
+		</supplies>
+		<start_dialog>pf_bunker_hermann_dialog</start_dialog>
+	</specific_character>
+
+	<!-- Гаваец из Янова: профиль, экипировка и проектная продажа координат. -->
+	<specific_character id="pf_yanov_hawaiian" team_default="1">
+		<name>jup_a6_stalker_barmen</name>
+		<icon>ui_inGame2_Gavaets</icon>
+		<map_icon x="1" y="0" />
+		<bio>Опытный сталкер. Детальная информация отсутствует.</bio>
+		<class>pf_yanov_hawaiian</class>
+		<community>stalker</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\stalker\</snd_config>
+		<rank>50</rank>
+		<money min="20000" max="20000" infinitive="0" />
+		<reputation>0</reputation>
+		<visual>actors\stalker_neutral\stalker_neutral_2_face_3</visual>
+		<supplies>
+			[spawn] \n
+		</supplies>
+		<start_dialog>pf_yanov_hawaiian_stash_sales_dialog</start_dialog>
+		<actor_dialog>actor_break_dialog</actor_dialog>
+#include "gameplay\character_criticals_4.xml"
+	</specific_character>
+
+	<!-- Азот из Янова: внешность, голос, экипировка и ремонт без сюжетных диалогов ЗП. -->
+	<specific_character id="pf_yanov_nitro" team_default="1">
+		<name>jup_b217_stalker_tech</name>
+		<icon>ui_inGame2_Azot</icon>
+		<map_icon x="1" y="0" />
+		<bio>Опытный сталкер. Детальная информация отсутствует.</bio>
+		<class>pf_yanov_nitro</class>
+		<community>stalker</community>
+		<mechanic_mode>1</mechanic_mode>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\dolg\</snd_config>
+		<rank>3338</rank>
+		<reputation>1755</reputation>
+		<money min="10000" max="10000" infinitive="0" />
+		<visual>actors\stalker_neutral\pf_yanov_nitro</visual>
+		<supplies>
+			[spawn] \n
+			wpn_fort \n
+			ammo_9x18_pmm = 1 \n
+			guitar_a = 1, prob=1 \n
+			harmonica_a = 1, prob=1 \n
+			wpn_binoc = 1, prob=1 \n
+			detector_advanced = 1, prob=0.3 \n
+#include "gameplay\character_food.xml"
+#include "gameplay\character_drugs_3.xml"
+		</supplies>
+		<actor_dialog>actor_break_dialog</actor_dialog>
+#include "gameplay\character_criticals_4.xml"
+	</specific_character>
+
+	<!-- Зверобой: ванильные внешность, голос и экипировка; проектный диалог. -->
+	<specific_character id="pf_yanov_trapper" team_default="1">
+		<name>jup_b220_trapper</name>
+		<icon>ui_inGame2_Zveroboy</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_yanov_trapper_bio</bio>
+		<class>pf_yanov_trapper</class>
+		<community>stalker</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_02\stalker\</snd_config>
+		<rank>15942</rank>
+		<reputation>1304</reputation>
+		<money min="1000000" max="1000000" infinitive="1" />
+		<visual>actors\stalker_neutral\stalker_neutral_2_face_7</visual>
+		<supplies>
+			[spawn] \n
+			ammo_12x70_buck = 2 \n
+			wpn_colt1911 \n
+			ammo_11.43x23_fmj = 1 \n
+#include "gameplay\character_items_eco_3.xml"
+#include "gameplay\character_food.xml"
+#include "gameplay\character_drugs_4.xml"
+		</supplies>
+		<start_dialog>pf_yanov_trapper_dialog</start_dialog>
+		<actor_dialog>actor_break_dialog</actor_dialog>
+#include "gameplay\character_criticals_4.xml"
+	</specific_character>
+
+	<specific_character id="pf_bunker_guard_01" team_default="1">
+		<name>pf_bunker_guard_commander_name</name>
+		<icon>ui_inGame2_Soldier_2</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_bunker_guard_bio</bio>
+		<class>pf_bunker_guard_01</class>
+		<community>army</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\military\</snd_config>
+		<rank>50</rank>
+		<reputation>0</reputation>
+		<visual>actors\stalker_soldier\stalker_soldier_2</visual>
+		<supplies>
+			[spawn] \n
+			wpn_ak74 \n
+			ammo_5.45x39_fmj = 2 \n
+			wpn_fort \n
+			ammo_9x18_fmj = 1 \n
+		</supplies>
+		<actor_dialog>actor_break_dialog</actor_dialog>
+	</specific_character>
+
+	<specific_character id="pf_bunker_guard_02" team_default="1">
+		<name>GENERATE_NAME_private</name>
+		<icon>ui_inGame2_Soldier_2</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_bunker_guard_bio</bio>
+		<class>pf_bunker_guard_02</class>
+		<community>army</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\military\</snd_config>
+		<rank>50</rank>
+		<reputation>0</reputation>
+		<visual>actors\stalker_soldier\stalker_soldier_2</visual>
+		<supplies>
+			[spawn] \n
+			wpn_ak74 \n
+			ammo_5.45x39_fmj = 2 \n
+			wpn_fort \n
+			ammo_9x18_fmj = 1 \n
+		</supplies>
+		<start_dialog>pf_bunker_guard_02_dialog</start_dialog>
+	</specific_character>
+
+	<specific_character id="pf_bunker_guard_03" team_default="1">
+		<name>GENERATE_NAME_private</name>
+		<icon>ui_inGame2_Soldier_2</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_bunker_guard_bio</bio>
+		<class>pf_bunker_guard_03</class>
+		<community>army</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\military\</snd_config>
+		<rank>50</rank>
+		<reputation>0</reputation>
+		<visual>actors\stalker_soldier\stalker_soldier_2</visual>
+		<supplies>
+			[spawn] \n
+			wpn_ak74 \n
+			ammo_5.45x39_fmj = 2 \n
+			wpn_fort \n
+			ammo_9x18_fmj = 1 \n
+		</supplies>
+		<start_dialog>pf_bunker_guard_03_dialog</start_dialog>
+	</specific_character>
+
+	<specific_character id="pf_bunker_guard_04" team_default="1">
+		<name>GENERATE_NAME_private</name>
+		<icon>ui_inGame2_Soldier_2</icon>
+		<map_icon x="1" y="0" />
+		<bio>pf_bunker_guard_bio</bio>
+		<class>pf_bunker_guard_04</class>
+		<community>army</community>
+		<terrain_sect>stalker_terrain</terrain_sect>
+		<snd_config>characters_voice\human_01\military\</snd_config>
+		<rank>50</rank>
+		<reputation>0</reputation>
+		<visual>actors\stalker_soldier\stalker_soldier_2</visual>
+		<supplies>
+			[spawn] \n
+			wpn_ak74 \n
+			ammo_5.45x39_fmj = 2 \n
+			wpn_fort \n
+			ammo_9x18_fmj = 1 \n
+		</supplies>
+		<start_dialog>pf_bunker_guard_04_dialog</start_dialog>
+	</specific_character>
+
+</xml>

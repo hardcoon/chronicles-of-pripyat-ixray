@@ -1,0 +1,328 @@
+-- Universal Developer-only point recorder for spawn authoring and spatial QA.
+-- A fresh timestamped TSV log is created on first use after every game load.
+
+local settings = {
+	tool_section = "pf_qa_point_logger_tool",
+	filename_prefix = "pf_qa_points_",
+	filename_extension = ".log",
+	max_filename_suffix = 999,
+	news_icon = "pf_news_stash",
+	reconcile_interval_ms = 500,
+	nondeveloper_stability_checks = 3
+}
+local state = {
+	filename = nil,
+	path = nil,
+	point_index = 0,
+	callbacks_registered = false,
+	reconcile_complete = false,
+	developer = nil,
+	next_reconcile = 0,
+	pending_id = nil,
+	actor_id = nil,
+	nondeveloper_checks = 0
+}
+local impl = {}
+
+function impl.developer_mode_enabled()
+	local qa = rawget(_G, "pf_stash_qa")
+	if not qa or type(qa.is_developer_mode) ~= "function" then return false end
+	local ok, enabled = pcall(qa.is_developer_mode)
+	return ok and enabled == true
+end
+
+function impl.report(message, hud_silent)
+	printf("[PF QA POINT LOGGER] %s", tostring(message))
+	if db.actor and hud_silent ~= true then
+		db.actor:give_game_news("Point logger QA", tostring(message), settings.news_icon, 0, 3000)
+	end
+end
+
+function impl.game_timestamp()
+	local year, month, day, hour, minute, second, millisecond = 0, 0, 0, 0, 0, 0, 0
+	year, month, day, hour, minute, second, millisecond = game.get_game_time():get(
+		year, month, day, hour, minute, second, millisecond
+	)
+	return string.format(
+		"%04d-%02d-%02d %02d:%02d:%02d",
+		year, month, day, hour, minute, second
+	)
+end
+
+function impl.real_timestamp()
+	return os.date("%Y-%m-%d %H:%M:%S")
+end
+
+function impl.select_new_log()
+	local stamp = os.date("%Y%m%d_%H%M%S")
+	for suffix = 0, settings.max_filename_suffix do
+		local suffix_text = suffix == 0 and "" or string.format("_%03d", suffix)
+		local filename = settings.filename_prefix .. stamp .. suffix_text ..
+			settings.filename_extension
+		local path = getFS():update_path("$logs$", filename)
+		local existing = io.open(path, "r")
+		if not existing then return filename, path end
+		existing:close()
+	end
+	return nil, nil
+end
+
+function impl.open_log()
+	if state.path then return io.open(state.path, "a"), false end
+
+	local filename, path = impl.select_new_log()
+	if not path then return nil, false end
+	local file = io.open(path, "w")
+	if not file then return nil, false end
+	state.filename = filename
+	state.path = path
+	file:write("# Universal QA spawn-point log\n")
+	file:write("# spawn position: x, y, z; spawn direction: pitch_rad, yaw_rad, roll_rad\n")
+	file:write("# point\treal_time\tgame_time\tlevel\tx\ty\tz\tyaw_rad\tyaw_deg\tpitch_rad\tpitch_deg\troll_rad\troll_deg\tactor_yaw_rad\tactor_yaw_deg\tcam_dx\tcam_dy\tcam_dz\tactor_dx\tactor_dy\tactor_dz\tcam_x\tcam_y\tcam_z\tlevel_vertex_id\tgame_vertex_id\n")
+	return file, true
+end
+
+function impl.capture_point()
+	local actor = db.actor
+	local position = vector():set(actor:position())
+	local actor_direction = vector():set(actor:direction())
+	local camera_position = vector():set(device().cam_pos)
+	local camera_direction = vector():set(device().cam_dir):normalize()
+	local horizontal = math.sqrt(
+		camera_direction.x * camera_direction.x + camera_direction.z * camera_direction.z
+	)
+	local yaw = math.atan2(camera_direction.x, camera_direction.z)
+	local pitch = math.atan2(-camera_direction.y, horizontal)
+	local actor_yaw = math.atan2(actor_direction.x, actor_direction.z)
+	local sim = alife()
+	local actor_server = sim and sim:actor() or nil
+	return {
+		position = position,
+		actor_direction = actor_direction,
+		camera_position = camera_position,
+		camera_direction = camera_direction,
+		yaw = yaw,
+		pitch = pitch,
+		actor_yaw = actor_yaw,
+		level_vertex_id = level.vertex_id(position),
+		game_vertex_id = actor_server and actor_server.m_game_vertex_id or -1
+	}
+end
+
+function impl.format_row(point_index, point)
+	local p, camera, actor = point.position, point.camera_direction, point.actor_direction
+	local camera_position = point.camera_position
+	return table.concat({
+		tostring(point_index),
+		impl.real_timestamp(),
+		impl.game_timestamp(),
+		tostring(level.name()),
+		string.format("%.6f", p.x),
+		string.format("%.6f", p.y),
+		string.format("%.6f", p.z),
+		string.format("%.9f", point.yaw),
+		string.format("%.3f", math.deg(point.yaw)),
+		string.format("%.9f", point.pitch),
+		string.format("%.3f", math.deg(point.pitch)),
+		"0.000000000",
+		"0.000",
+		string.format("%.9f", point.actor_yaw),
+		string.format("%.3f", math.deg(point.actor_yaw)),
+		string.format("%.9f", camera.x),
+		string.format("%.9f", camera.y),
+		string.format("%.9f", camera.z),
+		string.format("%.9f", actor.x),
+		string.format("%.9f", actor.y),
+		string.format("%.9f", actor.z),
+		string.format("%.6f", camera_position.x),
+		string.format("%.6f", camera_position.y),
+		string.format("%.6f", camera_position.z),
+		tostring(point.level_vertex_id),
+		tostring(point.game_vertex_id)
+	}, "\t")
+end
+
+function record_point()
+	if not impl.developer_mode_enabled() then
+		impl.report("Point recording is available only in Developer mode")
+		return false
+	end
+	if not db.actor then
+		impl.report("Actor is unavailable; no point was recorded")
+		return false
+	end
+
+	local next_index = state.point_index + 1
+	local point = impl.capture_point()
+	local file, created = impl.open_log()
+	if not file then
+		impl.report("Unable to create or append the point log in $logs$")
+		return false
+	end
+	file:write(impl.format_row(next_index, point), "\n")
+	file:close()
+	state.point_index = next_index
+	impl.report(string.format(
+		"Point %d saved: %.3f, %.3f, %.3f; yaw %.3f deg%s",
+		next_index, point.position.x, point.position.y, point.position.z,
+		math.deg(point.yaw), created and ("; new log " .. state.filename) or ""
+	))
+	return true
+end
+
+function use_point_logger_tool(_item)
+	record_point()
+	return false
+end
+
+function get_current_log_path()
+	return state.path, state.filename, state.point_index
+end
+
+function impl.restore_uses(item)
+	local ok, max_uses = pcall(function() return item:get_max_uses() end)
+	if ok and max_uses and max_uses > 0 then
+		pcall(function() item:set_remaining_uses(max_uses) end)
+	end
+end
+
+function on_inventory_eat(actor, item)
+	local section = item and item:section() or nil
+	if section == settings.tool_section then
+		impl.restore_uses(item)
+		record_point()
+		return true
+	end
+
+	local editor = rawget(_G, "pf_npc_editor")
+	if editor and type(editor.on_inventory_eat) == "function" then
+		return editor.on_inventory_eat(actor, item) ~= false
+	end
+	local stash = rawget(_G, "pf_stash_qa")
+	if stash and type(stash.on_inventory_eat) == "function" then
+		return stash.on_inventory_eat(actor, item) ~= false
+	end
+	local mechanics = rawget(_G, "lz_new_mechanics")
+	if mechanics and type(mechanics.on_inventory_eat) == "function" then
+		return mechanics.on_inventory_eat(actor, item) ~= false
+	end
+	return true
+end
+
+function impl.release_ids(sim, ids, keep_id)
+	local removed = 0
+	for _, id in ipairs(ids) do
+		if id ~= keep_id then
+			local server_item = sim:object(id, true)
+			if server_item then
+				sim:release(server_item, true)
+				removed = removed + 1
+			end
+		end
+	end
+	return removed
+end
+
+function impl.reconcile_tool()
+	local actor, sim = db.actor, alife()
+	if not actor or not sim then return false end
+	if state.actor_id ~= actor:id() then
+		state.actor_id = actor:id()
+		state.pending_id = nil
+	end
+
+	local ids = {}
+	actor:iterate_inventory(function(_, item)
+		if item and item:section() == settings.tool_section then
+			ids[#ids + 1] = item:id()
+		end
+	end, actor)
+	table.sort(ids)
+
+	if not impl.developer_mode_enabled() then
+		local removed = impl.release_ids(sim, ids, nil)
+		state.pending_id = nil
+		state.nondeveloper_checks = state.nondeveloper_checks + 1
+		if removed > 0 then
+			impl.report("Removed the Developer-only point logger from a regular save", true)
+		end
+		return state.nondeveloper_checks >= settings.nondeveloper_stability_checks
+	end
+
+	state.nondeveloper_checks = 0
+	if #ids > 0 then
+		local client_item = actor:object(settings.tool_section)
+		local keep_id = client_item and client_item:id() or ids[1]
+		local removed = impl.release_ids(sim, ids, keep_id)
+		state.pending_id = nil
+		if removed > 0 then
+			impl.report(string.format("Removed %d duplicate point logger item(s)", removed), true)
+		end
+		return true
+	end
+
+	if state.pending_id and sim:object(state.pending_id, true) then return false end
+	state.pending_id = nil
+	local ini = system_ini()
+	if not ini or not ini:section_exist(settings.tool_section) then
+		impl.report("Point-logger item section is unavailable; fully restart xrEngine.exe", true)
+		return true
+	end
+	local server_item = sim:create(settings.tool_section, vector(), 0, 0, actor:id())
+	if not server_item then
+		impl.report("Failed to issue the universal point logger", true)
+		return false
+	end
+	state.pending_id = server_item.id
+	impl.report("Universal point logger issued to Developer inventory", true)
+	return false
+end
+
+function impl.update()
+	if not db.actor then return end
+	local developer = impl.developer_mode_enabled()
+	if state.developer ~= developer then
+		state.developer = developer
+		state.reconcile_complete = false
+	end
+	-- A regular game stops polling after the fail-closed removal checks. In
+	-- Developer mode inventory must remain under reconciliation because its
+	-- startup preparation and F9 can replace the inventory after the first pass.
+	if state.reconcile_complete and not developer then return end
+	local now = time_global()
+	if now < state.next_reconcile then return end
+	state.next_reconcile = now + settings.reconcile_interval_ms
+	local ok, ready = pcall(impl.reconcile_tool)
+	if not ok then
+		impl.report("Point-logger inventory reconciliation failed: " .. tostring(ready), true)
+		return
+	end
+	state.reconcile_complete = ready == true
+end
+
+function impl.reset_runtime()
+	state.filename = nil
+	state.path = nil
+	state.point_index = 0
+	state.reconcile_complete = false
+	state.developer = nil
+	state.next_reconcile = time_global() + settings.reconcile_interval_ms
+	state.pending_id = nil
+	state.actor_id = nil
+	state.nondeveloper_checks = 0
+end
+
+function on_game_start()
+	if state.callbacks_registered then return true end
+	if type(RegisterScriptCallback) ~= "function" then
+		impl.report("RegisterScriptCallback is unavailable for the point logger", true)
+		return false
+	end
+	RegisterScriptCallback("update", impl.update)
+	RegisterScriptCallback("load", impl.reset_runtime)
+	state.callbacks_registered = true
+	impl.reset_runtime()
+	return true
+end
+
+on_game_start()

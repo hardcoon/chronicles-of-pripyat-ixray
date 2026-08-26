@@ -1,0 +1,12 @@
+[logic]
+active = ph_idle@init
+
+[ph_idle@init]
+on_info = {=dist_to_actor_le(79.9)} ph_idle@near
+on_info2 = {} ph_idle@far %=turn_off_object%
+
+[ph_idle@far]
+on_info = {=dist_to_actor_le(79.9)} ph_idle@near %=turn_on_object%
+
+[ph_idle@near]
+on_info = {=dist_to_actor_ge(80)} ph_idle@far %=turn_off_object%

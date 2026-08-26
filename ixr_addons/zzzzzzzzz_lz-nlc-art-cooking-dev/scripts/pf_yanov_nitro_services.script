@@ -1,0 +1,419 @@
+-- Repair-and-module dialogue service for the custom Azot on Pripyat Full.
+-- All work is demand-driven by dialogue conditions/actions; there are no callbacks.
+
+local DAY_KEY = "pf_yanov_nitro_stock_v1_day"
+local INTRO_KEY = "pf_yanov_nitro_services_intro_v1_seen"
+local PDA_INTRO_KEY = "pf_yanov_nitro_pda_service_intro_v1_seen"
+local SLOT_KEYS = {
+	"pf_yanov_nitro_stock_v1_section_1",
+	"pf_yanov_nitro_stock_v1_section_2"
+}
+local SOLD_KEYS = {
+	"pf_yanov_nitro_stock_v1_sold_1",
+	"pf_yanov_nitro_stock_v1_sold_2"
+}
+
+local MODULES = {
+	"itm_repairkit_tier_1",
+	"itm_repairkit_tier_2",
+	"itm_repairkit_tier_soft",
+	"itm_repairkit_tier_3",
+	"itm_field_upgrade_kit_blue",
+	"itm_field_upgrade_kit_green"
+}
+
+local MODULE_INDEX = {}
+for index, section in ipairs(MODULES) do
+	MODULE_INDEX[section] = index
+end
+
+local RECIPES = {
+	itm_repairkit_tier_1 = {
+		price = 2000,
+		materials = {
+			lz_nm_metal_part = 4,
+			jup_b200_tech_materials_wire = 2
+		}
+	},
+	itm_repairkit_tier_2 = {
+		price = 3000,
+		materials = {
+			lz_nm_metal_part = 3,
+			jup_b200_tech_materials_transistor = 2,
+			jup_b200_tech_materials_textolite = 1
+		}
+	},
+	itm_repairkit_tier_soft = {
+		price = 2500,
+		materials = {
+			lz_nm_metal_part = 2,
+			jup_b200_tech_materials_capacitor = 2
+		}
+	},
+	itm_repairkit_tier_3 = {
+		price = 4000,
+		materials = {
+			lz_nm_metal_part = 2,
+			jup_b200_tech_materials_capacitor = 1,
+			jup_b200_tech_materials_textolite = 1
+		}
+	},
+	itm_field_upgrade_kit_blue = {
+		price = 5000,
+		materials = {
+			lz_nm_metal_part = 4,
+			jup_b200_tech_materials_wire = 2,
+			jup_b200_tech_materials_capacitor = 1
+		}
+	},
+	itm_field_upgrade_kit_green = {
+		price = 6000,
+		materials = {
+			lz_nm_metal_part = 5,
+			jup_b200_tech_materials_transistor = 2,
+			jup_b200_tech_materials_textolite = 2
+		}
+	}
+}
+
+local PDA_OFFERS = {
+	novice = {
+		locked = "lz_ph_failed_pda_novice",
+		unlocked = "pf_stash_pda_novice",
+		price = 400
+	},
+	stalker = {
+		locked = "lz_ph_failed_pda_stalker",
+		unlocked = "pf_stash_pda_stalker",
+		price = 2500
+	},
+	veteran = {
+		locked = "lz_ph_failed_pda_veteran",
+		unlocked = "pf_stash_pda_veteran",
+		price = 8000
+	},
+	master = {
+		locked = "lz_ph_failed_pda_master",
+		unlocked = "pf_stash_pda_master",
+		price = 12000
+	}
+}
+local PDA_OFFER_ORDER = { "novice", "stalker", "veteran", "master" }
+
+local selected_section = nil
+local pda_transaction_result = "none"
+
+local function current_day()
+	local elapsed = game.get_game_time():diffSec(level.get_start_time())
+	return math.max(0, math.floor(elapsed / 86400))
+end
+
+local function stored(key, default)
+	return xr_logic.pstor_retrieve(db.actor, key, default)
+end
+
+local function save(key, value)
+	xr_logic.pstor_store(db.actor, key, value)
+end
+
+local function valid_stock(first, second)
+	return MODULE_INDEX[first] ~= nil and MODULE_INDEX[second] ~= nil and first ~= second
+end
+
+local function ensure_stock()
+	if not db.actor then return false end
+	local day = current_day()
+	local first = stored(SLOT_KEYS[1], "")
+	local second = stored(SLOT_KEYS[2], "")
+	if tonumber(stored(DAY_KEY, -1)) == day and valid_stock(first, second) then
+		return true
+	end
+
+	local first_index = math.random(#MODULES)
+	local second_index = math.random(#MODULES - 1)
+	if second_index >= first_index then
+		second_index = second_index + 1
+	end
+	save(DAY_KEY, day)
+	save(SLOT_KEYS[1], MODULES[first_index])
+	save(SLOT_KEYS[2], MODULES[second_index])
+	save(SOLD_KEYS[1], 0)
+	save(SOLD_KEYS[2], 0)
+	printf("[PF YANOV NITRO] refreshed day=%d slot1=%s slot2=%s",
+		day, MODULES[first_index], MODULES[second_index])
+	return true
+end
+
+local function slot_for(section)
+	if not ensure_stock() then return nil end
+	for slot = 1, 2 do
+		if stored(SLOT_KEYS[slot], "") == section and
+				tonumber(stored(SOLD_KEYS[slot], 0)) ~= 1 then
+			return slot
+		end
+	end
+	return nil
+end
+
+local function equipped_ids()
+	local result = {}
+	if not db.actor then return result end
+	for slot = 1, 16 do
+		local item = db.actor:item_in_slot(slot)
+		if item then result[item:id()] = true end
+	end
+	return result
+end
+
+local function collect_objects(section, count)
+	local result = {}
+	if not db.actor or count <= 0 then return result end
+	local equipped = equipped_ids()
+	db.actor:iterate_inventory(function(_, item)
+		if #result >= count or not item or item:section() ~= section then return end
+		if equipped[item:id()] or db.actor:is_on_belt(item) then return end
+		local server_item = alife():object(item:id(), true)
+		if server_item then
+			table.insert(result, {server = server_item, section = section, id = item:id()})
+		end
+	end, db.actor)
+	table.sort(result, function(left, right) return left.id < right.id end)
+	return result
+end
+
+local function material_selection(recipe)
+	local result = {}
+	for section, count in pairs(recipe.materials) do
+		local objects = collect_objects(section, count)
+		if #objects ~= count then return nil end
+		for _, entry in ipairs(objects) do
+			table.insert(result, entry)
+		end
+	end
+	return result
+end
+
+local function has_money(recipe)
+	return db.actor and db.actor:money() >= recipe.price or false
+end
+
+local function can_prepare(section)
+	local recipe = RECIPES[section]
+	if not recipe or not slot_for(section) or not has_money(recipe) then return false end
+	return material_selection(recipe) ~= nil
+end
+
+local function consume_resources(resources)
+	local consumed = {}
+	for _, entry in ipairs(resources) do
+		alife():release(entry.server, true)
+		consumed[entry.section] = (consumed[entry.section] or 0) + 1
+	end
+	for section, count in pairs(consumed) do
+		news_manager.relocate_item(db.actor, "out", section, count)
+	end
+end
+
+local function buy(section, first_speaker, second_speaker)
+	local recipe = RECIPES[section]
+	local slot = recipe and slot_for(section) or nil
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+	if not recipe or not slot or not npc or not has_money(recipe) then return false end
+
+	local resources = material_selection(recipe)
+	if not resources then return false end
+	local simulation = alife()
+	local reward = simulation:create(
+		section, db.actor:position(), db.actor:level_vertex_id(),
+		db.actor:game_vertex_id(), db.actor:id()
+	)
+	if not reward then return false end
+
+	consume_resources(resources)
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, recipe.price)
+	save(SOLD_KEYS[slot], 1)
+	news_manager.relocate_item(db.actor, "in", section)
+	printf("[PF YANOV NITRO] sold day=%d slot=%d section=%s price=%d",
+		current_day(), slot, section, recipe.price)
+	return true
+end
+
+local function offered(section)
+	return slot_for(section) ~= nil
+end
+
+local function select_recipe(section)
+	if offered(section) then selected_section = section end
+end
+
+local function selected_can_buy()
+	return can_prepare(selected_section)
+end
+
+local function oldest_actor_item(section)
+	if not db.actor or not alife() then return nil end
+	local selected = nil
+	local server_actor = alife():object(db.actor:id(), true)
+	if not server_actor then return nil end
+	local ok = pcall(function()
+		for child_id in alife():get_children(server_actor) do
+			local object = alife():object(child_id, true)
+			if object and object:section_name() == section and
+					(not selected or tonumber(object.id) < tonumber(selected.id)) then
+				selected = object
+			end
+		end
+	end)
+	if not ok then
+		printf("! [PF YANOV NITRO] failed to enumerate actor inventory for %s", tostring(section))
+		return nil
+	end
+	return selected
+end
+
+local function has_locked_pda(rank)
+	local offer = PDA_OFFERS[rank]
+	return offer ~= nil and oldest_actor_item(offer.locked) ~= nil
+end
+
+local function reflash_locked_pda(rank, first_speaker, second_speaker)
+	pda_transaction_result = "failed"
+	local offer = PDA_OFFERS[rank]
+	if not offer or not db.actor or not dialogs or
+			type(dialogs.relocate_money_from_actor) ~= "function" then
+		return false
+	end
+	local locked = oldest_actor_item(offer.locked)
+	if not locked then return false end
+	if db.actor:money() < offer.price then
+		pda_transaction_result = "no_money"
+		return false
+	end
+
+	-- Create the returned working PDA before removing the locked original. If
+	-- creation or the final ownership check fails, roll back the new object and
+	-- leave both the player's money and original PDA untouched.
+	local replacement = alife():create(offer.unlocked, vector(), 0, 0, db.actor:id())
+	if not replacement then
+		printf("! [PF YANOV NITRO] failed to create unlocked PDA rank=%s", tostring(rank))
+		return false
+	end
+	local current = alife():object(locked.id, true)
+	if not current or current:section_name() ~= offer.locked or
+			tonumber(current.parent_id) ~= db.actor:id() then
+		alife():release(replacement, true)
+		return false
+	end
+
+	alife():release(current, true)
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, offer.price)
+	news_manager.relocate_item(db.actor, "out", offer.locked)
+	news_manager.relocate_item(db.actor, "in", offer.unlocked)
+	pda_transaction_result = "success"
+	printf(
+		"[PF YANOV NITRO] unlocked PDA rank=%s old_id=%s new_id=%s price=%d",
+		tostring(rank), tostring(locked.id), tostring(replacement.id), offer.price
+	)
+	return true
+end
+
+function sold_out(first_speaker, second_speaker)
+	if not ensure_stock() then return false end
+	return tonumber(stored(SOLD_KEYS[1], 0)) == 1 and
+		tonumber(stored(SOLD_KEYS[2], 0)) == 1
+end
+
+function intro_seen(first_speaker, second_speaker)
+	return db.actor and tonumber(stored(INTRO_KEY, 0)) == 1 or false
+end
+
+function intro_unseen(first_speaker, second_speaker)
+	return not intro_seen(first_speaker, second_speaker)
+end
+
+function mark_intro_seen(first_speaker, second_speaker)
+	if db.actor then save(INTRO_KEY, 1) end
+end
+
+function pda_intro_seen(first_speaker, second_speaker)
+	return db.actor and tonumber(stored(PDA_INTRO_KEY, 0)) == 1 or false
+end
+
+function pda_intro_unseen(first_speaker, second_speaker)
+	return intro_seen(first_speaker, second_speaker) and not pda_intro_seen(first_speaker, second_speaker)
+end
+
+function mark_pda_intro_seen(first_speaker, second_speaker)
+	if db.actor then save(PDA_INTRO_KEY, 1) end
+end
+
+function service_ready(first_speaker, second_speaker)
+	return intro_seen(first_speaker, second_speaker) and pda_intro_seen(first_speaker, second_speaker)
+end
+
+function has_any_locked_pda(first_speaker, second_speaker)
+	if not service_ready(first_speaker, second_speaker) then return false end
+	for _, rank in ipairs(PDA_OFFER_ORDER) do
+		if has_locked_pda(rank) then return true end
+	end
+	return false
+end
+
+function has_locked_novice(first_speaker, second_speaker) return has_locked_pda("novice") end
+function has_locked_stalker(first_speaker, second_speaker) return has_locked_pda("stalker") end
+function has_locked_veteran(first_speaker, second_speaker) return has_locked_pda("veteran") end
+function has_locked_master(first_speaker, second_speaker) return has_locked_pda("master") end
+
+function reflash_locked_novice(first_speaker, second_speaker)
+	return reflash_locked_pda("novice", first_speaker, second_speaker)
+end
+
+function reflash_locked_stalker(first_speaker, second_speaker)
+	return reflash_locked_pda("stalker", first_speaker, second_speaker)
+end
+
+function reflash_locked_veteran(first_speaker, second_speaker)
+	return reflash_locked_pda("veteran", first_speaker, second_speaker)
+end
+
+function reflash_locked_master(first_speaker, second_speaker)
+	return reflash_locked_pda("master", first_speaker, second_speaker)
+end
+
+function pda_transaction_succeeded(first_speaker, second_speaker)
+	return pda_transaction_result == "success"
+end
+
+function pda_transaction_no_money(first_speaker, second_speaker)
+	return pda_transaction_result == "no_money"
+end
+
+function pda_transaction_failed(first_speaker, second_speaker)
+	return pda_transaction_result == "failed"
+end
+
+function offered_rough(first_speaker, second_speaker) return offered("itm_repairkit_tier_1") end
+function offered_fine(first_speaker, second_speaker) return offered("itm_repairkit_tier_2") end
+function offered_soft(first_speaker, second_speaker) return offered("itm_repairkit_tier_soft") end
+function offered_calibration(first_speaker, second_speaker) return offered("itm_repairkit_tier_3") end
+function offered_blue(first_speaker, second_speaker) return offered("itm_field_upgrade_kit_blue") end
+function offered_green(first_speaker, second_speaker) return offered("itm_field_upgrade_kit_green") end
+
+function select_rough(first_speaker, second_speaker) select_recipe("itm_repairkit_tier_1") end
+function select_fine(first_speaker, second_speaker) select_recipe("itm_repairkit_tier_2") end
+function select_soft(first_speaker, second_speaker) select_recipe("itm_repairkit_tier_soft") end
+function select_calibration(first_speaker, second_speaker) select_recipe("itm_repairkit_tier_3") end
+function select_blue(first_speaker, second_speaker) select_recipe("itm_field_upgrade_kit_blue") end
+function select_green(first_speaker, second_speaker) select_recipe("itm_field_upgrade_kit_green") end
+
+function can_buy_selected(first_speaker, second_speaker)
+	return selected_can_buy()
+end
+
+function cannot_buy_selected(first_speaker, second_speaker)
+	return not selected_can_buy()
+end
+
+function buy_selected(first_speaker, second_speaker)
+	return buy(selected_section, first_speaker, second_speaker)
+end

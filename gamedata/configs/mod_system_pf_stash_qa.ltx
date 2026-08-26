@@ -1,0 +1,209 @@
+; Compatibility parent for saves that already contain the retired standalone
+; nearest-stash item. It is no longer issued and is removed from old inventories
+; by pf_stash_qa; the section must remain loadable until that migration runs.
+[pf_stash_rejection_tool]:pf_qa_instant_tool_base
+$spawn = "food and drugs\pf_stash_rejection_tool"
+visual = dynamics\devices\dev_antirad\dev_antirad.ogf
+inv_name = pf_stash_rejection_tool_name
+inv_name_short = pf_stash_rejection_tool_name
+description = pf_stash_rejection_tool_descr
+inv_weight = 0.01
+cost = 0
+can_trade = false
+quest_item = false
+icons_texture = ui\pf_qa_tools_icons
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 9
+inv_grid_y = 0
+
+; Crosshair-only rejection and live deletion tool. It first records the exact
+; physical stash under the reticle, then removes that ALife object from the game.
+; Compatibility section for existing saves only. Its 33-character section name
+; overflows the engine's 32-byte quick-slot buffer, so Lua replaces it on load.
+[pf_stash_crosshair_rejection_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_stash_crosshair_rejection_tool"
+; Engine safeguard: 2x1 items are rejected before the unsafe quick-slot copy.
+inv_grid_width = 2
+inv_name = pf_stash_crosshair_rejection_tool_name
+inv_name_short = pf_stash_crosshair_rejection_tool_name
+description = pf_stash_crosshair_rejection_tool_descr
+inv_grid_x = 7
+inv_grid_y = 0
+; Native Use (double-click / quick slot) is handled by OnInventoryEat and
+; records + deletes the stash under the crosshair. Keep only the secondary
+; nearest-stash operation as an explicit context-menu action.
+use1_text = pf_stash_rejection_tool_use
+use1_functor = pf_stash_qa.use_stash_rejection_tool
+
+; Active short-name version. Standard Use records + deletes the aimed stash;
+; the secondary context action still marks the nearest stash without deleting.
+[pf_stash_aim_remove_tool]:pf_stash_crosshair_rejection_tool
+$spawn = "food and drugs\pf_stash_aim_remove_tool"
+inv_grid_width = 1
+
+; Advances the non-repeating runtime inspection queue from a quick slot.
+[pf_stash_teleport_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_stash_teleport_tool"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_stash_teleport_tool_name
+inv_name_short = pf_stash_teleport_tool_name
+description = pf_stash_teleport_tool_descr
+inv_grid_x = 1
+inv_grid_y = 0
+use1_text = pf_stash_teleport_tool_use
+use1_functor = pf_stash_qa.use_stash_teleport_tool
+
+; Toggles tier-coloured, loot-free QA previews on the PDA map.
+[pf_stash_markers_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_stash_markers_tool"
+inv_name = pf_stash_markers_tool_name
+inv_name_short = pf_stash_markers_tool_name
+description = pf_stash_markers_tool_descr
+inv_grid_x = 2
+use1_text = pf_stash_markers_tool_use
+use1_functor = pf_stash_qa.use_stash_markers_tool
+
+; Separate overlay for all 971 canonical coordinates, including both the
+; selected logical stashes and the unused rotation/hint reserve.
+[pf_stash_catalog_markers_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_stash_catalog_markers_tool"
+inv_name = pf_stash_catalog_markers_tool_name
+inv_name_short = pf_stash_catalog_markers_tool_name
+description = pf_stash_catalog_markers_tool_descr
+icons_texture = ui\pf_stash_catalog_markers_icon
+inv_grid_x = 0
+inv_grid_y = 0
+use1_text = pf_stash_catalog_markers_tool_use
+use1_functor = pf_stash_catalog_qa.use_tool
+
+; Empty marker anchor used only by the QA show-all overlay. Its unique section
+; is deliberately excluded from the production dynamic-stash manager.
+[pf_stash_qa_preview]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak_ol.ogf
+radius = 1
+
+; Invisible, non-interactive server anchor required only because the PDA map
+; API accepts object IDs rather than bare coordinates. It has no visual,
+; collision container, inventory or loot and is released when the overlay is
+; hidden or a save is loaded.
+[pf_stash_catalog_anchor]:script_object
+$spawn = "script\pf_stash_catalog_anchor"
+Scheduled = off
+
+; Developer tool: place a QA backpack at the crosshair and record it in both QA logs.
+[pf_stash_spawn_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_stash_spawn_tool"
+inv_name = pf_stash_spawn_tool_name
+inv_name_short = pf_stash_spawn_tool_name
+description = pf_stash_spawn_tool_descr
+inv_grid_x = 3
+use1_text = pf_stash_spawn_tool_use
+use1_functor = pf_stash_qa.use_stash_spawn_tool
+
+; Num Del: delete the QA backpack currently under the crosshair.
+[pf_stash_delete_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_stash_delete_tool"
+inv_name = pf_stash_delete_tool_name
+inv_name_short = pf_stash_delete_tool_name
+description = pf_stash_delete_tool_descr
+inv_grid_x = 4
+use1_text = pf_stash_delete_tool_use
+use1_functor = pf_stash_qa.use_stash_delete_tool
+
+; Developer tool: undo the latest logged QA backpack placement.
+[pf_stash_undo_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_stash_undo_tool"
+inv_name = pf_stash_undo_tool_name
+inv_name_short = pf_stash_undo_tool_name
+description = pf_stash_undo_tool_descr
+inv_grid_x = 5
+use1_text = pf_stash_undo_tool_use
+use1_functor = pf_stash_qa.use_stash_undo_tool
+
+; Records the crosshair hit as a candidate for a future light source.
+[pf_bunker_light_point_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_bunker_light_point_tool"
+inv_name = pf_bunker_light_point_tool_name
+inv_name_short = pf_bunker_light_point_tool_name
+description = pf_bunker_light_point_tool_descr
+inv_grid_x = 6
+use1_text = pf_bunker_light_point_tool_use
+use1_functor = pf_stash_qa.use_light_point_tool
+
+; Instant same-level teleport to the centre of the Pripyat Full scientist bunker.
+[pf_scientist_teleport_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_scientist_teleport_tool"
+inv_name = pf_scientist_teleport_tool_name
+inv_name_short = pf_scientist_teleport_tool_name
+description = pf_scientist_teleport_tool_descr
+inv_grid_x = 8
+inv_grid_y = 0
+use1_text = pf_scientist_teleport_tool_use
+use1_functor = pf_stash_qa.use_scientist_teleport_tool
+
+; Issues the next sequential Chronicles of Pripyat story document.
+[pf_story_document_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_story_document_tool"
+inv_name = pf_story_document_tool_name
+inv_name_short = pf_story_document_tool_name
+description = pf_story_document_tool_descr
+inv_grid_x = 9
+inv_grid_y = 0
+use1_text = pf_story_document_tool_use
+use1_functor = pf_stash_qa.use_story_document_tool
+
+; Issues every missing Ghost City test note directly to the actor inventory.
+[pf_lore_notes_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_lore_notes_tool"
+inv_name = pf_lore_notes_tool_name
+inv_name_short = pf_lore_notes_tool_name
+description = pf_lore_notes_tool_descr
+inv_grid_x = 10
+inv_grid_y = 0
+use1_text = pf_lore_notes_tool_use
+use1_functor = pf_stash_qa.use_lore_notes_tool
+
+; Records an order-delivery point at the actor position and immediately places
+; the real closed dropbox model there. Native Use works from a quick slot;
+; the additional context action removes the latest point and its linked model.
+[pf_order_point_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_order_point_tool"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_order_point_tool_name
+inv_name_short = pf_order_point_tool_name
+description = pf_order_point_tool_descr
+inv_grid_x = 3
+inv_grid_y = 0
+use1_text = pf_order_point_tool_undo
+use1_functor = pf_stash_qa.use_order_point_undo_tool
+
+; Random safe AI point near a verified interior stash-catalogue position.
+[pf_interior_teleport_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_interior_teleport_tool"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_interior_teleport_tool_name
+inv_name_short = pf_interior_teleport_tool_name
+description = pf_interior_teleport_tool_descr
+inv_grid_x = 11
+inv_grid_y = 0
+
+; Random safe AI point near an outdoor stash-catalogue position.
+[pf_outdoor_teleport_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_outdoor_teleport_tool"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_outdoor_teleport_tool_name
+inv_name_short = pf_outdoor_teleport_tool_name
+description = pf_outdoor_teleport_tool_descr
+inv_grid_x = 12
+inv_grid_y = 0
+
+; Records the actor position and camera-facing direction for a future NPC.
+[pf_npc_spawn_point_tool]:pf_stash_rejection_tool
+$spawn = "food and drugs\pf_npc_spawn_point_tool"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_npc_spawn_point_tool_name
+inv_name_short = pf_npc_spawn_point_tool_name
+description = pf_npc_spawn_point_tool_descr
+inv_grid_x = 13
+inv_grid_y = 0

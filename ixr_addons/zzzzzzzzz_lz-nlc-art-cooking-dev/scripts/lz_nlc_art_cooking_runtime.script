@@ -1,0 +1,968 @@
+-- Runtime implementation of the standalone NLC artefact-cooking developer addon.
+-- The public facade and engine callbacks live in lz_nlc_art_cooking.script.
+
+local state = {
+	initialized = false,
+	pending_drops = {},
+	anomaly_ids = {},
+	analyzer_sources = {},
+	analyzer_grid = {},
+	analyzer_candidates = {},
+	analyzer_entries = {},
+	boulder_ids = {},
+	operation_due = {},
+	operation_keys = {},
+	cooked_marker_sync_due = nil,
+	qa_cleanup_due = nil,
+	art_stash_due = nil,
+	art_stash_scan_done = false,
+	qa_art_stash_scan_done = false,
+	art_stash_audit_due = nil,
+	art_stash_audit_done = false,
+	hunger_due = 0,
+	analyzer_due = 0,
+	analyzer_scan_due = 0,
+	analyzer_equipped = false,
+	analyzer_frame = -1,
+	qa_mode_wait_until = nil
+}
+local impl = {}
+
+local ANALYZER_SECTION = "lz_nlc_anomaly_analyzer"
+local ANALYZER_RADIUS = 10
+local ANALYZER_GRID_CELL_SIZE = ANALYZER_RADIUS
+local ANALYZER_MAX_LABELS = 8
+local ANALYZER_LABEL_HEIGHT = 0.05
+local ANALYZER_ICON_HEIGHT = 13
+local ANALYZER_ICON_GAP = 3
+local ANALYZER_UI_BASE_ASPECT = 4 / 3
+local COOKED_MARKER_SPOT = "lz_nlc_cooked_artifact_location"
+local LEGACY_COOKED_MARKER_SPOT = "ui_pda2_quest_npc_location"
+local COOKED_MARKER_HINT = "st_lz_nlc_cooked_result_marker"
+local NO_PARENT_ID = 65535
+local analyzer_hud = nil
+local analyzer_hud_error_reported = false
+local settings = {
+	storage_key = "lz_nlc_art_cooking",
+	drop_delay_ms = 200,
+	queue_size = 100,
+	seed = 1357911,
+	qa_level = "pripyat_full",
+	cooking_accept_radius = 5.0,
+	drop_watch_ms = 5000,
+	drop_probe_ms = 50,
+	qa_mode_grace_ms = 10000,
+	qa_art_stash_revision = 3,
+}
+
+local registry = lz_nlc_anomaly_registry
+local recipes = registry.recipes_table()
+local spawn_config = lz_nlc_art_spawn_config
+
+local cooking_done_messages = {
+	zharka = "st_lz_nlc_cooking_done_zharka",
+	galant = "st_lz_nlc_cooking_done_galant",
+	buzz = "st_lz_nlc_cooking_done_buzz",
+	mosquito_bald = "st_lz_nlc_cooking_done_mosquito_bald",
+	mincer = "st_lz_nlc_cooking_done_whirligig"
+}
+
+local LEGACY_QA_ZONE_CLEANUP_REVISION = 1
+local legacy_qa_zone_sections = {
+	lz_nlc_qa_zone_mosquito_bald = true,
+	lz_nlc_qa_zone_gravi_zone = true,
+	lz_nlc_qa_zone_mincer = true,
+	lz_nlc_qa_zone_galant = true,
+	lz_nlc_qa_zone_buzz = true,
+	lz_nlc_qa_zone_zharka = true
+}
+
+local QA_ART_STASH_SECTION = "lz_nlc_qa_art_stash"
+
+-- Family order is intentional: every base artifact is followed by the four
+-- products in its own cooking branch. The inventory may apply its own visual
+-- sorting, but the saved container data remains easy to inspect and validate.
+local qa_art_stash_items = {
+	"af_soul", "af_spirit_1", "af_spirit_2", "af_spirit_3", "af_spirit_4",
+	"af_electra_flash", "af_cry_1", "af_cry_2", "af_cry_3", "af_cry_4",
+	"af_rusty_sea-urchin", "af_dik_1", "af_dik_2", "af_dik_3", "af_dik_4",
+	"af_dummy_kolobok", "af_kol_1", "af_kol_2", "af_kol_3", "af_kol_4",
+	"lz_nlc_af_dummy_glassbeads", "af_babka_1", "af_babka_2", "af_babka_3", "af_babka_4",
+	"lz_nlc_af_dummy_dummy", "af_pudd_1", "af_pudd_2", "af_pudd_3", "af_pudd_4",
+	"af_dummy_pellicle", "af_armor_1", "af_armor_2", "af_armor_3", "af_armor_4",
+	"af_dummy_buliz", ANALYZER_SECTION
+}
+
+local qa_art_stash_item_counts = {}
+for _, section in ipairs(qa_art_stash_items) do qa_art_stash_item_counts[section] = 1 end
+
+function impl.message(text_id)
+	if db.actor and news_manager and news_manager.send_tip then
+		news_manager.send_tip(db.actor, text_id, nil, nil, nil, nil)
+	end
+end
+
+function impl.developer_mode()
+	return pf_stash_qa and pf_stash_qa.is_developer_mode and
+		pf_stash_qa.is_developer_mode() == true
+end
+
+function impl.storage()
+	local root = alife_storage_manager.get_state()
+	if type(root[settings.storage_key]) ~= "table" then
+		root[settings.storage_key] = {}
+	end
+	local data = root[settings.storage_key]
+	local previous_version = tonumber(data.version) or 1
+	data.version = 3
+	data.prng_state = tonumber(data.prng_state) or settings.seed
+	if type(data.random_queue) ~= "table" then data.random_queue = {} end
+	if type(data.cooked_marker_ids) ~= "table" then data.cooked_marker_ids = {} end
+	if type(data.operations) ~= "table" then data.operations = {} end
+	-- Version 1 stored one global cooking operation. Preserve it as the first
+	-- entry in the unlimited operation collection when an old save is loaded.
+	if type(data.operation) == "table" then
+		local serial = tonumber(data.operation.serial) or
+			((tonumber(data.operation_serial) or 0) + 1)
+		while data.operations[tostring(serial)] do serial = serial + 1 end
+		data.operation.serial = serial
+		data.operation_serial = math.max(tonumber(data.operation_serial) or 0, serial)
+		data.operations[tostring(serial)] = data.operation
+	end
+	data.operation = nil
+	-- Version 2 allowed three-second developer cooks. Existing operations are
+	-- converted to the same in-game stage timers used by normal saves.
+	if previous_version < 3 then
+		for _, operation in pairs(data.operations) do
+			if type(operation) == "table" then operation.qa_fast = nil end
+		end
+	end
+	return data
+end
+
+function impl.add_cooked_marker(id)
+	id = tonumber(id)
+	if not id then return end
+	local data = impl.storage()
+	data.cooked_marker_ids[tostring(id)] = true
+	if level.map_has_object_spot(id, LEGACY_COOKED_MARKER_SPOT) ~= 0 then
+		level.map_remove_object_spot(id, LEGACY_COOKED_MARKER_SPOT)
+	end
+	if level.map_has_object_spot(id, COOKED_MARKER_SPOT) == 0 then
+		-- A serialized object spot follows the artefact without a per-frame update
+		-- and survives save/load. Its neutral hint deliberately conceals the result.
+		level.map_add_object_spot_ser(id, COOKED_MARKER_SPOT, COOKED_MARKER_HINT)
+	end
+end
+
+function impl.remove_cooked_marker(id)
+	id = tonumber(id)
+	if not id then return end
+	local data = impl.storage()
+	local key = tostring(id)
+	if not data.cooked_marker_ids[key] then return end
+	if level.map_has_object_spot(id, COOKED_MARKER_SPOT) ~= 0 then
+		level.map_remove_object_spot(id, COOKED_MARKER_SPOT)
+	end
+	if level.map_has_object_spot(id, LEGACY_COOKED_MARKER_SPOT) ~= 0 then
+		level.map_remove_object_spot(id, LEGACY_COOKED_MARKER_SPOT)
+	end
+	data.cooked_marker_ids[key] = nil
+end
+
+function impl.sync_cooked_markers(now)
+	if not state.cooked_marker_sync_due or now < state.cooked_marker_sync_due then return end
+	state.cooked_marker_sync_due = nil
+	local data = impl.storage()
+	local stale = {}
+	for key in pairs(data.cooked_marker_ids) do
+		local id = tonumber(key)
+		local object = id and alife():object(id, true) or nil
+		local parent_id = object and tonumber(object.parent_id) or nil
+		if object and (parent_id == nil or parent_id == NO_PARENT_ID) then
+			if level.map_has_object_spot(id, LEGACY_COOKED_MARKER_SPOT) ~= 0 then
+				level.map_remove_object_spot(id, LEGACY_COOKED_MARKER_SPOT)
+			end
+			if level.map_has_object_spot(id, COOKED_MARKER_SPOT) == 0 then
+				level.map_add_object_spot_ser(id, COOKED_MARKER_SPOT, COOKED_MARKER_HINT)
+			end
+		else
+			if id and level.map_has_object_spot(id, COOKED_MARKER_SPOT) ~= 0 then
+				level.map_remove_object_spot(id, COOKED_MARKER_SPOT)
+			end
+			if id and level.map_has_object_spot(id, LEGACY_COOKED_MARKER_SPOT) ~= 0 then
+				level.map_remove_object_spot(id, LEGACY_COOKED_MARKER_SPOT)
+			end
+			table.insert(stale, key)
+		end
+	end
+	for _, key in ipairs(stale) do data.cooked_marker_ids[key] = nil end
+end
+
+function impl.next_prng(data)
+	data.prng_state = (data.prng_state * 48271) % 2147483647
+	return math.floor(((data.prng_state - 1) * 100) / 2147483646) + 1
+end
+
+function impl.fill_random_queue(data)
+	while #data.random_queue < settings.queue_size do
+		table.insert(data.random_queue, impl.next_prng(data))
+	end
+end
+
+function impl.take_roll(data)
+	impl.fill_random_queue(data)
+	local roll = tonumber(table.remove(data.random_queue, 1)) or 1
+	table.insert(data.random_queue, impl.next_prng(data))
+	return math.max(1, math.min(100, math.floor(roll)))
+end
+
+function impl.result_for(recipe, source, roll)
+	if roll <= recipe.success then return recipe.result end
+	if roll <= recipe.success + recipe.returned then return source end
+	return "af_dummy_buliz"
+end
+
+function impl.game_elapsed_seconds()
+	return math.max(
+		0,
+		math.floor(tonumber(game.get_game_time():diffSec(level.get_start_time())) or 0)
+	)
+end
+
+function impl.anomaly_kind(section)
+	return registry.cooking_role(section)
+end
+
+function impl.collect_anomalies()
+	state.anomaly_ids = {}
+	state.analyzer_sources = {}
+	state.analyzer_grid = {}
+	state.analyzer_candidates = {}
+	state.analyzer_entries = {}
+	for _, object in alife():objects() do
+		local descriptor = registry.resolve(object:section_name())
+		if descriptor then
+			if descriptor.role then state.anomaly_ids[object.id] = true end
+			local position = object.position
+			if descriptor.visible and position then
+				local source_index = #state.analyzer_sources + 1
+				state.analyzer_sources[source_index] = {
+					position = vector():set(position),
+					anchor = vector():set(
+						position.x, position.y + ANALYZER_LABEL_HEIGHT, position.z
+					),
+					descriptor = {
+						text = descriptor.name,
+						icon = descriptor.icon,
+						color = descriptor.color
+					}
+				}
+				local cell_x = math.floor(position.x / ANALYZER_GRID_CELL_SIZE)
+				local cell_z = math.floor(position.z / ANALYZER_GRID_CELL_SIZE)
+				local key = tostring(cell_x) .. ":" .. tostring(cell_z)
+				local bucket = state.analyzer_grid[key]
+				if not bucket then
+					bucket = {}
+					state.analyzer_grid[key] = bucket
+				end
+				table.insert(bucket, source_index)
+			end
+		end
+	end
+end
+
+class "lz_nlc_anomaly_analyzer_hud" (CUIScriptWnd)
+
+function lz_nlc_anomaly_analyzer_hud:__init() super()
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	self:SetAutoDelete(true)
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_lz_nlc_anomaly_analyzer.xml")
+	self.root = xml:InitStatic("anomaly_labels", self)
+	self.labels = {}
+	local screen_width = math.max(1, tonumber(device().width) or 1024)
+	local screen_height = math.max(1, tonumber(device().height) or 768)
+	local icon_width = ANALYZER_ICON_HEIGHT *
+		(screen_height / screen_width) * ANALYZER_UI_BASE_ASPECT
+	for index = 1, ANALYZER_MAX_LABELS do
+		local icon = xml:InitStatic("anomaly_labels:icon", self.root)
+		local label = xml:InitTextWnd("anomaly_labels:label", self.root)
+		icon:SetWndSize(vector2():set(icon_width, ANALYZER_ICON_HEIGHT))
+		label:SetTextComplexMode(false)
+		icon:Show(false)
+		label:Show(false)
+		self.labels[index] = {
+			icon = icon,
+			text = label,
+			last_icon = nil,
+			last_text = nil,
+			last_color = nil
+		}
+	end
+end
+
+function lz_nlc_anomaly_analyzer_hud:SetEntries(entries)
+	for index, label in ipairs(self.labels) do
+		local entry = entries[index]
+		if entry then
+			local color = GetARGB(255, entry.color[1], entry.color[2], entry.color[3])
+			if label.last_text ~= entry.text then
+				label.text:SetText(game.translate_string(entry.text))
+				label.text:AdjustWidthToText()
+				label.last_text = entry.text
+			end
+			if label.last_icon ~= entry.icon then
+				label.icon:InitTexture(entry.icon)
+				label.last_icon = entry.icon
+			end
+			if label.last_color ~= color then
+				label.text:SetTextColor(color)
+				label.icon:SetTextureColor(color)
+				label.last_color = color
+			end
+			local icon_width = label.icon:GetWidth()
+			local icon_height = label.icon:GetHeight()
+			local text_width = label.text:GetWidth()
+			local text_height = label.text:GetHeight()
+			local row_height = math.max(icon_height, text_height)
+			local left = entry.x - (icon_width + ANALYZER_ICON_GAP + text_width) * 0.5
+			local top = entry.y - row_height - 2
+			label.icon:SetWndPos(vector2():set(
+				left, top + (row_height - icon_height) * 0.5
+			))
+			label.text:SetWndPos(vector2():set(
+				left + icon_width + ANALYZER_ICON_GAP,
+				top + (row_height - text_height) * 0.5
+			))
+			label.icon:Show(true)
+			label.text:Show(true)
+		else
+			label.icon:Show(false)
+			label.text:Show(false)
+		end
+	end
+end
+
+function impl.hide_analyzer_text()
+	if analyzer_hud then
+		pcall(function()
+			local hud = get_hud()
+			if hud then hud:RemoveDialogToRender(analyzer_hud) end
+		end)
+	end
+	analyzer_hud = nil
+end
+
+function impl.show_analyzer_entries(entries)
+	if #entries == 0 then
+		impl.hide_analyzer_text()
+		return
+	end
+	local ok, error_message = pcall(function()
+		local hud = get_hud()
+		if not hud then return end
+		if not analyzer_hud then
+			analyzer_hud = lz_nlc_anomaly_analyzer_hud()
+			hud:AddDialogToRender(analyzer_hud)
+			printf("lz_nlc_art_cooking: analyzer world labels created")
+		end
+		analyzer_hud:SetEntries(entries)
+	end)
+	if ok then
+		analyzer_hud_error_reported = false
+	else
+		if not analyzer_hud_error_reported then
+			printf("! lz_nlc_art_cooking: analyzer HUD failed: [%s]", tostring(error_message))
+			analyzer_hud_error_reported = true
+		end
+		impl.hide_analyzer_text()
+	end
+end
+
+function impl.analyzer_entries()
+	local actor_position = db.actor:position()
+	local entries = state.analyzer_entries
+	for index = #entries, 1, -1 do entries[index] = nil end
+	local candidates = state.analyzer_candidates
+	for index = #candidates, 1, -1 do candidates[index] = nil end
+	local actor_cell_x = math.floor(actor_position.x / ANALYZER_GRID_CELL_SIZE)
+	local actor_cell_z = math.floor(actor_position.z / ANALYZER_GRID_CELL_SIZE)
+	for cell_x = actor_cell_x - 1, actor_cell_x + 1 do
+		for cell_z = actor_cell_z - 1, actor_cell_z + 1 do
+			local key = tostring(cell_x) .. ":" .. tostring(cell_z)
+			local bucket = state.analyzer_grid[key]
+			if bucket then
+				for _, source_index in ipairs(bucket) do
+					table.insert(candidates, source_index)
+				end
+			end
+		end
+	end
+	-- Grid traversal changes bucket order, so restore the original ALife scan
+	-- order before applying the eight-label limit.
+	table.sort(candidates)
+	local radius_squared = ANALYZER_RADIUS * ANALYZER_RADIUS
+	for _, source_index in ipairs(candidates) do
+		local source = state.analyzer_sources[source_index]
+		local position = source.position
+		local dx = position.x - actor_position.x
+		local dy = position.y - actor_position.y
+		local dz = position.z - actor_position.z
+		if dx * dx + dy * dy + dz * dz <= radius_squared then
+			local screen = game.world2ui(source.anchor, false)
+			if screen and screen.x > -9000 then
+				table.insert(entries, {
+					x = screen.x,
+					y = screen.y,
+					text = source.descriptor.text,
+					icon = source.descriptor.icon,
+					color = source.descriptor.color
+				})
+				if #entries >= ANALYZER_MAX_LABELS then break end
+			end
+		end
+	end
+	return entries
+end
+
+function impl.analyzer_on_belt()
+	local found = false
+	db.actor:iterate_inventory(function(_, item)
+		if not found and item and item:section() == ANALYZER_SECTION and
+			db.actor:is_on_belt(item) then
+			found = true
+		end
+	end, db.actor)
+	return found
+end
+
+function impl.update_analyzer(now)
+	-- Both compatibility callback chains can reach this function. Process the
+	-- projection exactly once per rendered frame while keeping inventory and
+	-- ALife scans on their slower schedules.
+	local frame = device().frame
+	if state.analyzer_frame == frame then return end
+	state.analyzer_frame = frame
+	if now >= state.analyzer_due then
+		state.analyzer_due = now + 200
+		state.analyzer_equipped = impl.analyzer_on_belt()
+	end
+	if not state.analyzer_equipped then
+		impl.hide_analyzer_text()
+		return
+	end
+	if now >= state.analyzer_scan_due then
+		impl.collect_anomalies()
+		state.analyzer_scan_due = now + 30000
+	end
+	-- Screen coordinates are projected every frame so labels track camera
+	-- movement at the game's own update rate. Cooking keeps a separate small
+	-- anomaly-volume check and the analyzer still never inspects artefacts.
+	impl.show_analyzer_entries(impl.analyzer_entries())
+end
+
+function impl.segment_distance_squared(center, from, to)
+	if not from then
+		local dx = center.x - to.x
+		local dy = center.y - to.y
+		local dz = center.z - to.z
+		return dx * dx + dy * dy + dz * dz
+	end
+	local vx = to.x - from.x
+	local vy = to.y - from.y
+	local vz = to.z - from.z
+	local length_squared = vx * vx + vy * vy + vz * vz
+	local t = 0
+	if length_squared > 0.000001 then
+		t = ((center.x - from.x) * vx + (center.y - from.y) * vy +
+			(center.z - from.z) * vz) / length_squared
+		t = math.max(0, math.min(1, t))
+	end
+	local dx = center.x - (from.x + vx * t)
+	local dy = center.y - (from.y + vy * t)
+	local dz = center.z - (from.z + vz * t)
+	return dx * dx + dy * dy + dz * dz
+end
+
+function impl.zone_contains_segment(client, from, to)
+	local samples = from and { 0, 0.25, 0.5, 0.75, 1 } or { 1 }
+	for _, t in ipairs(samples) do
+		local position = to
+		if from and t < 1 then
+			position = vector():set(
+				from.x + (to.x - from.x) * t,
+				from.y + (to.y - from.y) * t,
+				from.z + (to.z - from.z) * t
+			)
+		end
+		local ok, inside = pcall(function() return client:inside(position) end)
+		if ok and inside then return true end
+	end
+	return false
+end
+
+function impl.item_anomaly_kind(position, previous_position)
+	local stale = nil
+	local nearest_kind = nil
+	local nearest_distance_squared = nil
+	local accept_radius_squared =
+		settings.cooking_accept_radius * settings.cooking_accept_radius
+	for id in pairs(state.anomaly_ids) do
+		local server = alife():object(id, true)
+		local client = server and level.object_by_id(id) or nil
+		if not server then
+			stale = stale or {}
+			table.insert(stale, id)
+		else
+			local section = server:section_name()
+			local kind = impl.anomaly_kind(section)
+			-- A native hit remains authoritative. The center-distance fallback adds
+			-- a modest usability margin around both map anomalies and old QA zones
+			-- whose dynamic spawn did not receive a collision shape.
+			if client and impl.zone_contains_segment(client, previous_position, position) then
+				return kind
+			end
+			if kind and server.position then
+				local distance_squared = impl.segment_distance_squared(
+					server.position, previous_position, position
+				)
+				if distance_squared <= accept_radius_squared and
+					(not nearest_distance_squared or
+						distance_squared < nearest_distance_squared) then
+					nearest_kind = kind
+					nearest_distance_squared = distance_squared
+				end
+			end
+		end
+	end
+	if stale then
+		for _, id in ipairs(stale) do state.anomaly_ids[id] = nil end
+	end
+	return nearest_kind
+end
+
+function impl.add_boulder(item)
+	if item and item:section() == "af_dummy_buliz" then state.boulder_ids[item:id()] = true end
+end
+
+function impl.remove_boulder(item)
+	if item and item:section() == "af_dummy_buliz" then state.boulder_ids[item:id()] = nil end
+end
+
+function impl.scan_boulders()
+	state.boulder_ids = {}
+	if not db.actor then return end
+	db.actor:iterate_inventory(function(_, item)
+		impl.add_boulder(item)
+	end, db.actor)
+end
+
+function impl.update_boulder_hunger(now)
+	if now < state.hunger_due then return end
+	state.hunger_due = now + 1000
+	local equipped = false
+	local stale = nil
+	for id in pairs(state.boulder_ids) do
+		local item = level.object_by_id(id)
+		if not item then
+			stale = stale or {}
+			table.insert(stale, id)
+		elseif db.actor:is_on_belt(item) then
+			equipped = true
+			break
+		end
+	end
+	if stale then for _, id in ipairs(stale) do state.boulder_ids[id] = nil end end
+	if not equipped then return end
+	-- The collapsed artefact amplifies the base hunger drain by difficulty.
+	-- Apply only the additional part once per real second.
+	local difficulty = tonumber(level.get_game_difficulty()) or 0
+	local extra = 0.0000162 * (3 + 3 * math.max(0, math.min(3, difficulty)))
+	db.actor.satiety = math.max(0, db.actor.satiety - extra)
+end
+
+function impl.start_operation(item, server, recipe, now)
+	local data = impl.storage()
+	local position = item:position()
+	local roll = impl.take_roll(data)
+	local source = server:section_name()
+	local result = impl.result_for(recipe, source, roll)
+	local cook_minutes = spawn_config.cooking_minutes(recipe.stage)
+	data.operation_serial = (tonumber(data.operation_serial) or 0) + 1
+	local operation_key = tostring(data.operation_serial)
+	data.operations[operation_key] = {
+		serial = data.operation_serial,
+		source = source,
+		result = result,
+		roll = roll,
+		anomaly = recipe.anomaly,
+		stage = recipe.stage,
+		cook_minutes = cook_minutes,
+		due_game_seconds = impl.game_elapsed_seconds() + cook_minutes * 60,
+		level_name = level.name(),
+		x = position.x, y = position.y, z = position.z,
+		level_vertex_id = server.m_level_vertex_id,
+		game_vertex_id = server.m_game_vertex_id
+	}
+	level.add_pp_effector("teleport.ppe", 1524, false)
+	alife():release(server, true)
+	impl.message("st_lz_nlc_cooking_started")
+	printf(
+		"lz_nlc_art_cooking: accepted [%s], roll=[%s], result=[%s]",
+		source, tostring(roll), result
+	)
+	return true
+end
+
+function impl.process_drop(id, pending, now)
+	local item = level.object_by_id(id)
+	local server = alife():object(id, true)
+	if not item or not server then
+		if now < pending.expires then
+			pending.due = now + settings.drop_probe_ms
+			return false
+		end
+		return true
+	end
+	if server:section_name() ~= pending.section then return true end
+	local parent_id = tonumber(server.parent_id)
+	if parent_id == db.actor:id() then
+		if now < pending.expires then
+			pending.due = now + settings.drop_probe_ms
+			return false
+		end
+		return true
+	end
+	-- The inventory-drop callback also fires when an item is transferred into a
+	-- stash or backpack. Only a parentless artefact can enter a world anomaly.
+	if parent_id ~= nil and parent_id ~= NO_PARENT_ID then return true end
+	local recipe = recipes[pending.section]
+	local position = item:position()
+	local anomaly_kind = impl.item_anomaly_kind(position, pending.last_position)
+	pending.last_position = vector():set(position)
+	if recipe and anomaly_kind == recipe.anomaly then
+		impl.start_operation(item, server, recipe, now)
+		return true
+	end
+	-- A dropped artefact keeps moving for several physics frames. NLC cooking
+	-- starts when it actually reaches the required anomaly, not at the first
+	-- frame in which ownership changes from the actor to the world.
+	if now < pending.expires then
+		pending.due = now + settings.drop_probe_ms
+		pending.last_anomaly = anomaly_kind
+		return false
+	end
+	printf(
+		"lz_nlc_art_cooking: drop [%s] ignored; expected anomaly=[%s], found=[%s]",
+		pending.section, recipe and recipe.anomaly or "nil",
+		tostring(pending.last_anomaly or anomaly_kind)
+	)
+	return true
+end
+
+function impl.update_drops(now)
+	local finished = nil
+	for id, pending in pairs(state.pending_drops) do
+		if now >= pending.due and impl.process_drop(id, pending, now) then
+			finished = finished or {}
+			table.insert(finished, id)
+		end
+	end
+	if finished then for _, id in ipairs(finished) do state.pending_drops[id] = nil end end
+end
+
+function impl.complete_operation(key, operation, data, now, game_elapsed)
+	if not operation.due_game_seconds then
+		local minutes = tonumber(operation.cook_minutes) or
+			spawn_config.cooking_minutes(operation.stage or 1)
+		operation.due_game_seconds = game_elapsed + minutes * 60
+	end
+	if game_elapsed < operation.due_game_seconds then return end
+	if state.operation_due[key] and now < state.operation_due[key] then return end
+	if level.name() ~= operation.level_name then return end
+	local position = vector():set(operation.x, operation.y, operation.z)
+	local created = alife():create(
+		operation.result,
+		position,
+		operation.level_vertex_id,
+		operation.game_vertex_id
+	)
+	if not created then
+		state.operation_due[key] = now + 500
+		printf("! lz_nlc_art_cooking: result creation failed; retrying")
+		return
+	end
+	operation.result_id = created.id
+	local result = operation.result
+	local source_recipe = recipes[operation.source]
+	local anomaly = operation.anomaly or (source_recipe and source_recipe.anomaly)
+	data.last_operation = {
+		serial = operation.serial,
+		result = result,
+		result_id = created.id,
+		roll = operation.roll,
+		anomaly = anomaly
+	}
+	impl.add_cooked_marker(created.id)
+	data.operations[key] = nil
+	state.operation_due[key] = nil
+	impl.message(cooking_done_messages[anomaly] or "st_lz_nlc_cooking_done_unknown")
+	printf(
+		"lz_nlc_art_cooking: completed serial=[%s], result=[%s], id=[%s]",
+		tostring(operation.serial), result, tostring(created.id)
+	)
+end
+
+function impl.operation_key_less(left, right)
+	return (tonumber(left) or 0) < (tonumber(right) or 0)
+end
+
+function impl.complete_operations(now)
+	local data = impl.storage()
+	local keys = state.operation_keys
+	local game_elapsed = impl.game_elapsed_seconds()
+	for index = #keys, 1, -1 do keys[index] = nil end
+	for key, operation in pairs(data.operations) do
+		if type(operation) == "table" then
+			table.insert(keys, key)
+		else
+			data.operations[key] = nil
+			state.operation_due[key] = nil
+		end
+	end
+	table.sort(keys, impl.operation_key_less)
+	for _, key in ipairs(keys) do
+		local operation = data.operations[key]
+		if operation then
+			impl.complete_operation(key, operation, data, now, game_elapsed)
+		end
+	end
+end
+
+function impl.remove_legacy_qa_zones(now)
+	if not state.qa_cleanup_due or now < state.qa_cleanup_due then return end
+	state.qa_cleanup_due = nil
+	local data = impl.storage()
+	if tonumber(data.qa_zone_cleanup_revision) == LEGACY_QA_ZONE_CLEANUP_REVISION then
+		return
+	end
+	local ids = {}
+	for _, object in alife():objects() do
+		if legacy_qa_zone_sections[object:section_name()] then
+			table.insert(ids, object.id)
+		end
+	end
+	for _, id in ipairs(ids) do
+		local object = alife():object(id, true)
+		if object then alife():release(object, true) end
+		state.anomaly_ids[id] = nil
+	end
+	data.qa_zone_ids = nil
+	data.qa_revision = nil
+	data.qa_zone_cleanup_revision = LEGACY_QA_ZONE_CLEANUP_REVISION
+	if #ids > 0 then
+		impl.collect_anomalies()
+		state.analyzer_scan_due = now + 30000
+	end
+	printf("lz_nlc_art_cooking: removed legacy startup QA zones=[%s]", tostring(#ids))
+end
+
+function impl.find_start_stash()
+	local id = tonumber(xr_logic.pstor_retrieve(db.actor, "lz_nm_start_stash_id", -1)) or -1
+	local stash = id >= 0 and alife():object(id, true) or nil
+	if stash and stash:section_name() == "lz_nm_start_stash" then return stash end
+	if state.art_stash_scan_done then return nil end
+	state.art_stash_scan_done = true
+	for _, object in alife():objects() do
+		if object:section_name() == "lz_nm_start_stash" then return object end
+	end
+	return nil
+end
+
+function impl.find_qa_art_stash(data)
+	local id = tonumber(data.qa_art_stash_id) or -1
+	local stash = id >= 0 and alife():object(id, true) or nil
+	if stash and stash:section_name() == QA_ART_STASH_SECTION then return stash end
+	if state.qa_art_stash_scan_done then return nil end
+	state.qa_art_stash_scan_done = true
+	for _, object in alife():objects() do
+		if object:section_name() == QA_ART_STASH_SECTION then
+			data.qa_art_stash_id = object.id
+			return object
+		end
+	end
+	return nil
+end
+
+function impl.spawn_qa_art_stash(start_stash)
+	if not impl.developer_mode() or not start_stash then return nil end
+	local direction = db.actor:direction()
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	local forward_x = length > 0.001 and direction.x / length or 1
+	local forward_z = length > 0.001 and direction.z / length or 0
+	local right_x = -forward_z
+	local right_z = forward_x
+	local position = vector():set(
+		start_stash.position.x + right_x * 1.4,
+		start_stash.position.y,
+		start_stash.position.z + right_z * 1.4
+	)
+	local stash = alife():create(
+		QA_ART_STASH_SECTION,
+		position,
+		start_stash.m_level_vertex_id,
+		start_stash.m_game_vertex_id
+	)
+	if stash then
+		stash.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
+	end
+	return stash
+end
+
+function impl.ensure_qa_art_stash(now)
+	if not state.art_stash_due or now < state.art_stash_due then return end
+	if level.name() ~= settings.qa_level then
+		state.art_stash_due = nil
+		return
+	end
+	if not impl.developer_mode() then
+		if state.qa_mode_wait_until and now < state.qa_mode_wait_until then
+			state.art_stash_due = now + 250
+		else
+			state.art_stash_due = nil
+		end
+		return
+	end
+	local data = impl.storage()
+	local stash = impl.find_qa_art_stash(data)
+	if stash and tonumber(data.qa_art_stash_revision) == settings.qa_art_stash_revision then
+		state.art_stash_due = nil
+		return
+	end
+	local start_stash = impl.find_start_stash()
+	if not stash and start_stash then
+		stash = impl.spawn_qa_art_stash(start_stash)
+		if stash then data.qa_art_stash_id = stash.id end
+	end
+	if not stash then
+		state.art_stash_due = now + 1000
+		return
+	end
+	local counts = {}
+	for _, section in ipairs(qa_art_stash_items) do counts[section] = 0 end
+	for child_id in alife():get_children(stash) do
+		local child = alife():object(child_id, true)
+		local section = child and child:section_name() or nil
+		if section and counts[section] ~= nil then counts[section] = counts[section] + 1 end
+	end
+	local created = 0
+	for _, section in ipairs(qa_art_stash_items) do
+		local target_count = qa_art_stash_item_counts[section] or 1
+		for _ = counts[section] + 1, target_count do
+			if alife():create(section, vector(), 0, 0, stash.id) then created = created + 1 end
+		end
+	end
+	data.qa_art_stash_id = stash.id
+	data.qa_art_stash_revision = settings.qa_art_stash_revision
+	state.art_stash_due = nil
+	printf("lz_nlc_art_cooking: dedicated artifact QA stash ready with [%s] added item(s)", tostring(created))
+end
+
+function impl.audit_qa_art_stash(now)
+	if state.art_stash_audit_done or not state.art_stash_audit_due or
+		now < state.art_stash_audit_due then return end
+	state.art_stash_audit_done = true
+	if impl.developer_mode() then return end
+	local data = impl.storage()
+	local removed = 0
+	local stashes = {}
+	for _, object in alife():objects() do
+		if object:section_name() == QA_ART_STASH_SECTION then table.insert(stashes, object) end
+	end
+	for _, stash in ipairs(stashes) do
+		local children = {}
+		for child_id in alife():get_children(stash) do table.insert(children, child_id) end
+		for _, child_id in ipairs(children) do
+			local child = alife():object(child_id, true)
+			if child then alife():release(child, true) end
+		end
+		alife():release(stash, true)
+		removed = removed + 1
+	end
+	data.qa_art_stash_id = nil
+	data.qa_art_stash_revision = nil
+	if removed > 0 then
+		printf("lz_nlc_art_cooking: removed [%s] artifact QA stash(es) outside developer mode", tostring(removed))
+	end
+end
+
+function actor_on_inventory_item_drop(item)
+	if not item then return end
+	impl.remove_boulder(item)
+	local section = item:section()
+	if recipes[section] then
+		local now = time_global()
+		state.pending_drops[item:id()] = {
+			section = section,
+			due = now + settings.drop_delay_ms,
+			expires = now + settings.drop_watch_ms,
+			last_position = vector():set(item:position())
+		}
+		printf("lz_nlc_art_cooking: queued dropped artefact [%s] id=[%s]", section, tostring(item:id()))
+	end
+end
+
+function actor_on_inventory_item_take(item)
+	if item then state.pending_drops[item:id()] = nil end
+	if item then impl.remove_cooked_marker(item:id()) end
+	impl.add_boulder(item)
+end
+
+function actor_on_inventory_trade(item, sell_bye)
+	if sell_bye then
+		impl.remove_boulder(item)
+	else
+		impl.add_boulder(item)
+	end
+end
+
+function on_game_load()
+	impl.hide_analyzer_text()
+	state.initialized = true
+	state.pending_drops = {}
+	state.operation_due = {}
+	state.operation_keys = {}
+	state.cooked_marker_sync_due = time_global() + 500
+	state.qa_cleanup_due = time_global() + 500
+	state.art_stash_due = time_global() + 750
+	state.art_stash_scan_done = false
+	state.qa_art_stash_scan_done = false
+	state.art_stash_audit_due = time_global() + settings.qa_mode_grace_ms
+	state.art_stash_audit_done = false
+	state.hunger_due = time_global() + 1000
+	state.analyzer_due = time_global()
+	state.analyzer_scan_due = time_global() + 30000
+	state.analyzer_equipped = false
+	state.analyzer_frame = -1
+	state.qa_mode_wait_until = time_global() + settings.qa_mode_grace_ms
+	impl.fill_random_queue(impl.storage())
+	impl.collect_anomalies()
+	impl.scan_boulders()
+	printf("lz_nlc_art_cooking: runtime initialized")
+end
+
+function update(now)
+	if not db.actor then return end
+	if not state.initialized then on_game_load() end
+	impl.update_drops(now)
+	impl.complete_operations(now)
+	impl.sync_cooked_markers(now)
+	impl.remove_legacy_qa_zones(now)
+	impl.ensure_qa_art_stash(now)
+	impl.audit_qa_art_stash(now)
+	-- Boulder hunger is handled by satiety_restore_speed in the artefact LTX.
+	-- A second real-time drain here would stack the legacy difficulty penalty
+	-- on top of the configured effect instead of giving the intended +20%.
+	impl.update_analyzer(now)
+end

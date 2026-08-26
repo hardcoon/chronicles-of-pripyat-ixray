@@ -1,0 +1,138 @@
+; Point zones inherit native collision, damage, particles, sound, and light.
+; Because the objects are baked, those resources exist only while native ALife
+; keeps a nearby zone online; aura shells remain deliberately silent below.
+
+[pf_proc_gravitational_weak]:zone_mine_gravitational_weak
+$spawn = "zones\pf procedural gravitational weak"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_gravitational_average]:zone_mine_gravitational_average
+$spawn = "zones\pf procedural gravitational average"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_gravitational_strong]:zone_mine_gravitational_strong
+$spawn = "zones\pf procedural gravitational strong"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_electric_weak]:zone_mine_electric_weak
+$spawn = "zones\pf procedural electric weak"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_electric_average]:zone_mine_electric_average
+$spawn = "zones\pf procedural electric average"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_electric_strong]:zone_mine_electric_strong
+$spawn = "zones\pf procedural electric strong"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_chemical_weak]:zone_buzz_weak
+$spawn = "zones\pf procedural chemical weak"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_chemical_average]:zone_buzz_average
+$spawn = "zones\pf procedural chemical average"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_chemical_strong]:zone_buzz_strong
+$spawn = "zones\pf procedural chemical strong"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_thermal_weak]:zone_zharka_static_weak
+$spawn = "zones\pf procedural thermal weak"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_thermal_average]:zone_zharka_static_average
+$spawn = "zones\pf procedural thermal average"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_thermal_strong]:zone_zharka_static_strong
+$spawn = "zones\pf procedural thermal strong"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_psi_weak]:zone_field_psychic_weak
+$spawn = "zones\pf procedural psi weak"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_psi_average]:zone_field_psychic_average
+$spawn = "zones\pf procedural psi average"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_psi_strong]:zone_field_psychic_strong
+$spawn = "zones\pf procedural psi strong"
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+; Group aura objects also anchor serialized PDA markers.  Gravitational and
+; electric shells remain neutral because their frequent hit packets caused the
+; original movement problem.  Chemical and thermal fields intentionally omit
+; postprocess: their screen effects are unpleasant, but their damage remains.
+[pf_proc_aura_gravitational]:zone_base
+$spawn = "zones\pf procedural aura gravitational"
+GroupControlSection = spawn_group_zone
+$def_sphere = 15
+class = ZS_RADIO
+hit_impulse_scale = 0.01
+effective_radius = 1.0
+ef_anomaly_type = 3
+ef_weapon_type = 15
+hit_type = strike
+max_start_power = 0.0
+attenuation = 0.5
+disable_time = -1
+disable_time_small = -1
+disable_idle_time = -1
+ignore_nonalive = true
+ignore_small = false
+ignore_artefacts = true
+blowout_light = off
+awaking_time = 100
+blowout_time = 100
+accamulate_time = 100
+blowout_wind = off
+idle_particles =
+idle_sound = ambient\no_sound
+idle_light = off
+artefact_spawn_rnd = 0
+artefact_spawn_count = 0
+
+[pf_proc_aura_electric]:pf_proc_aura_gravitational
+$spawn = "zones\pf procedural aura electric"
+hit_type = shock
+max_start_power = 0.0
+
+[pf_proc_aura_chemical]:pf_proc_aura_gravitational
+$spawn = "zones\pf procedural aura chemical"
+hit_type = chemical_burn
+max_start_power = 0.1
+
+[pf_proc_aura_thermal]:pf_proc_aura_gravitational
+$spawn = "zones\pf procedural aura thermal"
+hit_type = light_burn
+max_start_power = 0.1
+
+[pf_proc_aura_psi]:pf_proc_aura_gravitational
+$spawn = "zones\pf procedural aura psi"
+postprocess = postprocess_psi
+hit_type = telepatic
+max_start_power = 0.1
+
+[pf_proc_aura_radioactive]:pf_proc_aura_gravitational
+$spawn = "zones\pf procedural aura radioactive"
+postprocess = postprocess_rad
+hit_type = radiation
+max_start_power = 0.015

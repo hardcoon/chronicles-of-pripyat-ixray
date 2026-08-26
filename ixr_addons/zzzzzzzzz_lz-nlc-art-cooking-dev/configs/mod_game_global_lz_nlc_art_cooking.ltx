@@ -1,0 +1,6 @@
+; IX-Ray exposes one native inventory-focus callback through game_global.ltx.
+; Keep its canonical owner in the active mechanics layer: the Lua facade first
+; refreshes ordinary mechanics actions and then forwards the focused item to
+; lz_pda_hacking so the reflash module can expose locked-PDA ranks only.
+![callbacks]
+OnItemFocusReceive = lz_new_mechanics.on_item_focus_receive

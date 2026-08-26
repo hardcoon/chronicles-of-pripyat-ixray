@@ -1,0 +1,176 @@
+-- Novikov and the Pripyat Full Nitro use explicit linear repair coefficients.
+-- The stock inventory_upgrades module mixes its shared percentage with global
+-- inflation, reputation and skill factors. Its public callbacks are wrapped
+-- before the engine caches upgrade functors, but change behavior only while
+-- one of these two mechanic windows is active.
+
+local PROFILES = {
+	novikov = {
+		mechanic = "pf_bunker_novikov",
+		upgrade_multiplier = 2.5,
+		repair_coefficient = 1.65
+	},
+	nitro = {
+		mechanic = "pf_yanov_nitro",
+		-- Novikov after his 25% task discount: 1.65 * 0.75 = 1.2375.
+		-- Nitro is another 20% cheaper: 1.2375 * 0.80 = 0.99.
+		repair_coefficient = 0.99
+	}
+}
+
+local state = {
+	discount = 1.0,
+	installed = false,
+	profile = nil,
+	original = {}
+}
+
+local function profile_for(mechanic)
+	if mechanic == PROFILES.novikov.mechanic then return PROFILES.novikov end
+	if mechanic == PROFILES.nitro.mechanic then return PROFILES.nitro end
+	return nil
+end
+
+local function is_novikov()
+	return state.profile == PROFILES.novikov
+end
+
+local function is_nitro()
+	return state.profile == PROFILES.nitro
+end
+
+local function select_profile(mechanic)
+	local profile = profile_for(mechanic)
+	if state.profile ~= profile then
+		state.discount = 1.0
+	end
+	state.profile = profile
+	return profile
+end
+
+local function with_price_multiplier(multiplier, callback, ...)
+	local args = {...}
+	state.original.mech_discount(state.discount * multiplier)
+	local result = {pcall(function() return callback(unpack(args)) end)}
+	state.original.mech_discount(state.discount)
+	if not result[1] then error(result[2]) end
+	return unpack(result, 2)
+end
+
+local function repair_price(profile, item_name, item_condition)
+	local condition = tonumber(item_condition) or 1.0
+	condition = math.max(0.0, math.min(1.0, condition))
+	local cost = system_ini():r_u32(item_name, "cost")
+	return math.floor(cost * (1.0 - condition) * profile.repair_coefficient * state.discount)
+end
+
+local function profile_can_repair(profile, item_name, item_condition)
+	if item_name == "pri_a17_gauss_rifle" or not db.actor then return false end
+	if db.actor:money() < repair_price(profile, item_name, item_condition) then return false end
+	return true
+end
+
+local function profile_repair_question(profile, item_name, item_condition)
+	if item_name == "pri_a17_gauss_rifle" then
+		return game.translate_string("st_gauss_cannot_be_repaired")
+	end
+	local price = repair_price(profile, item_name, item_condition)
+	if db.actor:money() < price then
+		return game.translate_string("st_upgr_cost")..": "..price.." RU\\n"..
+			game.translate_string("ui_inv_not_enought_money")..": "..price-db.actor:money().." RU"
+	end
+	return game.translate_string("st_upgr_cost").." "..price.." RU. "..
+		game.translate_string("ui_st_inv_repair").."?"
+end
+
+local function install()
+	if state.installed then return end
+	local original = state.original
+	original.mech_discount = inventory_upgrades.mech_discount
+	original.precondition_functor_a = inventory_upgrades.precondition_functor_a
+	original.effect_functor_a = inventory_upgrades.effect_functor_a
+	original.get_upgrade_cost = inventory_upgrades.get_upgrade_cost
+	original.prereq_functor_a = inventory_upgrades.prereq_functor_a
+	original.can_upgrade_item = inventory_upgrades.can_upgrade_item
+	original.can_upgrade_item2 = inventory_upgrades.can_upgrade_item2
+	original.can_repair_item = inventory_upgrades.can_repair_item
+	original.question_repair_item = inventory_upgrades.question_repair_item
+	original.effect_repair_item = inventory_upgrades.effect_repair_item
+
+	inventory_upgrades.precondition_functor_a = function(...)
+		if is_nitro() then return 1 end
+		if not is_novikov() then return original.precondition_functor_a(...) end
+		return with_price_multiplier(PROFILES.novikov.upgrade_multiplier, original.precondition_functor_a, ...)
+	end
+	inventory_upgrades.effect_functor_a = function(...)
+		if is_nitro() then return end
+		if not is_novikov() then return original.effect_functor_a(...) end
+		return with_price_multiplier(PROFILES.novikov.upgrade_multiplier, original.effect_functor_a, ...)
+	end
+	inventory_upgrades.get_upgrade_cost = function(...)
+		if is_nitro() then return " " end
+		if not is_novikov() then return original.get_upgrade_cost(...) end
+		return with_price_multiplier(PROFILES.novikov.upgrade_multiplier, original.get_upgrade_cost, ...)
+	end
+	inventory_upgrades.prereq_functor_a = function(...)
+		if is_nitro() then return "" end
+		if not is_novikov() then return original.prereq_functor_a(...) end
+		return with_price_multiplier(PROFILES.novikov.upgrade_multiplier, original.prereq_functor_a, ...)
+	end
+	inventory_upgrades.can_upgrade_item = function(item_name, mechanic, ...)
+		local profile = select_profile(mechanic)
+		if profile == PROFILES.nitro then return false end
+		return original.can_upgrade_item(item_name, mechanic, ...)
+	end
+	if original.can_upgrade_item2 then
+		inventory_upgrades.can_upgrade_item2 = function(item_name, mechanic, ...)
+			local profile = select_profile(mechanic)
+			if profile == PROFILES.nitro then return false end
+			return original.can_upgrade_item2(item_name, mechanic, ...)
+		end
+	end
+	inventory_upgrades.can_repair_item = function(item_name, item_condition, mechanic)
+		local profile = select_profile(mechanic)
+		if not profile then
+			return original.can_repair_item(item_name, item_condition, mechanic)
+		end
+		return profile_can_repair(profile, item_name, item_condition)
+	end
+	inventory_upgrades.question_repair_item = function(item_name, item_condition, can, mechanic)
+		local profile = select_profile(mechanic)
+		if not profile then
+			return original.question_repair_item(item_name, item_condition, can, mechanic)
+		end
+		return profile_repair_question(profile, item_name, item_condition)
+	end
+	inventory_upgrades.effect_repair_item = function(item_name, item_condition, ...)
+		local profile = state.profile
+		if not profile then return original.effect_repair_item(item_name, item_condition, ...) end
+		-- A zero stock multiplier keeps the original delayed-repair/lending
+		-- behavior while preventing it from charging a second time. Charge only
+		-- after that callback succeeds so a script error cannot consume money.
+		with_price_multiplier(0.0, original.effect_repair_item, item_name, item_condition, ...)
+		db.actor:give_money(-repair_price(profile, item_name, item_condition))
+	end
+	state.installed = true
+end
+
+local function apply_profile(profile, value)
+	install()
+	state.profile = profile
+	state.discount = tonumber(value) or 1.0
+	if state.discount < 0.0 then state.discount = 1.0 end
+	state.original.mech_discount(state.discount)
+end
+
+function install_callbacks()
+	install()
+end
+
+function apply_discount(value)
+	apply_profile(PROFILES.novikov, value)
+end
+
+function apply_nitro()
+	apply_profile(PROFILES.nitro, 1.0)
+end

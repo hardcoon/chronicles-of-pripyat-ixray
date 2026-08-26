@@ -1,0 +1,823 @@
+[lz_orders]
+template_count = 62
+variants_per_client = 5
+; Applied to every generated offer that requests ordinary or rare provisions.
+; The 22% weight factor yields about 39% of five-slot boards with at least one
+; provision order. Rewards are balanced against Hawaiian's buyback as a hard
+; floor, with an additional contract premium for scarcity and logistics.
+ration_offer_weight_percent = 22
+; Tier 3 contains rare, non-story deliverables used only by every fifth variant.
+tier_3_medicine = medkit_scientic, drug_antidot, drug_psy_blockade
+tier_3_rations = lz_nm_strange_stew, lz_nm_strange_shot, lz_nm_strange_drink
+tier_3_repair = lz_nm_recovered_upgrade, itm_field_upgrade_kit_blue, itm_field_upgrade_kit_red, itm_field_upgrade_kit_yellow, itm_field_upgrade_kit_green
+tier_3_mutant = mutant_part_chimera_claw, mutant_part_chimera_kogot, mutant_part_burer_hand, mutant_part_pseudogigant_eye, mutant_part_pseudogigant_hand, mutant_part_controller_glass, mutant_part_controller_hand
+tier_3_ammo = ammo_pkm_100
+template_1 = lz_order_frontline_medicine
+template_2 = lz_order_military_medicine
+template_3 = lz_order_science_medicine
+template_4 = lz_order_radiation_kit
+template_5 = lz_order_field_stimulants
+template_6 = lz_order_psi_support
+template_7 = lz_order_basic_rations
+template_8 = lz_order_drinks
+template_9 = lz_order_long_rations
+template_10 = lz_order_electronics
+template_11 = lz_order_composites
+template_12 = lz_order_weapon_repairs
+template_13 = lz_order_armor_repairs
+template_14 = lz_order_common_mutants
+template_15 = lz_order_hunter_samples
+template_16 = lz_order_rare_mutants
+template_17 = lz_order_common_artefacts
+template_18 = lz_order_thermal_artefacts
+template_19 = lz_order_lokhmaty_reserve
+template_20 = lz_order_vist_ammo
+template_21 = lz_order_north_loop_caravan
+template_22 = lz_order_tamara_sutures
+template_23 = lz_order_rusty_nut
+template_24 = lz_order_quiet_cordon
+template_25 = lz_order_vereshchagin_samples
+template_26 = lz_order_gloomy_hunter
+template_27 = lz_order_fifth_number
+template_28 = lz_order_danila_moss
+template_29 = lz_order_rosa_hospital
+template_30 = lz_order_echo_lab
+template_31 = lz_order_arsen_long
+template_32 = lz_order_three_candles
+template_33 = lz_order_ignat_coil
+template_34 = lz_order_horizon_expedition
+template_35 = lz_order_ladoga_guard
+template_36 = lz_order_nina_cross
+template_37 = lz_order_black_wire
+template_38 = lz_order_yakov_whisper
+template_39 = lz_order_spectrum_modification
+template_40 = lz_order_spectrum_urgent_modification
+template_41 = lz_order_spectrum_mesomodification
+template_42 = lz_order_spectrum_scarce_mesomodification
+template_43 = lz_order_spectrum_hypermodification
+template_44 = lz_order_thermosphere_modification
+template_45 = lz_order_thermosphere_urgent_modification
+template_46 = lz_order_thermosphere_mesomodification
+template_47 = lz_order_thermosphere_scarce_mesomodification
+template_48 = lz_order_thermosphere_hypermodification
+template_49 = lz_order_three_candles_modification
+template_50 = lz_order_three_candles_urgent_modification
+template_51 = lz_order_three_candles_mesomodification
+template_52 = lz_order_three_candles_scarce_mesomodification
+template_53 = lz_order_three_candles_hypermodification
+template_54 = lz_order_yakov_field_anatomy
+template_55 = lz_order_yakov_common_tissue
+template_56 = lz_order_yakov_hunter_trophies
+template_57 = lz_order_yakov_field_meat
+template_58 = lz_order_yakov_predator_tissue
+template_59 = lz_order_yakov_psi_organs
+template_60 = lz_order_yakov_controller_sample
+template_61 = lz_order_yakov_giant_organs
+template_62 = lz_order_yakov_chimera_trophy
+
+[lz_order_frontline_medicine]
+client = lz_order_frontline_medicine_client
+title = lz_order_frontline_medicine_title
+descr = lz_order_frontline_medicine_descr
+board_descr = lz_order_frontline_medicine_board_descr
+deadline_hours = 24
+reward = 1300
+weight = 10
+item_1 = medkit, 4
+item_2 = bandage, 6
+
+[lz_order_military_medicine]
+client = lz_order_military_medicine_client
+title = lz_order_military_medicine_title
+descr = lz_order_military_medicine_descr
+board_descr = lz_order_military_medicine_board_descr
+deadline_hours = 48
+reward = 2200
+weight = 8
+item_1 = medkit_army, 2
+item_2 = antirad, 3
+item_3 = bandage, 4
+
+[lz_order_science_medicine]
+client = lz_order_science_medicine_client
+title = lz_order_science_medicine_title
+descr = lz_order_science_medicine_descr
+board_descr = lz_order_science_medicine_board_descr
+deadline_hours = 72
+reward = 3450
+weight = 5
+item_1 = medkit_scientic, 2
+item_2 = drug_antidot, 2
+
+[lz_order_radiation_kit]
+client = lz_order_radiation_kit_client
+title = lz_order_radiation_kit_title
+descr = lz_order_radiation_kit_descr
+board_descr = lz_order_radiation_kit_board_descr
+deadline_hours = 48
+reward = 2350
+weight = 8
+item_1 = antirad, 5
+item_2 = drug_radioprotector, 2
+
+[lz_order_field_stimulants]
+client = lz_order_field_stimulants_client
+title = lz_order_field_stimulants_title
+descr = lz_order_field_stimulants_descr
+board_descr = lz_order_field_stimulants_board_descr
+deadline_hours = 24
+reward = 3750
+weight = 8
+item_1 = drug_booster, 2
+item_2 = drug_sleep, 2
+item_3 = drug_coagulant, 3
+
+[lz_order_psi_support]
+client = lz_order_psi_support_client
+title = lz_order_psi_support_title
+descr = lz_order_psi_support_descr
+board_descr = lz_order_psi_support_board_descr
+deadline_hours = 48
+reward = 2500
+weight = 6
+item_1 = drug_psy_blockade, 3
+item_2 = medkit_scientic, 1
+
+[lz_order_basic_rations]
+client = lz_order_basic_rations_client
+title = lz_order_basic_rations_title
+descr = lz_order_basic_rations_descr
+board_descr = lz_order_basic_rations_board_descr
+deadline_hours = 24
+reward = 1500
+weight = 10
+item_1 = bread, 4
+item_2 = kolbasa, 4
+item_3 = conserva, 4
+
+[lz_order_drinks]
+client = lz_order_drinks_client
+title = lz_order_drinks_title
+descr = lz_order_drinks_descr
+board_descr = lz_order_drinks_board_descr
+deadline_hours = 24
+reward = 1600
+weight = 9
+item_1 = energy_drink, 6
+item_2 = mineral_water, 4
+
+[lz_order_long_rations]
+client = lz_order_long_rations_client
+title = lz_order_long_rations_title
+descr = lz_order_long_rations_descr
+board_descr = lz_order_long_rations_board_descr
+deadline_hours = 48
+reward = 2200
+weight = 8
+item_1 = conserva, 8
+item_2 = vodka, 3
+
+[lz_order_electronics]
+client = lz_order_electronics_client
+title = lz_order_electronics_title
+descr = lz_order_electronics_descr
+board_descr = lz_order_electronics_board_descr
+deadline_hours = 48
+reward = 5700
+weight = 7
+item_1 = jup_b200_tech_materials_wire, 2
+item_2 = lz_nm_krona_battery, 1
+item_3 = jup_b200_tech_materials_capacitor, 2
+item_4 = jup_b200_tech_materials_transistor, 2
+
+[lz_order_composites]
+client = lz_order_composites_client
+title = lz_order_composites_title
+descr = lz_order_composites_descr
+board_descr = lz_order_composites_board_descr
+deadline_hours = 72
+reward = 3150
+weight = 5
+item_1 = jup_b200_tech_materials_textolite, 2
+item_2 = jup_b200_tech_materials_acetone, 2
+
+[lz_order_weapon_repairs]
+client = lz_order_weapon_repairs_client
+title = lz_order_weapon_repairs_title
+descr = lz_order_weapon_repairs_descr
+board_descr = lz_order_weapon_repairs_board_descr
+deadline_hours = 48
+reward = 5900
+weight = 7
+item_1 = lz_nm_metal_part, 4
+item_2 = jup_b200_tech_materials_wire, 2
+item_3 = lz_nm_used_filter, 1
+
+[lz_order_armor_repairs]
+client = lz_order_armor_repairs_client
+title = lz_order_armor_repairs_title
+descr = lz_order_armor_repairs_descr
+board_descr = lz_order_armor_repairs_board_descr
+deadline_hours = 72
+reward = 7900
+weight = 5
+item_1 = lz_nm_armor_pouch, 1
+item_2 = lz_nm_rubber_padding, 1
+item_3 = lz_nm_combat_boots, 1
+
+[lz_order_common_mutants]
+client = lz_order_common_mutants_client
+title = lz_order_common_mutants_title
+descr = lz_order_common_mutants_descr
+board_descr = lz_order_common_mutants_board_descr
+deadline_hours = 48
+reward = 1300
+weight = 8
+item_1 = mutant_part_dog_meat, 3
+item_2 = mutant_part_flesh_meat, 3
+item_3 = mutant_part_tushkano_meat, 3
+
+[lz_order_hunter_samples]
+client = lz_order_hunter_samples_client
+title = lz_order_hunter_samples_title
+descr = lz_order_hunter_samples_descr
+board_descr = lz_order_hunter_samples_board_descr
+deadline_hours = 48
+reward = 1750
+weight = 6
+item_1 = mutant_part_boar_chop, 3
+item_2 = mutant_part_psevdodog_meat, 2
+
+[lz_order_rare_mutants]
+client = lz_order_rare_mutants_client
+title = lz_order_rare_mutants_title
+descr = lz_order_rare_mutants_descr
+board_descr = lz_order_rare_mutants_board_descr
+deadline_hours = 72
+reward = 3200
+weight = 3
+item_1 = mutant_part_krovosos_meat, 2
+item_2 = mutant_part_chimera_meat, 1
+
+[lz_order_common_artefacts]
+client = lz_order_common_artefacts_client
+title = lz_order_natural_spectrum_title
+descr = lz_order_natural_spectrum_descr
+board_descr = lz_order_natural_spectrum_board_descr
+deadline_hours = 72
+reward = 4320
+weight = 4
+variant_count = 1
+reward_from_item_cost = true
+reward_percent_of_cost = 72
+item_pool = af_blood, af_mincer_meat, af_rusty_thorn, af_rusty_kristall, af_ameba_slime, af_ameba_slug, af_ameba_mica, af_soul, af_rusty_sea-urchin, af_dummy_pellicle, af_dummy_simbion
+
+[lz_order_thermal_artefacts]
+client = lz_order_thermal_artefacts_client
+title = lz_order_natural_thermosphere_title
+descr = lz_order_natural_thermosphere_descr
+board_descr = lz_order_natural_thermosphere_board_descr
+deadline_hours = 72
+reward = 4320
+weight = 3
+variant_count = 1
+reward_from_item_cost = true
+reward_percent_of_cost = 72
+item_pool = af_electra_sparkler, af_dummy_spring, af_electra_moonlight, af_electra_flash, af_drops, af_fireball, af_cristall, lz_nlc_af_dummy_dummy, lz_nlc_af_dummy_battery
+
+[lz_order_lokhmaty_reserve]
+client = lz_order_lokhmaty_reserve_client
+title = lz_order_lokhmaty_reserve_title
+descr = lz_order_lokhmaty_reserve_descr
+board_descr = lz_order_lokhmaty_reserve_board_descr
+deadline_hours = 48
+reward = 2000
+weight = 7
+item_1 = medkit_army, 1
+item_2 = bandage, 4
+item_3 = conserva, 3
+
+[lz_order_vist_ammo]
+client = lz_order_vist_ammo_client
+title = lz_order_vist_ammo_title
+descr = lz_order_vist_ammo_descr
+board_descr = lz_order_vist_ammo_board_descr
+deadline_hours = 72
+reward = 6250
+weight = 4
+fixed_requirements = true
+item_1 = ammo_pkm_100, 1
+item_name_1 = lz_order_vist_ammo_item
+
+[lz_order_north_loop_caravan]
+client = lz_order_north_loop_caravan_client
+title = lz_order_north_loop_caravan_title
+descr = lz_order_north_loop_caravan_descr
+board_descr = lz_order_north_loop_caravan_board_descr
+deadline_hours = 48
+reward = 2100
+weight = 8
+item_1 = conserva, 5
+item_2 = mineral_water, 4
+item_3 = energy_drink, 3
+
+[lz_order_tamara_sutures]
+client = lz_order_tamara_sutures_client
+title = lz_order_tamara_sutures_title
+descr = lz_order_tamara_sutures_descr
+board_descr = lz_order_tamara_sutures_board_descr
+deadline_hours = 48
+reward = 2350
+weight = 6
+item_1 = bandage, 8
+item_2 = drug_coagulant, 3
+item_3 = medkit, 2
+
+[lz_order_rusty_nut]
+client = lz_order_rusty_nut_client
+title = lz_order_rusty_nut_title
+descr = lz_order_rusty_nut_descr
+board_descr = lz_order_rusty_nut_board_descr
+deadline_hours = 72
+reward = 4050
+weight = 5
+item_1 = lz_nm_metal_part, 3
+item_2 = jup_b200_tech_materials_wire, 3
+item_3 = jup_b200_tech_materials_acetone, 1
+
+[lz_order_quiet_cordon]
+client = lz_order_quiet_cordon_client
+title = lz_order_quiet_cordon_title
+descr = lz_order_quiet_cordon_descr
+board_descr = lz_order_quiet_cordon_board_descr
+deadline_hours = 48
+reward = 2300
+weight = 7
+item_1 = antirad, 4
+item_2 = drug_radioprotector, 2
+item_3 = mineral_water, 3
+
+[lz_order_vereshchagin_samples]
+client = lz_order_vereshchagin_samples_client
+title = lz_order_vereshchagin_samples_title
+descr = lz_order_vereshchagin_samples_descr
+board_descr = lz_order_vereshchagin_samples_board_descr
+deadline_hours = 48
+reward = 1400
+weight = 7
+item_1 = mutant_part_dog_tail, 5
+item_2 = mutant_part_flesh_eye, 4
+
+[lz_order_gloomy_hunter]
+client = lz_order_gloomy_hunter_client
+title = lz_order_gloomy_hunter_title
+descr = lz_order_gloomy_hunter_descr
+board_descr = lz_order_gloomy_hunter_board_descr
+deadline_hours = 48
+reward = 1850
+weight = 5
+item_1 = mutant_part_boar_leg, 3
+item_2 = mutant_part_snork_hand, 3
+
+[lz_order_fifth_number]
+client = lz_order_fifth_number_client
+title = lz_order_fifth_number_title
+descr = lz_order_fifth_number_descr
+board_descr = lz_order_fifth_number_board_descr
+deadline_hours = 72
+reward = 7900
+weight = 5
+item_1 = lz_nm_armor_pouch, 1
+item_2 = lz_nm_rubber_padding, 1
+item_3 = lz_nm_combat_boots, 1
+
+[lz_order_danila_moss]
+client = lz_order_danila_moss_client
+title = lz_order_danila_moss_title
+descr = lz_order_danila_moss_descr
+board_descr = lz_order_danila_moss_board_descr
+deadline_hours = 48
+reward = 1900
+weight = 8
+item_1 = bread, 3
+item_2 = conserva, 3
+item_3 = mineral_water, 4
+
+[lz_order_rosa_hospital]
+client = lz_order_rosa_hospital_client
+title = lz_order_rosa_hospital_title
+descr = lz_order_rosa_hospital_descr
+board_descr = lz_order_rosa_hospital_board_descr
+deadline_hours = 72
+reward = 3250
+weight = 4
+item_1 = medkit_army, 2
+item_2 = medkit_scientic, 1
+item_3 = bandage, 6
+
+[lz_order_echo_lab]
+client = lz_order_echo_lab_client
+title = lz_order_echo_lab_title
+descr = lz_order_echo_lab_descr
+board_descr = lz_order_echo_lab_board_descr
+deadline_hours = 72
+reward = 2950
+weight = 4
+item_1 = drug_psy_blockade, 3
+item_2 = drug_antidot, 2
+
+[lz_order_arsen_long]
+client = lz_order_arsen_long_client
+title = lz_order_arsen_long_title
+descr = lz_order_arsen_long_descr
+board_descr = lz_order_arsen_long_board_descr
+deadline_hours = 48
+reward = 2000
+weight = 8
+item_1 = vodka, 4
+item_2 = conserva, 5
+item_3 = kolbasa, 3
+
+[lz_order_three_candles]
+client = lz_order_three_candles_client
+title = lz_order_natural_three_candles_title
+descr = lz_order_natural_three_candles_descr
+board_descr = lz_order_natural_three_candles_board_descr
+deadline_hours = 72
+reward = 4320
+weight = 3
+variant_count = 1
+reward_from_item_cost = true
+reward_percent_of_cost = 72
+item_pool = af_medusa, af_cristall_flower, af_night_star, af_vyvert, af_gravi, af_gold_fish, af_dummy_kolobok, lz_nlc_af_dummy_glassbeads
+
+[lz_order_ignat_coil]
+client = lz_order_ignat_coil_client
+title = lz_order_ignat_coil_title
+descr = lz_order_ignat_coil_descr
+board_descr = lz_order_ignat_coil_board_descr
+deadline_hours = 48
+reward = 6300
+weight = 6
+item_1 = jup_b200_tech_materials_wire, 4
+item_2 = jup_b200_tech_materials_capacitor, 3
+item_3 = jup_b200_tech_materials_transistor, 2
+
+[lz_order_horizon_expedition]
+client = lz_order_horizon_expedition_client
+title = lz_order_horizon_expedition_title
+descr = lz_order_horizon_expedition_descr
+board_descr = lz_order_horizon_expedition_board_descr
+deadline_hours = 72
+reward = 3000
+weight = 5
+item_1 = drug_radioprotector, 2
+item_2 = medkit_army, 2
+item_3 = conserva, 4
+
+[lz_order_ladoga_guard]
+client = lz_order_ladoga_guard_client
+title = lz_order_ladoga_guard_title
+descr = lz_order_ladoga_guard_descr
+board_descr = lz_order_ladoga_guard_board_descr
+deadline_hours = 48
+reward = 2400
+weight = 6
+item_1 = drug_booster, 3
+item_2 = drug_coagulant, 3
+item_3 = medkit_army, 1
+
+[lz_order_nina_cross]
+client = lz_order_nina_cross_client
+title = lz_order_nina_cross_title
+descr = lz_order_nina_cross_descr
+board_descr = lz_order_nina_cross_board_descr
+deadline_hours = 48
+reward = 2200
+weight = 7
+item_1 = medkit, 3
+item_2 = bandage, 8
+item_3 = drug_antidot, 1
+
+[lz_order_black_wire]
+client = lz_order_black_wire_client
+title = lz_order_black_wire_title
+descr = lz_order_black_wire_descr
+board_descr = lz_order_black_wire_board_descr
+deadline_hours = 72
+reward = 3300
+weight = 4
+item_1 = jup_b200_tech_materials_textolite, 3
+item_2 = jup_b200_tech_materials_acetone, 2
+item_3 = lz_nm_metal_part, 3
+
+[lz_order_yakov_whisper]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_whisper_title
+descr = lz_order_yakov_whisper_descr
+board_descr = lz_order_yakov_whisper_board_descr
+deadline_hours = 72
+reward = 13020
+weight = 1
+variant_count = 1
+item_1 = lz_nlc_af_dummy_dummy, 1
+item_2 = mutant_part_chimera_claw, 1
+
+[lz_order_yakov_field_anatomy]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_field_anatomy_title
+descr = lz_order_yakov_field_anatomy_descr
+board_descr = lz_order_yakov_field_anatomy_descr
+deadline_hours = 48
+reward = 9890
+weight = 1
+variant_count = 1
+item_1 = af_dummy_simbion, 1
+item_2 = mutant_part_dog_tail, 2
+item_3 = mutant_part_flesh_eye, 2
+item_4 = mutant_part_boar_leg, 1
+item_5 = mutant_part_tushkano_head, 1
+
+[lz_order_yakov_common_tissue]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_common_tissue_title
+descr = lz_order_yakov_common_tissue_descr
+board_descr = lz_order_yakov_common_tissue_descr
+deadline_hours = 48
+reward = 9340
+weight = 1
+variant_count = 1
+item_1 = af_dummy_spring, 1
+item_2 = mutant_part_dog_meat, 2
+item_3 = mutant_part_flesh_meat, 2
+item_4 = mutant_part_tushkano_meat, 2
+
+[lz_order_yakov_hunter_trophies]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_hunter_trophies_title
+descr = lz_order_yakov_hunter_trophies_descr
+board_descr = lz_order_yakov_hunter_trophies_descr
+deadline_hours = 48
+reward = 10940
+weight = 1
+variant_count = 1
+item_1 = lz_nlc_af_dummy_battery, 1
+item_2 = mutant_part_snork_hand, 1
+item_3 = mutant_part_krovosos_jaw, 1
+item_4 = mutant_part_psevdodog_tail, 1
+
+[lz_order_yakov_field_meat]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_field_meat_title
+descr = lz_order_yakov_field_meat_descr
+board_descr = lz_order_yakov_field_meat_descr
+deadline_hours = 48
+reward = 12220
+weight = 1
+variant_count = 1
+item_1 = af_dummy_kolobok, 1
+item_2 = mutant_part_boar_chop, 2
+item_3 = mutant_part_psevdodog_meat, 1
+
+[lz_order_yakov_predator_tissue]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_predator_tissue_title
+descr = lz_order_yakov_predator_tissue_descr
+board_descr = lz_order_yakov_predator_tissue_descr
+deadline_hours = 72
+reward = 13820
+weight = 1
+variant_count = 1
+item_1 = lz_nlc_af_dummy_glassbeads, 1
+item_2 = mutant_part_krovosos_meat, 1
+item_3 = mutant_part_chimera_meat, 1
+
+[lz_order_yakov_psi_organs]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_psi_organs_title
+descr = lz_order_yakov_psi_organs_descr
+board_descr = lz_order_yakov_psi_organs_descr
+deadline_hours = 72
+reward = 17720
+weight = 1
+variant_count = 1
+item_1 = af_dummy_pellicle, 1
+item_2 = mutant_part_burer_hand, 1
+item_3 = mutant_part_controller_hand, 1
+
+[lz_order_yakov_controller_sample]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_controller_sample_title
+descr = lz_order_yakov_controller_sample_descr
+board_descr = lz_order_yakov_controller_sample_descr
+deadline_hours = 72
+reward = 15720
+weight = 1
+variant_count = 1
+item_1 = lz_nlc_af_dummy_dummy, 1
+item_2 = mutant_part_controller_glass, 1
+
+[lz_order_yakov_giant_organs]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_giant_organs_title
+descr = lz_order_yakov_giant_organs_descr
+board_descr = lz_order_yakov_giant_organs_descr
+deadline_hours = 72
+reward = 16690
+weight = 1
+variant_count = 1
+item_1 = af_dummy_simbion, 1
+item_2 = mutant_part_pseudogigant_eye, 1
+item_3 = mutant_part_pseudogigant_hand, 1
+
+[lz_order_yakov_chimera_trophy]
+client = lz_order_yakov_whisper_client
+title = lz_order_yakov_chimera_trophy_title
+descr = lz_order_yakov_chimera_trophy_descr
+board_descr = lz_order_yakov_chimera_trophy_descr
+deadline_hours = 72
+reward = 10140
+weight = 1
+variant_count = 1
+item_1 = af_dummy_spring, 1
+item_2 = mutant_part_chimera_kogot, 1
+
+[lz_order_spectrum_modification]
+client = lz_order_common_artefacts_client
+title = lz_order_spectrum_modification_title
+descr = lz_order_spectrum_modification_descr
+board_descr = lz_order_spectrum_modification_descr
+deadline_hours = 48
+reward = 12960
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_spirit_1, af_dik_1, af_armor_1
+
+[lz_order_spectrum_urgent_modification]
+client = lz_order_common_artefacts_client
+title = lz_order_spectrum_urgent_modification_title
+descr = lz_order_spectrum_urgent_modification_descr
+board_descr = lz_order_spectrum_urgent_modification_descr
+deadline_hours = 24
+reward = 15120
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_spirit_1, af_dik_1, af_armor_1
+
+[lz_order_spectrum_mesomodification]
+client = lz_order_common_artefacts_client
+title = lz_order_spectrum_mesomodification_title
+descr = lz_order_spectrum_mesomodification_descr
+board_descr = lz_order_spectrum_mesomodification_descr
+deadline_hours = 72
+reward = 18720
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_spirit_2, af_dik_2, af_armor_2
+
+[lz_order_spectrum_scarce_mesomodification]
+client = lz_order_common_artefacts_client
+title = lz_order_spectrum_scarce_mesomodification_title
+descr = lz_order_spectrum_scarce_mesomodification_descr
+board_descr = lz_order_spectrum_scarce_mesomodification_descr
+deadline_hours = 48
+reward = 21840
+weight = 1
+variant_count = 1
+recipe_gated = true
+item_pool = af_spirit_2, af_dik_2, af_armor_2
+
+[lz_order_spectrum_hypermodification]
+client = lz_order_common_artefacts_client
+title = lz_order_spectrum_hypermodification_title
+descr = lz_order_spectrum_hypermodification_descr
+board_descr = lz_order_spectrum_hypermodification_descr
+deadline_hours = 72
+reward = 27360
+weight = 1
+variant_count = 1
+recipe_gated = true
+item_pool = af_spirit_3, af_dik_3, af_armor_3
+
+[lz_order_thermosphere_modification]
+client = lz_order_thermal_artefacts_client
+title = lz_order_thermosphere_modification_title
+descr = lz_order_thermosphere_modification_descr
+board_descr = lz_order_thermosphere_modification_descr
+deadline_hours = 48
+reward = 12960
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_cry_1, af_pudd_1
+
+[lz_order_thermosphere_urgent_modification]
+client = lz_order_thermal_artefacts_client
+title = lz_order_thermosphere_urgent_modification_title
+descr = lz_order_thermosphere_urgent_modification_descr
+board_descr = lz_order_thermosphere_urgent_modification_descr
+deadline_hours = 24
+reward = 15120
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_cry_1, af_pudd_1
+
+[lz_order_thermosphere_mesomodification]
+client = lz_order_thermal_artefacts_client
+title = lz_order_thermosphere_mesomodification_title
+descr = lz_order_thermosphere_mesomodification_descr
+board_descr = lz_order_thermosphere_mesomodification_descr
+deadline_hours = 72
+reward = 18720
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_cry_2, af_pudd_2
+
+[lz_order_thermosphere_scarce_mesomodification]
+client = lz_order_thermal_artefacts_client
+title = lz_order_thermosphere_scarce_mesomodification_title
+descr = lz_order_thermosphere_scarce_mesomodification_descr
+board_descr = lz_order_thermosphere_scarce_mesomodification_descr
+deadline_hours = 48
+reward = 21840
+weight = 1
+variant_count = 1
+recipe_gated = true
+item_pool = af_cry_2, af_pudd_2
+
+[lz_order_thermosphere_hypermodification]
+client = lz_order_thermal_artefacts_client
+title = lz_order_thermosphere_hypermodification_title
+descr = lz_order_thermosphere_hypermodification_descr
+board_descr = lz_order_thermosphere_hypermodification_descr
+deadline_hours = 72
+reward = 27360
+weight = 1
+variant_count = 1
+recipe_gated = true
+item_pool = af_cry_3, af_pudd_3
+
+[lz_order_three_candles_modification]
+client = lz_order_three_candles_client
+title = lz_order_three_candles_modification_title
+descr = lz_order_three_candles_modification_descr
+board_descr = lz_order_three_candles_modification_descr
+deadline_hours = 48
+reward = 12960
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_kol_1, af_babka_1
+
+[lz_order_three_candles_urgent_modification]
+client = lz_order_three_candles_client
+title = lz_order_three_candles_urgent_modification_title
+descr = lz_order_three_candles_urgent_modification_descr
+board_descr = lz_order_three_candles_urgent_modification_descr
+deadline_hours = 24
+reward = 15120
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_kol_1, af_babka_1
+
+[lz_order_three_candles_mesomodification]
+client = lz_order_three_candles_client
+title = lz_order_three_candles_mesomodification_title
+descr = lz_order_three_candles_mesomodification_descr
+board_descr = lz_order_three_candles_mesomodification_descr
+deadline_hours = 72
+reward = 18720
+weight = 2
+variant_count = 1
+recipe_gated = true
+item_pool = af_kol_2, af_babka_2
+
+[lz_order_three_candles_scarce_mesomodification]
+client = lz_order_three_candles_client
+title = lz_order_three_candles_scarce_mesomodification_title
+descr = lz_order_three_candles_scarce_mesomodification_descr
+board_descr = lz_order_three_candles_scarce_mesomodification_descr
+deadline_hours = 48
+reward = 21840
+weight = 1
+variant_count = 1
+recipe_gated = true
+item_pool = af_kol_2, af_babka_2
+
+[lz_order_three_candles_hypermodification]
+client = lz_order_three_candles_client
+title = lz_order_three_candles_hypermodification_title
+descr = lz_order_three_candles_hypermodification_descr
+board_descr = lz_order_three_candles_hypermodification_descr
+deadline_hours = 72
+reward = 27360
+weight = 1
+variant_count = 1
+recipe_gated = true
+item_pool = af_kol_3, af_babka_3

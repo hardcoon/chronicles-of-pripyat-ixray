@@ -1,0 +1,85 @@
+class "opt_gameplay" (CUIWindow)
+
+function opt_gameplay:__init() super()
+end
+
+function opt_gameplay:__finalize()
+end
+
+function opt_gameplay:InitControls(x, y, xml, handler)
+    self:SetWndPos(vector2():set(x,y))
+    self:SetWndSize(vector2():set(738,416))
+    self:SetAutoDelete(true)
+    self.scroll_v = xml:InitScrollView("main_dialog:scroll_v", self)
+
+    local _st
+    local addControl = function(control)
+        self.scroll_v:AddWindow(control, true)
+        control:SetAutoDelete(false)
+    end
+    local addStandard = function(caption, control, kind)
+        _st = xml:InitStatic("video_adv:templ_item", nil)
+        xml:InitStatic("tab_gameplay:" .. caption, _st)
+        if kind == "combo" then xml:InitComboBox("tab_gameplay:" .. control, _st)
+        elseif kind == "track" then xml:InitTrackBar("tab_gameplay:" .. control, _st)
+        else xml:InitCheck("tab_gameplay:" .. control, _st) end
+        addControl(_st)
+    end
+
+    addStandard("cap_lang", "list_lang", "combo")
+    addStandard("cap_bobbing_factor", "track_bobbing_factor", "track")
+    addStandard("cap_hit_slowmo", "check_hit_slowmo", "check")
+    addStandard("cap_wpn_aim_toggle", "check_wpn_aim_toggle", "check")
+    addStandard("cap_check_crosshair", "check_crosshair", "check")
+    addStandard("cap_check_dyn_crosshair", "check_dyn_crosshair", "check")
+    addStandard("cap_check_show_weapon", "check_show_weapon", "check")
+    addStandard("cap_check_dist", "check_dist", "check")
+    addStandard("cap_check_tips", "check_tips", "check")
+    addStandard("cap_check_crouch_toggle", "check_crouch_toggle", "check")
+    addStandard("cap_check_important_save", "check_important_save", "check")
+    addStandard("cap_check_hud_draw", "check_hud_draw", "check")
+    addStandard("cap_rs_fps_show", "check_rs_fps_show", "check")
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_gameplay:cap_developer_access", _st)
+    self.check_developer_access = xml:InitCheck("tab_gameplay:check_developer_access", _st)
+    addControl(_st)
+
+    local chat_xml = CScriptXmlInit()
+    chat_xml:ParseFile("pf_irc_options.xml")
+    _st = chat_xml:InitStatic("chat_item", nil)
+    chat_xml:InitStatic("chat_item:caption", _st)
+    self.check_game_chat = chat_xml:InitCheck("chat_item:check", _st)
+    chat_xml:InitStatic("chat_item:note", _st)
+    addControl(_st)
+end
+
+function opt_gameplay:SetDeveloperAccessValue()
+    self.developer_access_backup = pf_stash_qa and
+        pf_stash_qa.is_developer_access_enabled and
+        pf_stash_qa.is_developer_access_enabled() == true or false
+    self.check_developer_access:SetCheck(self.developer_access_backup)
+
+    self.game_chat_backup = pf_irc_chat and pf_irc_chat.is_enabled and
+        pf_irc_chat.is_enabled() == true or false
+    self.check_game_chat:SetCheck(self.game_chat_backup)
+end
+
+function opt_gameplay:SaveDeveloperAccessValue()
+    local developer_enabled = self.check_developer_access:GetCheck() == true
+    local developer_saved = true
+    if developer_enabled ~= self.developer_access_backup then
+        developer_saved = pf_stash_qa and pf_stash_qa.set_developer_access_enabled and
+            pf_stash_qa.set_developer_access_enabled(developer_enabled) == true or false
+        if developer_saved then self.developer_access_backup = developer_enabled end
+    end
+
+    local chat_enabled = self.check_game_chat:GetCheck() == true
+    local chat_saved = true
+    if chat_enabled ~= self.game_chat_backup then
+        chat_saved = pf_irc_chat and pf_irc_chat.set_enabled and
+            pf_irc_chat.set_enabled(chat_enabled) == true or false
+        if chat_saved then self.game_chat_backup = chat_enabled end
+    end
+    return developer_saved and chat_saved
+end

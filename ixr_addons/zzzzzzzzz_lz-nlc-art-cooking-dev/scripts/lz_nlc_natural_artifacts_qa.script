@@ -1,0 +1,246 @@
+-- Developer-only QA chest for all 26 approved class I-IV NLC artifacts.
+-- The active lz_new_mechanics facade owns the load/update callbacks.
+
+local state = {
+	initialized = false,
+	ensure_due = nil,
+	scan_due = 0,
+	audit_due = nil,
+	audit_done = false,
+	mode_wait_until = nil
+}
+local impl = {}
+local settings = {
+	storage_key = "lz_nlc_natural_artifacts_qa",
+	level = "pripyat_full",
+	start_stash_section = "lz_nm_start_stash",
+	cooking_stash_section = "lz_nlc_qa_art_stash",
+	stash_section = "lz_nlc_natural_qa_art_stash",
+	spacing = 1.4,
+	revision = 3,
+	mode_grace_ms = 10000
+}
+
+-- Family order is intentional: each natural line stays adjacent in the box.
+local items = {
+	"af_medusa", "af_cristall_flower", "af_night_star", "af_dummy_simbion",
+	"af_vyvert", "af_gravi", "af_gold_fish",
+	"af_blood", "af_mincer_meat", "af_soul",
+	"af_electra_sparkler", "af_dummy_spring", "af_electra_moonlight", "lz_nlc_af_dummy_battery", "af_electra_flash",
+	"af_rusty_thorn", "af_rusty_kristall", "af_rusty_sea-urchin",
+	"af_drops", "af_fireball", "af_cristall",
+	"af_ameba_slime", "af_ameba_slug", "af_ameba_mica",
+	"af_dummy_kolobok", "lz_nlc_af_dummy_glassbeads",
+	"lz_nlc_af_dummy_dummy", "af_dummy_pellicle"
+}
+
+function impl.developer_mode()
+	return pf_stash_qa and type(pf_stash_qa.is_developer_mode) == "function" and
+		pf_stash_qa.is_developer_mode() == true
+end
+
+function impl.storage()
+	local root = alife_storage_manager.get_state()
+	if type(root[settings.storage_key]) ~= "table" then
+		root[settings.storage_key] = {}
+	end
+	return root[settings.storage_key]
+end
+
+function impl.object_by_id(id, section)
+	id = tonumber(id) or -1
+	local object = id >= 0 and alife():object(id, true) or nil
+	if object and object:section_name() == section then return object end
+	return nil
+end
+
+function impl.find_chests(data, now)
+	local start_id = xr_logic.pstor_retrieve(db.actor, "lz_nm_start_stash_id", -1)
+	local root = alife_storage_manager.get_state()
+	local cooking_data = type(root.lz_nlc_art_cooking) == "table" and
+		root.lz_nlc_art_cooking or {}
+	local start_stash = impl.object_by_id(start_id, settings.start_stash_section)
+	local cooking_stash = impl.object_by_id(
+		cooking_data.qa_art_stash_id, settings.cooking_stash_section
+	)
+	local stash = impl.object_by_id(data.stash_id, settings.stash_section)
+	if start_stash and cooking_stash and stash then
+		return start_stash, cooking_stash, stash
+	end
+	if now < state.scan_due then return start_stash, cooking_stash, stash end
+
+	-- Only a short startup fallback: at most one ALife pass per second until the
+	-- two established QA chests are available.
+	state.scan_due = now + 1000
+	for _, object in alife():objects() do
+		local section = object:section_name()
+		if not start_stash and section == settings.start_stash_section then
+			start_stash = object
+		elseif not cooking_stash and section == settings.cooking_stash_section then
+			cooking_stash = object
+		elseif not stash and section == settings.stash_section then
+			stash = object
+			data.stash_id = object.id
+		end
+	end
+	return start_stash, cooking_stash, stash
+end
+
+function impl.spawn_stash(start_stash, cooking_stash)
+	if not impl.developer_mode() or not start_stash or not cooking_stash then return nil end
+	local dx = cooking_stash.position.x - start_stash.position.x
+	local dz = cooking_stash.position.z - start_stash.position.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	local right_x, right_z
+	if length > 0.1 then
+		right_x = dx / length
+		right_z = dz / length
+	else
+		local direction = db.actor:direction()
+		local forward_length = math.sqrt(
+			direction.x * direction.x + direction.z * direction.z
+		)
+		local forward_x = forward_length > 0.001 and direction.x / forward_length or 1
+		local forward_z = forward_length > 0.001 and direction.z / forward_length or 0
+		right_x = -forward_z
+		right_z = forward_x
+	end
+	local position = vector():set(
+		cooking_stash.position.x + right_x * settings.spacing,
+		cooking_stash.position.y,
+		cooking_stash.position.z + right_z * settings.spacing
+	)
+	local stash = alife():create(
+		settings.stash_section,
+		position,
+		cooking_stash.m_level_vertex_id,
+		cooking_stash.m_game_vertex_id
+	)
+	if stash then
+		local yaw = cooking_stash.angle and cooking_stash.angle.y or
+			math.rad(math.random(0, 359))
+		stash.angle = vector():set(0, yaw, 0)
+	end
+	return stash
+end
+
+function impl.fill_stash(stash)
+	local counts = {}
+	for _, section in ipairs(items) do counts[section] = 0 end
+	for child_id in alife():get_children(stash) do
+		local child = alife():object(child_id, true)
+		local section = child and child:section_name() or nil
+		if section and counts[section] ~= nil then
+			counts[section] = counts[section] + 1
+		end
+	end
+	local created = 0
+	for _, section in ipairs(items) do
+		if counts[section] < 1 and alife():create(section, vector(), 0, 0, stash.id) then
+			created = created + 1
+		end
+	end
+	return created
+end
+
+function impl.ensure_stash(now)
+	if not state.ensure_due or now < state.ensure_due then return end
+	if level.name() ~= settings.level then
+		state.ensure_due = nil
+		return
+	end
+	if not impl.developer_mode() then
+		state.ensure_due = state.mode_wait_until and now < state.mode_wait_until and
+			now + 250 or nil
+		return
+	end
+
+	local data = impl.storage()
+	local start_stash, cooking_stash, stash = impl.find_chests(data, now)
+	if stash and tonumber(data.revision) == settings.revision then
+		state.ensure_due = nil
+		return
+	end
+	if not stash and start_stash and cooking_stash then
+		stash = impl.spawn_stash(start_stash, cooking_stash)
+		if stash then data.stash_id = stash.id end
+	end
+	if not stash then
+		state.ensure_due = now + 500
+		return
+	end
+
+	local created = impl.fill_stash(stash)
+	data.stash_id = stash.id
+	data.revision = settings.revision
+	state.ensure_due = nil
+	if start_stash and cooking_stash then
+		local first_dx = cooking_stash.position.x - start_stash.position.x
+		local first_dz = cooking_stash.position.z - start_stash.position.z
+		local second_dx = stash.position.x - cooking_stash.position.x
+		local second_dz = stash.position.z - cooking_stash.position.z
+		printf(
+			"lz_nlc_natural_artifacts_qa: chest ready with [%s] added artifact(s); " ..
+				"spacing=[%.2f, %.2f]; positions=[%.2f/%.2f, %.2f/%.2f, %.2f/%.2f]",
+			tostring(created),
+			math.sqrt(first_dx * first_dx + first_dz * first_dz),
+			math.sqrt(second_dx * second_dx + second_dz * second_dz),
+			start_stash.position.x, start_stash.position.z,
+			cooking_stash.position.x, cooking_stash.position.z,
+			stash.position.x, stash.position.z
+		)
+	else
+		printf(
+			"lz_nlc_natural_artifacts_qa: chest ready with [%s] added artifact(s)",
+			tostring(created)
+		)
+	end
+end
+
+function impl.audit_outside_developer_mode(now)
+	if state.audit_done or not state.audit_due or now < state.audit_due then return end
+	state.audit_done = true
+	if impl.developer_mode() then return end
+
+	local stashes = {}
+	for _, object in alife():objects() do
+		if object:section_name() == settings.stash_section then
+			table.insert(stashes, object)
+		end
+	end
+	for _, stash in ipairs(stashes) do
+		local children = {}
+		for child_id in alife():get_children(stash) do table.insert(children, child_id) end
+		for _, child_id in ipairs(children) do
+			local child = alife():object(child_id, true)
+			if child then alife():release(child, true) end
+		end
+		alife():release(stash, true)
+	end
+	local data = impl.storage()
+	data.stash_id = nil
+	data.revision = nil
+	if #stashes > 0 then
+		printf(
+			"lz_nlc_natural_artifacts_qa: removed [%s] chest(es) outside developer mode",
+			tostring(#stashes)
+		)
+	end
+end
+
+function on_game_load()
+	local now = time_global()
+	state.initialized = true
+	state.ensure_due = now + 1000
+	state.scan_due = now
+	state.audit_due = now + settings.mode_grace_ms
+	state.audit_done = false
+	state.mode_wait_until = now + settings.mode_grace_ms
+end
+
+function update(now)
+	if not db.actor then return end
+	if not state.initialized then on_game_load() end
+	impl.ensure_stash(now)
+	impl.audit_outside_developer_mode(now)
+end

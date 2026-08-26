@@ -1,0 +1,156 @@
+-- Paid stash-coordinate service for the Yanov Hawaiian on pripyat_full.
+-- The rotating stash manager remains the sole owner of stash selection and
+-- marker creation; this module owns only prices and per-calendar-day limits.
+
+local STATE_KEY = "pf_hawaiian_stash_sales_v1"
+local STATE_VERSION = 1
+local DAILY_LIMIT = 5
+local INTRO_INFO = "pf_yanov_hawaiian_intro_done"
+local HINT_MESSAGE = "pf_hawaiian_stash_sales_hint_received"
+local offers = {
+	green = { price = 500, limit = 3 },
+	cyan = { price = 3000, limit = 2 },
+	purple = { price = 10000, limit = 1 },
+}
+local offer_order = { "green", "cyan", "purple" }
+local impl = {}
+
+function impl.current_day_key()
+	if not game or not game.get_game_time then return nil end
+	local year, month, day, hour, minute, second, millisecond = 0, 0, 0, 0, 0, 0, 0
+	year, month, day, hour, minute, second, millisecond = game.get_game_time():get(
+		year, month, day, hour, minute, second, millisecond
+	)
+	return string.format("%04d-%02d-%02d", year, month, day)
+end
+
+function impl.new_state(day_key)
+	return {
+		version = STATE_VERSION,
+		day_key = day_key,
+		total = 0,
+		by_tier = { green = 0, cyan = 0, purple = 0 },
+	}
+end
+
+function impl.normalize_count(value)
+	return math.max(0, math.floor(tonumber(value) or 0))
+end
+
+function impl.get_state()
+	local day_key = impl.current_day_key()
+	if not day_key or not alife_storage_manager or not alife_storage_manager.get_state then
+		return nil
+	end
+	local root = alife_storage_manager.get_state()
+	if type(root) ~= "table" then return nil end
+	local state = root[STATE_KEY]
+	if type(state) ~= "table" or state.version ~= STATE_VERSION then
+		state = impl.new_state(day_key)
+		root[STATE_KEY] = state
+	end
+	if type(state.by_tier) ~= "table" then state.by_tier = {} end
+	state.total = impl.normalize_count(state.total)
+	for _, tier in ipairs(offer_order) do
+		state.by_tier[tier] = impl.normalize_count(state.by_tier[tier])
+	end
+	if state.day_key ~= day_key then
+		state.day_key = day_key
+		state.total = 0
+		for _, tier in ipairs(offer_order) do state.by_tier[tier] = 0 end
+	end
+	return state
+end
+
+function impl.stash_api_ready()
+	return pf_dynamic_stashes ~= nil
+		and type(pf_dynamic_stashes.can_grant_hint) == "function"
+		and type(pf_dynamic_stashes.grant_hint) == "function"
+end
+
+function impl.tier_has_capacity(state, tier)
+	local offer = offers[tier]
+	return state ~= nil and offer ~= nil and state.total < DAILY_LIMIT
+		and state.by_tier[tier] < offer.limit
+end
+
+function impl.tier_has_coordinates(state, tier)
+	return impl.tier_has_capacity(state, tier) and impl.stash_api_ready()
+		and pf_dynamic_stashes.can_grant_hint(tier) == true
+end
+
+function impl.can_buy(tier)
+	local state = impl.get_state()
+	local offer = offers[tier]
+	return state ~= nil and offer ~= nil and db.actor ~= nil and dialogs ~= nil
+		and has_alife_info(INTRO_INFO)
+		and type(dialogs.relocate_money_from_actor) == "function"
+		and db.actor:money() >= offer.price
+		and impl.tier_has_coordinates(state, tier)
+end
+
+function impl.buy(first_speaker, second_speaker, tier)
+	if not impl.can_buy(tier) then return false end
+	local state = impl.get_state()
+	local offer = offers[tier]
+	if not state or not offer or not impl.tier_has_coordinates(state, tier)
+		or db.actor:money() < offer.price then return false end
+	-- The marker is granted first. Payment and counters change only after the
+	-- stash manager confirms that a real hidden coordinate was revealed.
+	if pf_dynamic_stashes.grant_hint(tier, HINT_MESSAGE) ~= true then return false end
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, offer.price)
+	state.total = state.total + 1
+	state.by_tier[tier] = state.by_tier[tier] + 1
+	return true
+end
+
+function can_buy_green(first_speaker, second_speaker)
+	return impl.can_buy("green")
+end
+
+function can_buy_cyan(first_speaker, second_speaker)
+	return impl.can_buy("cyan")
+end
+
+function can_buy_purple(first_speaker, second_speaker)
+	return impl.can_buy("purple")
+end
+
+function daily_sold_out(first_speaker, second_speaker)
+	local state = impl.get_state()
+	return state ~= nil and state.total >= DAILY_LIMIT
+end
+
+function no_coordinates_available(first_speaker, second_speaker)
+	local state = impl.get_state()
+	if not state or state.total >= DAILY_LIMIT then return false end
+	for _, tier in ipairs(offer_order) do
+		if impl.tier_has_coordinates(state, tier) then return false end
+	end
+	return true
+end
+
+function no_affordable_coordinates(first_speaker, second_speaker)
+	local state = impl.get_state()
+	if not state or not db.actor or state.total >= DAILY_LIMIT then return false end
+	local found_coordinates = false
+	for _, tier in ipairs(offer_order) do
+		if impl.tier_has_coordinates(state, tier) then
+			found_coordinates = true
+			if db.actor:money() >= offers[tier].price then return false end
+		end
+	end
+	return found_coordinates
+end
+
+function buy_green(first_speaker, second_speaker)
+	return impl.buy(first_speaker, second_speaker, "green")
+end
+
+function buy_cyan(first_speaker, second_speaker)
+	return impl.buy(first_speaker, second_speaker, "cyan")
+end
+
+function buy_purple(first_speaker, second_speaker)
+	return impl.buy(first_speaker, second_speaker, "purple")
+end

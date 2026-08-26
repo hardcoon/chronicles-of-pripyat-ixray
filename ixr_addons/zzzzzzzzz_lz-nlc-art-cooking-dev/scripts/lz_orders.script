@@ -1,0 +1,1971 @@
+local SLOT_COUNT = 5
+local ACTIVE_LIMIT = 5
+local GUARANTEED_SIMPLE_SLOT = 1
+local DAY_SECONDS = 24 * 60 * 60
+local PAYMENT_DELAY = DAY_SECONDS
+local UPDATE_INTERVAL_MS = 1000
+local USE_DISTANCE = 3.0
+local BOARD_DESCRIPTION_WIDTH = 46
+local ORDER_SPOT = "secondary_task_location"
+local LEGACY_ORDER_SPOT = "pf_stash_orange"
+local CONFIG_PATH = "misc\\lz_orders.ltx"
+
+local STATE_VERSION_KEY = "lz_orders_state_version"
+local CURRENT_STATE_VERSION = 3
+local SCHEDULE_KEY = "lz_orders_schedule"
+local NEXT_REFRESH_KEY = "lz_orders_next_refresh"
+local SLOTS_KEY = "lz_orders_slots"
+local ACTIVE_KEY = "lz_orders_active"
+local PENDING_KEY = "lz_orders_pending"
+local COUNTER_KEY = "lz_orders_counter"
+local DROPBOX_ID_KEY = "lz_orders_dropbox_kpp_id"
+local CAPTURED_DROP_POINTS_KEY = "lz_orders_captured_drop_points_v1"
+local CAPTURED_DROP_POINTS_LIMIT = 24
+
+local REFRESH_HOUR_POOL = { 0, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22 }
+
+local drop_points = {
+	kpp_temp = {
+		name = "lz_order_point_numbered",
+		display_index = 1,
+		level = "pripyat_full",
+		story_id = "",
+		position = { 111.3497, 0.4895, -1240.1392 },
+		level_vertex_id = 7574613,
+		game_vertex_id = 355,
+		yaw = -1.548253,
+		section = "lz_nm_order_dropbox",
+		object_key = DROPBOX_ID_KEY
+	},
+	outskirts_01 = { name = "lz_order_point_numbered", display_index = 2, level = "pripyat_full", story_id = "", position = { 295.3276, -0.0039, -1318.9708 }, level_vertex_id = 8515706, game_vertex_id = 725, yaw = 1.834531, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_01_id" },
+	outskirts_02 = { name = "lz_order_point_numbered", display_index = 3, level = "pripyat_full", story_id = "", position = { 415.9549, 0.8020, -1230.2061 }, level_vertex_id = 9163331, game_vertex_id = 731, yaw = -1.127584, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_02_id" },
+	outskirts_03 = { name = "lz_order_point_numbered", display_index = 4, level = "pripyat_full", story_id = "", position = { 1035.1024, -4.8489, -1244.3427 }, level_vertex_id = 12656820, game_vertex_id = 676, yaw = 1.696489, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_03_id" },
+	outskirts_04 = { name = "lz_order_point_numbered", display_index = 5, level = "pripyat_full", story_id = "", position = { 829.3521, 1.0164, -1123.6385 }, level_vertex_id = 11457437, game_vertex_id = 688, yaw = 3.654339, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_04_id" },
+	outskirts_05 = { name = "lz_order_point_numbered", display_index = 6, level = "pripyat_full", story_id = "", position = { 638.2160, 1.0101, -1201.0396 }, level_vertex_id = 10391011, game_vertex_id = 715, yaw = 0.130216, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_05_id" },
+	outskirts_06 = { name = "lz_order_point_numbered", display_index = 7, level = "pripyat_full", story_id = "", position = { -87.4299, 1.1763, -1348.2297 }, level_vertex_id = 6590903, game_vertex_id = 358, yaw = 3.123263, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_06_id" },
+	outskirts_07 = { name = "lz_order_point_numbered", display_index = 8, level = "pripyat_full", story_id = "", position = { -379.4579, 0.6551, -1281.3739 }, level_vertex_id = 5187742, game_vertex_id = 822, yaw = 3.813381, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_07_id" },
+	outskirts_08 = { name = "lz_order_point_numbered", display_index = 9, level = "pripyat_full", story_id = "", position = { -1379.0995, 1.0990, -941.6079 }, level_vertex_id = 487667, game_vertex_id = 404, yaw = -1.203159, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_08_id" },
+	outskirts_09 = { name = "lz_order_point_numbered", display_index = 10, level = "pripyat_full", story_id = "", position = { -1010.3495, 1.0588, -1245.0408 }, level_vertex_id = 2191553, game_vertex_id = 387, yaw = 0.660994, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_09_id" },
+	outskirts_10 = { name = "lz_order_point_numbered", display_index = 11, level = "pripyat_full", story_id = "", position = { -846.7109, -2.4412, -960.1581 }, level_vertex_id = 2914994, game_vertex_id = 814, yaw = -1.426043, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_10_id" },
+	outskirts_11 = { name = "lz_order_point_numbered", display_index = 12, level = "pripyat_full", story_id = "", position = { -959.8110, 0.0697, -582.7780 }, level_vertex_id = 2425520, game_vertex_id = 415, yaw = 3.019345, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_11_id" },
+	outskirts_12 = { name = "lz_order_point_numbered", display_index = 13, level = "pripyat_full", story_id = "", position = { -1198.7493, 0.0341, -429.7029 }, level_vertex_id = 1351610, game_vertex_id = 423, yaw = 3.609783, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_12_id" },
+	outskirts_13 = { name = "lz_order_point_numbered", display_index = 14, level = "pripyat_full", story_id = "", position = { -1143.3467, 0.2192, -151.2165 }, level_vertex_id = 1597206, game_vertex_id = 430, yaw = -0.243858, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_13_id" },
+	outskirts_14 = { name = "lz_order_point_numbered", display_index = 15, level = "pripyat_full", story_id = "", position = { -1381.0448, 0.0185, -14.1046 }, level_vertex_id = 481827, game_vertex_id = 440, yaw = 3.121019, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_14_id" },
+	outskirts_15 = { name = "lz_order_point_numbered", display_index = 16, level = "pripyat_full", story_id = "", position = { -1287.1624, 1.9837, 1142.2063 }, level_vertex_id = 938591, game_vertex_id = 469, yaw = 0.786751, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_15_id" },
+	outskirts_16 = { name = "lz_order_point_numbered", display_index = 17, level = "pripyat_full", story_id = "", position = { -1272.2491, 1.3898, 1527.6711 }, level_vertex_id = 1014443, game_vertex_id = 487, yaw = 0.007229, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_16_id" },
+	outskirts_17 = { name = "lz_order_point_numbered", display_index = 18, level = "pripyat_full", story_id = "", position = { -1103.9894, 1.2859, 1071.8986 }, level_vertex_id = 1768371, game_vertex_id = 493, yaw = 2.984444, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_17_id" },
+	outskirts_18 = { name = "lz_order_point_numbered", display_index = 19, level = "pripyat_full", story_id = "", position = { 1098.1781, 0.1092, -726.5906 }, level_vertex_id = 13023944, game_vertex_id = 616, yaw = 0.268072, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_18_id" },
+	outskirts_19 = { name = "lz_order_point_numbered", display_index = 20, level = "pripyat_full", story_id = "", position = { 1237.6541, -3.3417, -911.9332 }, level_vertex_id = 13789128, game_vertex_id = 620, yaw = 2.160825, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_19_id" },
+	outskirts_20 = { name = "lz_order_point_numbered", display_index = 21, level = "pripyat_full", story_id = "", position = { 1743.5897, 0.0230, -1359.3273 }, level_vertex_id = 16034349, game_vertex_id = 657, yaw = 0.604406, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_20_id" },
+	outskirts_21 = { name = "lz_order_point_numbered", display_index = 22, level = "pripyat_full", story_id = "", position = { 1038.9524, -2.5711, -991.1502 }, level_vertex_id = 12682051, game_vertex_id = 679, yaw = 3.094797, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_21_id" },
+	outskirts_22 = { name = "lz_order_point_numbered", display_index = 23, level = "pripyat_full", story_id = "", position = { -594.7521, 0.1141, -771.9617 }, level_vertex_id = 4160354, game_vertex_id = 739, yaw = 3.719616, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_22_id" },
+	outskirts_23 = { name = "lz_order_point_numbered", display_index = 24, level = "pripyat_full", story_id = "", position = { -640.0074, -0.1263, -481.0564 }, level_vertex_id = 3945194, game_vertex_id = 753, yaw = 0.954711, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_23_id" },
+	outskirts_24 = { name = "lz_order_point_numbered", display_index = 25, level = "pripyat_full", story_id = "", position = { -900.6365, 0.1038, 864.5895 }, level_vertex_id = 2702663, game_vertex_id = 459, yaw = 1.473826, section = "lz_nm_order_dropbox", object_key = "lz_orders_dropbox_outskirts_24_id" }
+}
+
+local config = nil
+local sysini = nil
+local templates = nil
+local template_by_id = nil
+local state_loaded = false
+local schedule = {}
+local next_refresh = {}
+local slots = {}
+local active = {}
+local pending = {}
+local order_counter = 0
+local next_update = 0
+local next_state_check = nil
+local last_dropbox_tips = {}
+local task_text_synced = {}
+local point_dump_counter = 0
+local impl = {
+	point_object_ids = {},
+	points_reconciled = false,
+	points_spawned_for_session = false
+}
+
+local function trim(value)
+	value = tostring(value or "")
+	value = string.gsub(value, "^%s+", "")
+	value = string.gsub(value, "%s+$", "")
+	return value
+end
+
+local function split(value, separator)
+	local result = {}
+	value = tostring(value or "")
+	separator = separator or "|"
+	local start = 1
+	while true do
+		local pos = string.find(value, separator, start, true)
+		if not pos then
+			table.insert(result, string.sub(value, start))
+			break
+		end
+		table.insert(result, string.sub(value, start, pos - 1))
+		start = pos + #separator
+	end
+	return result
+end
+
+local function get_config()
+	if not config then config = ini_file(CONFIG_PATH) end
+	return config
+end
+
+local function get_sysini()
+	if not sysini then sysini = system_ini() end
+	return sysini
+end
+
+local function translate(id)
+	return game.translate_string(tostring(id or ""))
+end
+
+-- Some stock localization entries are assembled from legacy CP1251 and UTF-8
+-- fragments. Feeding such a mixed item name to the PDA's single-byte text path
+-- leaves the UTF-8 fragment visible as mojibake. Order-only keys keep the board
+-- independent from those duplicate stock string-table entries.
+local order_item_name_overrides = {
+	mineral_water = "lz_order_item_mineral_water"
+}
+
+local function utf8_text(value)
+	value = tostring(value or "")
+	if lz_new_mechanics and lz_new_mechanics.text_for_utf8 then
+		return lz_new_mechanics.text_for_utf8(value)
+	end
+	return value
+end
+
+local function legacy_text(value)
+	value = tostring(value or "")
+	if lz_new_mechanics and lz_new_mechanics.text_for_legacy then
+		return lz_new_mechanics.text_for_legacy(value)
+	end
+	return value
+end
+
+local function utf8_visible_length(value)
+	local _, count = string.gsub(tostring(value or ""), "[^\128-\191]", "")
+	return count
+end
+
+local function wrap_words(value, limit)
+	limit = math.max(12, math.floor(tonumber(limit) or 30))
+	local text = tostring(value or ""):gsub("\\n", "\n")
+	local result = {}
+	for paragraph in string.gmatch(text .. "\n", "(.-)\n") do
+		local line = ""
+		local line_length = 0
+		for word in string.gmatch(paragraph, "%S+") do
+			local word_length = utf8_visible_length(word)
+			if line ~= "" and line_length + 1 + word_length > limit then
+				table.insert(result, line)
+				line = word
+				line_length = word_length
+			else
+				if line ~= "" then
+					line = line .. " " .. word
+					line_length = line_length + 1 + word_length
+				else
+					line = word
+					line_length = word_length
+				end
+			end
+		end
+		if line ~= "" then table.insert(result, line) end
+	end
+	return table.concat(result, "\\n")
+end
+
+local function message(id_or_text)
+	if db.actor and news_manager and news_manager.send_tip then
+		news_manager.send_tip(db.actor, id_or_text, nil, nil, nil, nil)
+	end
+end
+
+function print_actor_position()
+	if not db.actor then
+		printf("! lz_orders: actor is not available")
+		return false
+	end
+	point_dump_counter = point_dump_counter + 1
+	local position = db.actor:position()
+	printf(
+		"LZ_POINT_%02d | level=%s | pos=%.3f, %.3f, %.3f | lvid=%d | gvid=%d",
+		point_dump_counter, level.name(), position.x, position.y, position.z,
+		db.actor:level_vertex_id(), db.actor:game_vertex_id()
+	)
+	return true
+end
+
+function reset_point_counter()
+	point_dump_counter = 0
+	printf("lz_orders: point counter reset")
+end
+
+-- Development helper for collecting the 24 permanent delivery locations.
+-- Captures live in actor pstor, so changing levels, saving or restarting the
+-- game does not lose the route. The log line is already formatted as a Lua
+-- registry entry and can be pasted into drop_points after field collection.
+function impl.decode_captured_drop_points()
+	local result = {}
+	if not db.actor then return result end
+	local raw = tostring(xr_logic.pstor_retrieve(db.actor, CAPTURED_DROP_POINTS_KEY, "") or "")
+	for _, encoded in ipairs(split(raw, "|")) do
+		if encoded ~= "" then
+			local fields = split(encoded, ",")
+			if #fields >= 9 then
+				table.insert(result, {
+					level = fields[1],
+					x = tonumber(fields[2]) or 0,
+					y = tonumber(fields[3]) or 0,
+					z = tonumber(fields[4]) or 0,
+					level_vertex_id = math.floor(tonumber(fields[5]) or 0),
+					game_vertex_id = math.floor(tonumber(fields[6]) or 0),
+					yaw = tonumber(fields[7]) or 0,
+					direction_x = tonumber(fields[8]) or 0,
+					direction_z = tonumber(fields[9]) or 0,
+					object_id = math.floor(tonumber(fields[10]) or -1)
+				})
+			end
+		end
+	end
+	return result
+end
+
+function impl.save_captured_drop_points(points)
+	if not db.actor then return false end
+	local encoded = {}
+	for _, point in ipairs(points or {}) do
+		table.insert(encoded, string.format(
+			"%s,%.4f,%.4f,%.4f,%d,%d,%.6f,%.6f,%.6f,%d",
+			point.level, point.x, point.y, point.z,
+			point.level_vertex_id, point.game_vertex_id, point.yaw,
+			point.direction_x, point.direction_z,
+			math.floor(tonumber(point.object_id) or -1)
+		))
+	end
+	xr_logic.pstor_store(db.actor, CAPTURED_DROP_POINTS_KEY, table.concat(encoded, "|"))
+	return true
+end
+
+function impl.print_captured_drop_point(index, point)
+	local point_id = string.format("outskirts_%02d", index)
+	printf(
+		"LZ_DROP_POINT_%02d | level=%s | pos=%.4f, %.4f, %.4f | lvid=%d | gvid=%d | yaw=%.6f | dir=%.6f, %.6f | object_id=%d",
+		index, point.level, point.x, point.y, point.z,
+		point.level_vertex_id, point.game_vertex_id, point.yaw,
+		point.direction_x, point.direction_z,
+		math.floor(tonumber(point.object_id) or -1)
+	)
+	printf(
+		"%s = { name = \"lz_order_point_numbered\", display_index = %d, level = \"%s\", story_id = \"\", position = { %.4f, %.4f, %.4f }, level_vertex_id = %d, game_vertex_id = %d, yaw = %.6f, section = \"lz_nm_order_dropbox\", object_key = \"lz_orders_dropbox_%s_id\" },",
+		point_id, index + 1, point.level, point.x, point.y, point.z,
+		point.level_vertex_id, point.game_vertex_id, point.yaw, point_id
+	)
+end
+
+function impl.release_captured_dropbox(point)
+	local object_id = math.floor(tonumber(point and point.object_id) or -1)
+	if object_id < 0 then return false end
+	local object = alife():object(object_id, true)
+	if not object or object:section_name() ~= "lz_nm_order_dropbox" or not object.position then
+		return false
+	end
+	if math.abs(object.position.x - point.x) > 0.5 or
+		math.abs(object.position.y - point.y) > 0.5 or
+		math.abs(object.position.z - point.z) > 0.5 then
+		return false
+	end
+	alife():release(object, true)
+	return true
+end
+
+function capture_drop_point()
+	if not db.actor then
+		printf("! lz_orders: actor is not available")
+		return false
+	end
+	local points = impl.decode_captured_drop_points()
+	if #points >= CAPTURED_DROP_POINTS_LIMIT then
+		printf("! lz_orders: all %d delivery points are already captured", CAPTURED_DROP_POINTS_LIMIT)
+		return false
+	end
+
+	local position = db.actor:position()
+	local current_level = level.name()
+	for index, point in ipairs(points) do
+		if point.level == current_level then
+			local dx, dy, dz = position.x - point.x, position.y - point.y, position.z - point.z
+			if dx * dx + dy * dy + dz * dz < 25 then
+				printf(
+					"! lz_orders: point is only %.2f m from captured point %02d; move at least 5 m",
+					math.sqrt(dx * dx + dy * dy + dz * dz), index
+				)
+				return false
+			end
+		end
+	end
+
+	local direction = db.actor:direction()
+	local point = {
+		level = current_level,
+		x = position.x, y = position.y, z = position.z,
+		level_vertex_id = db.actor:level_vertex_id(),
+		game_vertex_id = db.actor:game_vertex_id(),
+		yaw = direction:getH(),
+		direction_x = direction.x,
+		direction_z = direction.z
+	}
+	local marker = alife():create(
+		"lz_nm_order_dropbox", vector():set(position),
+		point.level_vertex_id, point.game_vertex_id
+	)
+	if not marker then
+		printf("! lz_orders: failed to create the captured delivery dropbox")
+		return false
+	end
+	if marker.angle then marker.angle = vector():set(0, point.yaw, 0) end
+	point.object_id = marker.id
+	table.insert(points, point)
+	if not impl.save_captured_drop_points(points) then
+		alife():release(marker, true)
+		return false
+	end
+	impl.print_captured_drop_point(#points, point)
+	printf(
+		"lz_orders: delivery point captured [%d/%d]",
+		#points, CAPTURED_DROP_POINTS_LIMIT
+	)
+	return true
+end
+
+function dump_drop_points()
+	local points = impl.decode_captured_drop_points()
+	printf("lz_orders: captured delivery points [%d/%d]", #points, CAPTURED_DROP_POINTS_LIMIT)
+	for index, point in ipairs(points) do impl.print_captured_drop_point(index, point) end
+	return #points
+end
+
+function undo_drop_point()
+	local points = impl.decode_captured_drop_points()
+	if #points == 0 then
+		printf("! lz_orders: there are no captured delivery points to undo")
+		return false
+	end
+	local removed = table.remove(points)
+	local object_removed = impl.release_captured_dropbox(removed)
+	impl.save_captured_drop_points(points)
+	printf(
+		"lz_orders: removed delivery point %02d [%s | %.4f, %.4f, %.4f]; model=%s; remaining [%d/%d]",
+		#points + 1, removed.level, removed.x, removed.y, removed.z,
+		object_removed and "removed" or "not found",
+		#points, CAPTURED_DROP_POINTS_LIMIT
+	)
+	return true
+end
+
+function reset_drop_points()
+	if not db.actor then return false end
+	for _, point in ipairs(impl.decode_captured_drop_points()) do
+		impl.release_captured_dropbox(point)
+	end
+	xr_logic.pstor_store(db.actor, CAPTURED_DROP_POINTS_KEY, "")
+	printf("lz_orders: all captured delivery points were cleared [0/%d]", CAPTURED_DROP_POINTS_LIMIT)
+	return true
+end
+
+local function game_seconds()
+	if not game or not level then return 0 end
+	return math.max(0, math.floor(tonumber(game.get_game_time():diffSec(level.get_start_time())) or 0))
+end
+
+local function format_money(value)
+	local text = tostring(math.floor(tonumber(value) or 0))
+	local formatted = text
+	while true do
+		local changed, count = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1 %2")
+		formatted = changed
+		if count == 0 then break end
+	end
+	return string.format(translate("lz_order_money_format"), formatted)
+end
+
+local function format_time(seconds)
+	seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+	local days = math.floor(seconds / DAY_SECONDS)
+	local hours = math.floor((seconds % DAY_SECONDS) / 3600)
+	local minutes = math.floor((seconds % 3600) / 60)
+	if days > 0 then
+		return string.format(translate("lz_order_time_days_hours"), days, hours)
+	elseif hours > 0 then
+		return string.format(translate("lz_order_time_hours_minutes"), hours, minutes)
+	end
+	return string.format(translate("lz_order_time_minutes"), math.max(1, minutes))
+end
+
+local function item_name(section)
+	local override = order_item_name_overrides[section]
+	if override then return translate(override) end
+	local ini = get_sysini()
+	if not ini:section_exist(section) then return section end
+	local line = ini:line_exist(section, "inv_name") and "inv_name" or "inv_name_short"
+	if not ini:line_exist(section, line) then return section end
+	return translate(ini:r_string(section, line))
+end
+
+local function requirement_name(requirement)
+	if requirement and requirement.name then return translate(requirement.name) end
+	return item_name(requirement and requirement.section or "")
+end
+
+local function forbidden_item_section(section)
+	local lowered = string.lower(tostring(section or ""))
+	return lowered == "hand_radio" or lowered == "af_dummy_buliz" or
+		string.find(lowered, "pda", 1, true) ~= nil or
+		lz_nlc_anomaly_registry.is_absolute(section)
+end
+
+local variant_item_pools = {
+	medicine = {
+		"medkit", "bandage", "antirad", "medkit_army", "drug_coagulant",
+		"drug_radioprotector", "drug_sleep"
+	},
+	rations = { "bread", "kolbasa", "conserva", "energy_drink", "mineral_water", "vodka" },
+	repair = {
+		"jup_b200_tech_materials_wire", "jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor", "jup_b200_tech_materials_textolite",
+		"jup_b200_tech_materials_acetone", "lz_nm_metal_part", "lz_nm_krona_battery"
+	},
+	mutant = {
+		"mutant_part_dog_tail", "mutant_part_flesh_eye", "mutant_part_boar_leg",
+		"mutant_part_tushkano_head", "mutant_part_psevdodog_tail", "mutant_part_snork_hand",
+		"mutant_part_krovosos_jaw", "mutant_part_chimera_claw", "mutant_part_chimera_kogot",
+		"mutant_part_dog_meat", "mutant_part_flesh_meat", "mutant_part_tushkano_meat",
+		"mutant_part_boar_chop", "mutant_part_psevdodog_meat",
+		"mutant_part_krovosos_meat", "mutant_part_chimera_meat"
+	},
+	artefact = {
+		"af_medusa", "af_vyvert", "af_blood", "af_electra_sparkler",
+		"af_rusty_thorn", "af_drops", "af_ameba_slime", "af_cristall_flower",
+		"af_gravi", "af_mincer_meat", "af_dummy_spring", "af_rusty_kristall",
+		"af_fireball", "af_ameba_slug", "af_night_star", "af_gold_fish",
+		"af_electra_moonlight", "af_cristall", "af_ameba_mica", "af_soul",
+		"af_electra_flash", "af_rusty_sea-urchin", "af_dummy_kolobok",
+		"lz_nlc_af_dummy_glassbeads", "lz_nlc_af_dummy_dummy",
+		"af_dummy_pellicle", "af_dummy_simbion", "lz_nlc_af_dummy_battery"
+	},
+	ammo = { "ammo_pkm_100" }
+}
+
+local medicine_sections = {
+	medkit = true, medkit_army = true, medkit_scientic = true, bandage = true,
+	antirad = true, drug_antidot = true, drug_booster = true,
+	drug_coagulant = true, drug_psy_blockade = true, drug_radioprotector = true,
+	drug_sleep = true
+}
+
+local ration_sections = {
+	bread = true, kolbasa = true, conserva = true,
+	energy_drink = true, mineral_water = true, vodka = true
+}
+
+local function section_category(section)
+	section = tostring(section or "")
+	if string.sub(section, 1, 5) == "ammo_" then return "ammo" end
+	if lz_nlc_anomaly_registry.artifact_tier(section) or
+		string.sub(section, 1, 3) == "af_" then return "artefact" end
+	if string.sub(section, 1, 12) == "mutant_part_" then return "mutant" end
+	if string.sub(section, 1, 4) == "jup_" or string.sub(section, 1, 6) == "lz_nm_" then return "repair" end
+	if medicine_sections[section] then return "medicine" end
+	if ration_sections[section] then return "rations" end
+	return "repair"
+end
+
+local function copy_items(items)
+	local result = {}
+	for _, item in ipairs(items or {}) do
+		table.insert(result, { section = item.section, amount = item.amount, name = item.name })
+	end
+	return result
+end
+
+local function is_scarce_item(section)
+	local category = section_category(section)
+	return category == "artefact" or section == "mutant_part_krovosos_jaw" or
+		section == "mutant_part_chimera_claw" or
+		section == "mutant_part_chimera_kogot" or
+		section == "mutant_part_krovosos_meat" or
+		section == "mutant_part_chimera_meat" or section == "medkit_scientic"
+end
+
+local rare_armor_salvage = {
+	lz_nm_armor_pouch = true,
+	lz_nm_rubber_padding = true,
+	lz_nm_combat_boots = true
+}
+
+local generated_amount_caps = {
+	bread = 6, kolbasa = 6, conserva = 8, energy_drink = 6,
+	mineral_water = 6, vodka = 4, bandage = 8,
+	medkit = 4, medkit_army = 3, medkit_scientic = 2,
+	antirad = 5, drug_antidot = 3, drug_booster = 3,
+	drug_coagulant = 4, drug_psy_blockade = 3, drug_radioprotector = 3,
+	drug_sleep = 4,
+	jup_b200_tech_materials_wire = 4,
+	jup_b200_tech_materials_capacitor = 4,
+	jup_b200_tech_materials_transistor = 4,
+	jup_b200_tech_materials_textolite = 4,
+	jup_b200_tech_materials_acetone = 4,
+	lz_nm_metal_part = 4,
+	lz_nm_krona_battery = 2,
+	lz_nm_used_filter = 3,
+	lz_nm_armor_pouch = 5,
+	lz_nm_rubber_padding = 5,
+	lz_nm_combat_boots = 2,
+	mutant_part_dog_meat = 6,
+	mutant_part_flesh_meat = 6,
+	mutant_part_tushkano_meat = 6,
+	mutant_part_tushkano_head = 5,
+	mutant_part_boar_chop = 6,
+	mutant_part_psevdodog_meat = 5,
+	mutant_part_psevdodog_tail = 4,
+	mutant_part_krovosos_meat = 4,
+	mutant_part_chimera_meat = 2,
+	mutant_part_chimera_kogot = 1,
+	af_dummy_simbion = 1,
+	lz_nlc_af_dummy_battery = 1,
+	af_dummy_spring = 1,
+	af_dummy_kolobok = 1,
+	lz_nlc_af_dummy_glassbeads = 1,
+	lz_nlc_af_dummy_dummy = 1,
+	af_dummy_pellicle = 1
+}
+
+-- Minimum contract values for items whose acquisition is governed by a real
+-- drop/salvage chance or whose ordinary resale value would otherwise make an
+-- order irrational. Hawaiian's buyback remains the resale floor, while the
+-- authored template rewards also account for collection time and logistics.
+local minimum_reward_values = {
+	-- A bought Echo detector costs 500 * 2.2 = 1100 rubles and yields two
+	-- common radio parts on average. Pricing each at 700 keeps collection orders
+	-- worthwhile without creating a buy-disassemble-contract money loop.
+	jup_b200_tech_materials_wire = 700,
+	jup_b200_tech_materials_capacitor = 700,
+	jup_b200_tech_materials_transistor = 700,
+	lz_nm_metal_part = 650,
+	-- Sleeping pills are common stash/trader medicine. Krona cells are
+	-- stash-only detector consumables, so orders ask for fewer and pay more.
+	drug_sleep = 800,
+	lz_nm_krona_battery = 1500,
+	lz_nm_used_filter = 1900,
+	lz_nm_armor_pouch = 2000,
+	lz_nm_rubber_padding = 2400,
+	lz_nm_combat_boots = 3500,
+	lz_nm_recovered_upgrade = 7000,
+	itm_field_upgrade_kit_blue = 8000,
+	itm_field_upgrade_kit_green = 8000,
+	itm_field_upgrade_kit_red = 7000,
+	itm_field_upgrade_kit_yellow = 7000,
+	mutant_part_dog_tail = 200,
+	mutant_part_flesh_eye = 200,
+	mutant_part_boar_leg = 250,
+	mutant_part_snork_hand = 400,
+	mutant_part_krovosos_jaw = 1500,
+	mutant_part_chimera_claw = 1500,
+	mutant_part_chimera_kogot = 1500,
+	mutant_part_psevdodog_tail = 400,
+	mutant_part_tushkano_head = 200,
+	-- Raw meat is priced by both yield per corpse and the danger/rarity of
+	-- finding its source mutant. Cooked compatibility sections are excluded.
+	mutant_part_dog_meat = 100,
+	mutant_part_flesh_meat = 100,
+	mutant_part_tushkano_meat = 150,
+	mutant_part_boar_chop = 200,
+	mutant_part_psevdodog_meat = 300,
+	mutant_part_krovosos_meat = 800,
+	mutant_part_chimera_meat = 1500,
+	mutant_part_burer_hand = 2400,
+	mutant_part_pseudogigant_eye = 4500,
+	mutant_part_pseudogigant_hand = 3550,
+	mutant_part_controller_glass = 4200,
+	mutant_part_controller_hand = 3800,
+	-- Natural artefacts pay 20% above Hermann's 60% buyback:
+	-- class I = 3600, class II = 5760, class III = 8640,
+	-- class IV = 7200.
+	-- Cooked results use fixed rewards in their recipe-gated templates, while
+	-- Absolutes and the failed Boulder are rejected before an offer is built.
+	af_medusa = 3600,
+	af_vyvert = 3600,
+	af_blood = 3600,
+	af_electra_sparkler = 3600,
+	af_rusty_thorn = 3600,
+	af_drops = 3600,
+	af_ameba_slime = 3600,
+	af_cristall_flower = 5760,
+	af_gravi = 5760,
+	af_mincer_meat = 5760,
+	af_dummy_spring = 5760,
+	af_rusty_kristall = 5760,
+	af_fireball = 5760,
+	af_ameba_slug = 5760,
+	af_night_star = 8640,
+	af_gold_fish = 8640,
+	af_electra_moonlight = 8640,
+	af_cristall = 8640,
+	af_ameba_mica = 8640,
+	af_soul = 7200,
+	af_electra_flash = 7200,
+	["af_rusty_sea-urchin"] = 7200,
+	af_dummy_simbion = 8640,
+	lz_nlc_af_dummy_battery = 8640,
+	af_dummy_kolobok = 7200,
+	lz_nlc_af_dummy_glassbeads = 7200,
+	lz_nlc_af_dummy_dummy = 7200,
+	af_dummy_pellicle = 7200,
+	ammo_pkm_100 = 6250
+}
+
+local tier_3_reward_minimums = {
+	medicine = 7500, rations = 4500, repair = 7000,
+	mutant = 7500, artefact = 9000, ammo = 9500
+}
+
+local function cap_generated_amount(item)
+	local cap = generated_amount_caps[item.section]
+	if cap then item.amount = math.min(item.amount, cap) end
+end
+
+local function minimum_order_reward(items, variant, category, values)
+	local item_value = 0
+	values = values or minimum_reward_values
+	for _, item in ipairs(items or {}) do
+		item_value = item_value + (values[item.section] or 0) * item.amount
+	end
+	local tier_minimum = variant == 5 and (tier_3_reward_minimums[category] or 0) or 0
+	return math.max(item_value, tier_minimum)
+end
+
+local tier_3_type_counts = {
+	medicine = 2, rations = 1, repair = 1,
+	mutant = 2, artefact = 1, ammo = 1
+}
+
+local function tier_3_items(base, base_index)
+	local category = section_category(base.items[1].section)
+	local ini = get_config()
+	local key = "tier_3_" .. category
+	local pool = ini:line_exist("lz_orders", key) and
+		split(ini:r_string("lz_orders", key), ",") or {}
+	local result = {}
+	local target_count = tier_3_type_counts[category] or 1
+	for offset = 0, #pool - 1 do
+		local section = trim(pool[((base_index + offset - 1) % #pool) + 1])
+		if section ~= "" and not forbidden_item_section(section) and
+			get_sysini():section_exist(section) then
+			table.insert(result, { section = section, amount = 1 })
+			if #result >= target_count then break end
+		end
+	end
+	-- The configuration is validated before release, but keep a safe fallback
+	-- so a removed addon item cannot make the entire order board fail to load.
+	return #result > 0 and result or copy_items(base.items)
+end
+
+local function is_complete_armor_salvage_order(items)
+	local present = {}
+	for _, item in ipairs(items or {}) do
+		if rare_armor_salvage[item.section] then present[item.section] = true end
+	end
+	return present.lz_nm_armor_pouch and present.lz_nm_rubber_padding and
+		present.lz_nm_combat_boots
+end
+
+local function rare_armor_salvage_bundle()
+	return {
+		{ section = "lz_nm_armor_pouch", amount = 5 },
+		{ section = "lz_nm_rubber_padding", amount = 5 },
+		{ section = "lz_nm_combat_boots", amount = 1 }
+	}
+end
+
+local function variant_items(base, variant, base_index)
+	if base.fixed_requirements or variant == 1 then return copy_items(base.items) end
+	local result = copy_items(base.items)
+	if variant == 2 then
+		local changed = false
+		for _, item in ipairs(result) do
+			local reduced = math.max(1, math.ceil(item.amount * 0.6))
+			if reduced < item.amount then changed = true end
+			item.amount = reduced
+		end
+		-- A one-piece requirement cannot be reduced numerically. Keep the urgent
+		-- variant distinct by asking for a smaller subset or a related substitute.
+		if not changed then
+			if #result > 1 then
+				table.remove(result, #result)
+			else
+				local category = section_category(result[1].section)
+				local pool = variant_item_pools[category] or variant_item_pools.repair
+				for offset = 0, #pool - 1 do
+					local section = pool[((base_index + offset - 1) % #pool) + 1]
+					if section ~= result[1].section and get_sysini():section_exist(section) then
+						result = { { section = section, amount = 1 } }
+						break
+					end
+				end
+			end
+		end
+	elseif variant == 3 then
+		local category = section_category(result[1].section)
+		if category == "artefact" then
+			-- Artefacts do not scale by asking for duplicate specimens. Add one
+			-- different common artefact instead; the reward floor accounts for it.
+			local present = {}
+			for _, item in ipairs(result) do
+				item.amount = 1
+				present[item.section] = true
+			end
+			for offset = 0, #variant_item_pools.artefact - 1 do
+				local section = variant_item_pools.artefact[
+					((base_index + offset - 1) % #variant_item_pools.artefact) + 1
+				]
+				if not present[section] and get_sysini():section_exist(section) then
+					table.insert(result, { section = section, amount = 1 })
+					break
+				end
+			end
+		else
+			local rare = {}
+			for _, item in ipairs(result) do
+				if rare_armor_salvage[item.section] then
+					table.insert(rare, item)
+				else
+					item.amount = item.amount + math.max(1, math.ceil(item.amount * 0.5))
+				end
+				cap_generated_amount(item)
+			end
+			if #rare > 0 then
+				local chosen = rare[((base_index - 1) % #rare) + 1]
+				chosen.amount = chosen.amount + 1
+				cap_generated_amount(chosen)
+			end
+		end
+	elseif variant == 4 then
+		local chosen = nil
+		for offset = 0, #result - 1 do
+			local candidate = result[((base_index + offset - 1) % #result) + 1]
+			local extra = rare_armor_salvage[candidate.section] and 1 or
+				(is_scarce_item(candidate.section) and 2 or math.max(2, math.ceil(candidate.amount * 0.75)))
+			local amount = candidate.amount + extra
+			local cap = generated_amount_caps[candidate.section]
+			if cap then amount = math.min(amount, cap) end
+			if amount > candidate.amount or offset == #result - 1 then
+				candidate.amount = amount
+				chosen = candidate
+				break
+			end
+		end
+		result = { chosen }
+	elseif variant == 5 then
+		result = is_complete_armor_salvage_order(base.items) and
+			rare_armor_salvage_bundle() or tier_3_items(base, base_index)
+	end
+	return result
+end
+
+local function scale_reward(value, factor)
+	return math.max(50, math.floor((tonumber(value) or 0) * factor / 50 + 0.5) * 50)
+end
+
+local function make_variant(base, variant, base_index)
+	local reward_factors = { 1.0, 0.8, 1.45, 0.9, 3.0 }
+	local weight_factors = { 1.0, 1.0, 0.6, 0.85, 0.7 }
+	local deadlines = { base.deadline_hours, 24, 72, 48, 72 }
+	local category = section_category(base.items[1].section)
+	local items = variant_items(base, variant, base_index)
+	local weight = math.max(1, math.floor(base.weight * weight_factors[variant] + 0.5))
+	local is_ration = category == "rations"
+	if not is_ration then
+		for _, item in ipairs(items) do
+			if ration_sections[item.section] then is_ration = true break end
+		end
+	end
+	if is_ration then
+		local ini = get_config()
+		local percent = ini:line_exist("lz_orders", "ration_offer_weight_percent") and
+			math.max(1, math.min(100, ini:r_s32("lz_orders", "ration_offer_weight_percent"))) or 100
+		weight = math.max(1, math.floor(weight * percent / 100 + 0.5))
+	end
+	local reward = math.max(
+		scale_reward(base.reward, reward_factors[variant]),
+		minimum_order_reward(items, variant, category, base.minimum_reward_values)
+	)
+	return {
+		id = variant == 1 and base.id or base.id .. "_v" .. tostring(variant),
+		base_id = base.id,
+		variant = variant,
+		fixed_requirements = base.fixed_requirements,
+		category = category,
+		client = base.client,
+		title = base.title,
+		descr = base.descr,
+		board_descr = base.board_descr,
+		deadline_hours = deadlines[variant],
+		reward = reward,
+		weight = weight,
+		items = items
+	}
+end
+
+function impl.legacy_artifact_id(stored_id)
+	stored_id = tostring(stored_id or "")
+	for _, base_id in ipairs({
+		"lz_order_common_artefacts",
+		"lz_order_thermal_artefacts",
+		"lz_order_three_candles"
+	}) do
+		if stored_id == base_id or string.find(stored_id, base_id .. "_v", 1, true) == 1 then
+			return "legacy~" .. stored_id
+		end
+	end
+	return nil
+end
+
+function impl.add_legacy_artifact_templates()
+	local legacy_artifact_reward_values = {
+		af_dummy_simbion = 9000,
+		af_dummy_spring = 1500,
+		lz_nlc_af_dummy_dummy = 6000,
+		af_dummy_pellicle = 6000
+	}
+	local legacy = {
+		{
+			id = "lz_order_common_artefacts", client = "lz_order_common_artefacts_client",
+			title = "lz_order_common_artefacts_title", descr = "lz_order_common_artefacts_descr",
+			board_descr = "lz_order_common_artefacts_board_descr", deadline_hours = 72,
+			reward = 2800, weight = 4,
+			items = { { section = "af_dummy_simbion", amount = 1 }, { section = "af_dummy_spring", amount = 1 } }
+		},
+		{
+			id = "lz_order_thermal_artefacts", client = "lz_order_thermal_artefacts_client",
+			title = "lz_order_thermal_artefacts_title", descr = "lz_order_thermal_artefacts_descr",
+			board_descr = "lz_order_thermal_artefacts_board_descr", deadline_hours = 72,
+			reward = 3600, weight = 3,
+			items = { { section = "lz_nlc_af_dummy_dummy", amount = 1 }, { section = "lz_nlc_af_dummy_dummy", amount = 1 } }
+		},
+		{
+			id = "lz_order_three_candles", client = "lz_order_three_candles_client",
+			title = "lz_order_three_candles_title", descr = "lz_order_three_candles_descr",
+			board_descr = "lz_order_three_candles_board_descr", deadline_hours = 72,
+			reward = 2900, weight = 3,
+			items = {
+				{ section = "lz_nlc_af_dummy_dummy", amount = 1 },
+				{ section = "af_dummy_simbion", amount = 1 },
+				{ section = "af_dummy_spring", amount = 1 }
+			}
+		}
+	}
+	for base_index, base in ipairs(legacy) do
+		base.minimum_reward_values = legacy_artifact_reward_values
+		for variant = 1, 5 do
+			local entry = make_variant(base, variant, ({ 17, 18, 32 })[base_index])
+			if variant == 5 then
+				local section = ({ "lz_nlc_af_dummy_dummy", "af_dummy_pellicle", "lz_nlc_af_dummy_dummy" })[base_index]
+				entry.items = { { section = section, amount = 1 } }
+				entry.reward = 9000
+			end
+			-- One historical Thermosphere template listed the same artefact twice.
+			-- Preserve its total requirement while making inventory checks/removal
+			-- atomic for old accepted orders.
+			local merged, positions = {}, {}
+			for _, item in ipairs(entry.items) do
+				local existing = positions[item.section]
+				if existing then
+					existing.amount = existing.amount + item.amount
+				else
+					local copy = { section = item.section, amount = item.amount, name = item.name }
+					positions[item.section] = copy
+					table.insert(merged, copy)
+				end
+			end
+			entry.items = merged
+			entry.id = "legacy~" .. entry.id
+			template_by_id[entry.id] = entry
+		end
+	end
+end
+
+-- Yakov originally inherited the generic five-variant generator. Keep the
+-- four old generated IDs available only for accepted, pending and already
+-- displayed saved orders; new boards use the explicit composite contracts.
+function impl.add_legacy_yakov_variants()
+	local base = {
+		id = "lz_order_yakov_whisper", client = "lz_order_yakov_whisper_client",
+		title = "lz_order_yakov_whisper_title", descr = "lz_order_yakov_whisper_descr",
+		board_descr = "lz_order_yakov_whisper_board_descr", deadline_hours = 72,
+		reward = 10140, weight = 2,
+		items = {
+			{ section = "mutant_part_chimera_claw", amount = 1 },
+			{ section = "lz_nlc_af_dummy_dummy", amount = 1 }
+		}
+	}
+	for variant = 2, 5 do
+		local entry = make_variant(base, variant, 38)
+		template_by_id[entry.id] = entry
+	end
+end
+
+local function split_pool(value)
+	local result = {}
+	for _, raw in ipairs(split(value or "", ",")) do
+		local section = trim(raw)
+		if section ~= "" then table.insert(result, section) end
+	end
+	return result
+end
+
+local function known_pool_items(entry)
+	local result = {}
+	for _, section in ipairs(entry.item_pool or {}) do
+		if not forbidden_item_section(section) and get_sysini():section_exist(section) then
+			local info = lz_nlc_anomaly_registry.recipe_info_for_result(section)
+			if not entry.recipe_gated or (info and has_alife_info(info)) then
+				table.insert(result, section)
+			end
+		end
+	end
+	return result
+end
+
+local function materialize_pool_template(entry, section)
+	if not entry or not section or forbidden_item_section(section) then return nil end
+	local result = {}
+	for key, value in pairs(entry) do result[key] = value end
+	result.id = entry.id .. "@" .. section
+	result.pool_template_id = entry.id
+	result.items = { { section = section, amount = 1 } }
+	if entry.reward_from_item_cost then
+		local ini = get_sysini()
+		local cost = ini:line_exist(section, "cost") and ini:r_u32(section, "cost") or 0
+		result.reward = math.max(1, math.floor(cost * entry.reward_percent_of_cost / 100 + 0.5))
+	end
+	return result
+end
+
+local function load_templates()
+	if templates then return templates end
+	templates = {}
+	template_by_id = {}
+	impl.add_legacy_artifact_templates()
+	impl.add_legacy_yakov_variants()
+	local ini = get_config()
+	local count = ini:r_s32("lz_orders", "template_count")
+	local variant_count = ini:line_exist("lz_orders", "variants_per_client") and
+		math.max(1, ini:r_s32("lz_orders", "variants_per_client")) or 1
+	for index = 1, count do
+		local id = trim(ini:r_string("lz_orders", "template_" .. tostring(index)))
+		if id ~= "" and ini:section_exist(id) then
+			local entry = {
+				id = id,
+				client = ini:r_string(id, "client"),
+				title = ini:r_string(id, "title"),
+				descr = ini:r_string(id, "descr"),
+				board_descr = ini:line_exist(id, "board_descr") and ini:r_string(id, "board_descr") or ini:r_string(id, "descr"),
+				deadline_hours = ini:r_s32(id, "deadline_hours"),
+				reward = ini:r_s32(id, "reward"),
+				weight = math.max(1, ini:r_s32(id, "weight")),
+				fixed_requirements = ini:line_exist(id, "fixed_requirements") and ini:r_bool(id, "fixed_requirements") or false,
+				variant_count = ini:line_exist(id, "variant_count") and
+					math.max(1, ini:r_s32(id, "variant_count")) or variant_count,
+				recipe_gated = ini:line_exist(id, "recipe_gated") and ini:r_bool(id, "recipe_gated") or false,
+				reward_from_item_cost = ini:line_exist(id, "reward_from_item_cost") and
+					ini:r_bool(id, "reward_from_item_cost") or false,
+				reward_percent_of_cost = ini:line_exist(id, "reward_percent_of_cost") and
+					math.max(1, ini:r_s32(id, "reward_percent_of_cost")) or 100,
+				item_pool = ini:line_exist(id, "item_pool") and split_pool(ini:r_string(id, "item_pool")) or nil,
+				items = {}
+			}
+			local item_index = 1
+			local valid = true
+			while ini:line_exist(id, "item_" .. tostring(item_index)) do
+				local fields = split(ini:r_string(id, "item_" .. tostring(item_index)), ",")
+				local section = trim(fields[1])
+				local amount = math.max(1, math.floor(tonumber(fields[2]) or 1))
+				if section == "" or forbidden_item_section(section) or not get_sysini():section_exist(section) then
+					printf("! lz_orders: template [%s] has unavailable item section [%s]", id, section)
+					valid = false
+				else
+					local name_key = "item_name_" .. tostring(item_index)
+					table.insert(entry.items, {
+						section = section,
+						amount = amount,
+						name = ini:line_exist(id, name_key) and ini:r_string(id, name_key) or nil
+					})
+				end
+				item_index = item_index + 1
+			end
+			if entry.item_pool and #entry.item_pool > 0 then
+				valid = true
+				for _, section in ipairs(entry.item_pool) do
+					if forbidden_item_section(section) or not get_sysini():section_exist(section) or
+						(entry.recipe_gated and not lz_nlc_anomaly_registry.recipe_info_for_result(section)) then
+						printf("! lz_orders: template [%s] has invalid pool item [%s]", id, section)
+						valid = false
+					end
+				end
+				if valid then
+					entry.variant = 1
+					entry.base_id = id
+					entry.category = "artefact"
+					table.insert(templates, entry)
+					template_by_id[entry.id] = entry
+				end
+			elseif valid and #entry.items > 0 then
+				for variant = 1, entry.variant_count do
+					local variant_entry = make_variant(entry, variant, index)
+					table.insert(templates, variant_entry)
+					template_by_id[variant_entry.id] = variant_entry
+				end
+			end
+		end
+	end
+	return templates
+end
+
+local function template_for(id)
+	load_templates()
+	id = tostring(id or "")
+	local entry = template_by_id[id]
+	if entry then return entry end
+	local separator = string.find(id, "@", 1, true)
+	if not separator then return nil end
+	local base = template_by_id[string.sub(id, 1, separator - 1)]
+	local section = string.sub(id, separator + 1)
+	if not base or not base.item_pool then return nil end
+	for _, allowed in ipairs(base.item_pool) do
+		if section == allowed then
+			entry = materialize_pool_template(base, section)
+			template_by_id[id] = entry
+			return entry
+		end
+	end
+	return nil
+end
+
+local function save_state()
+	if not db.actor then return end
+	local schedule_parts, refresh_parts, slot_parts = {}, {}, {}
+	for index = 1, SLOT_COUNT do
+		table.insert(schedule_parts, tostring(schedule[index] or 0))
+		table.insert(refresh_parts, tostring(math.floor(next_refresh[index] or 0)))
+		table.insert(slot_parts, slots[index] or "_")
+	end
+
+	local active_parts = {}
+	for _, order in ipairs(active) do
+		table.insert(active_parts, table.concat({
+			order.id, order.template_id, tostring(order.accepted_at),
+			tostring(order.deadline_at), order.point_id
+		}, ","))
+	end
+
+	local pending_parts = {}
+	for _, order in ipairs(pending) do
+		table.insert(pending_parts, table.concat({
+			order.id, order.template_id, tostring(order.delivered_at),
+			tostring(order.payment_at), order.point_id
+		}, ","))
+	end
+
+	xr_logic.pstor_store(db.actor, STATE_VERSION_KEY, CURRENT_STATE_VERSION)
+	xr_logic.pstor_store(db.actor, SCHEDULE_KEY, table.concat(schedule_parts, ","))
+	xr_logic.pstor_store(db.actor, NEXT_REFRESH_KEY, table.concat(refresh_parts, ","))
+	xr_logic.pstor_store(db.actor, SLOTS_KEY, table.concat(slot_parts, "|"))
+	xr_logic.pstor_store(db.actor, ACTIVE_KEY, table.concat(active_parts, ";"))
+	xr_logic.pstor_store(db.actor, PENDING_KEY, table.concat(pending_parts, ";"))
+	xr_logic.pstor_store(db.actor, COUNTER_KEY, order_counter)
+end
+
+local function next_time_for_hour(now, hour)
+	local day_start = math.floor(now / DAY_SECONDS) * DAY_SECONDS
+	local result = day_start + hour * 3600
+	if result <= now then result = result + DAY_SECONDS end
+	return result
+end
+
+local function assign_schedule(now)
+	local pool = {}
+	for _, hour in ipairs(REFRESH_HOUR_POOL) do table.insert(pool, hour) end
+	for index = #pool, 2, -1 do
+		local swap = math.random(index)
+		pool[index], pool[swap] = pool[swap], pool[index]
+	end
+	for index = 1, SLOT_COUNT do
+		schedule[index] = pool[index]
+		next_refresh[index] = next_time_for_hour(now, schedule[index])
+	end
+end
+
+local function decode_orders(serialized, is_pending, migrate_legacy_artifacts)
+	local result = {}
+	if trim(serialized) == "" then return result end
+	for _, record in ipairs(split(serialized, ";")) do
+		local fields = split(record, ",")
+		local template_id = fields[2]
+		if migrate_legacy_artifacts then template_id = impl.legacy_artifact_id(template_id) or template_id end
+		if #fields >= 5 and template_for(template_id) then
+			if is_pending then
+				table.insert(result, {
+					id = fields[1], template_id = template_id,
+					delivered_at = tonumber(fields[3]) or 0,
+					payment_at = tonumber(fields[4]) or 0,
+					point_id = fields[5]
+				})
+			else
+				table.insert(result, {
+					id = fields[1], template_id = template_id,
+					accepted_at = tonumber(fields[3]) or 0,
+					deadline_at = tonumber(fields[4]) or 0,
+					point_id = fields[5]
+				})
+			end
+		end
+	end
+	return result
+end
+
+local function used_templates()
+	local used = {}
+	local function mark(id)
+		local entry = template_for(id)
+		if entry then used[entry.pool_template_id or entry.id] = true end
+	end
+	for index = 1, SLOT_COUNT do mark(slots[index]) end
+	for _, order in ipairs(active) do mark(order.template_id) end
+	return used
+end
+
+local function used_clients()
+	local used = {}
+	local function mark(template_id)
+		local entry = template_for(template_id)
+		if entry then used[entry.client] = true end
+	end
+	for index = 1, SLOT_COUNT do mark(slots[index]) end
+	for _, order in ipairs(active) do mark(order.template_id) end
+	for _, order in ipairs(pending) do mark(order.template_id) end
+	return used
+end
+
+local function choose_template(required_variant, simple_nonartefact_only)
+	local loaded = load_templates()
+	local used = used_templates()
+	local clients = used_clients()
+	local candidates, total_weight = {}, 0
+	for _, entry in ipairs(loaded) do
+		if (not required_variant or entry.variant == required_variant) and
+			(not simple_nonartefact_only or entry.category ~= "artefact") and
+			not used[entry.id] and not clients[entry.client] then
+			local known = entry.item_pool and known_pool_items(entry) or nil
+			if not entry.item_pool or #known > 0 then
+				total_weight = total_weight + entry.weight
+				table.insert(candidates, { entry = entry, known = known })
+			end
+		end
+	end
+	if #candidates == 0 then return nil end
+	local roll = math.random(total_weight)
+	for _, candidate in ipairs(candidates) do
+		roll = roll - candidate.entry.weight
+		if roll <= 0 then
+			if candidate.known then
+				return candidate.entry.id .. "@" .. candidate.known[math.random(#candidate.known)]
+			end
+			return candidate.entry.id
+		end
+	end
+	local fallback = candidates[#candidates]
+	if fallback.known then
+		return fallback.entry.id .. "@" .. fallback.known[math.random(#fallback.known)]
+	end
+	return fallback.entry.id
+end
+
+local function initialize_state()
+	if state_loaded or not db.actor then return end
+	load_templates()
+	local now = game_seconds()
+	local stored_version = tonumber(xr_logic.pstor_retrieve(db.actor, STATE_VERSION_KEY, 0)) or 0
+
+	schedule, next_refresh, slots, active, pending = {}, {}, {}, {}, {}
+	if stored_version >= 1 then
+		local hours = split(xr_logic.pstor_retrieve(db.actor, SCHEDULE_KEY, ""), ",")
+		local refresh = split(xr_logic.pstor_retrieve(db.actor, NEXT_REFRESH_KEY, ""), ",")
+		local stored_slots = split(xr_logic.pstor_retrieve(db.actor, SLOTS_KEY, ""), "|")
+		local seen_hours = {}
+		-- Accept an older six-slot save and keep its first five permanent hours.
+		local valid_schedule = #hours >= SLOT_COUNT and #refresh >= SLOT_COUNT
+		for index = 1, SLOT_COUNT do
+			local hour = tonumber(hours[index])
+			if not hour or hour < 0 or hour > 23 or seen_hours[hour] then valid_schedule = false break end
+			seen_hours[hour] = true
+			schedule[index] = hour
+			next_refresh[index] = tonumber(refresh[index]) or 0
+		end
+		if not valid_schedule then assign_schedule(now) end
+		local migrate_legacy_artifacts = stored_version < CURRENT_STATE_VERSION
+		active = decode_orders(xr_logic.pstor_retrieve(db.actor, ACTIVE_KEY, ""), false, migrate_legacy_artifacts)
+		pending = decode_orders(xr_logic.pstor_retrieve(db.actor, PENDING_KEY, ""), true, migrate_legacy_artifacts)
+		order_counter = math.max(0, math.floor(tonumber(xr_logic.pstor_retrieve(db.actor, COUNTER_KEY, 0)) or 0))
+		local replace_slots = {}
+		for index = 1, SLOT_COUNT do
+			local id = stored_slots[index]
+			if id and id ~= "_" and template_for(id) then
+				slots[index] = id
+			elseif id and impl.legacy_artifact_id(id) and string.find(id, "_v", 1, true) then
+				replace_slots[index] = true
+			else
+				slots[index] = nil
+			end
+		end
+		for index = 1, SLOT_COUNT do
+			if replace_slots[index] then
+				-- Old generated artefact variants are no longer valid offers. Replace
+				-- them only after all retained slots and saved orders are known, so the
+				-- replacement cannot duplicate a client already visible on the board.
+				slots[index] = choose_template(
+					index == GUARANTEED_SIMPLE_SLOT and 1 or nil,
+					index == GUARANTEED_SIMPLE_SLOT
+				)
+			end
+		end
+	else
+		assign_schedule(now)
+		for index = 1, SLOT_COUNT do
+			slots[index] = choose_template(
+				index == GUARANTEED_SIMPLE_SLOT and 1 or nil,
+				index == GUARANTEED_SIMPLE_SLOT
+			)
+		end
+	end
+
+	for index = 1, SLOT_COUNT do
+		if not next_refresh[index] or next_refresh[index] <= 0 then
+			next_refresh[index] = next_time_for_hour(now, schedule[index])
+		end
+		if not slots[index] then
+			-- An empty accepted slot stays empty until its own scheduled refresh.
+		elseif not template_for(slots[index]) then
+			slots[index] = choose_template(
+				index == GUARANTEED_SIMPLE_SLOT and 1 or nil,
+				index == GUARANTEED_SIMPLE_SLOT
+			)
+		end
+	end
+	-- Upgrade existing saves immediately: a filled reserved slot always holds
+	-- a base order. An accepted (empty) slot remains empty until its own hour.
+	local simple_entry = template_for(slots[GUARANTEED_SIMPLE_SLOT])
+	if simple_entry and (simple_entry.variant ~= 1 or simple_entry.category == "artefact") then
+		slots[GUARANTEED_SIMPLE_SLOT] = nil
+		slots[GUARANTEED_SIMPLE_SLOT] = choose_template(1, true)
+	end
+	state_loaded = true
+	save_state()
+end
+
+function impl.point_matches_object(point, object)
+	if not point or not object or object:section_name() ~= point.section or not object.position then return false end
+	if not point.position then return true end
+	local dx = object.position.x - point.position[1]
+	local dy = object.position.y - point.position[2]
+	local dz = object.position.z - point.position[3]
+	return dx * dx + dy * dy + dz * dz <= 4
+end
+
+function impl.reconcile_drop_points()
+	if impl.points_reconciled or not db.actor then return end
+	impl.point_object_ids = {}
+	local unresolved = {}
+	for point_id, point in pairs(drop_points) do
+		local stored_id = tonumber(xr_logic.pstor_retrieve(db.actor, point.object_key, -1)) or -1
+		local object = stored_id >= 0 and alife():object(stored_id, true) or nil
+		if impl.point_matches_object(point, object) then
+			impl.point_object_ids[point_id] = object.id
+		else
+			unresolved[point_id] = point
+		end
+	end
+	if next(unresolved) then
+		for _, candidate in alife():objects() do
+			if candidate.position then
+				for point_id, point in pairs(unresolved) do
+					if impl.point_matches_object(point, candidate) then
+						impl.point_object_ids[point_id] = candidate.id
+						xr_logic.pstor_store(db.actor, point.object_key, candidate.id)
+						unresolved[point_id] = nil
+						break
+					end
+				end
+				if not next(unresolved) then break end
+			end
+		end
+	end
+	impl.points_reconciled = true
+end
+
+local function point_object(point_id, allow_spawn)
+	local point = drop_points[point_id]
+	if not point or not db.actor then return nil end
+	if point.story_id ~= "" then
+		local story_object_id = get_story_object_id(point.story_id)
+		if story_object_id then return alife():object(story_object_id, true) end
+	end
+	impl.reconcile_drop_points()
+	local stored_id = tonumber(impl.point_object_ids[point_id]) or -1
+	local object = stored_id >= 0 and alife():object(stored_id, true) or nil
+	if impl.point_matches_object(point, object) then return object end
+	impl.point_object_ids[point_id] = nil
+
+	local spawn_position, spawn_level_vertex_id, spawn_game_vertex_id = nil, nil, nil
+	if point.position then
+		spawn_position = vector():set(point.position[1], point.position[2], point.position[3])
+		spawn_level_vertex_id = point.level_vertex_id
+		spawn_game_vertex_id = point.game_vertex_id
+	elseif point.path and level.name() == point.level then
+		local path = patrol(point.path)
+		spawn_position = path:point(0)
+		spawn_level_vertex_id = path:level_vertex_id(0)
+		spawn_game_vertex_id = path:game_vertex_id(0)
+	end
+
+	if not allow_spawn or level.name() ~= point.level or not has_alife_info("pf_guide_dialog_done") then return nil end
+	if not spawn_position or not spawn_level_vertex_id or not spawn_game_vertex_id then
+		printf("! lz_orders: delivery point [%s] has no valid spawn coordinates", tostring(point_id))
+		return nil
+	end
+	object = alife():create(
+		point.section, spawn_position, spawn_level_vertex_id, spawn_game_vertex_id
+	)
+	if object then
+		if point.yaw and object.angle then
+			object.angle = vector():set(0, point.yaw, 0)
+		end
+		xr_logic.pstor_store(db.actor, point.object_key, object.id)
+		impl.point_object_ids[point_id] = object.id
+		printf(
+			"lz_orders: delivery dropbox [%s] created, id=[%s]",
+			tostring(point_id), tostring(object.id)
+		)
+	end
+	return object
+end
+
+local function active_count()
+	return #active
+end
+
+local function available_point_ids()
+	local result = {}
+	local occupied = {}
+	for _, order in ipairs(active) do
+		if order.point_id then occupied[order.point_id] = true end
+	end
+	for point_id, point in pairs(drop_points) do
+		if not occupied[point_id] and point.level == level.name() and point_object(point_id, true) then
+			table.insert(result, point_id)
+		end
+	end
+	table.sort(result)
+	return result
+end
+
+local function choose_drop_point()
+	local points = available_point_ids()
+	if #points == 0 or not db.actor then return nil end
+	local actor_position = db.actor:position()
+	local best_id, best_distance = nil, nil
+	for _, point_id in ipairs(points) do
+		local point = drop_points[point_id]
+		local dx = point.position[1] - actor_position.x
+		local dy = point.position[2] - actor_position.y
+		local dz = point.position[3] - actor_position.z
+		local distance = dx * dx + dy * dy + dz * dz
+		if not best_distance or distance < best_distance or (distance == best_distance and point_id < best_id) then
+			best_id, best_distance = point_id, distance
+		end
+	end
+	return best_id
+end
+
+local function point_name(point_id)
+	local point = drop_points[point_id]
+	if point and point.display_index then
+		return string.format(translate(point.name), point.display_index)
+	end
+	return point and translate(point.name) or translate("lz_order_point_unknown")
+end
+
+local function order_title(entry)
+	if not entry then return "" end
+	if (entry.variant or 1) == 1 then return translate(entry.title) end
+	if entry.fixed_requirements then
+		return translate("lz_order_vist_ammo_v" .. tostring(entry.variant) .. "_title")
+	end
+	return string.format(
+		translate("lz_order_variant_" .. tostring(entry.variant) .. "_title"),
+		translate(entry.title)
+	)
+end
+
+local function order_description(entry, board)
+	if not entry then return "" end
+	if (entry.variant or 1) == 5 and not entry.fixed_requirements then
+		local kind = board and "board_descr" or "descr"
+		return string.format(
+			translate("lz_order_tier_3_" .. tostring(entry.category) .. "_" .. kind),
+			translate(entry.client)
+		)
+	end
+	local base = translate(board and entry.board_descr or entry.descr)
+	if (entry.variant or 1) == 1 then return base end
+	local kind = board and "board_suffix" or "descr_suffix"
+	local prefix = entry.fixed_requirements and "lz_order_vist_ammo_v" or "lz_order_variant_"
+	local suffix = translate(prefix .. tostring(entry.variant) .. "_" .. kind)
+	return base .. " " .. suffix
+end
+
+local function task_description(order)
+    local entry = template_for(order.template_id)
+    if not entry then return "" end
+    local lines = {
+        utf8_text(translate("lz_order_task_items"))
+    }
+	for _, requirement in ipairs(entry.items) do
+		table.insert(lines, string.format("%s x%d", utf8_text(requirement_name(requirement)), requirement.amount))
+	end
+	table.insert(lines, string.format(
+		utf8_text(translate("lz_order_task_point")), utf8_text(point_name(order.point_id))
+	))
+	table.insert(lines, string.format(
+		utf8_text(translate("lz_order_task_reward")), utf8_text(format_money(entry.reward))
+	))
+	return table.concat(lines, "\\n")
+end
+
+function impl.give_native_task(order)
+	if not db.actor then return end
+	local entry = template_for(order.template_id)
+	if not entry then return end
+	local point = point_object(order.point_id, true)
+	if not point then return end
+	local existing = db.actor:get_task(order.id, true)
+	if existing then
+		if not task_text_synced[order.id] then
+			existing:set_title(order_title(entry))
+			existing:set_description(task_description(order))
+			existing:set_map_location(ORDER_SPOT)
+			existing:set_map_object_id(point.id)
+			task_text_synced[order.id] = true
+		end
+		return
+	end
+	local game_task = CGameTask()
+	game_task:set_id(order.id)
+	game_task:set_type(task.additional)
+	game_task:set_title(order_title(entry))
+	game_task:set_description(task_description(order))
+	game_task:set_priority(1)
+	game_task:set_icon_name("ui_pda2_mtask_overlay")
+	game_task:set_map_location(ORDER_SPOT)
+	game_task:set_map_object_id(point.id)
+	db.actor:give_task(game_task, 0, false, 0)
+	task_text_synced[order.id] = true
+end
+
+function impl.finish_native_task(order, state)
+	if not db.actor then return end
+	local game_task = db.actor:get_task(order.id, true)
+	if game_task then db.actor:set_task_state(state, order.id) end
+end
+
+local function equipped_ids()
+	local result = {}
+	if not db.actor then return result end
+	for slot = 1, 16 do
+		local item = db.actor:item_in_slot(slot)
+		if item then result[item:id()] = true end
+	end
+	return result
+end
+
+local function collect_eligible_items()
+	local result = {}
+	if not db.actor then return result end
+	local equipped = equipped_ids()
+	local function collect(_, item)
+		if not item or equipped[item:id()] or db.actor:is_on_belt(item) then return end
+		if not alife():object(item:id(), true) then return end
+		local section = item:section()
+		result[section] = result[section] or {}
+		table.insert(result[section], item)
+	end
+	db.actor:iterate_inventory(collect, db.actor)
+	return result
+end
+
+local function inventory_progress(entry, inventory)
+	local missing = {}
+	for _, requirement in ipairs(entry.items) do
+		local count = #(inventory[requirement.section] or {})
+		if count < requirement.amount then
+			table.insert(missing, string.format(
+				utf8_text(translate("lz_order_missing_item")), utf8_text(requirement_name(requirement)), requirement.amount - count
+			))
+		end
+	end
+	return #missing == 0, missing
+end
+
+local function remove_requirements(entry, inventory)
+	local objects = {}
+	for _, requirement in ipairs(entry.items) do
+		local section_items = inventory[requirement.section] or {}
+		for index = 1, requirement.amount do table.insert(objects, section_items[index]) end
+	end
+	for _, item in ipairs(objects) do
+		local server = item and alife():object(item:id(), true) or nil
+		if server then alife():release(server, true) end
+	end
+end
+
+local function refresh_ui()
+	if lz_new_mechanics_pda and lz_new_mechanics_pda.refresh_orders_ui then
+		lz_new_mechanics_pda.refresh_orders_ui()
+	end
+end
+
+local function refresh_slots(now)
+	local changed = false
+	for index = 1, SLOT_COUNT do
+		if now >= (next_refresh[index] or 0) then
+			slots[index] = choose_template(
+				index == GUARANTEED_SIMPLE_SLOT and 1 or nil,
+				index == GUARANTEED_SIMPLE_SLOT
+			)
+			next_refresh[index] = next_time_for_hour(now, schedule[index])
+			changed = true
+		end
+	end
+	return changed
+end
+
+function impl.fail_expired(now)
+	local changed = false
+	for index = #active, 1, -1 do
+		local order = active[index]
+		if now >= order.deadline_at then
+			impl.finish_native_task(order, task.fail)
+			task_text_synced[order.id] = nil
+			table.remove(active, index)
+			message(string.format(
+				utf8_text(translate("lz_order_failed")),
+				utf8_text(order_title(template_for(order.template_id)))
+			))
+			changed = true
+		end
+	end
+	return changed
+end
+
+function impl.pay_due_orders(now)
+	local changed = false
+	for index = #pending, 1, -1 do
+		local order = pending[index]
+		if now >= order.payment_at then
+			local entry = template_for(order.template_id)
+			if entry then
+				db.actor:give_money(entry.reward)
+				if game_stats and game_stats.money_quest_update then game_stats.money_quest_update(entry.reward) end
+				message(string.format(
+					utf8_text(translate("lz_order_paid")),
+					utf8_text(order_title(entry)), utf8_text(format_money(entry.reward))
+				))
+			end
+			task_text_synced[order.id] = nil
+			table.remove(pending, index)
+			changed = true
+		end
+	end
+	return changed
+end
+
+local function find_next_state_check()
+	local result = nil
+	for index = 1, SLOT_COUNT do
+		local due = next_refresh[index]
+		if due and due > 0 and (not result or due < result) then result = due end
+	end
+	for _, order in ipairs(active) do
+		if order.deadline_at and (not result or order.deadline_at < result) then result = order.deadline_at end
+	end
+	for _, order in ipairs(pending) do
+		if order.payment_at and (not result or order.payment_at < result) then result = order.payment_at end
+	end
+	return result
+end
+
+local function ensure_tasks()
+	for _, order in ipairs(active) do impl.give_native_task(order) end
+end
+
+local function refresh_point_markers()
+	for point_id, _ in pairs(drop_points) do
+		local count = 0
+		for _, order in ipairs(active) do
+			if order.point_id == point_id then count = count + 1 end
+		end
+		local object = point_object(point_id, count > 0)
+		if object then
+			local has_legacy_spot = level.map_has_object_spot(object.id, LEGACY_ORDER_SPOT) ~= 0
+			if has_legacy_spot then
+				level.map_remove_object_spot(object.id, LEGACY_ORDER_SPOT)
+			end
+			local has_spot = level.map_has_object_spot(object.id, ORDER_SPOT) ~= 0
+			if count > 0 and not has_spot then
+				level.map_add_object_spot_ser(object.id, ORDER_SPOT, string.format(
+					translate("lz_order_map_hint"), count, point_name(point_id)
+				))
+			elseif count == 0 and has_spot then
+				level.map_remove_object_spot(object.id, ORDER_SPOT)
+			end
+		end
+	end
+end
+
+local function update_dropbox_tip()
+	for point_id, _ in pairs(drop_points) do
+		local object = point_object(point_id, false)
+		if object and object.online then
+			local client = level.object_by_id(object.id)
+			if client then
+				local count = 0
+				for _, order in ipairs(active) do
+					if order.point_id == point_id then count = count + 1 end
+				end
+				local tip = count > 0 and translate("lz_order_dropbox_use") or translate("lz_order_dropbox_empty")
+				if tip ~= last_dropbox_tips[object.id] then
+					client:set_tip_text(tip)
+					last_dropbox_tips[object.id] = tip
+				end
+			end
+		end
+	end
+end
+
+function update()
+	if not db.actor then return end
+	initialize_state()
+	local realtime = time_global()
+	if realtime < next_update then return end
+	next_update = realtime + UPDATE_INTERVAL_MS
+	local now = game_seconds()
+	if not next_state_check then next_state_check = find_next_state_check() end
+	local changed = false
+	if next_state_check and now >= next_state_check then
+		changed = refresh_slots(now)
+		if impl.fail_expired(now) then changed = true end
+		if impl.pay_due_orders(now) then changed = true end
+		next_state_check = find_next_state_check()
+	end
+	if not impl.points_spawned_for_session and has_alife_info("pf_guide_dialog_done") then
+		available_point_ids()
+		impl.points_spawned_for_session = true
+	else
+		point_object("kpp_temp", true)
+	end
+	ensure_tasks()
+	refresh_point_markers()
+	update_dropbox_tip()
+	if changed then
+		save_state()
+		refresh_ui()
+	end
+end
+
+function on_game_load()
+	state_loaded = false
+	next_update = 0
+	next_state_check = nil
+	last_dropbox_tips = {}
+	task_text_synced = {}
+	impl.point_object_ids = {}
+	impl.points_reconciled = false
+	impl.points_spawned_for_session = false
+	initialize_state()
+	point_object("kpp_temp", true)
+	ensure_tasks()
+	refresh_point_markers()
+	update()
+end
+
+function accept_order(slot_index)
+	initialize_state()
+	slot_index = tonumber(slot_index)
+	if not slot_index or slot_index < 1 or slot_index > SLOT_COUNT or not slots[slot_index] then return false end
+	if active_count() >= ACTIVE_LIMIT then
+		message("lz_order_active_limit")
+		return false
+	end
+	local point_id = choose_drop_point()
+	local point = point_id and point_object(point_id, false) or nil
+	if not point or not point_id then
+		message("lz_order_network_locked")
+		return false
+	end
+	local template_id = slots[slot_index]
+	local entry = template_for(template_id)
+	if not entry then return false end
+	order_counter = order_counter + 1
+	local now = game_seconds()
+	local order = {
+		id = string.format("lz_order_%06d", order_counter),
+		template_id = template_id,
+		accepted_at = now,
+		deadline_at = now + entry.deadline_hours * 3600,
+		point_id = point_id
+	}
+	table.insert(active, order)
+	slots[slot_index] = nil
+	next_state_check = nil
+	save_state()
+	impl.give_native_task(order)
+	refresh_point_markers()
+	message(string.format(
+		utf8_text(translate("lz_order_accepted")),
+		utf8_text(order_title(entry)), utf8_text(point_name(order.point_id))
+	))
+	refresh_ui()
+	return true
+end
+
+local function deliver_order(order, inventory)
+	local entry = template_for(order.template_id)
+	if not entry then return false end
+	local complete, missing = inventory_progress(entry, inventory)
+	if not complete then return false, missing end
+	remove_requirements(entry, inventory)
+	local now = game_seconds()
+	for index, candidate in ipairs(active) do
+		if candidate.id == order.id then table.remove(active, index) break end
+	end
+	table.insert(pending, {
+		id = order.id,
+		template_id = order.template_id,
+		delivered_at = now,
+		payment_at = now + PAYMENT_DELAY,
+		point_id = order.point_id
+	})
+	next_state_check = nil
+	impl.finish_native_task(order, task.completed)
+	task_text_synced[order.id] = nil
+	refresh_point_markers()
+	save_state()
+	message(string.format(
+		utf8_text(translate("lz_order_delivered")), utf8_text(order_title(entry))
+	))
+	refresh_ui()
+	-- The order is complete only after its items, native task state and
+	-- persistent board state have all been updated.
+	xr_effects.scenario_autosave(db.actor, nil, {"st_save_lz_order_completed"})
+	return true
+end
+
+local function dropbox_at_crosshair()
+	if not db.actor or level.get_target_dist() > USE_DISTANCE then return nil end
+	local object = level.get_target_obj()
+	if not object then return nil end
+	for point_id, _ in pairs(drop_points) do
+		local point = point_object(point_id, false)
+		if point and point.id == object:id() then return object end
+	end
+	return nil
+end
+
+function try_deliver_at_dropbox()
+	initialize_state()
+	local box = dropbox_at_crosshair()
+	if not box then return false end
+	if #active == 0 then
+		message("lz_order_dropbox_empty")
+		return true
+	end
+	local now = game_seconds()
+	if impl.fail_expired(now) then
+		next_state_check = nil
+		save_state()
+		refresh_ui()
+		if #active == 0 then
+			message("lz_order_dropbox_empty")
+			return true
+		end
+	end
+	local inventory = collect_eligible_items()
+	local ready = {}
+	for _, order in ipairs(active) do
+		local point = point_object(order.point_id, false)
+		if point and point.id == box:id() then
+			local entry = template_for(order.template_id)
+			local complete = entry and inventory_progress(entry, inventory)
+			if complete then table.insert(ready, order) end
+		end
+	end
+	table.sort(ready, function(a, b) return a.deadline_at < b.deadline_at end)
+	if #ready > 0 then return deliver_order(ready[1], inventory) end
+
+	local nearest = nil
+	for _, order in ipairs(active) do
+		local point = point_object(order.point_id, false)
+		if point and point.id == box:id() and (not nearest or order.deadline_at < nearest.deadline_at) then
+			nearest = order
+		end
+	end
+	if nearest then
+		local entry = template_for(nearest.template_id)
+		local _, missing = inventory_progress(entry, inventory)
+		message(string.format(
+			utf8_text(translate("lz_order_missing")),
+			utf8_text(order_title(entry)), table.concat(missing, "\\n")
+		))
+	else
+		message("lz_order_dropbox_wrong")
+	end
+	return true
+end
+
+function on_key_press(dik)
+	if dik_to_bind(dik) == key_bindings.kUSE then try_deliver_at_dropbox() end
+end
+
+function on_key_hold(dik)
+end
+
+function on_key_release(dik)
+end
+
+local function requirements_text(entry, with_progress)
+	local lines = {}
+	-- This PDA list uses the legacy single-byte text path, unlike the stock
+	-- task-map tooltip. Keep its Alt+255 separator and item names in CP1251.
+	local invisible_space = string.char(160)
+	local inventory = with_progress and collect_eligible_items() or nil
+	for _, requirement in ipairs(entry.items) do
+		local name = legacy_text(requirement_name(requirement))
+		if with_progress then
+			local count = math.min(requirement.amount, #(inventory[requirement.section] or {}))
+			table.insert(lines, string.format("%s%sx%d/%d", name, invisible_space, count, requirement.amount))
+		else
+			table.insert(lines, string.format("%s%sx%d", name, invisible_space, requirement.amount))
+		end
+	end
+	return table.concat(lines, "\\n")
+end
+
+local function board_description(entry)
+	return wrap_words(order_title(entry) .. "\\n" .. order_description(entry, true), BOARD_DESCRIPTION_WIDTH)
+end
+
+function get_board_state()
+	initialize_state()
+	return {
+		active = #active,
+		limit = ACTIVE_LIMIT,
+		point_ready = #available_point_ids() > 0
+	}
+end
+
+function get_available_orders()
+	initialize_state()
+	local result = {}
+	local can_accept = #active < ACTIVE_LIMIT and #available_point_ids() > 0
+	for index = 1, SLOT_COUNT do
+		local entry = template_for(slots[index])
+		if entry then
+			table.insert(result, {
+				slot = index,
+				title = translate(entry.client),
+				descr = board_description(entry),
+				items = requirements_text(entry, false),
+				deadline = format_time(entry.deadline_hours * 3600),
+				reward = format_money(entry.reward),
+				can_accept = can_accept
+			})
+		end
+	end
+	return result
+end
+
+function get_accepted_orders()
+	initialize_state()
+	local now = game_seconds()
+	local result = {}
+	for _, order in ipairs(active) do
+		local entry = template_for(order.template_id)
+		if entry then
+			table.insert(result, {
+				id = order.id,
+				title = translate(entry.client),
+				descr = board_description(entry),
+				items = requirements_text(entry, true),
+				deadline = format_time(order.deadline_at - now),
+				reward = format_money(entry.reward),
+				status = string.format(translate("lz_order_status_active"), point_name(order.point_id)),
+				sort_time = order.deadline_at,
+				pending = false
+			})
+		end
+	end
+	for _, order in ipairs(pending) do
+		local entry = template_for(order.template_id)
+		if entry then
+			table.insert(result, {
+				id = order.id,
+				title = translate(entry.client),
+				descr = board_description(entry),
+				items = requirements_text(entry, false),
+				deadline = format_time(order.payment_at - now),
+				reward = format_money(entry.reward),
+				status = translate("lz_order_status_pending"),
+				sort_time = order.payment_at,
+				pending = true
+			})
+		end
+	end
+	table.sort(result, function(a, b)
+		if a.pending ~= b.pending then return not a.pending end
+		return a.sort_time < b.sort_time
+	end)
+	return result
+end
+
+class "lz_nm_order_dropbox_binder" (object_binder)
+
+function lz_nm_order_dropbox_binder:__init(object) super(object)
+	self.object:set_tip_text(translate("lz_order_dropbox_empty"))
+	self.object:set_nonscript_usable(false)
+end
+
+function lz_nm_order_dropbox_binder:net_spawn(data)
+	return object_binder.net_spawn(self, data)
+end
+
+function lz_nm_order_dropbox_binder:net_destroy()
+	object_binder.net_destroy(self)
+end
+
+function bind_dropbox(object)
+	object:bind_object(lz_nm_order_dropbox_binder(object))
+end

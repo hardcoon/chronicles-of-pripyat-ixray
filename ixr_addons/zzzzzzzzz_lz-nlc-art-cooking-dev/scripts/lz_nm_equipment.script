@@ -1,0 +1,1630 @@
+-- Detectors, repair, upgrades, dismantling, equipment wear, and headgear HUD.
+-- Engine callbacks are owned by the lz_new_mechanics facade.
+local state = {
+	pending_inventory_tool_action = nil,
+	inventory_normalization_pending = true,
+	context_menu_dirty = true,
+	context_targets = {},
+	context_menu_signature = nil,
+	detector_battery_elapsed = 0,
+	detector_battery_empty_notified = {},
+	detector_lifetimes = {},
+	recovered_upgrade_tooltips = {},
+	repair_tooltip_charges = {},
+	disassembly_tooltip_charges = {},
+	detector_tooltip_minutes = {},
+	helmet_slot_initialized = false,
+	helmet_slot_id = nil,
+	helmet_slot_section = nil,
+	pending_helmet_animation = nil,
+	pending_helmet_animation_next = nil,
+	headgear_fade_start_due = nil,
+	headgear_fade_end_due = nil,
+	headgear_fade_active = false
+}
+local impl = {}
+local core = lz_nm_core
+local HEADGEAR_FADE_EFFECT_ID = 105186
+
+local repair_tools = {
+	itm_gunsmith_toolkit = "weapon",
+	itm_outfit_toolkit = "outfit"
+}
+
+local disassembly_tools = {
+	lz_nm_weapon_disassembly_kit = "equipment"
+}
+
+local weapon_repair_parts = {
+	lz_nm_metal_part = true
+}
+
+local upgrade_tools = {
+	itm_repairkit_tier_1 = "rough",
+	itm_repairkit_tier_2 = "fine",
+	itm_repairkit_tier_soft = "soft",
+	itm_repairkit_tier_3 = "calibration",
+	itm_field_upgrade_kit_blue = "magazine",
+	itm_field_upgrade_kit_red = "reload",
+	itm_field_upgrade_kit_yellow = "caliber",
+	itm_field_upgrade_kit_green = "weight"
+}
+
+local recovered_field_upgrade_tools = {
+	rough = "itm_repairkit_tier_1",
+	fine = "itm_repairkit_tier_2",
+	soft = "itm_repairkit_tier_soft",
+	calibration = "itm_repairkit_tier_3",
+	magazine = "itm_field_upgrade_kit_blue",
+	reload = "itm_field_upgrade_kit_red",
+	caliber = "itm_field_upgrade_kit_yellow",
+	weight = "itm_field_upgrade_kit_green"
+}
+
+
+local detector_disassembly = {
+	detector_simple = {
+		min = 1, max = 3,
+		pool = {
+			"jup_b200_tech_materials_wire",
+			"jup_b200_tech_materials_capacitor",
+			"jup_b200_tech_materials_transistor"
+		}
+	},
+	detector_advanced = {
+		min = 2, max = 4,
+		pool = {
+			"jup_b200_tech_materials_wire",
+			"jup_b200_tech_materials_capacitor",
+			"jup_b200_tech_materials_transistor",
+			"jup_b200_tech_materials_textolite"
+		}
+	},
+	detector_elite = {
+		min = 3, max = 5,
+		pool = {
+			"jup_b200_tech_materials_wire",
+			"jup_b200_tech_materials_capacitor",
+			"jup_b200_tech_materials_transistor",
+			"jup_b200_tech_materials_textolite",
+			"jup_b200_tech_materials_acetone"
+		}
+	},
+	detector_scientific = {
+		min = 5, max = 5,
+		guaranteed = {
+			"jup_b200_tech_materials_wire",
+			"jup_b200_tech_materials_capacitor",
+			"jup_b200_tech_materials_transistor",
+			"jup_b200_tech_materials_textolite",
+			"jup_b200_tech_materials_acetone"
+		}
+	}
+}
+
+-- Stash-detector variants reuse the corresponding stock detector salvage.
+detector_disassembly.pf_metal_detector_homemade = detector_disassembly.detector_simple
+detector_disassembly.pf_metal_detector_wave = detector_disassembly.detector_advanced
+detector_disassembly.pf_metal_detector_magnet = detector_disassembly.detector_elite
+
+-- These are two distinct device families. Both use ordinary saved condition as
+-- battery charge and accept the same Krona cell, but must remain separate in UI
+-- wording and gameplay classification.
+local artefact_detectors = {
+	detector_simple = true,
+	detector_advanced = true,
+	detector_elite = true,
+	detector_scientific = true
+}
+
+local stash_metal_detectors = {
+	pf_metal_detector_homemade = true,
+	pf_metal_detector_wave = true,
+	pf_metal_detector_magnet = true
+}
+
+local DETECTOR_BATTERY_SECONDS = 15 * 60
+
+function impl.is_chargeable_detector(section)
+	return artefact_detectors[section] or stash_metal_detectors[section]
+end
+
+local RECOVERED_UPGRADE_KEY_PREFIX = "lz_nm_recovered_upgrade_"
+
+function impl.mark_inventory_dirty()
+	state.context_menu_dirty = true
+	state.context_menu_signature = nil
+	for section in pairs(state.context_targets) do
+		state.context_targets[section] = nil
+	end
+end
+
+function impl.forget_item(item_or_id)
+	local id = type(item_or_id) == "number" and item_or_id or
+		(item_or_id and item_or_id:id() or nil)
+	if not id then return end
+	state.detector_battery_empty_notified[id] = nil
+	state.recovered_upgrade_tooltips[id] = nil
+	state.repair_tooltip_charges[id] = nil
+	state.disassembly_tooltip_charges[id] = nil
+	state.detector_tooltip_minutes[id] = nil
+	impl.mark_inventory_dirty()
+end
+
+function impl.release_item(item)
+	if not item then return end
+	impl.forget_item(item)
+	core.release_item(item)
+end
+
+function impl.detector_lifetime(section)
+	local cached = state.detector_lifetimes[section]
+	if cached ~= nil then return cached end
+	local ini = core.get_sysini()
+	cached = ini:line_exist(section, "lz_detector_battery_lifetime") and
+		ini:r_float(section, "lz_detector_battery_lifetime") or 0
+	state.detector_lifetimes[section] = cached
+	return cached
+end
+
+function impl.update_detector_battery()
+	local detector = db.actor:active_detector()
+	if not detector or not impl.is_chargeable_detector(detector:section()) then
+		state.detector_battery_elapsed = 0
+		return
+	end
+
+	local id = detector:id()
+	local condition = math.max(0, math.min(1, detector:condition()))
+	if condition <= 0.0001 then
+		if not state.detector_battery_empty_notified[id] then
+			state.detector_battery_empty_notified[id] = true
+			core.message("lz_nm_detector_battery_empty")
+		end
+		db.actor:switch_detector()
+		return
+	end
+
+	-- IX-Ray makes f_time_delta zero while paused and clamps long frames. Accumulate
+	-- it so inventory condition only needs to be synchronized four times a second.
+	state.detector_battery_elapsed = state.detector_battery_elapsed + device().f_time_delta
+	if state.detector_battery_elapsed < 0.25 then return end
+	local elapsed = state.detector_battery_elapsed
+	state.detector_battery_elapsed = 0
+
+	local section = detector:section()
+	local lifetime = impl.detector_lifetime(section)
+	if not lifetime or lifetime <= 0 then return end
+	local remaining = math.max(0, condition - elapsed / lifetime)
+	detector:set_condition(remaining)
+
+	if condition > 0.25 and remaining <= 0.25 then
+		core.message("lz_nm_detector_battery_low")
+	end
+	if remaining <= 0 then
+		state.detector_battery_empty_notified[id] = true
+		core.message("lz_nm_detector_battery_empty")
+		db.actor:switch_detector()
+	end
+end
+
+
+function impl.charge_detector_with_battery(source, detector)
+	if not source or not detector or not impl.is_chargeable_detector(detector:section()) then return false end
+	local source_section = core.canonical_item_section(source:section())
+	if source_section ~= "lz_nm_krona_battery" then return false end
+
+	local detector_condition = math.max(0, math.min(1, detector:condition()))
+	if detector_condition >= 0.9999 then
+		core.message("lz_nm_detector_charge_full")
+		return false
+	end
+
+	local lifetime = impl.detector_lifetime(detector:section())
+	if not lifetime or lifetime <= 0 then return false end
+	-- Every Krona adds the same 15 minutes. Condition stores a fraction of the
+	-- section's own lifetime, so convert the fixed duration before adding it.
+	detector:set_condition(math.min(1, detector_condition + DETECTOR_BATTERY_SECONDS / lifetime))
+	state.detector_battery_empty_notified[detector:id()] = nil
+	impl.release_item(source)
+	impl.mark_inventory_dirty()
+	impl.refresh_detector_tooltip(detector)
+	core.message("lz_nm_detector_charge_battery_used")
+	return true
+end
+
+
+function impl.refresh_disassembly_tooltip(item)
+	if not item or type(item.set_item_additional_description) ~= "function" then return end
+	local section = core.canonical_item_section(item:section())
+	local disassembly_type = disassembly_tools[section]
+	if not disassembly_type or not core.get_sysini():line_exist(section, "max_uses") then return end
+	local maximum = core.get_sysini():r_s32(section, "max_uses")
+	local remaining = math.floor(item:condition() * maximum + 0.5)
+	if remaining < 1 or remaining > maximum then remaining = maximum end
+	local id = item:id()
+	if state.disassembly_tooltip_charges[id] == remaining and
+		type(item.is_item_used_additional_description) == "function" and
+		item:is_item_used_additional_description() then return end
+
+	item:set_item_additional_description(
+		string.format(game.translate_string("lz_nm_disassembly_uses_left"), remaining) ..
+		"%c[255,216,186,140]"
+	)
+	state.disassembly_tooltip_charges[id] = remaining
+end
+
+function impl.refresh_repair_tooltip(item)
+	if not item or type(item.set_item_additional_description) ~= "function" then return end
+	local section = core.canonical_item_section(item:section())
+	local repair_type = repair_tools[section]
+	if not repair_type or not core.get_sysini():line_exist(section, "max_uses") then return end
+	local maximum = core.get_sysini():r_s32(section, "max_uses")
+	local remaining = math.floor(item:condition() * maximum + 0.5)
+	if remaining < 1 or remaining > maximum then remaining = maximum end
+	local id = item:id()
+	if state.repair_tooltip_charges[id] == remaining and
+		type(item.is_item_used_additional_description) == "function" and
+		item:is_item_used_additional_description() then return end
+
+	local status_id = repair_type == "outfit" and
+		"lz_nm_outfit_repair_kit_status" or "lz_nm_weapon_repair_kit_status"
+	local repair_percent = math.floor(core.get_sysini():r_float(section, "repair_add_condition") * 100 + 0.5)
+	item:set_item_additional_description(
+		string.format(game.translate_string(status_id), remaining, repair_percent) ..
+		"%c[255,216,186,140]"
+	)
+	state.repair_tooltip_charges[id] = remaining
+end
+
+function impl.refresh_detector_tooltip(item)
+	if not item or not impl.is_chargeable_detector(item:section()) or
+		type(item.set_item_additional_description) ~= "function" then return end
+	local section = item:section()
+	if not core.get_sysini():line_exist(section, "lz_detector_battery_lifetime") then return end
+
+	local lifetime = impl.detector_lifetime(section)
+	local condition = math.max(0, math.min(1, item:condition()))
+	local total_minutes = math.floor(condition * lifetime / 60)
+	if condition > 0 and total_minutes < 1 then total_minutes = 1 end
+	local id = item:id()
+	if state.detector_tooltip_minutes[id] == total_minutes and
+		type(item.is_item_used_additional_description) == "function" and
+		item:is_item_used_additional_description() then return end
+
+	local hours = math.floor(total_minutes / 60)
+	local minutes = total_minutes % 60
+	item:set_item_additional_description(
+		"\n" .. string.char(194, 160) .. "\n%c[255,170,220,255]" .. string.format(
+			game.translate_string("lz_nm_detector_charge_time"), hours, minutes
+		) .. "%c[default]"
+	)
+	state.detector_tooltip_minutes[id] = total_minutes
+end
+
+function impl.consume_one_use(item)
+	if not item then return false end
+	local section = core.canonical_item_section(item:section())
+	if not core.get_sysini():line_exist(section, "max_uses") then return false end
+	local maximum = core.get_sysini():r_s32(section, "max_uses")
+	-- Single-use field modules are ordinary stackable items with no condition
+	-- strip. Remove only the exact instance which successfully applied an effect.
+	if maximum <= 1 then
+		impl.release_item(item)
+		return true
+	end
+	-- Toolboxes are attachment-class items so their custom RMB actions do not
+	-- invoke the food/medicine path. Use the whole condition strip: a two-use
+	-- kit is full at two charges and half-full at one charge.
+	local remaining = math.floor(item:condition() * maximum + 0.5)
+	if remaining < 1 or remaining > maximum then remaining = maximum end
+	remaining = remaining - 1
+	if remaining > 0 then
+		item:set_condition(remaining / maximum)
+		if repair_tools[section] then
+			impl.refresh_repair_tooltip(item)
+		else
+			impl.refresh_disassembly_tooltip(item)
+		end
+	else
+		state.repair_tooltip_charges[item:id()] = nil
+		state.disassembly_tooltip_charges[item:id()] = nil
+		impl.release_item(item)
+	end
+	impl.mark_inventory_dirty()
+	return true
+end
+
+function impl.repair_animation_section(tool)
+	if not tool or not db.actor or db.actor:is_hud_animator_active() then return nil end
+	local section = core.canonical_item_section(tool:section())
+	local animator = section == "itm_gunsmith_toolkit" and "toolkit_weapon" or
+		(section == "itm_outfit_toolkit" and "toolkit_outfit" or nil)
+	if not animator then return nil end
+	local maximum = core.get_sysini():r_s32(section, "max_uses")
+	local remaining = math.floor(tool:condition() * maximum + 0.5)
+	if remaining < 1 or remaining > maximum then remaining = maximum end
+	if remaining <= 1 then animator = animator .. "_last" end
+	return animator
+end
+
+
+function can_disassemble_item(section, condition, partner_profile_name)
+	return detector_disassembly[section] ~= nil
+end
+
+function question_disassemble_item(section, condition, can_disassemble, partner_profile_name)
+	local recipe = detector_disassembly[section]
+	if not can_disassemble or not recipe then
+		return game.translate_string("lz_nm_disassemble_unavailable")
+	end
+	if recipe.min == recipe.max then
+		return string.format(
+			game.translate_string("lz_nm_disassemble_question_exact"), recipe.min
+		)
+	end
+	return string.format(
+		game.translate_string("lz_nm_disassemble_question_range"), recipe.min, recipe.max
+	)
+end
+
+function effect_disassemble_item(section, condition, partner_profile_name)
+	local recipe = detector_disassembly[section]
+	if not recipe or not db.actor then return end
+
+	local created = 0
+	if recipe.guaranteed then
+		for _, part_section in ipairs(recipe.guaranteed) do
+			if core.create_for_actor(part_section) then created = created + 1 end
+		end
+	else
+		local count = math.random(recipe.min, recipe.max)
+		for _ = 1, count do
+			local part_section = recipe.pool[math.random(1, #recipe.pool)]
+			if core.create_for_actor(part_section) then created = created + 1 end
+		end
+	end
+	printf(
+		"lz_new_mechanics: disassembled [%s], created [%s] salvage parts",
+		tostring(section), tostring(created)
+	)
+end
+
+-- Ordinary inventory context-menu action. Salvage is created first and the
+-- exact detector instance selected by the player is then removed. Returning
+-- false prevents the engine from also trying to use it as a consumable.
+function disassemble_detector(item)
+	if not item or not db.actor then return false end
+	local section = item:section()
+	if not detector_disassembly[section] then return false end
+	if not core.require_actor_owned_item(item) then return false end
+	impl.queue_inventory_tool_action(item, item, "disassemble_detector")
+	return false
+end
+
+function impl.complete_detector_disassembly(item)
+	if not item or not core.is_actor_owned_item(item) then return false end
+	local section = item:section()
+	if not detector_disassembly[section] then return false end
+	effect_disassemble_item(section, item:condition(), nil)
+	impl.release_item(item)
+	return true
+end
+
+
+function impl.write_context_action(section, index, label, functor)
+	local text_line = "use" .. tostring(index) .. "_text"
+	local functor_line = "use" .. tostring(index) .. "_functor"
+	core.get_sysini():set_readonly(false)
+	-- CInifile::w_string does not overwrite an existing key in this IX-Ray
+	-- build: it asserts with "name[...] already exist". Context actions are
+	-- refreshed repeatedly, and the base tool sections also define fallback
+	-- actions in LTX, so remove both old values before writing replacements.
+	if core.get_sysini():line_exist(section, text_line) then
+		core.get_sysini():remove_line(section, text_line)
+	end
+	if core.get_sysini():line_exist(section, functor_line) then
+		core.get_sysini():remove_line(section, functor_line)
+	end
+	if label then
+		-- CInifile strips ordinary ASCII spaces from dynamically written values.
+		-- Keep visual word spacing with the Windows-1251 non-breaking-space byte.
+		label = string.gsub(label, " ", string.char(0xA0))
+		core.get_sysini():w_string(section, text_line, label, nil)
+		core.get_sysini():w_string(section, functor_line, functor, nil)
+	end
+	core.get_sysini():set_readonly(true)
+end
+
+function impl.item_condition_percent(item)
+	if not item then return 0 end
+	return math.max(0, math.min(100, math.floor(item:condition() * 100 + 0.5)))
+end
+
+function impl.update_context_menu_actions(force)
+	if not db.actor then return end
+	local weapon_targets = {}
+	for _, slot in ipairs({2, 3}) do
+		local item = db.actor:item_in_slot(slot)
+		if core.is_weapon_mechanics_target(item) then table.insert(weapon_targets, item) end
+	end
+	local outfit_targets = {}
+	for _, slot in ipairs({7, 12}) do
+		local item = db.actor:item_in_slot(slot)
+		if core.is_outfit_or_helmet(item) then table.insert(outfit_targets, item) end
+	end
+	local disassembly_targets = {}
+	for _, item in ipairs(weapon_targets) do table.insert(disassembly_targets, item) end
+	for _, item in ipairs(outfit_targets) do table.insert(disassembly_targets, item) end
+	local inventory_weapon_targets = {}
+	local detector_targets = {}
+	db.actor:iterate_inventory(function(_, item)
+		if core.is_weapon_mechanics_target(item) then table.insert(inventory_weapon_targets, item) end
+		if impl.is_chargeable_detector(item:section()) and item:condition() < 0.9999 then
+			table.insert(detector_targets, item)
+		end
+	end, db.actor)
+	local repair_kit_weapon_targets = {}
+	for _, item in ipairs(inventory_weapon_targets) do
+		table.insert(repair_kit_weapon_targets, item)
+	end
+	table.sort(repair_kit_weapon_targets, function(left, right)
+		local left_condition = left:condition()
+		local right_condition = right:condition()
+		local left_repairable = left_condition >= 0.20 and left_condition < 0.90
+		local right_repairable = right_condition >= 0.20 and right_condition < 0.90
+		if left_repairable ~= right_repairable then return left_repairable end
+		return left:id() < right:id()
+	end)
+	table.sort(inventory_weapon_targets, function(left, right)
+		-- Use the same rounded percentage that is shown in the context menu.
+		-- Otherwise 89.5-89.9% is displayed as 90%, but the part rejects it.
+		local left_percent = impl.item_condition_percent(left)
+		local right_percent = impl.item_condition_percent(right)
+		local left_repairable = left_percent >= 90 and left_percent < 100
+		local right_repairable = right_percent >= 90 and right_percent < 100
+		if left_repairable ~= right_repairable then return left_repairable end
+		return left:id() < right:id()
+	end)
+	table.sort(detector_targets, function(left, right)
+		local left_condition = left:condition()
+		local right_condition = right:condition()
+		local left_chargeable = left_condition < 0.9999
+		local right_chargeable = right_condition < 0.9999
+		if left_chargeable ~= right_chargeable then return left_chargeable end
+		if left_condition ~= right_condition then return left_condition < right_condition end
+		return left:id() < right:id()
+	end)
+	local signature_parts = {}
+	for _, item in ipairs(weapon_targets) do
+		table.insert(signature_parts,
+			tostring(item:id()) .. "@" .. tostring(impl.item_condition_percent(item)))
+	end
+	table.insert(signature_parts, "/")
+	for _, item in ipairs(outfit_targets) do
+		table.insert(signature_parts,
+			tostring(item:id()) .. "@" .. tostring(impl.item_condition_percent(item)))
+	end
+	table.insert(signature_parts, "/inventory/")
+	for _, item in ipairs(inventory_weapon_targets) do
+		table.insert(signature_parts,
+			tostring(item:id()) .. "@" .. tostring(impl.item_condition_percent(item)))
+	end
+	table.insert(signature_parts, "/detectors/")
+	for _, item in ipairs(detector_targets) do
+		table.insert(signature_parts,
+			tostring(item:id()) .. "@" .. tostring(impl.item_condition_percent(item)))
+	end
+	local signature = table.concat(signature_parts, ":")
+	if not force and signature == state.context_menu_signature then
+		state.context_menu_dirty = false
+		return
+	end
+	state.context_menu_signature = signature
+	state.context_menu_dirty = false
+
+	local function configure(section, targets, verb_id, functor_prefix, action_count, show_condition)
+		state.context_targets[core.canonical_item_section(section)] = targets
+		for index = 1, action_count or 2 do
+			local target = targets[index]
+			local display_name = target and core.item_display_name(target) or nil
+			local label = nil
+			if display_name then
+				local format_text = core.text_for_legacy(game.translate_string(verb_id))
+				if show_condition then
+					label = string.format(
+						format_text, impl.item_condition_percent(target),
+						core.text_for_legacy(display_name)
+					)
+				else
+					label = string.format(format_text, core.text_for_legacy(display_name))
+				end
+			end
+			impl.write_context_action(
+				section, index, label,
+				"lz_new_mechanics." .. functor_prefix .. tostring(index)
+			)
+		end
+	end
+
+	configure(
+		"itm_gunsmith_toolkit", repair_kit_weapon_targets,
+		"lz_nm_action_repair_weapon_named_condition", "use_repair_target_", 4, true
+	)
+	configure(
+		"itm_outfit_toolkit", outfit_targets,
+		"lz_nm_action_repair_named_condition", "use_repair_target_", 2, true
+	)
+	configure(
+		"lz_nm_weapon_disassembly_kit", disassembly_targets,
+		"lz_nm_action_disassemble_named_condition", "use_disassemble_target_", 4, true
+	)
+	-- Refresh inherited RMB lines too when an old save still owns the retired
+	-- armor-kit section. It is presented and handled as the same unified item.
+	if core.get_sysini():section_exist("lz_nm_armor_disassembly_kit") then
+		configure(
+			"lz_nm_armor_disassembly_kit", disassembly_targets,
+			"lz_nm_action_disassemble_named_condition", "use_disassemble_target_", 4, true
+		)
+	end
+	configure(
+		"lz_nm_metal_part", inventory_weapon_targets,
+		"lz_nm_action_repair_with_part_named", "use_metal_part_target_", 4, true
+	)
+	state.context_targets.lz_nm_krona_battery = detector_targets
+	for index = 1, 4 do
+		local target = detector_targets[index]
+		local label = nil
+		if target then
+			local verb_id = artefact_detectors[target:section()] and
+				"lz_nm_action_charge_artefact_detector_named" or
+				"lz_nm_action_charge_metal_detector_named"
+			label = string.format(
+				core.text_for_legacy(game.translate_string(verb_id)),
+				impl.item_condition_percent(target),
+				core.text_for_legacy(core.item_display_name(target))
+			)
+		end
+		impl.write_context_action(
+			"lz_nm_krona_battery", index, label,
+			"lz_new_mechanics.use_detector_battery_target_" .. tostring(index)
+		)
+	end
+	for section in pairs(upgrade_tools) do
+		configure(section, weapon_targets, "lz_nm_action_upgrade_named", "use_upgrade_target_")
+	end
+end
+
+-- IX-Ray exposes inventory focus through game_global.ltx. Refresh the custom
+-- action labels while the cursor is over a repair or upgrade kit, immediately
+-- before RMB builds the property box. This does not depend on the optional
+-- RegisterScriptCallback framework used by some engine branches.
+function on_item_focus_receive(item)
+	if item then
+		local section = core.canonical_item_section(item:section())
+		if repair_tools[section] or disassembly_tools[section] or weapon_repair_parts[section] or
+			section == "lz_nm_krona_battery" or
+			upgrade_tools[section] ~= nil then
+			impl.update_context_menu_actions()
+		end
+		if repair_tools[section] then impl.refresh_repair_tooltip(item) end
+		if disassembly_tools[section] then impl.refresh_disassembly_tooltip(item) end
+		if impl.is_chargeable_detector(section) then impl.refresh_detector_tooltip(item) end
+		-- Rebuild saved and newly acquired weapon tooltips before the delayed
+		-- item-info window is drawn. Legacy tooltips first restore the missing
+		-- server-side upgrade IDs; an incomplete migration keeps its source text
+		-- so a later inventory callback can retry it safely.
+		if type(refresh_field_upgrade_tooltip) == "function" and core.is_weapon(item) and
+			core.get_sysini():line_exist(section, "lz_nm_field_upgrade") and
+			core.get_sysini():r_bool(section, "lz_nm_field_upgrade") then
+			local migration_status = impl.restore_field_upgrades_from_saved_tooltip(item)
+			if migration_status ~= false then refresh_field_upgrade_tooltip(item) end
+		end
+	end
+	return true
+end
+
+function impl.upgrade_display_name(upgrade_id)
+	if not upgrade_id or not core.get_sysini():section_exist(upgrade_id) then
+		return tostring(upgrade_id or "")
+	end
+	if core.get_sysini():line_exist(upgrade_id, "name") then
+		return game.translate_string(core.get_sysini():r_string(upgrade_id, "name"))
+	end
+	return upgrade_id
+end
+
+function impl.refresh_recovered_upgrade_tooltip(item)
+	if not item or core.canonical_item_section(item:section()) ~= "lz_nm_recovered_upgrade" or
+		type(item.set_item_additional_description) ~= "function" then return end
+	local id = item:id()
+	local upgrade_id = tostring(xr_logic.pstor_retrieve(
+		db.actor, RECOVERED_UPGRADE_KEY_PREFIX .. tostring(id), ""
+	) or "")
+	if upgrade_id == "" or state.recovered_upgrade_tooltips[id] == upgrade_id then return end
+	item:set_item_additional_description(string.format(
+		game.translate_string("lz_nm_recovered_upgrade_exact"),
+		impl.upgrade_display_name(upgrade_id)
+	))
+	-- Different extracted upgrades must not collapse into one grouped cell: the
+	-- item section is shared, while the exact upgrade id is per instance.
+	if item:condition() > 0.99 then
+		item:set_condition(0.10 + ((id * 37) % 89) / 100)
+	end
+	state.recovered_upgrade_tooltips[id] = upgrade_id
+end
+
+function impl.normalize_tool_charge(item)
+	if not item then return end
+	local section = core.canonical_item_section(item:section())
+	if impl.is_chargeable_detector(section) then
+		impl.refresh_detector_tooltip(item)
+		return
+	end
+	if section == "lz_nm_recovered_upgrade" then
+		impl.refresh_recovered_upgrade_tooltip(item)
+		return
+	end
+	if not repair_tools[section] and not disassembly_tools[section] and
+		upgrade_tools[section] == nil then return end
+	local maximum = core.get_sysini():r_s32(section, "max_uses")
+	-- Upgrade modules from existing saves may retain their former partial
+	-- condition. Normalize them so they join the same inventory stack.
+	if maximum <= 1 then
+		if item:condition() < 0.999 then item:set_condition(1.0) end
+		return
+	end
+	-- Migrate repair kits saved with the former compact 13-segment encoding:
+	-- 2/13 meant two charges and 1/13 meant one. New saves use a clear full or
+	-- half-width bar instead.
+	if repair_tools[section] and item:condition() <= maximum / 13 + 0.001 then
+		local remaining = math.floor(item:condition() * 13 + 0.5)
+		if remaining < 1 or remaining > maximum then remaining = maximum end
+		item:set_condition(remaining / maximum)
+	end
+	if repair_tools[section] then impl.refresh_repair_tooltip(item) end
+	if disassembly_tools[section] then impl.refresh_disassembly_tooltip(item) end
+end
+
+function impl.normalize_inventory_item(item)
+	impl.normalize_tool_charge(item)
+	if type(impl.restore_field_upgrades_from_saved_tooltip) == "function" then
+		impl.restore_field_upgrades_from_saved_tooltip(item)
+	end
+end
+
+function impl.normalize_tool_charges()
+	db.actor:iterate_inventory(function(_, item)
+		impl.normalize_inventory_item(item)
+	end, db.actor)
+end
+
+function actor_on_inventory_item_take(item)
+	impl.mark_inventory_dirty()
+	impl.normalize_inventory_item(item)
+end
+
+function actor_on_inventory_item_drop(item)
+	impl.forget_item(item)
+end
+
+function actor_on_inventory_trade(item, sell_bye)
+	-- IX-Ray reports true when the actor sold the item. Evict that ID while the
+	-- object is still valid; purchases are normalized once, just like take.
+	if sell_bye then
+		impl.forget_item(item)
+	else
+		impl.mark_inventory_dirty()
+		impl.normalize_inventory_item(item)
+	end
+end
+
+local FIELD_UPGRADE_TYPES = { "rough", "fine", "soft", "calibration", "magazine", "reload", "caliber", "weight" }
+local FIELD_UPGRADE_LIMIT = 3
+local FIELD_UPGRADE_SINGLE_USE = { magazine = true, reload = true, caliber = true, weight = true }
+
+function impl.field_upgrade_key(section)
+	return string.lower(string.gsub(section, "[^%w_]", "_"))
+end
+
+function impl.field_upgrade_id(target, upgrade_type, stage)
+	local suffix = stage and stage > 1 and "_" .. tostring(stage) or ""
+	return string.format("lz_nm_up_%s_%s%s", impl.field_upgrade_key(target:section()), upgrade_type, suffix)
+end
+
+function impl.field_upgrade_state(target)
+	local count = 0
+	local type_counts = {}
+	for _, upgrade_type in ipairs(FIELD_UPGRADE_TYPES) do
+		local installed = 0
+		for stage = 1, FIELD_UPGRADE_LIMIT do
+			local id = impl.field_upgrade_id(target, upgrade_type, stage)
+			if core.get_sysini():section_exist(id) and target:has_upgrade(id) then
+				installed = installed + 1
+			end
+		end
+		if installed > 0 then
+			-- Old saves may contain two or three reload stages. After migration
+			-- they represent one +35% module and occupy only one field slot.
+			local effective = FIELD_UPGRADE_SINGLE_USE[upgrade_type] and 1 or installed
+			count = count + effective
+			type_counts[upgrade_type] = effective
+		end
+	end
+	return count, type_counts
+end
+
+local FIELD_UPGRADE_TOOLTIP_EFFECTS = {
+	rough = { text = "lz_nm_weapon_upgrade_effect_rough", per_stage = 20 },
+	fine = { text = "lz_nm_weapon_upgrade_effect_fine", per_stage = 10 },
+	soft = { text = "lz_nm_weapon_upgrade_effect_soft", per_stage = 20 },
+	calibration = { text = "lz_nm_weapon_upgrade_effect_calibration", per_stage = 15 },
+	magazine = { text = "lz_nm_weapon_upgrade_effect_magazine" },
+	reload = { text = "lz_nm_weapon_upgrade_effect_reload", per_stage = 35 },
+	caliber = { text = "lz_nm_weapon_upgrade_effect_caliber" },
+	weight = { text = "lz_nm_weapon_upgrade_effect_weight" }
+}
+
+-- These two shipped localizations are read only while repairing saves made by
+-- the old client-only install path. Keeping both makes the one-time migration
+-- independent of the language selected before the first fixed load.
+local FIELD_UPGRADE_LEGACY_TEXTS = {
+	rough = { "+%d%% к надёжности", "+%d%% reliability" },
+	fine = { "+%d%% к урону", "+%d%% damage" },
+	soft = { "-%d%% к отдаче", "-%d%% recoil" },
+	calibration = { "+%d%% к точности", "+%d%% accuracy" },
+	magazine = { "Объём магазина +10", "Magazine capacity +10" },
+	reload = { "+%d%% к скорости перезарядки", "+%d%% reload speed" },
+	caliber = { "Смена калибра", "Caliber conversion" },
+	weight = { "-50% к весу оружия", "-50% weapon weight" }
+}
+
+local FIELD_UPGRADE_LEGACY_COUNTERS = {
+	"Полевые модификации: %d/%d",
+	"Field modifications: %d/%d"
+}
+
+-- Never hand an incomplete generated upgrade to the engine: IX-Ray treats an
+-- absent or unrecognized effect section as fatal instead of returning false.
+local FIELD_UPGRADE_EFFECT_KEYS = {
+	rough = { "condition_shot_dec", "condition_queue_shot_dec", "fire_dispersion_condition_factor" },
+	fine = { "hit_power" },
+	soft = { "cam_dispersion", "cam_dispersion_inc", "cam_step_angle_horz",
+		"zoom_cam_dispersion", "zoom_cam_dispersion_inc", "zoom_cam_step_angle_horz" },
+	calibration = { "fire_dispersion_base" },
+	magazine = { "ammo_mag_size" },
+	reload = { "hud" },
+	caliber = { "ammo_class" },
+	weight = { "inv_weight" }
+}
+
+function impl.field_upgrade_definition_valid(upgrade, upgrade_type)
+	local ini = core.get_sysini()
+	if not upgrade or not ini:section_exist(upgrade) or not ini:line_exist(upgrade, "section") then
+		return false
+	end
+	local effect = ini:r_string(upgrade, "section")
+	if not effect or effect == "" or not ini:section_exist(effect) then return false end
+	for _, key in ipairs(FIELD_UPGRADE_EFFECT_KEYS[upgrade_type] or {}) do
+		if ini:line_exist(effect, key) then return true end
+	end
+	return false
+end
+
+local function contains_plain(text, candidate)
+	return candidate and candidate ~= "" and string.find(text, candidate, 1, true) ~= nil
+end
+
+function impl.saved_field_upgrade_state(target)
+	if not target or type(target.get_item_additional_description) ~= "function" then return nil end
+	local description = tostring(target:get_item_additional_description() or "")
+	if description == "" then return nil end
+
+	local counter_templates = { game.translate_string("lz_nm_weapon_upgrade_counter") }
+	for _, template in ipairs(FIELD_UPGRADE_LEGACY_COUNTERS) do
+		table.insert(counter_templates, template)
+	end
+	local has_counter = false
+	for count = 1, FIELD_UPGRADE_LIMIT do
+		for _, template in ipairs(counter_templates) do
+			if contains_plain(description, string.format(template, count, FIELD_UPGRADE_LIMIT)) then
+				has_counter = true
+				break
+			end
+		end
+		if has_counter then break end
+	end
+	if not has_counter then return nil end
+
+	local desired = {}
+	local found = false
+	for _, upgrade_type in ipairs(FIELD_UPGRADE_TYPES) do
+		local effect = FIELD_UPGRADE_TOOLTIP_EFFECTS[upgrade_type]
+		local templates = { game.translate_string(effect.text) }
+		for _, template in ipairs(FIELD_UPGRADE_LEGACY_TEXTS[upgrade_type] or {}) do
+			table.insert(templates, template)
+		end
+		if effect.per_stage then
+			for stage = FIELD_UPGRADE_LIMIT, 1, -1 do
+				for _, template in ipairs(templates) do
+					if contains_plain(description, string.format(template, effect.per_stage * stage)) then
+						desired[upgrade_type] = FIELD_UPGRADE_SINGLE_USE[upgrade_type] and 1 or stage
+						found = true
+						break
+					end
+				end
+				if desired[upgrade_type] then break end
+			end
+		else
+			for _, text in ipairs(templates) do
+				if contains_plain(description, text) then
+					desired[upgrade_type] = 1
+					found = true
+					break
+				end
+			end
+		end
+	end
+	return found and desired or nil
+end
+
+function impl.restore_field_upgrades_from_saved_tooltip(target)
+	if not target or not core.is_weapon(target) then return nil end
+	local section = core.canonical_item_section(target:section())
+	if not core.get_sysini():line_exist(section, "lz_nm_field_upgrade") or
+		not core.get_sysini():r_bool(section, "lz_nm_field_upgrade") then return nil end
+
+	local desired = impl.saved_field_upgrade_state(target)
+	if not desired then return nil end
+	-- The binding is supplied by COP-ENG-024. Without it, fail closed instead of
+	-- repeatedly applying client-only effects every time the item is focused.
+	if type(target.restore_upgrade) ~= "function" then return false end
+
+	local complete = true
+	for _, upgrade_type in ipairs(FIELD_UPGRADE_TYPES) do
+		local desired_stages = desired[upgrade_type] or 0
+		for stage = 1, desired_stages do
+			local upgrade = impl.field_upgrade_id(target, upgrade_type, stage)
+			if not impl.field_upgrade_definition_valid(upgrade, upgrade_type) then
+				complete = false
+			elseif not target:has_upgrade(upgrade) then
+				-- Caliber conversion must run the native pre-install path so an old
+				-- magazine is unloaded before its ammo classes change. Other modules
+				-- use the non-destructive migration binding and retain attachments/ammo.
+				local restored = false
+				if upgrade_type == "caliber" then
+					restored = target:install_upgrade(upgrade)
+				else
+					restored = target:restore_upgrade(upgrade)
+				end
+				if not restored then complete = false end
+			end
+		end
+	end
+	if complete then refresh_field_upgrade_tooltip(target) end
+	return complete
+end
+
+function refresh_field_upgrade_tooltip(target)
+	if not target or type(target.set_item_additional_description) ~= "function" then return end
+	local count, type_counts = impl.field_upgrade_state(target)
+	if count <= 0 then return end
+
+	local lines = {}
+	for _, upgrade_type in ipairs(FIELD_UPGRADE_TYPES) do
+		local stages = type_counts[upgrade_type] or 0
+		local effect = FIELD_UPGRADE_TOOLTIP_EFFECTS[upgrade_type]
+		if stages > 0 and effect then
+			local text = game.translate_string(effect.text)
+			if effect.per_stage then text = string.format(text, effect.per_stage * stages) end
+			table.insert(lines, text)
+		end
+	end
+	table.insert(lines, " ")
+	table.insert(lines, string.format(
+		game.translate_string("lz_nm_weapon_upgrade_counter"), count, FIELD_UPGRADE_LIMIT
+	))
+	target:set_item_additional_description(
+		-- Complex UI text recognizes the two-character sequence "\\n", not a raw LF.
+		"%c[255,240,190,70]" .. table.concat(lines, "\\n") .. "%c[255,216,186,140]"
+	)
+end
+
+function impl.magazine_upgrade_target_allowed(target)
+	local section = target and target:section() or nil
+	if not section then return false end
+	-- The generated per-weapon marker is authoritative. In particular, all
+	-- belt-fed and light machine guns are marked false even when a legacy hidden
+	-- node is retained so older saves can still load it.
+	if core.get_sysini():line_exist(section, "lz_nm_magazine_upgrade_allowed") then
+		return core.get_sysini():r_bool(section, "lz_nm_magazine_upgrade_allowed")
+	end
+	-- STCoP uses zero-based config slot 1 for every pistol, including machine
+	-- pistols whose engine class is shared with rifles.
+	if core.item_slot(target) == 1 then return false end
+	-- Magazine-fed Saiga/Vepr variants share rifle engine classes, so the
+	-- explicit weapon_class marker is the reliable shotgun discriminator.
+	if core.get_sysini():line_exist(section, "weapon_class") then
+		local weapon_class = string.lower(core.get_sysini():r_string(section, "weapon_class") or "")
+		if string.find(weapon_class, "shotgun", 1, true) then return false end
+	end
+	return true
+end
+
+-- Every firearm receives the four original generated specializations and the
+-- one-stage weight-reduction node. Eligible non-pistol, non-shotgun weapons
+-- also receive the one-stage magazine node.
+-- The shared script cap remains three successful field modules per weapon.
+function impl.install_field_upgrade(tool, target)
+	if not tool or not core.is_weapon_mechanics_target(target) then
+		core.message("lz_nm_upgrade_wrong_target")
+		return false
+	end
+	local target_section = target:section()
+	if not core.get_sysini():line_exist(target_section, "lz_nm_field_upgrade") or
+		not core.get_sysini():r_bool(target_section, "lz_nm_field_upgrade") then
+		core.message("lz_nm_upgrade_not_supported")
+		return false
+	end
+
+	local upgrade_type = upgrade_tools[core.canonical_item_section(tool:section())]
+	if upgrade_type == "magazine" and not impl.magazine_upgrade_target_allowed(target) then
+		core.message("lz_nm_upgrade_not_supported")
+		return false
+	end
+	local count, type_counts = impl.field_upgrade_state(target)
+	if FIELD_UPGRADE_SINGLE_USE[upgrade_type] and (type_counts[upgrade_type] or 0) > 0 then
+		core.message("lz_nm_upgrade_duplicate")
+		return false
+	end
+	if count >= FIELD_UPGRADE_LIMIT then
+		core.message("lz_nm_upgrade_limit")
+		return false
+	end
+
+	-- Repeating ordinary specializations is allowed. Magazine, reload, caliber
+	-- and weight modifications have only one active stage per weapon.
+	local upgrade = nil
+	for stage = 1, FIELD_UPGRADE_LIMIT do
+		local candidate = impl.field_upgrade_id(target, upgrade_type, stage)
+		if core.get_sysini():section_exist(candidate) and not target:has_upgrade(candidate) then
+			if impl.field_upgrade_definition_valid(candidate, upgrade_type) then upgrade = candidate end
+			break
+		end
+	end
+	if not upgrade then
+		core.message("lz_nm_upgrade_not_supported")
+		return false
+	end
+	if target:install_upgrade(upgrade) then
+		count = count + 1
+		refresh_field_upgrade_tooltip(target)
+		impl.consume_one_use(tool)
+		impl.mark_inventory_dirty()
+		core.message("lz_nm_upgrade_complete")
+		return true
+	end
+
+	core.message("lz_nm_upgrade_not_supported")
+	return false
+end
+
+function impl.repair_item(tool, target)
+	if not tool or not target then return false end
+	local repair_type = repair_tools[core.canonical_item_section(tool:section())]
+	if not repair_type then return false end
+
+	local valid_target = false
+	if repair_type == "weapon" then
+		valid_target = core.is_weapon_mechanics_target(target)
+	elseif repair_type == "outfit" then
+		valid_target = core.is_outfit_or_helmet(target)
+	end
+	if not valid_target then
+		core.message("lz_nm_repair_wrong_target")
+		return false
+	end
+
+	local condition = target:condition()
+	local min_condition = core.get_sysini():r_float(tool:section(), "repair_min_condition")
+	local max_condition = core.get_sysini():r_float(tool:section(), "repair_max_condition")
+	local add_condition = core.get_sysini():r_float(tool:section(), "repair_add_condition")
+
+	if condition < min_condition then
+		core.message("lz_nm_repair_too_damaged")
+		return false
+	end
+	if condition >= max_condition then
+		core.message("lz_nm_repair_not_needed")
+		return false
+	end
+
+	local animator = impl.repair_animation_section(tool)
+	target:set_condition(math.min(max_condition, condition + add_condition))
+	impl.consume_one_use(tool)
+	impl.mark_inventory_dirty()
+	core.message("lz_nm_repair_complete")
+	-- Starting a HUD animator hides the inventory dialog itself. Refreshing the
+	-- actor menu after that transition re-enters its grouped-cell rebuild and can
+	-- trip CUICellContainer::AddSimilar on an already grouped item. Let the next
+	-- ordinary inventory open rebuild the condition bars instead.
+	if animator then db.actor:start_hud_animator(animator) end
+	return true
+end
+
+function impl.repair_weapon_with_metal_part(part, target)
+	if not part or not target or not weapon_repair_parts[core.canonical_item_section(part:section())] then
+		return false
+	end
+	if not core.is_weapon_mechanics_target(target) then
+		core.message("lz_nm_repair_part_wrong_target")
+		return false
+	end
+
+	local condition = target:condition()
+	local condition_percent = impl.item_condition_percent(target)
+	if condition_percent < 90 then
+		core.message("lz_nm_repair_part_too_damaged")
+		return false
+	end
+	if condition_percent >= 100 then
+		core.message("lz_nm_repair_part_not_needed")
+		return false
+	end
+
+	target:set_condition(math.min(1.0, condition + 0.01))
+	impl.release_item(part)
+	impl.mark_inventory_dirty()
+	core.message("lz_nm_repair_part_complete")
+	printf(
+		"lz_new_mechanics: consumed metal part to repair weapon [%s] from [%.4f] to [%.4f]",
+		tostring(target:section()), condition, math.min(1.0, condition + 0.01)
+	)
+	return true
+end
+
+function impl.last_installed_upgrade(target)
+	if not target or type(target.iterate_installed_upgrades) ~= "function" then return nil end
+	local last = nil
+	target:iterate_installed_upgrades(function(upgrade_id)
+		last = tostring(upgrade_id)
+		return false
+	end)
+	return last
+end
+
+function impl.recovered_field_tool(upgrade_id)
+	if not upgrade_id or string.sub(upgrade_id, 1, 9) ~= "lz_nm_up_" then return nil end
+	for upgrade_type, tool_section in pairs(recovered_field_upgrade_tools) do
+		if string.match(upgrade_id, "_" .. upgrade_type .. "_%d+$") or
+			string.match(upgrade_id, "_" .. upgrade_type .. "$") then
+			return tool_section
+		end
+	end
+	return nil
+end
+
+function impl.create_recovered_upgrade(upgrade_id)
+	local section = impl.recovered_field_tool(upgrade_id) or "lz_nm_recovered_upgrade"
+	local object = core.create_for_actor(section)
+	if not object then return nil end
+	if section == "lz_nm_recovered_upgrade" then
+		xr_logic.pstor_store(
+			db.actor, RECOVERED_UPGRADE_KEY_PREFIX .. tostring(object.id), upgrade_id
+		)
+	end
+	return object
+end
+
+-- Equipment salvage is bound to the persistent object id instead of the global
+-- random-number generator. The rolls are therefore decided for this exact item
+-- before it is dismantled and remain unchanged after save/load.
+function impl.deterministic_salvage_succeeds(target_id, multiplier, offset, chance)
+	local value = tonumber(target_id) or 0
+	for _ = 1, 2 do
+		value = (value * multiplier + offset) % 2147483647
+	end
+	return (value % 100) < chance
+end
+
+local armor_salvage = {
+	{ section = "lz_nm_armor_pouch", bit = 1, multiplier = 48271, offset = 1013904223, multiple = true },
+	{ section = "lz_nm_rubber_padding", bit = 2, multiplier = 69621, offset = 1664525, multiple = true },
+	{ section = "lz_nm_combat_boots", bit = 4, multiplier = 16807, offset = 12345, multiple = false }
+}
+
+-- Cost is used as an automatic rarity proxy so addon outfits also receive an
+-- appropriate yield without maintaining a brittle section-name whitelist.
+-- Exoskeletons are the only armor allowed to reach five pouches/composites.
+local armor_salvage_tiers = {
+	{ max_cost = 7500, max_count = 1, chance = 30 },
+	{ max_cost = 15000, max_count = 2, chance = 40 },
+	{ max_cost = 30000, max_count = 3, chance = 50 },
+	{ max_cost = math.huge, max_count = 4, chance = 60 }
+}
+
+function impl.armor_salvage_profile(section)
+	if string.find(section, "exo", 1, true) then
+		return 5, 70
+	end
+
+	local cost = 0
+	local ini = core.get_sysini()
+	if ini:line_exist(section, "cost") then
+		cost = ini:r_float(section, "cost")
+	end
+	for _, tier in ipairs(armor_salvage_tiers) do
+		if cost <= tier.max_cost then return tier.max_count, tier.chance end
+	end
+	return 1, 30
+end
+
+function impl.deterministic_salvage_count(target_id, salvage, maximum, chance)
+	local count = 0
+	for roll_index = 1, maximum do
+		if impl.deterministic_salvage_succeeds(
+			target_id, salvage.multiplier + roll_index * 997,
+			salvage.offset + roll_index * 104729, chance
+		) then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+function impl.disassemble_equipment(tool, target)
+	if not tool or not target then
+		return false
+	end
+	if not disassembly_tools[core.canonical_item_section(tool:section())] then return false end
+	if core.is_weapon_mechanics_target(target) then
+
+		-- CInventoryItem::m_upgrades is append-only. The engine-facing iterator
+		-- walks that vector in installation order, so the final callback value is
+		-- the real most recently installed upgrade, including after save/load.
+		local upgrade_id = impl.last_installed_upgrade(target)
+		local metal = core.create_for_actor("lz_nm_metal_part")
+		if not metal then
+			core.message("lz_nm_disassemble_weapon_failed")
+			return false
+		end
+		local recovered = nil
+		if upgrade_id then
+			recovered = impl.create_recovered_upgrade(upgrade_id)
+			if not recovered then
+				alife():release(metal, true)
+				core.message("lz_nm_disassemble_weapon_failed")
+				return false
+			end
+		end
+
+		local target_section = target:section()
+		impl.release_item(target)
+		impl.consume_one_use(tool)
+		core.message(upgrade_id and "lz_nm_disassemble_weapon_complete_upgrade" or
+			"lz_nm_disassemble_weapon_complete_plain")
+		printf(
+			"lz_new_mechanics: disassembled weapon [%s], recovered last upgrade [%s]",
+			tostring(target_section), tostring(upgrade_id or "none")
+		)
+		return true
+	elseif core.is_helmet(target) then
+		local target_id = target:id()
+		local recovered_filter = impl.deterministic_salvage_succeeds(
+			target_id, 40699, 1103515245, 50
+		)
+		if recovered_filter then
+			local filter = core.create_for_actor("lz_nm_used_filter")
+			if not filter then
+				core.message("lz_nm_disassemble_helmet_failed")
+				return false
+			end
+		end
+
+		local target_section = target:section()
+		impl.release_item(target)
+		impl.consume_one_use(tool)
+		core.message(recovered_filter and "lz_nm_disassemble_helmet_result_1" or
+			"lz_nm_disassemble_helmet_result_0")
+		printf(
+			"lz_new_mechanics: disassembled helmet [%s:%s], deterministic filter salvage [%s]",
+			tostring(target_section), tostring(target_id), tostring(recovered_filter)
+		)
+		return true
+	elseif core.is_outfit_or_helmet(target) then
+		local recovered = {}
+		local result_mask = 0
+		local target_id = target:id()
+		local target_section = target:section()
+		local maximum, chance = impl.armor_salvage_profile(target_section)
+		local result_counts = { pouch = 0, composite = 0, boots = 0 }
+		for _, salvage in ipairs(armor_salvage) do
+			local salvage_maximum = salvage.multiple and maximum or 1
+			local count = impl.deterministic_salvage_count(
+				target_id, salvage, salvage_maximum, chance
+			)
+			for _ = 1, count do
+				local item = core.create_for_actor(salvage.section)
+				if not item then
+					for _, created in ipairs(recovered) do alife():release(created, true) end
+					core.message("lz_nm_disassemble_armor_failed")
+					return false
+				end
+				table.insert(recovered, item)
+			end
+			if count > 0 then result_mask = result_mask + salvage.bit end
+			if salvage.bit == 1 then
+				result_counts.pouch = count
+			elseif salvage.bit == 2 then
+				result_counts.composite = count
+			else
+				result_counts.boots = count
+			end
+		end
+
+		impl.release_item(target)
+		impl.consume_one_use(tool)
+		core.message(string.format(
+			game.translate_string("lz_nm_disassemble_armor_result_counts"),
+			result_counts.boots, result_counts.pouch, result_counts.composite
+		))
+		printf(
+			"lz_new_mechanics: disassembled armor [%s:%s], rarity yield [%s%%, max %s], salvage mask [%s], boots/pouches/composites [%s/%s/%s]",
+			tostring(target_section), tostring(target_id), tostring(chance), tostring(maximum),
+			tostring(result_mask), tostring(result_counts.boots), tostring(result_counts.pouch),
+			tostring(result_counts.composite)
+		)
+		return true
+	end
+	core.message("lz_nm_disassemble_wrong_target")
+	return false
+end
+
+function impl.equipped_weapon()
+	if not db.actor then return nil end
+	local item = db.actor:active_item()
+	if core.is_weapon_mechanics_target(item) then return item end
+	item = db.actor:item_in_slot(3)
+	if core.is_weapon_mechanics_target(item) then return item end
+	item = db.actor:item_in_slot(2)
+	if core.is_weapon_mechanics_target(item) then return item end
+	return nil
+end
+
+function impl.equipped_outfit_or_helmet(tool)
+	if not db.actor then return nil end
+	local max_condition = core.get_sysini():r_float(tool:section(), "repair_max_condition")
+	local outfit = db.actor:item_in_slot(7)
+	local helmet = db.actor:item_in_slot(12)
+	if core.is_outfit_or_helmet(outfit) and outfit:condition() < max_condition then return outfit end
+	if core.is_outfit_or_helmet(helmet) and helmet:condition() < max_condition then return helmet end
+	-- Return an equipped item even when both are healthy so the more specific
+	-- "repair not needed" message is shown.
+	if core.is_outfit_or_helmet(outfit) then return outfit end
+	if core.is_outfit_or_helmet(helmet) then return helmet end
+	return nil
+end
+
+function impl.queue_inventory_tool_action(tool, target, action)
+	if not tool or not target or state.pending_inventory_tool_action then return false end
+	state.pending_inventory_tool_action = {
+		tool_id = tool:id(),
+		target_id = target:id(),
+		action = action,
+		-- Let the property box / drag callback finish before a stacked cell loses
+		-- one of its objects. Mutating it inside OnMouseAction invalidates indices.
+		due = time_global() + 150
+	}
+	return true
+end
+
+-- Context-menu action. Drag-and-drop remains available for selecting an exact
+-- inventory item; this shortcut works on currently equipped gear.
+function use_repair_kit(tool)
+	if not tool or not db.actor then return false end
+	if not core.require_actor_owned_item(tool) then return false end
+	if db.actor:is_talking() then return false end
+	local repair_type = repair_tools[core.canonical_item_section(tool:section())]
+	local target = repair_type == "weapon" and impl.equipped_weapon() or
+		(repair_type == "outfit" and impl.equipped_outfit_or_helmet(tool))
+	if not target then
+		core.message(repair_type == "weapon" and "lz_nm_repair_no_weapon" or "lz_nm_repair_no_outfit")
+		return false
+	end
+	impl.queue_inventory_tool_action(tool, target, "repair")
+	return false
+end
+
+function impl.use_context_target(tool, index, action)
+	if not tool or not db.actor or db.actor:is_talking() then return false end
+	if not core.require_actor_owned_item(tool) then return false end
+	local section = core.canonical_item_section(tool:section())
+	local targets = state.context_targets[section]
+	local target = targets and targets[index] or nil
+	if not target then
+		local target_type = repair_tools[section]
+		if disassembly_tools[section] then
+			core.message("lz_nm_disassemble_no_target")
+		elseif section == "lz_nm_krona_battery" then
+			core.message("lz_nm_detector_charge_no_detector")
+		else
+			core.message(target_type == "outfit" and "lz_nm_repair_no_outfit" or "lz_nm_repair_no_weapon")
+		end
+		return false
+	end
+	impl.queue_inventory_tool_action(tool, target, action)
+	-- The script owns charge consumption. Prevent the engine from treating the
+	-- attachment-class toolbox as food after a successful custom action.
+	return false
+end
+
+function use_repair_target_1(tool) return impl.use_context_target(tool, 1, "repair") end
+function use_repair_target_2(tool) return impl.use_context_target(tool, 2, "repair") end
+function use_repair_target_3(tool) return impl.use_context_target(tool, 3, "repair") end
+function use_repair_target_4(tool) return impl.use_context_target(tool, 4, "repair") end
+function use_upgrade_target_1(tool) return impl.use_context_target(tool, 1, "upgrade") end
+function use_upgrade_target_2(tool) return impl.use_context_target(tool, 2, "upgrade") end
+function use_disassemble_target_1(tool) return impl.use_context_target(tool, 1, "disassemble") end
+function use_disassemble_target_2(tool) return impl.use_context_target(tool, 2, "disassemble") end
+function use_disassemble_target_3(tool) return impl.use_context_target(tool, 3, "disassemble") end
+function use_disassemble_target_4(tool) return impl.use_context_target(tool, 4, "disassemble") end
+function use_metal_part_target_1(part) return impl.use_context_target(part, 1, "repair_part") end
+function use_metal_part_target_2(part) return impl.use_context_target(part, 2, "repair_part") end
+function use_metal_part_target_3(part) return impl.use_context_target(part, 3, "repair_part") end
+function use_metal_part_target_4(part) return impl.use_context_target(part, 4, "repair_part") end
+function use_detector_battery_target_1(battery)
+	return impl.use_context_target(battery, 1, "charge_detector")
+end
+function use_detector_battery_target_2(battery)
+	return impl.use_context_target(battery, 2, "charge_detector")
+end
+function use_detector_battery_target_3(battery)
+	return impl.use_context_target(battery, 3, "charge_detector")
+end
+function use_detector_battery_target_4(battery)
+	return impl.use_context_target(battery, 4, "charge_detector")
+end
+function use_upgrade_tool(tool)
+	if not tool or not db.actor then return false end
+	if not core.require_actor_owned_item(tool) then return false end
+	if db.actor:is_talking() then return false end
+	local target = impl.equipped_weapon()
+	if not target then
+		core.message("lz_nm_repair_no_weapon")
+		return false
+	end
+	impl.queue_inventory_tool_action(tool, target, "upgrade")
+	return false
+end
+
+-- Engine callback. Returning true tells CUIActorMenu that the custom drop was
+-- handled and lets CUIDragDropListEx destroy its temporary drag icon. Returning
+-- false has the opposite meaning here: the list performs its fallback UI move,
+-- which leaves a rejected tool cell sitting on top of the target until the
+-- inventory is reopened. Do not repair, consume or release an item inside this
+-- callback:
+-- CUICellContainer is still unwinding its grouped-cell operation at this
+-- point, and changing either cell there can trip AddSimilar/ChildsCount.
+-- Resolve both objects and perform the action from actor_on_update instead.
+function on_item_dropped(tool, target, from_slot, to_slot)
+	if not tool or not target then return true end
+	impl.mark_inventory_dirty()
+	local section = core.canonical_item_section(tool:section())
+	local repair_type = repair_tools[section]
+	local upgrade_type = upgrade_tools[section]
+	local can_disassemble = disassembly_tools[section]
+	local is_repair_part = weapon_repair_parts[section]
+	local is_detector_charge = section == "lz_nm_krona_battery" and
+		impl.is_chargeable_detector(target:section())
+	if not repair_type and not can_disassemble and not is_repair_part and
+		upgrade_type == nil and not is_detector_charge then return true end
+
+	if from_slot ~= 2 or (to_slot ~= 1 and to_slot ~= 2) then
+		return true
+	end
+	if db.actor and db.actor:is_talking() then
+		return true
+	end
+
+	impl.queue_inventory_tool_action(tool, target,
+		is_detector_charge and "charge_detector" or
+		(can_disassemble and "disassemble" or (is_repair_part and "repair_part" or
+			(upgrade_type ~= nil and "upgrade" or "repair"))))
+	return true
+end
+
+-- Physical HUD models and motions come from Headgear Animations v0.9.2.
+local headgear_animation_profiles = {
+	helm_respirator = "gasmask",
+	helm_hardhat = "hardhat",
+	helm_protective = "protector",
+	helm_tactic = "tactic",
+	helm_battle = "battle",
+}
+
+-- Remove the duplicate entries from the old developer outfit menu as well.
+local removed_headgear_sections = {
+	helm_respirator_2 = true,
+	helm_m40 = true,
+	helm_respirator_joker = true,
+	helm_respirator_half = true,
+	helm_hardhat_snag = true,
+	helm_facemask = true,
+}
+
+local function remove_duplicate_headgear_from_god_menu()
+	local outfits = god_tbl and god_tbl.god_outfits_table
+	if type(outfits) ~= "table" then return end
+	for index = #outfits, 1, -1 do
+		if removed_headgear_sections[outfits[index]] then
+			table.remove(outfits, index)
+		end
+	end
+end
+
+remove_duplicate_headgear_from_god_menu()
+
+-- Timings are based on Headgear Animations v0.9.2 and adjusted to the actual
+-- end of these motions in IX-Ray. deimos_short.ppe briefly darkens the view and then
+-- blends back, hiding the frame where the physical HUD model is removed.
+local headgear_equip_fade_timings = {
+	lz_nm_headgear_gasmask_equip = { 1500, 2000 },
+	lz_nm_headgear_hardhat_equip = { 2200, 3200 },
+	lz_nm_headgear_battle_equip = { 2300, 3300 },
+	lz_nm_headgear_tactic_equip = { 2500, 3500 },
+	lz_nm_headgear_protector_equip = { 2800, 3500 },
+}
+
+function impl.clear_headgear_fade()
+	state.headgear_fade_start_due = nil
+	state.headgear_fade_end_due = nil
+	if state.headgear_fade_active then
+		level.remove_pp_effector(HEADGEAR_FADE_EFFECT_ID)
+		state.headgear_fade_active = false
+	end
+end
+
+function impl.schedule_headgear_fade(section)
+	impl.clear_headgear_fade()
+	local timing = headgear_equip_fade_timings[section]
+	if not timing then return end
+	local now = time_global()
+	state.headgear_fade_start_due = now + timing[1]
+	state.headgear_fade_end_due = now + timing[2]
+end
+
+-- The animator start callback runs from CHudAnimatorManager::PlayMotion, after
+-- the active weapon and detector have actually cleared the actor's hands.
+-- Anchor the existing millisecond offsets here instead of at the earlier Lua
+-- request, so the fade keeps the same phase relative to the motion at any FPS.
+function headgear_animator_started()
+	if not db.actor then return end
+	impl.schedule_headgear_fade(db.actor:get_hud_animator_section())
+end
+
+function impl.update_headgear_fade(now)
+	if state.headgear_fade_start_due and now >= state.headgear_fade_start_due then
+		state.headgear_fade_start_due = nil
+		level.add_pp_effector("deimos_short.ppe", HEADGEAR_FADE_EFFECT_ID, false)
+		state.headgear_fade_active = true
+	end
+	if state.headgear_fade_end_due and now >= state.headgear_fade_end_due then
+		state.headgear_fade_end_due = nil
+		if state.headgear_fade_active then
+			level.remove_pp_effector(HEADGEAR_FADE_EFFECT_ID)
+			state.headgear_fade_active = false
+		end
+	end
+end
+
+function impl.headgear_animator_section(item_section, equip)
+	local profile = item_section and headgear_animation_profiles[item_section]
+	if not profile then return nil end
+	return "lz_nm_headgear_" .. profile .. (equip and "_equip" or "_unequip")
+end
+
+-- Slot 12 is the one-based script slot for standalone helmets. Do not play an
+-- animation on save load: initialize from the equipped item and react only to
+-- a real subsequent equip/unequip change. If another HUD animation is active,
+-- keep only the latest requested helmet transition and play it afterwards.
+function impl.update_helmet_animation()
+	local helmet = db.actor:item_in_slot(12)
+	local current_id = helmet and helmet:id() or nil
+	local current_section = helmet and helmet:section() or nil
+	if not state.helmet_slot_initialized then
+		state.helmet_slot_initialized = true
+		state.helmet_slot_id = current_id
+		state.helmet_slot_section = current_section
+		return
+	end
+
+	if current_id ~= state.helmet_slot_id then
+		local previous_section = state.helmet_slot_section
+		state.helmet_slot_id = current_id
+		state.helmet_slot_section = current_section
+		local unequip_section = impl.headgear_animator_section(previous_section, false)
+		local equip_section = impl.headgear_animator_section(current_section, true)
+		state.pending_helmet_animation_next = nil
+		if previous_section and current_section then
+			state.pending_helmet_animation = unequip_section or equip_section
+			state.pending_helmet_animation_next = unequip_section and equip_section or nil
+		else
+			state.pending_helmet_animation = current_section and equip_section or unequip_section
+		end
+	end
+
+	if state.pending_helmet_animation and not db.actor:is_hud_animator_active() then
+		local section = state.pending_helmet_animation
+		state.pending_helmet_animation = state.pending_helmet_animation_next
+		state.pending_helmet_animation_next = nil
+		db.actor:start_hud_animator(section)
+	end
+end
+
+function on_game_load()
+	state.pending_inventory_tool_action = nil
+	state.inventory_normalization_pending = true
+	state.context_menu_dirty = true
+	state.context_targets = {}
+	state.context_menu_signature = nil
+	state.recovered_upgrade_tooltips = {}
+	state.repair_tooltip_charges = {}
+	state.disassembly_tooltip_charges = {}
+	state.helmet_slot_initialized = false
+	state.helmet_slot_id = nil
+	state.helmet_slot_section = nil
+	state.pending_helmet_animation = nil
+	state.pending_helmet_animation_next = nil
+	state.headgear_fade_start_due = nil
+	state.headgear_fade_end_due = nil
+	state.headgear_fade_active = false
+	state.detector_battery_elapsed = 0
+	state.detector_battery_empty_notified = {}
+	state.detector_tooltip_minutes = {}
+	state.detector_lifetimes = {}
+end
+
+function update_headgear_slot()
+	impl.update_helmet_animation()
+
+end
+
+function update_detector_and_fade(now)
+	impl.update_detector_battery()
+	impl.update_headgear_fade(now)
+end
+
+function update_equipped(now)
+	update_headgear_slot()
+	update_detector_and_fade(now)
+end
+
+function update_context_actions(now)
+	-- Existing saves need one migration pass. Afterwards inventory callbacks and
+	-- the focused item drive all normalization; no background full scans remain.
+	if state.inventory_normalization_pending and db.actor then
+		state.inventory_normalization_pending = false
+		impl.normalize_tool_charges()
+	end
+	if state.pending_inventory_tool_action and now >= state.pending_inventory_tool_action.due then
+		local pending = state.pending_inventory_tool_action
+		state.pending_inventory_tool_action = nil
+		local tool = level.object_by_id(pending.tool_id)
+		local target = level.object_by_id(pending.target_id)
+		if tool and target and core.is_actor_owned_item(tool) and core.is_actor_owned_item(target) then
+			if pending.action == "disassemble_detector" then
+				impl.complete_detector_disassembly(tool)
+			elseif pending.action == "charge_detector" then
+				impl.charge_detector_with_battery(tool, target)
+			elseif pending.action == "upgrade" then
+				impl.install_field_upgrade(tool, target)
+			elseif pending.action == "disassemble" then
+				impl.disassemble_equipment(tool, target)
+			elseif pending.action == "repair_part" then
+				impl.repair_weapon_with_metal_part(tool, target)
+			else
+				impl.repair_item(tool, target)
+			end
+		end
+	end
+end

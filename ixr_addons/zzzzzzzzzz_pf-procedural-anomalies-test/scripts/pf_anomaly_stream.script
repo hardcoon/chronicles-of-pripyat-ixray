@@ -1,0 +1,415 @@
+-- Staged visual/audio manager for the clustered Pripyat anomaly spawn.
+-- Native collision is supplied by all.spawn. This script never creates or
+-- releases ALife anomaly objects while the actor is moving through the map.
+
+local UPDATE_INTERVAL_MS = 100
+local PARTICLE_ON_SQR = 50 * 50
+local PARTICLE_OFF_SQR = 60 * 60
+local LIGHT_ON_SQR = 35 * 35
+local LIGHT_OFF_SQR = 45 * 45
+local SOUND_ON_SQR = 20 * 20
+local SOUND_OFF_SQR = 30 * 30
+local DECORATIVE_ZONE_CHECK_INTERVAL_MS = 1000
+local GRID_CELL_SIZE = 64
+local GRID_NEIGHBOR_SPAN = math.ceil(math.sqrt(math.max(
+	PARTICLE_OFF_SQR, LIGHT_OFF_SQR, SOUND_OFF_SQR
+)) / GRID_CELL_SIZE)
+
+-- These two Burning Fuzz objects hang above the Monolith-base room shared by
+-- Sergey and the Guardian. Keep their topolinypuh visuals and streamed idle
+-- particles, but never let the native zones hurt anyone or appear on anomaly
+-- detectors. Matching by spawn name keeps the rest of Pripyat's Burning Fuzz
+-- untouched and also makes the fix work with saves created before this patch.
+local decorative_zone_names = {
+	pf_zone_burning_fuzz_strong_02 = true,
+	pf_zone_burning_fuzz_strong_03 = true
+}
+
+local anomalies = nil
+local states = {}
+local section_effects = {}
+local next_update = 0
+local next_decorative_zone_check = 0
+local decorative_zone_ids = {}
+local decorative_zone_disabled = {}
+local decorative_zone_discovery_done = false
+local sys_ini = nil
+local anomaly_grid = {}
+local active_indices = {}
+local candidate_marks = {}
+local candidate_indices = {}
+local candidate_epoch = 0
+local candidate_count = 0
+local fixed_population = false
+local procedural_resource_profiles = {
+	"zone_mine_gravitational_weak", "zone_mine_gravitational_average", "zone_mine_gravitational_strong",
+	"zone_mine_electric_weak", "zone_mine_electric_average", "zone_mine_electric_strong",
+	"zone_buzz_weak", "zone_buzz_average", "zone_buzz_strong",
+	"zone_zharka_static_weak", "zone_zharka_static_average", "zone_zharka_static_strong",
+	"zone_field_psychic_weak", "zone_field_psychic_average", "zone_field_psychic_strong"
+}
+local procedural_resource_state = { index = 1, next_step = 0, resources = {} }
+
+local function initialize_data()
+	if anomalies then return end
+	sys_ini = system_ini()
+	local mode = "off"
+	local config_section = "pf_procedural_anomalies_test"
+	if sys_ini:section_exist(config_section) and sys_ini:line_exist(config_section, "mode") then
+		mode = sys_ini:r_string(config_section, "mode")
+	end
+	anomalies = {}
+	for _, anomaly in ipairs(pf_anomaly_stream_data.anomalies) do
+		local section = anomaly[2]
+		local preserved = string.match(section, "^zone_field_radioactive")
+			or string.match(section, "^zone_burning_fuzz")
+		fixed_population = mode == "streaming_test" or mode == "static_spawn_test"
+		if not fixed_population or preserved then anomalies[#anomalies + 1] = anomaly end
+	end
+end
+
+local function grid_key(cell_x, cell_z)
+	return tostring(cell_x) .. ":" .. tostring(cell_z)
+end
+
+local function build_anomaly_grid()
+	initialize_data()
+	for index = 1, #anomalies do
+		local anomaly = anomalies[index]
+		local cell_x = math.floor(anomaly[3] / GRID_CELL_SIZE)
+		local cell_z = math.floor(anomaly[5] / GRID_CELL_SIZE)
+		local key = grid_key(cell_x, cell_z)
+		local bucket = anomaly_grid[key]
+		if not bucket then
+			bucket = {}
+			anomaly_grid[key] = bucket
+		end
+		table.insert(bucket, index)
+	end
+end
+
+local function find_decorative_zones()
+	for _, server_object in alife():objects() do
+		local name = server_object:name()
+		if decorative_zone_names[name] then
+			decorative_zone_ids[name] = server_object.id
+		end
+	end
+end
+
+local function disable_decorative_zones(now)
+	if now < next_decorative_zone_check then return end
+	next_decorative_zone_check = now + DECORATIVE_ZONE_CHECK_INTERVAL_MS
+
+	if not decorative_zone_discovery_done then
+		find_decorative_zones()
+		decorative_zone_discovery_done = true
+	end
+
+	for name in pairs(decorative_zone_names) do
+		local object_id = decorative_zone_ids[name]
+		local client_zone = object_id and level.object_by_id(object_id) or nil
+		if client_zone then
+			if not decorative_zone_disabled[name] then
+				client_zone:set_anomaly_power(0)
+				client_zone:disable_anomaly()
+				decorative_zone_disabled[name] = true
+				printf("[PF ANOMALY] converted %s to harmless decoration", name)
+			end
+		else
+			-- Reapply after ALife brings the object online again.
+			decorative_zone_disabled[name] = nil
+		end
+	end
+end
+
+local function read_string(section, key, default)
+	if sys_ini:line_exist(section, key) then
+		return sys_ini:r_string(section, key)
+	end
+	return default
+end
+
+local function read_bool(section, key, default)
+	if sys_ini:line_exist(section, key) then
+		return sys_ini:r_bool(section, key)
+	end
+	return default
+end
+
+local function read_float(section, key, default)
+	if sys_ini:line_exist(section, key) then
+		return sys_ini:r_float(section, key)
+	end
+	return default
+end
+
+local function first_resource(value)
+	if not value or value == "" then
+		return nil
+	end
+	local resource = string.match(value, "^%s*([^,;]+)")
+	if not resource then
+		return nil
+	end
+	resource = string.gsub(resource, "%s+$", "")
+	return resource ~= "" and resource or nil
+end
+
+local function warm_next_procedural_resource(now)
+	local state = procedural_resource_state
+	if state.index > #procedural_resource_profiles or now < state.next_step then return end
+	state.next_step = now + 100
+	local section = procedural_resource_profiles[state.index]
+	local warm = {}
+	if sys_ini:line_exist(section, "idle_particles") then
+		local particle = first_resource(sys_ini:r_string(section, "idle_particles"))
+		if particle then warm.particle = particles_object(particle) end
+	end
+	if sys_ini:line_exist(section, "idle_sound") then
+		local sound = first_resource(sys_ini:r_string(section, "idle_sound"))
+		if sound and sound ~= "ambient\\no_sound" then warm.sound = sound_object(sound) end
+	end
+	state.resources[state.index] = warm
+	state.index = state.index + 1
+end
+
+local function get_effects(section)
+	local result = section_effects[section]
+	if result then
+		return result
+	end
+
+	-- Radioactive fields are intentionally left fully vanilla. Their original
+	-- CoP feedback comes from radiation_counter.ltx (the Geiger crackle near or
+	-- inside the field), so the 20 m custom anomaly sound streamer must not add
+	-- an idle hum or any other visual/audio layer to them.
+	if string.match(section, "^zone_field_radioactive") then
+		result = { particle = nil, sound = nil, light = false }
+		section_effects[section] = result
+		return result
+	end
+
+	result = {
+		particle = first_resource(read_string(section, "idle_particles", "")),
+		sound = first_resource(read_string(section, "idle_sound", "")),
+		light = read_bool(section, "idle_light", false)
+	}
+	section_effects[section] = result
+	return result
+end
+
+local function distance_sqr(pos, anomaly)
+	local dx = pos.x - anomaly[3]
+	local dy = pos.y - anomaly[4]
+	local dz = pos.z - anomaly[5]
+	return dx * dx + dy * dy + dz * dz
+end
+
+local function add_candidate_index(index)
+	if candidate_marks[index] == candidate_epoch then return end
+	candidate_marks[index] = candidate_epoch
+	candidate_count = candidate_count + 1
+	candidate_indices[candidate_count] = index
+end
+
+local function collect_candidate_indices(actor_pos)
+	for index = 1, #candidate_indices do candidate_indices[index] = nil end
+	candidate_epoch = candidate_epoch + 1
+	candidate_count = 0
+	local actor_cell_x = math.floor(actor_pos.x / GRID_CELL_SIZE)
+	local actor_cell_z = math.floor(actor_pos.z / GRID_CELL_SIZE)
+
+	for cell_x = actor_cell_x - GRID_NEIGHBOR_SPAN,
+		actor_cell_x + GRID_NEIGHBOR_SPAN do
+		for cell_z = actor_cell_z - GRID_NEIGHBOR_SPAN,
+			actor_cell_z + GRID_NEIGHBOR_SPAN do
+			local bucket = anomaly_grid[grid_key(cell_x, cell_z)]
+			if bucket then
+				for _, index in ipairs(bucket) do add_candidate_index(index) end
+			end
+		end
+	end
+	for index in pairs(active_indices) do add_candidate_index(index) end
+	table.sort(candidate_indices)
+	return candidate_indices
+end
+
+local function update_active_index(index, state)
+	if state and (state.particle_playing or state.light_playing or state.sound_playing) then
+		active_indices[index] = true
+	else
+		active_indices[index] = nil
+	end
+end
+
+local function get_state(index)
+	local result = states[index]
+	if not result then
+		result = {}
+		states[index] = result
+	end
+	return result
+end
+
+local function anomaly_position(anomaly)
+	return vector():set(anomaly[3], anomaly[4], anomaly[5])
+end
+
+local function enable_particle(index, anomaly, effects)
+	if not effects.particle then
+		return false
+	end
+	local state = get_state(index)
+	if not state.particle then
+		state.particle = particles_object(effects.particle)
+	end
+	state.particle:play_at_pos(anomaly_position(anomaly))
+	state.particle_playing = true
+	return true
+end
+
+local function disable_particle(state)
+	if state and state.particle_playing and state.particle then
+		state.particle:stop_deffered()
+		state.particle_playing = false
+		return true
+	end
+	return false
+end
+
+local function enable_sound(index, anomaly, effects)
+	if not effects.sound then
+		return false
+	end
+	local state = get_state(index)
+	if not state.sound then
+		state.sound = sound_object(effects.sound)
+	end
+	state.sound:play_at_pos(db.actor, anomaly_position(anomaly), 0, sound_object.s3d + sound_object.looped)
+	state.sound_playing = true
+	return true
+end
+
+local function disable_sound(state)
+	if state and state.sound_playing and state.sound then
+		state.sound:stop_deffered()
+		state.sound_playing = false
+		return true
+	end
+	return false
+end
+
+local function enable_light(index, anomaly, effects)
+	if not effects.light or not script_light then
+		return false
+	end
+	local state = get_state(index)
+	if not state.light then
+		state.light = script_light()
+		state.light:set_position(anomaly_position(anomaly))
+		state.light.range = read_float(anomaly[2], "idle_light_range", 6)
+		state.light.shadow = false
+	end
+	state.light.enabled = true
+	state.light_playing = true
+	return true
+end
+
+local function disable_light(state)
+	if state and state.light_playing and state.light then
+		state.light.enabled = false
+		state.light_playing = false
+		return true
+	end
+	return false
+end
+
+local function actor_on_update()
+	if not db.actor or level.name() ~= "pripyat_full" then
+		return
+	end
+	local now = time_global()
+	if not next(anomaly_grid) then build_anomaly_grid() end
+	if fixed_population then warm_next_procedural_resource(now) end
+	disable_decorative_zones(now)
+	if now < next_update then
+		return
+	end
+	next_update = now + UPDATE_INTERVAL_MS
+	if fixed_population then pf_proc_group_markers.update(now) end
+
+	local actor_pos = db.actor:position()
+	for _, index in ipairs(collect_candidate_indices(actor_pos)) do
+		local anomaly = anomalies[index]
+		local distance = distance_sqr(actor_pos, anomaly)
+		local state = states[index]
+		local effects = get_effects(anomaly[2])
+
+		-- One state transition per update keeps resource work off the same frame.
+		if distance > PARTICLE_OFF_SQR and disable_particle(state) then
+			update_active_index(index, state)
+			return
+		end
+		if distance > LIGHT_OFF_SQR and disable_light(state) then
+			update_active_index(index, state)
+			return
+		end
+		if distance > SOUND_OFF_SQR and disable_sound(state) then
+			update_active_index(index, state)
+			return
+		end
+		if distance <= PARTICLE_ON_SQR and (not state or not state.particle_playing) and
+			enable_particle(index, anomaly, effects) then
+			update_active_index(index, states[index])
+			return
+		end
+		if distance <= LIGHT_ON_SQR and (not state or not state.light_playing) and
+			enable_light(index, anomaly, effects) then
+			update_active_index(index, states[index])
+			return
+		end
+		if distance <= SOUND_ON_SQR and (not state or not state.sound_playing) and
+			enable_sound(index, anomaly, effects) then
+			update_active_index(index, states[index])
+			return
+		end
+	end
+end
+
+local function reset_state()
+	for _, state in pairs(states) do
+		disable_sound(state)
+		disable_light(state)
+		disable_particle(state)
+	end
+	states = {}
+	active_indices = {}
+	candidate_marks = {}
+	candidate_indices = {}
+	candidate_epoch = 0
+	candidate_count = 0
+	next_update = 0
+	next_decorative_zone_check = 0
+	decorative_zone_ids = {}
+	decorative_zone_disabled = {}
+	decorative_zone_discovery_done = false
+	anomaly_grid = {}
+	procedural_resource_state = { index = 1, next_step = 0, resources = {} }
+	if pf_proc_group_markers and type(pf_proc_group_markers.reset) == "function" then
+		pf_proc_group_markers.reset()
+	end
+end
+
+function procedural_resources_ready()
+	return anomalies ~= nil and fixed_population
+		and procedural_resource_state.index > #procedural_resource_profiles
+end
+
+function update()
+	actor_on_update()
+end
+
+function reset()
+	reset_state()
+end

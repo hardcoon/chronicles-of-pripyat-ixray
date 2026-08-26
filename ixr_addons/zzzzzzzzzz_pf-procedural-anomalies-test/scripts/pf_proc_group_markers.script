@@ -1,0 +1,220 @@
+-- Generated from reference_group_catalog_20260821.json.
+-- Group coordinates start hidden. A serialized marker is revealed only after
+-- the actor physically enters the group's main aura or buys its coordinates
+-- from Novikov. Dialogue queries use the constant-time availability API below.
+
+local SPOT_TYPE = "primary_object"
+local DISCOVERY_PSTOR = "pf_proc_discovered_groups_v1"
+local CHECK_INTERVAL_MS = 200
+local RETRY_DELAY_MS = 1000
+local EXPECTED_GROUPS = 41
+local MAX_GROUP_RADIUS_SQR = 50 * 50
+
+local entries = {
+	{ group_id = 1, object_name = "pf_proc_fixed_g01_a_base", hint = "st_pf_proc_group_01" },
+	{ group_id = 2, object_name = "pf_proc_fixed_g02_a_base", hint = "st_pf_proc_group_02" },
+	{ group_id = 3, object_name = "pf_proc_fixed_g03_a_base", hint = "st_pf_proc_group_03" },
+	{ group_id = 4, object_name = "pf_proc_fixed_g04_a_base", hint = "st_pf_proc_group_04" },
+	{ group_id = 5, object_name = "pf_proc_fixed_g05_a_base", hint = "st_pf_proc_group_05" },
+	{ group_id = 6, object_name = "pf_proc_fixed_g06_a_base", hint = "st_pf_proc_group_06" },
+	{ group_id = 7, object_name = "pf_proc_fixed_g07_a_base", hint = "st_pf_proc_group_07" },
+	{ group_id = 8, object_name = "pf_proc_fixed_g08_a_base", hint = "st_pf_proc_group_08" },
+	{ group_id = 9, object_name = "pf_proc_fixed_g09_a_base", hint = "st_pf_proc_group_09" },
+	{ group_id = 10, object_name = "pf_proc_fixed_g10_a_base", hint = "st_pf_proc_group_10" },
+	{ group_id = 11, object_name = "pf_proc_fixed_g11_a_base", hint = "st_pf_proc_group_11" },
+	{ group_id = 12, object_name = "pf_proc_fixed_g12_a_base", hint = "st_pf_proc_group_12" },
+	{ group_id = 13, object_name = "pf_proc_fixed_g13_a_base", hint = "st_pf_proc_group_13" },
+	{ group_id = 14, object_name = "pf_proc_fixed_g14_a_base", hint = "st_pf_proc_group_14" },
+	{ group_id = 15, object_name = "pf_proc_fixed_g15_a_base", hint = "st_pf_proc_group_15" },
+	{ group_id = 16, object_name = "pf_proc_fixed_g16_a_base", hint = "st_pf_proc_group_16" },
+	{ group_id = 17, object_name = "pf_proc_fixed_g17_a_base", hint = "st_pf_proc_group_17" },
+	{ group_id = 18, object_name = "pf_proc_fixed_g18_a_base", hint = "st_pf_proc_group_18" },
+	{ group_id = 19, object_name = "pf_proc_fixed_g19_a_base", hint = "st_pf_proc_group_19" },
+	{ group_id = 20, object_name = "pf_proc_fixed_g20_a_base", hint = "st_pf_proc_group_20" },
+	{ group_id = 21, object_name = "pf_proc_fixed_g21_a_base", hint = "st_pf_proc_group_21" },
+	{ group_id = 22, object_name = "pf_proc_fixed_g22_a_base", hint = "st_pf_proc_group_22" },
+	{ group_id = 23, object_name = "pf_proc_fixed_g23_a_base", hint = "st_pf_proc_group_23" },
+	{ group_id = 24, object_name = "pf_proc_fixed_g24_a_base", hint = "st_pf_proc_group_24" },
+	{ group_id = 25, object_name = "pf_proc_fixed_g25_a_base", hint = "st_pf_proc_group_25" },
+	{ group_id = 26, object_name = "pf_proc_fixed_g26_a_base", hint = "st_pf_proc_group_26" },
+	{ group_id = 27, object_name = "pf_proc_fixed_g27_a_base", hint = "st_pf_proc_group_27" },
+	{ group_id = 28, object_name = "pf_proc_fixed_g28_a_base", hint = "st_pf_proc_group_28" },
+	{ group_id = 29, object_name = "pf_proc_fixed_g29_a_base", hint = "st_pf_proc_group_29" },
+	{ group_id = 30, object_name = "pf_proc_fixed_g30_a_base", hint = "st_pf_proc_group_30" },
+	{ group_id = 31, object_name = "pf_proc_fixed_g31_a_base", hint = "st_pf_proc_group_31" },
+	{ group_id = 32, object_name = "pf_proc_fixed_g32_a_base", hint = "st_pf_proc_group_32" },
+	{ group_id = 33, object_name = "pf_proc_fixed_g33_a_base", hint = "st_pf_proc_group_33" },
+	{ group_id = 34, object_name = "pf_proc_fixed_g34_a_base", hint = "st_pf_proc_group_34" },
+	{ group_id = 35, object_name = "pf_proc_fixed_g35_a_base", hint = "st_pf_proc_group_35" },
+	{ group_id = 36, object_name = "pf_proc_fixed_g36_a_base", hint = "st_pf_proc_group_36" },
+	{ group_id = 37, object_name = "pf_proc_fixed_g37_a_base", hint = "st_pf_proc_group_37" },
+	{ group_id = 38, object_name = "pf_proc_fixed_g38_a_base", hint = "st_pf_proc_group_38" },
+	{ group_id = 39, object_name = "pf_proc_fixed_g39_a_base", hint = "st_pf_proc_group_39" },
+	{ group_id = 40, object_name = "pf_proc_fixed_g40_a_base", hint = "st_pf_proc_group_40" },
+	{ group_id = 41, object_name = "pf_proc_fixed_g41_a_base", hint = "st_pf_proc_group_41" },
+}
+
+local ready = false
+local next_action = 0
+local discovered = {}
+local entries_by_id = {}
+local previous_actor_position = nil
+
+local function gate_open()
+	return db.actor ~= nil
+		and level.name() == "pripyat_full"
+		and pf_stash_qa ~= nil
+		and type(pf_stash_qa.is_developer_mode) == "function"
+		and pf_stash_qa.is_developer_mode() == true
+end
+
+local function copy_position(position)
+	return vector():set(position.x, position.y, position.z)
+end
+
+local function load_discovered()
+	discovered = {}
+	local raw = xr_logic.pstor_retrieve(db.actor, DISCOVERY_PSTOR, "") or ""
+	for value in string.gmatch(tostring(raw), "%d+") do
+		local group_id = tonumber(value)
+		if entries_by_id[group_id] then discovered[group_id] = true end
+	end
+end
+
+local function save_discovered()
+	local encoded = {}
+	for group_id = 1, EXPECTED_GROUPS do
+		if discovered[group_id] then encoded[#encoded + 1] = tostring(group_id) end
+	end
+	xr_logic.pstor_store(db.actor, DISCOVERY_PSTOR, table.concat(encoded, ","))
+end
+
+local function set_marker(entry, visible)
+	local has_spot = level.map_has_object_spot(entry.id, SPOT_TYPE) ~= 0
+	if visible and not has_spot then
+		level.map_add_object_spot_ser(entry.id, SPOT_TYPE, game.translate_string(entry.hint))
+	elseif not visible and has_spot then
+		level.map_remove_object_spot(entry.id, SPOT_TYPE)
+	end
+end
+
+local function build_registry()
+	local simulator = alife()
+	if not simulator then return false end
+	local wanted = {}
+	for _, entry in ipairs(entries) do wanted[entry.object_name] = entry end
+	for _, object in simulator:objects() do
+		local entry = wanted[object:name()]
+		if entry and not entry.id then
+			entry.id = object.id
+			entry.center = copy_position(object.position)
+		end
+	end
+	local count = 0
+	for _, entry in ipairs(entries) do
+		if entry.id then count = count + 1 end
+	end
+	if count ~= EXPECTED_GROUPS then return false end
+	entries_by_id = {}
+	for _, entry in ipairs(entries) do entries_by_id[entry.group_id] = entry end
+	load_discovered()
+	-- Old test saves serialized all spots. Remove each undiscovered legacy spot
+	-- once so they migrate to the hidden-by-default rule.
+	for _, entry in ipairs(entries) do set_marker(entry, discovered[entry.group_id]) end
+	previous_actor_position = copy_position(db.actor:position())
+	ready = true
+	return true
+end
+
+local function segment_distance_sqr(center, from, to)
+	local vx = to.x - from.x
+	local vy = to.y - from.y
+	local vz = to.z - from.z
+	local length_sqr = vx * vx + vy * vy + vz * vz
+	local t = 0
+	if length_sqr > 0.000001 then
+		t = ((center.x - from.x) * vx + (center.y - from.y) * vy +
+			(center.z - from.z) * vz) / length_sqr
+		t = math.max(0, math.min(1, t))
+	end
+	local dx = center.x - (from.x + vx * t)
+	local dy = center.y - (from.y + vy * t)
+	local dz = center.z - (from.z + vz * t)
+	return dx * dx + dy * dy + dz * dz
+end
+
+local function actor_crossed_aura(entry, from, to)
+	if segment_distance_sqr(entry.center, from, to) > MAX_GROUP_RADIUS_SQR then return false end
+	local zone = level.object_by_id(entry.id)
+	if not zone then return false end
+	for _, t in ipairs({ 0, 0.25, 0.5, 0.75, 1 }) do
+		local position = vector():set(
+			from.x + (to.x - from.x) * t,
+			from.y + (to.y - from.y) * t,
+			from.z + (to.z - from.z) * t
+		)
+		local ok, inside = pcall(function() return zone:inside(position) end)
+		if ok and inside then return true end
+	end
+	return false
+end
+
+function reveal_group(group_id)
+	group_id = math.floor(tonumber(group_id) or 0)
+	local entry = entries_by_id[group_id]
+	if not ready or not entry or not gate_open() then return false end
+	if not discovered[group_id] then
+		discovered[group_id] = true
+		save_discovered()
+	end
+	set_marker(entry, true)
+	return true
+end
+
+function is_ready()
+	return ready and gate_open()
+end
+
+function is_group_available(group_id)
+	group_id = math.floor(tonumber(group_id) or 0)
+	return ready and gate_open() and entries_by_id[group_id] ~= nil
+		and not discovered[group_id]
+end
+
+function is_discovered(group_id)
+	group_id = math.floor(tonumber(group_id) or 0)
+	return ready and entries_by_id[group_id] ~= nil
+		and discovered[group_id] == true
+end
+
+function update(now)
+	if now < next_action or not gate_open() then return end
+	if not ready then
+		if not build_registry() then
+			next_action = now + RETRY_DELAY_MS
+			return
+		end
+	end
+	next_action = now + CHECK_INTERVAL_MS
+	local actor_position = copy_position(db.actor:position())
+	local from = previous_actor_position or actor_position
+	for _, entry in ipairs(entries) do
+		if not discovered[entry.group_id] and actor_crossed_aura(entry, from, actor_position) then
+			reveal_group(entry.group_id)
+			break
+		end
+	end
+	previous_actor_position = actor_position
+end
+
+function reset()
+	for _, entry in ipairs(entries) do
+		entry.id = nil
+		entry.center = nil
+	end
+	ready = false
+	next_action = 0
+	discovered = {}
+	entries_by_id = {}
+	previous_actor_position = nil
+end

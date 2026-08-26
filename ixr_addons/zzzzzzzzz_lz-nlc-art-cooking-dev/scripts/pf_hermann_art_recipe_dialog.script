@@ -1,0 +1,204 @@
+-- Hermann's paid artefact-modification research service. Purchased recipes
+-- are permanent info portions used by the mechanics encyclopedia unlocks.
+
+-- Base daily orders currently pay 750-3600 rubles (median 1750, average
+-- 1826), use five independently refreshed slots, and delay payment by one
+-- in-game day. This ladder makes an early recipe affordable after one or two
+-- ordinary contracts while keeping an Absolute protocol a long-term purchase.
+local PRICES = {
+	[1] = 2000,
+	[2] = 4000,
+	[3] = 7000,
+	[4] = 11000
+}
+
+local ACCESS_INFO = "pf_novikov_upgrade_stage_2_active"
+local INTRO_INFO = "pf_hermann_recipe_intro_done"
+
+local recipes = {
+	spirit_1 = { family = "spirit", stage = 1, info = "lz_nlc_recipe_spirit_1_known" },
+	spirit_2 = { family = "spirit", stage = 2, info = "lz_nlc_recipe_spirit_2_known" },
+	spirit_3 = { family = "spirit", stage = 3, info = "lz_nlc_recipe_spirit_3_known" },
+	spirit_4 = { family = "spirit", stage = 4, info = "lz_nlc_recipe_spirit_4_known" },
+	cry_1 = { family = "cry", stage = 1, info = "lz_nlc_recipe_cry_1_known" },
+	cry_2 = { family = "cry", stage = 2, info = "lz_nlc_recipe_cry_2_known" },
+	cry_3 = { family = "cry", stage = 3, info = "lz_nlc_recipe_cry_3_known" },
+	cry_4 = { family = "cry", stage = 4, info = "lz_nlc_recipe_cry_4_known" },
+	dik_1 = { family = "dik", stage = 1, info = "lz_nlc_recipe_dik_1_known" },
+	dik_2 = { family = "dik", stage = 2, info = "lz_nlc_recipe_dik_2_known" },
+	dik_3 = { family = "dik", stage = 3, info = "lz_nlc_recipe_dik_3_known" },
+	dik_4 = { family = "dik", stage = 4, info = "lz_nlc_recipe_dik_4_known" },
+	kol_1 = { family = "kol", stage = 1, info = "lz_nlc_recipe_kol_1_known" },
+	kol_2 = { family = "kol", stage = 2, info = "lz_nlc_recipe_kol_2_known" },
+	kol_3 = { family = "kol", stage = 3, info = "lz_nlc_recipe_kol_3_known" },
+	kol_4 = { family = "kol", stage = 4, info = "lz_nlc_recipe_kol_4_known" },
+	babka_1 = { family = "babka", stage = 1, info = "lz_nlc_recipe_babka_1_known" },
+	babka_2 = { family = "babka", stage = 2, info = "lz_nlc_recipe_babka_2_known" },
+	babka_3 = { family = "babka", stage = 3, info = "lz_nlc_recipe_babka_3_known" },
+	babka_4 = { family = "babka", stage = 4, info = "lz_nlc_recipe_babka_4_known" },
+	pudd_1 = { family = "pudd", stage = 1, info = "lz_nlc_recipe_pudd_1_known" },
+	pudd_2 = { family = "pudd", stage = 2, info = "lz_nlc_recipe_pudd_2_known" },
+	pudd_3 = { family = "pudd", stage = 3, info = "lz_nlc_recipe_pudd_3_known" },
+	pudd_4 = { family = "pudd", stage = 4, info = "lz_nlc_recipe_pudd_4_known" },
+	armor_1 = { family = "armor", stage = 1, info = "lz_nlc_recipe_armor_1_known" },
+	armor_2 = { family = "armor", stage = 2, info = "lz_nlc_recipe_armor_2_known" },
+	armor_3 = { family = "armor", stage = 3, info = "lz_nlc_recipe_armor_3_known" },
+	armor_4 = { family = "armor", stage = 4, info = "lz_nlc_recipe_armor_4_known" }
+}
+
+local family_order = {
+	spirit = { "spirit_1", "spirit_2", "spirit_3", "spirit_4" },
+	cry = { "cry_1", "cry_2", "cry_3", "cry_4" },
+	dik = { "dik_1", "dik_2", "dik_3", "dik_4" },
+	kol = { "kol_1", "kol_2", "kol_3", "kol_4" },
+	babka = { "babka_1", "babka_2", "babka_3", "babka_4" },
+	pudd = { "pudd_1", "pudd_2", "pudd_3", "pudd_4" },
+	armor = { "armor_1", "armor_2", "armor_3", "armor_4" }
+}
+
+local selected_recipe_id = nil
+
+local function actor_has_info(info)
+	return db.actor ~= nil and db.actor:has_info(info)
+end
+
+local function service_unlocked()
+	return actor_has_info(ACCESS_INFO)
+end
+
+local function recipe_available(recipe_id)
+	local recipe = recipes[recipe_id]
+	if not service_unlocked() or not actor_has_info(INTRO_INFO) or
+			not recipe or actor_has_info(recipe.info) then return false end
+	if recipe.stage == 1 then return true end
+	local previous_id = recipe.family .. "_" .. tostring(recipe.stage - 1)
+	local previous = recipes[previous_id]
+	return previous ~= nil and actor_has_info(previous.info)
+end
+
+local function family_available(family)
+	local ordered = family_order[family]
+	if not ordered then return false end
+	for _, recipe_id in ipairs(ordered) do
+		if recipe_available(recipe_id) then return true end
+	end
+	return false
+end
+
+local function select_recipe(recipe_id)
+	selected_recipe_id = recipe_available(recipe_id) and recipe_id or nil
+end
+
+function any_available(first_speaker, second_speaker)
+	if not service_unlocked() or not actor_has_info(INTRO_INFO) then return false end
+	for family in pairs(family_order) do
+		if family_available(family) then return true end
+	end
+	return false
+end
+
+function begin_purchase(first_speaker, second_speaker)
+	selected_recipe_id = nil
+end
+
+function clear_selection(first_speaker, second_speaker)
+	selected_recipe_id = nil
+end
+
+function can_pay_selected(first_speaker, second_speaker)
+	local recipe = recipes[selected_recipe_id]
+	return recipe ~= nil and recipe_available(selected_recipe_id) and
+		db.actor ~= nil and db.actor:money() >= PRICES[recipe.stage]
+end
+
+function cannot_pay_selected(first_speaker, second_speaker)
+	local recipe = recipes[selected_recipe_id]
+	return recipe ~= nil and recipe_available(selected_recipe_id) and
+		(db.actor == nil or db.actor:money() < PRICES[recipe.stage])
+end
+
+function pay_selected(first_speaker, second_speaker)
+	local recipe_id = selected_recipe_id
+	local recipe = recipes[recipe_id]
+	if not recipe or not recipe_available(recipe_id) or db.actor == nil then
+		selected_recipe_id = nil
+		return false
+	end
+
+	local price = PRICES[recipe.stage]
+	if db.actor:money() < price then
+		selected_recipe_id = nil
+		return false
+	end
+
+	-- Unlock first and verify persistence before charging the actor. This keeps
+	-- a missing/unregistered info portion from consuming money.
+	db.actor:give_info_portion(recipe.info)
+	if not db.actor:has_info(recipe.info) then
+		selected_recipe_id = nil
+		return false
+	end
+
+	xr_logic.pstor_store(db.actor, "lz_nm_encyclopedia_unread", true)
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, price)
+
+	local artefact_name_id = "st_lz_nlc_af_" .. recipe.family .. "_" ..
+		tostring(recipe.stage) .. "_name"
+	local notification = string.format(
+		game.translate_string("pf_hermann_recipe_unlocked_news"),
+		game.translate_string(artefact_name_id)
+	)
+	xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+	db.actor:give_game_news(
+		game.translate_string("st_tip"), notification,
+		"pf_actor_thought_icon", 0, 5000, 0
+	)
+
+	selected_recipe_id = nil
+	return true
+end
+
+function family_spirit_available(first_speaker, second_speaker)
+	return family_available("spirit")
+end
+
+function family_cry_available(first_speaker, second_speaker)
+	return family_available("cry")
+end
+
+function family_dik_available(first_speaker, second_speaker)
+	return family_available("dik")
+end
+
+function family_kol_available(first_speaker, second_speaker)
+	return family_available("kol")
+end
+
+function family_babka_available(first_speaker, second_speaker)
+	return family_available("babka")
+end
+
+function family_pudd_available(first_speaker, second_speaker)
+	return family_available("pudd")
+end
+
+function family_armor_available(first_speaker, second_speaker)
+	return family_available("armor")
+end
+
+-- Dialogue XML needs one named precondition and action per visible recipe.
+-- Export them from the module environment while keeping the catalogue above
+-- as the single source of truth.
+local function export_recipe_handlers(recipe_id)
+	local module_environment = getfenv(1)
+	module_environment["recipe_" .. recipe_id .. "_available"] = function(first_speaker, second_speaker)
+		return recipe_available(recipe_id)
+	end
+	module_environment["select_recipe_" .. recipe_id] = function(first_speaker, second_speaker)
+		select_recipe(recipe_id)
+	end
+end
+
+for recipe_id in pairs(recipes) do
+	export_recipe_handlers(recipe_id)
+end

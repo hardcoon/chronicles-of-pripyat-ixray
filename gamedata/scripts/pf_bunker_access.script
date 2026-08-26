@@ -1,0 +1,260 @@
+local CASE_SECTION = "pf_bunker_access_case"
+local CASE_STORY_ID = "pf_bunker_access_case"
+local CASE_DELIVERED_INFO = "pf_bunker_access_case_delivered"
+local INTRO_DIALOG_ACTIVE_INFO = "pf_bunker_access_intro_dialog_active"
+local CASE_DIALOG_ACTIVE_INFO = "pf_bunker_access_case_dialog_active"
+local VODKA_DELIVERED_INFO = "pf_bunker_access_vodka_delivered"
+local VODKA_DIALOG_ACTIVE_INFO = "pf_bunker_access_vodka_dialog_active"
+local FINISH_DIALOG_ACTIVE_INFO = "pf_bunker_access_finish_dialog_active"
+local COMMANDER_DIALOG = "pf_bunker_guard_commander_dialog"
+local DIALOG_ACTIVE_INFOS = {
+    INTRO_DIALOG_ACTIVE_INFO,
+    CASE_DIALOG_ACTIVE_INFO,
+    VODKA_DIALOG_ACTIVE_INFO,
+    FINISH_DIALOG_ACTIVE_INFO,
+}
+local LEVEL_NAME = "pripyat_full"
+local CASE_LEVEL_VERTEX_ID = 11379742
+local CASE_GAME_VERTEX_ID = 607
+local UPDATE_INTERVAL = 1000
+
+local case_id = nil
+local registry_scanned = false
+local next_update = 0
+
+local function case_position()
+    return vector():set(814, 0, -403)
+end
+
+local function actor_has_info(info)
+    return db.actor ~= nil and db.actor:has_info(info)
+end
+
+-- Existing saves may still hold the old conditional meet_dialog inside the
+-- already constructed xr_meet manager. When a quest info portion changes,
+-- that stale condlist calls run_talk_dialog(), whose native implementation
+-- hides the current talk window before starting another one. Replace the live
+-- manager data in place before every quest-stage mutation. Do not restart the
+-- dialog: the currently active phrase graph must remain on screen.
+local function pin_commander_dialog(first_speaker, second_speaker)
+    if db.actor == nil then
+        return
+    end
+
+    local commander = second_speaker
+    if commander ~= nil and commander:id() == db.actor:id() then
+        commander = first_speaker
+    end
+    if commander == nil or commander:id() == db.actor:id() then
+        return
+    end
+
+    local storage = db.storage[commander:id()]
+    local meet_manager = storage ~= nil and storage.meet ~= nil and
+        storage.meet.meet_manager or nil
+    if meet_manager ~= nil and meet_manager.a ~= nil then
+        meet_manager.a.meet_dialog = xr_logic.parse_condlist(
+            commander,
+            "[pf_bunker_access.script]",
+            "meet_dialog",
+            COMMANDER_DIALOG
+        )
+        meet_manager.a.use = xr_logic.parse_condlist(
+            commander,
+            "[pf_bunker_access.script]",
+            "use",
+            "true"
+        )
+        meet_manager.a.allow_break = xr_logic.parse_condlist(
+            commander,
+            "[pf_bunker_access.script]",
+            "allow_break",
+            "true"
+        )
+        meet_manager.startdialog = COMMANDER_DIALOG
+        meet_manager.use = "true"
+        meet_manager.allow_break = true
+    end
+
+    commander:set_start_dialog(COMMANDER_DIALOG)
+    commander:enable_talk()
+    commander:allow_break_talk_dialog(true)
+end
+
+local function find_case()
+    local sim = alife()
+    if sim == nil then
+        return nil
+    end
+
+    local story_id = get_story_object_id(CASE_STORY_ID)
+    local story_object = story_id ~= nil and sim:object(story_id) or nil
+    if story_object ~= nil and story_object:section_name() == CASE_SECTION then
+        case_id = story_object.id
+        registry_scanned = true
+        return story_object
+    end
+
+    for _, server_object in sim:objects() do
+        if server_object:section_name() == CASE_SECTION then
+            case_id = server_object.id
+            registry_scanned = true
+            return server_object
+        end
+    end
+
+    case_id = nil
+    registry_scanned = true
+    return nil
+end
+
+local function current_case()
+    local sim = alife()
+    if sim == nil then
+        return nil
+    end
+    if case_id ~= nil then
+        local server_object = sim:object(case_id)
+        if server_object ~= nil and server_object:section_name() == CASE_SECTION then
+            return server_object
+        end
+        case_id = nil
+        registry_scanned = false
+    end
+    if not registry_scanned then
+        return find_case()
+    end
+    return nil
+end
+
+local function spawn_case()
+    if level.name() ~= LEVEL_NAME or db.actor == nil then
+        return nil
+    end
+
+    local existing = current_case()
+    if existing ~= nil then
+        return existing
+    end
+
+    local position = case_position()
+    local server_object = alife():create(
+        CASE_SECTION,
+        position,
+        CASE_LEVEL_VERTEX_ID,
+        CASE_GAME_VERTEX_ID
+    )
+    if server_object ~= nil then
+        case_id = server_object.id
+        registry_scanned = true
+        server_object.position = position
+        server_object.m_level_vertex_id = CASE_LEVEL_VERTEX_ID
+        server_object.m_game_vertex_id = CASE_GAME_VERTEX_ID
+        printf("[PF BUNKER ACCESS] commander case spawned at 814, 0, -403 (id=%d)",
+            server_object.id)
+    end
+    return server_object
+end
+
+function assign_case(_first_speaker, _second_speaker)
+    if db.actor == nil or actor_has_info("pf_bunker_access_case_assigned") then
+        return
+    end
+    pin_commander_dialog(_first_speaker, _second_speaker)
+    db.actor:give_info_portion("pf_bunker_access_case_assigned")
+    spawn_case()
+end
+
+function has_case(_first_speaker, _second_speaker)
+    return db.actor ~= nil and db.actor:object(CASE_SECTION) ~= nil
+end
+
+function deliver_case(first_speaker, second_speaker)
+    if db.actor == nil or actor_has_info(CASE_DELIVERED_INFO) or
+        not has_case() then
+        return
+    end
+    pin_commander_dialog(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, CASE_SECTION)
+    db.actor:give_info_portion(CASE_DELIVERED_INFO)
+end
+
+function can_give_vodka(_first_speaker, _second_speaker)
+    return db.actor ~= nil and not actor_has_info(VODKA_DELIVERED_INFO) and
+        db.actor:object("vodka") ~= nil
+end
+
+function deliver_vodka(first_speaker, second_speaker)
+    if db.actor == nil or actor_has_info(VODKA_DELIVERED_INFO) or
+        not can_give_vodka() then
+        return
+    end
+    pin_commander_dialog(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "vodka")
+    db.actor:give_info_portion(VODKA_DELIVERED_INFO)
+end
+
+function deliver_vodka_from_case_dialog(first_speaker, second_speaker)
+    deliver_vodka(first_speaker, second_speaker)
+end
+
+function deliver_vodka_from_vodka_dialog(first_speaker, second_speaker)
+    deliver_vodka(first_speaker, second_speaker)
+end
+
+function mark_finish_dialog_active(_first_speaker, _second_speaker)
+    if db.actor ~= nil and not actor_has_info(FINISH_DIALOG_ACTIVE_INFO) then
+        db.actor:give_info_portion(FINISH_DIALOG_ACTIVE_INFO)
+    end
+end
+
+function complete_access(first_speaker, second_speaker)
+    if db.actor == nil or actor_has_info("pf_bunker_access_granted") or
+        not actor_has_info(VODKA_DELIVERED_INFO) then
+        return
+    end
+    pin_commander_dialog(first_speaker, second_speaker)
+    db.actor:give_info_portion("pf_bunker_access_granted")
+end
+
+local function clear_dialog_active_info()
+    if db.actor:is_talking() then
+        return
+    end
+
+    for _, info in ipairs(DIALOG_ACTIVE_INFOS) do
+        if actor_has_info(info) then
+            db.actor:disable_info_portion(info)
+        end
+    end
+end
+
+function update()
+    if db.actor == nil then
+        return
+    end
+
+    clear_dialog_active_info()
+
+    local now = time_global()
+    if now < next_update then
+        return
+    end
+    next_update = now + UPDATE_INTERVAL
+
+    if not actor_has_info("pf_bunker_access_case_assigned") or
+        actor_has_info(CASE_DELIVERED_INFO) or
+        actor_has_info("pf_bunker_access_granted") then
+        return
+    end
+
+    if current_case() == nil then
+        spawn_case()
+    end
+end
+
+function reset()
+    case_id = nil
+    registry_scanned = false
+    next_update = 0
+end

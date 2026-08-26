@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<string_table>
+	<string id="pf_ph_boot_caption"><text># PF-LINUX 4.26-IXR // ttyPDA0</text></string>
+	<string id="pf_ph_boot_online"><text># [ OK ] usb-toolkit</text></string>
+	<string id="pf_ph_boot_header_rule"><text>+</text></string>
+	<string id="pf_ph_boot_payloads"><text>+-- /mnt/usb/payloads </text></string>
+	<string id="pf_ph_boot_payloads_footer"><text>+-- wheel: ^ / v </text></string>
+	<string id="pf_ph_boot_commands"><text>+-- /usr/sbin/pda-recovery </text></string>
+	<string id="pf_ph_boot_commands_footer"><text>+-- click [RUN] to execute </text></string>
+	<string id="pf_ph_boot_terminal"><text>+-- journalctl -fu pda-recovery </text></string>
+	<string id="pf_ph_boot_terminal_footer"><text>+</text></string>
+	<string id="pf_ph_boot_corner"><text>+</text></string>
+	<string id="pf_ph_boot_edge_6"><text>&#160;</text></string>
+	<string id="pf_ph_boot_edge_7"><text>&#160;</text></string>
+	<string id="pf_ph_boot_edge_10"><text>&#160;</text></string>
+	<string id="pf_ph_boot_execute"><text>[RUN]</text></string>
+	<string id="pf_ph_boot_prompt"><text>root@pda-recovery:/# _</text></string>
+	<string id="pf_ph_boot_protection"><text># crypto.lock |</text></string>
+	<string id="pf_ph_boot_recovered"><text># /dev/pda0   |</text></string>
+	<string id="pf_ph_boot_bottom_rule"><text>+</text></string>
+	<string id="pf_ph_boot_abort"><text># ^C [ESC] emergency halt; /dev/pda0 будет заблокирован</text></string>
+	<string id="pf_ph_boot_help_hint"><text>man pda-hack</text></string>
+	<string id="pf_ph_boot_status_ready"><text>root@pda-recovery:/# выберите payload; справка: [?]</text></string>
+	<string id="pf_ph_boot_intro"><text>[    0.000000] PF-Linux 4.26-ixr\n[  OK  ] /dev/pda0 обнаружен и смонтирован ro\n[  OK  ] recovery shell запущен на ttyPDA0</text></string>
+	<string id="lz_ph_status"><text># ttyPDA0: actions=%d | payloads=%d | extracts=%d</text></string>
+	<string id="lz_ph_status_actions"><text># ttyPDA0: actions=%s</text></string>
+	<string id="lz_ph_status_payloads"><text># ttyPDA0: payloads=%s</text></string>
+	<string id="lz_ph_status_extracts"><text># ttyPDA0: extracts=%s</text></string>
+	<string id="lz_ph_selected"><text>source /boot/%s --power=%d</text></string>
+	<string id="lz_ph_selected_none"><text>source _</text></string>
+	<string id="lz_ph_loaded"><text># modprobe /boot/%s --power=%d\n[  OK  ] модуль подключён; команды доступны</text></string>
+	<string id="lz_ph_active_usb"><text>[  OK  ] /dev/usb-toolkit смонтирован в /mnt/usb (level=%d)</text></string>
+	<string id="lz_ph_term_system"><text>[kernel]</text></string>
+	<string id="lz_ph_term_script"><text>[module]</text></string>
+	<string id="lz_ph_term_hack"><text>[exec]</text></string>
+	<string id="lz_ph_term_success"><text>[  OK  ]</text></string>
+	<string id="lz_ph_term_warning"><text>[ WARN ]</text></string>
+	<string id="lz_ph_term_error"><text>[FAILED]</text></string>
+
+	<string id="pf_ph_boot_cmd_decrypt"><text>./decrypt          # прогресс взлома</text></string>
+	<string id="pf_ph_boot_cmd_nuke"><text>./weaken           # защита КПК</text></string>
+	<string id="pf_ph_boot_cmd_rescan"><text>./rescan-usb       # новые скрипты</text></string>
+	<string id="pf_ph_boot_cmd_cmdup"><text>./recover-actions  # очки действий</text></string>
+	<string id="pf_ph_boot_cmd_bruteforce"><text>./brute-boot       # шанс успеха</text></string>
+	<string id="pf_ph_boot_cmd_extract"><text>./extract-wallet   # деньги</text></string>
+	<string id="pf_ph_boot_cmd_skeleton"><text>./skeleton-key     # мгновенный успех + пси</text></string>
+	<string id="pf_ph_boot_cmd_trace_purple"><text>./trace-purple     # фиолетовый тайник</text></string>
+	<string id="pf_ph_boot_cmd_trace_legendary"><text>./trace-legendary  # легендарный тайник</text></string>
+	<string id="pf_ph_boot_cmd_trace_red"><text>./trace-red        # красный тайник</text></string>
+
+	<string id="pf_ph_boot_help_title"><text>+-- root@pda-recovery:/# man pda-hack </text></string>
+	<string id="pf_ph_boot_help_subtitle"><text>tty help: мышь выполняет команды; ручной ввод не требуется.</text></string>
+	<string id="pf_ph_boot_help_body"><text>\n# ЦЕЛЬ\n  Восстановите 100% данных до исчерпания скриптов.\n\n# ПОРЯДОК РАБОТЫ\n  01 | выберите BOOT PAYLOAD слева\n  02 | нажмите [RUN] у нужной команды\n  03 | команда выполнится сразу; скрипт будет удалён\n\n# ОСНОВНЫЕ ОПЕРАЦИИ\n  DECRYPT / WEAKEN | данные и защита\n  RESCAN / RECOVER | скрипты и очки действий\n  BRUTE / EXTRACT  | мгновенный успех или деньги\n  SKELETON-KEY     | успех с небольшим пси-ударом\n\n# CACHE-ПЕРЕХВАТЫ\n  PURPLE | LEGENDARY | RED\n  процент = шанс; [-N] = цена действия</text></string>
+	<string id="pf_ph_boot_help_footer"><text>+-- [ESC] close </text></string>
+</string_table>

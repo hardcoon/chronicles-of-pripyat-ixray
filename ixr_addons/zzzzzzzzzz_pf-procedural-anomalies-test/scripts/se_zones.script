@@ -1,0 +1,417 @@
+local not_spawn_levels = {
+	l05_bar = true
+}
+
+-- Static anomalies remain ordinary ALife server objects. This file owns only
+-- their native online/offline policy; it never creates, destroys or relocates
+-- them from actor update callbacks.
+local PF_STAGE_PREFIX = "pf_stage_"
+local PF_PROC_PREFIX = "pf_proc_"
+local PF_ZONE_ONLINE_DISTANCE_SQR = 100 * 100
+local PF_ZONE_OFFLINE_DISTANCE_SQR = 125 * 125
+local PF_STAGE_SWITCH_DELAY_MS = 150
+local PF_PROC_CONFIG_SECTION = "pf_procedural_anomalies_test"
+local PF_PROC_GATE_REFRESH_MS = 250
+-- The fixed layout was exhaustively checked: every possible 100 m disk
+-- contains at most 47 procedural shells and 3 auras. No mutable online
+-- counters are needed; removing them also makes save/load stateless.
+local pf_next_stage_switch = 0
+local pf_next_proc_mutation = 0
+local pf_proc_mutation_pause_until = 0
+local pf_proc_gate_next_check = 0
+local pf_proc_gate_active = false
+local pf_proc_enabled = false
+local pf_proc_online_distance_sqr = 100 * 100
+local pf_proc_offline_distance_sqr = 125 * 125
+local pf_proc_switch_delay_ms = 50
+local pf_proc_config_loaded = false
+
+local function pf_has_prefix(section, prefix)
+	return type(section) == "string"
+		and string.sub(section, 1, string.len(prefix)) == prefix
+end
+
+local function pf_classify_zone(zone)
+	if zone.pf_classified then return end
+	local section = zone:section_name()
+	zone.pf_is_procedural = pf_has_prefix(section, PF_PROC_PREFIX)
+	zone.pf_is_staged = pf_has_prefix(section, PF_STAGE_PREFIX)
+	zone.pf_is_aura = pf_has_prefix(section, "pf_proc_aura_")
+	zone.pf_classified = true
+end
+
+local function pf_read_number(ini, key, default)
+	if not ini:line_exist(PF_PROC_CONFIG_SECTION, key) then return default end
+	return tonumber(ini:r_string(PF_PROC_CONFIG_SECTION, key)) or default
+end
+
+local function pf_load_proc_config()
+	pf_proc_config_loaded = true
+	local ini = system_ini()
+	if not ini:section_exist(PF_PROC_CONFIG_SECTION)
+		or not ini:line_exist(PF_PROC_CONFIG_SECTION, "mode")
+		or ini:r_string(PF_PROC_CONFIG_SECTION, "mode") ~= "static_spawn_test" then
+		return
+	end
+
+	local online_distance = math.max(1, pf_read_number(ini, "online_distance", 100))
+	local offline_distance = math.max(
+		online_distance + 1,
+		pf_read_number(ini, "offline_distance", 125)
+	)
+	pf_proc_enabled = true
+	pf_proc_online_distance_sqr = online_distance * online_distance
+	pf_proc_offline_distance_sqr = offline_distance * offline_distance
+	pf_proc_switch_delay_ms = math.max(
+		1,
+		math.floor(pf_read_number(ini, "online_transition_delay_ms", 50))
+	)
+end
+
+local function pf_proc_resources_ready()
+	return pf_anomaly_stream
+		and type(pf_anomaly_stream.procedural_resources_ready) == "function"
+		and pf_anomaly_stream.procedural_resources_ready()
+end
+
+local function pf_refresh_proc_gate(now)
+	if now < pf_proc_gate_next_check then return pf_proc_gate_active end
+	pf_proc_gate_next_check = now + PF_PROC_GATE_REFRESH_MS
+	if not pf_proc_config_loaded then pf_load_proc_config() end
+	pf_proc_gate_active = pf_proc_enabled
+		and level.name() == "pripyat_full"
+	return pf_proc_gate_active
+end
+
+local function pf_proc_mutation_allowed(now)
+	if now < pf_proc_mutation_pause_until or now < pf_next_proc_mutation then
+		return false
+	end
+	local frame_time = device().f_time_delta or 0
+	if frame_time > 0.05 then
+		pf_proc_mutation_pause_until = now + 500
+		return false
+	end
+	if frame_time > 0.04 then return false end
+	pf_next_proc_mutation = now + pf_proc_switch_delay_ms
+	return true
+end
+
+local function pf_actor_distance_sqr(zone)
+	local simulator = alife()
+	local actor = simulator and simulator:actor()
+	if not actor then
+		return nil
+	end
+	return actor.position:distance_to_sqr(zone.position)
+end
+
+local function pf_zone_can_switch_online(zone)
+	pf_classify_zone(zone)
+	local distance_sqr = pf_actor_distance_sqr(zone)
+	if zone.pf_is_procedural then
+		local now = time_global()
+		if distance_sqr == nil or distance_sqr > pf_proc_online_distance_sqr
+			or not pf_refresh_proc_gate(now) or not pf_proc_resources_ready() then
+			return false
+		end
+		if not pf_proc_mutation_allowed(now) then return false end
+		return true
+	end
+	if distance_sqr == nil or distance_sqr > PF_ZONE_ONLINE_DISTANCE_SQR then
+		return false
+	end
+	if zone.pf_is_staged then
+		local now = time_global()
+		if now < pf_next_stage_switch then
+			return false
+		end
+		pf_next_stage_switch = now + PF_STAGE_SWITCH_DELAY_MS
+	end
+	return true
+end
+
+local function pf_zone_can_switch_offline(zone)
+	pf_classify_zone(zone)
+	local distance_sqr = pf_actor_distance_sqr(zone)
+	if zone.pf_is_procedural then
+		local now = time_global()
+		local should_switch = not pf_refresh_proc_gate(now)
+			or not pf_proc_resources_ready()
+			or distance_sqr == nil
+			or distance_sqr > pf_proc_offline_distance_sqr
+		if not should_switch or not pf_proc_mutation_allowed(now) then return false end
+		return true
+	end
+	return distance_sqr == nil or distance_sqr > PF_ZONE_OFFLINE_DISTANCE_SQR
+end
+
+function is_single_player_game	()
+	if (_G.alife == nil) then
+		return	(true)
+	end
+
+	if (alife() ~= nil) then
+		return	(true)
+	end
+
+	if (_G.IsGameTypeSingle == nil) then
+		return	(true)
+	end
+
+	if (IsGameTypeSingle() == true) then
+		return	(true)
+	end
+
+	return		(false)
+end
+
+class "se_zone_anom" (cse_anomalous_zone)
+function se_zone_anom:__init (section) super (section)
+	self.m_registred = false
+	self.pf_classified = false
+	self.pf_is_procedural = false
+	self.pf_is_staged = false
+	self.pf_is_aura = false
+end
+function se_zone_anom:can_switch_online()
+	return pf_zone_can_switch_online(self)
+end
+function se_zone_anom:can_switch_offline()
+	return pf_zone_can_switch_offline(self)
+end
+function se_zone_anom:on_register()
+	cse_anomalous_zone.on_register(self)
+	pf_classify_zone(self)
+	-- Проверяем кастомдату обьекта на наличие стори айди.
+	story_objects.check_spawn_ini_for_story_id(self)
+
+	self.m_registred = true
+	self.artefact_spawn_idle = 60*60*1000*utils.cfg_get_number(system_ini(), self:section_name(), "artefact_spawn_idle", self, false, 24)
+	self.artefact_spawn_rnd = utils.cfg_get_number(system_ini(), self:section_name(), "artefact_spawn_rnd", self, false, 100)
+end
+function se_zone_anom:update()
+	cse_anomalous_zone.update(self)
+	-- The baked test zones never spawn artefacts. Avoid allocating CTime values
+	-- and executing the hourly random branch for all 1,268 server objects.
+	if self.pf_is_procedural then
+		return
+	end
+
+	if self.last_spawn_time == nil then
+		self.last_spawn_time = game.get_game_time()
+	end
+
+	if game.get_game_time():diffSec(self.last_spawn_time) >= self.artefact_spawn_idle then
+		self.last_spawn_time = game.get_game_time()
+		if math.random(100) <= self.artefact_spawn_rnd then
+			self:spawn_artefacts()
+		end
+	end
+end
+function se_zone_anom:STATE_Write(packet)
+	cse_anomalous_zone.STATE_Write(self, packet)
+
+--	if self.m_registred ~= true then
+--		return
+--	end
+	--printf("name[%s]", self:name())
+	if (is_single_player_game() == false) then
+		return
+	end
+
+	if self.last_spawn_time == nil then
+		packet:w_u8(0)
+	else
+		packet:w_u8(1)
+		utils.w_CTime(packet, self.last_spawn_time)
+	end
+end
+-- восстановление
+function se_zone_anom:STATE_Read( packet, size )
+	cse_anomalous_zone.STATE_Read( self, packet, size )
+
+	if editor() then
+		return
+	end
+--	if self.m_registred ~= true then
+--		return
+--	end
+
+	if (is_single_player_game() == false) then
+		return
+	end
+
+	local flag = packet:r_u8()
+	if flag == 1 then
+		self.last_spawn_time = utils.r_CTime(packet)
+	end
+end
+
+class "se_zone_torrid" (cse_torrid_zone)
+function se_zone_torrid:__init (section) super (section)
+	self.m_registred = false
+	self.pf_classified = false
+	self.pf_is_procedural = false
+	self.pf_is_staged = false
+	self.pf_is_aura = false
+end
+function se_zone_torrid:can_switch_online()
+	return pf_zone_can_switch_online(self)
+end
+function se_zone_torrid:can_switch_offline()
+	return pf_zone_can_switch_offline(self)
+end
+function se_zone_torrid:on_register()
+	cse_torrid_zone.on_register(self)
+	pf_classify_zone(self)
+	-- Проверяем кастомдату обьекта на наличие стори айди.
+	story_objects.check_spawn_ini_for_story_id(self)
+
+	self.m_registred = true
+	self.artefact_spawn_idle = 60*60*1000*utils.cfg_get_number(system_ini(), self:section_name(), "artefact_spawn_idle", self, false, 24)
+	self.artefact_spawn_rnd = utils.cfg_get_number(system_ini(), self:section_name(), "artefact_spawn_rnd", self, false, 100)
+end
+function se_zone_torrid:update()
+	cse_torrid_zone.update(self)
+	if self.pf_is_procedural then return end
+
+	if self.last_spawn_time == nil then
+		self.last_spawn_time = game.get_game_time()
+	end
+
+	if game.get_game_time():diffSec(self.last_spawn_time) >= self.artefact_spawn_idle then
+		self.last_spawn_time = game.get_game_time()
+		if math.random(100) <= self.artefact_spawn_rnd then
+			self:spawn_artefacts()
+		end
+	end
+end
+function se_zone_torrid:STATE_Write(packet)
+	cse_torrid_zone.STATE_Write(self, packet)
+
+--	if self.m_registred ~= true then
+--		return
+--	end
+	--printf("name[%s]", self:name())
+	if (is_single_player_game() == false) then
+		return
+	end
+
+	if self.last_spawn_time == nil then
+		packet:w_u8(0)
+	else
+		packet:w_u8(1)
+		utils.w_CTime(packet, self.last_spawn_time)
+	end
+end
+-- восстановление
+function se_zone_torrid:STATE_Read( packet, size )
+	cse_torrid_zone.STATE_Read( self, packet, size )
+
+	if editor() then
+		return
+	end
+--	if self.m_registred ~= true then
+--		return
+--	end
+
+	if (is_single_player_game() == false) then
+		return
+	end
+
+	local flag = packet:r_u8()
+	if flag == 1 then
+		self.last_spawn_time = utils.r_CTime(packet)
+	end
+end
+
+
+class "se_zone_visual" (cse_zone_visual)
+function se_zone_visual:__init (section) super (section)
+	self.pf_classified = false
+	self.pf_is_procedural = false
+	self.pf_is_staged = false
+	self.pf_is_aura = false
+end
+function se_zone_visual:can_switch_online()
+	return pf_zone_can_switch_online(self)
+end
+function se_zone_visual:can_switch_offline()
+	return pf_zone_can_switch_offline(self)
+end
+function se_zone_visual:on_register()
+	cse_zone_visual.on_register(self)
+	pf_classify_zone(self)
+	-- Проверяем кастомдату обьекта на наличие стори айди.
+	story_objects.check_spawn_ini_for_story_id(self)
+
+	self.artefact_spawn_idle = 60*60*1000*utils.cfg_get_number(system_ini(), self:section_name(), "artefact_spawn_idle", self, false, 24)
+	self.artefact_spawn_rnd = utils.cfg_get_number(system_ini(), self:section_name(), "artefact_spawn_rnd", self, false, 100)
+end
+function se_zone_visual:update()
+	cse_zone_visual.update(self)
+	if self.pf_is_procedural then return end
+
+	if self.last_spawn_time == nil then
+		self.last_spawn_time = game.get_game_time()
+	end
+
+	if game.get_game_time():diffSec(self.last_spawn_time) >= self.artefact_spawn_idle then
+		self.last_spawn_time = game.get_game_time()
+		if math.random(100) <= self.artefact_spawn_rnd then
+			self:spawn_artefacts()
+		end
+	end
+end
+
+function se_zone_visual:STATE_Write(packet)
+	cse_zone_visual.STATE_Write(self, packet)
+
+	if (is_single_player_game() == false) then
+		return
+	end
+
+	if self.last_spawn_time == nil then
+		packet:w_u8(0)
+	else
+		packet:w_u8(1)
+		utils.w_CTime(packet, self.last_spawn_time)
+	end
+end
+-- восстановление
+function se_zone_visual:STATE_Read( packet, size )
+	cse_zone_visual.STATE_Read( self, packet, size )
+
+	if editor() then
+		return
+	end
+
+	if (is_single_player_game() == false) then
+		return
+	end
+
+	local flag = packet:r_u8()
+	if flag == 1 then
+		self.last_spawn_time = utils.r_CTime(packet)
+	end
+end
+
+
+
+--' Рестрикторы
+class "se_restrictor" (cse_alife_space_restrictor)
+function se_restrictor:__init (section) super (section)
+end
+
+function se_restrictor:on_register()
+	cse_alife_space_restrictor.on_register(self)
+	-- Проверяем кастомдату обьекта на наличие стори айди.
+	story_objects.check_spawn_ini_for_story_id(self)
+
+	treasure_manager.get_treasure_manager():register_restrictor(self)
+end
+
+function se_restrictor:keep_saved_data_anyway()
+	return true
+end

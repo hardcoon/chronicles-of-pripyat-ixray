@@ -1,0 +1,19 @@
+; Universal actor/camera point recorder. The first use after a game load
+; creates a new timestamped log; later uses append independent spawn markers.
+[pf_qa_point_logger_tool]:pf_qa_instant_tool_base
+$spawn = "food and drugs\pf_qa_point_logger_tool"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_qa_point_logger_tool_name
+inv_name_short = pf_qa_point_logger_tool_name
+description = pf_qa_point_logger_tool_descr
+icons_texture = ui\pf_qa_point_logger_icon
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+
+use1_text = pf_qa_point_logger_tool_use
+use1_functor = pf_qa_point_logger.use_point_logger_tool
+
+![inventory_sort_registry]
+pf_qa_point_logger_tool = qa

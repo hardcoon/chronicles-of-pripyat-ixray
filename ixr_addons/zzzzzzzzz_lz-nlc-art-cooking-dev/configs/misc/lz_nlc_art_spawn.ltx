@@ -1,0 +1,153 @@
+; Единая редактируемая таблица естественного спавна артефактов.
+; Одна строка [spawn_zones] = одна из 41 реальной кластерной аномальной зоны.
+; Одиночные аномалии в таблицу не входят: они участвуют в варке, но не создают
+; естественные артефакты.
+;
+; Классы естественного спавна:
+; class_1..class_4 = только природные артефакты I-IV.
+; Модификаты, мезомодификаты, гипермодификаты и Абсолюты создаются только
+; варкой и в естественном спавне отсутствуют.
+
+[spawn_settings]
+level = pripyat_full
+storage_key = lz_nlc_art_spawn
+initial_artifacts = 10
+initial_minimum_per_class = 1
+artifacts_per_emission = 3
+empty_zone_cooldown_emissions = 1
+actor_exclusion_radius = 120
+spawn_height = 0.25
+update_interval_ms = 1000
+scan_retry_ms = 5000
+seed = 24681357
+
+; Шансы классов едины для новой игры и каждого выброса. Возраст мира меняет
+; только общий лимит населения ниже.
+[spawn_class_chances]
+class_1 = 30
+class_2 = 20
+class_3 = 20
+class_4 = 30
+
+; Дни 0–4: ранний общий лимит.
+[spawn_phase_0_4]
+day_from = 0
+day_to = 4
+total_cap = 18
+
+; Дни 5–9: средний общий лимит.
+[spawn_phase_5_9]
+day_from = 5
+day_to = 9
+total_cap = 22
+
+; Начиная с 10-го дня: окончательный общий лимит.
+[spawn_phase_10_plus]
+day_from = 10
+day_to = -1
+total_cap = 24
+
+; Все режимы используют одинаковое игровое время.
+[cooking_times]
+stage_1_minutes = 30
+stage_2_minutes = 40
+stage_3_minutes = 50
+stage_4_minutes = 60
+
+; Пулы определяются типом аномальной зоны и содержат каждый природный артефакт
+; ровно один раз.
+; Веса перечисляются в том же порядке, что и секции.
+[spawn_family_psi]
+class_1 = af_medusa
+class_1_weights = 1
+class_2 = af_cristall_flower
+class_2_weights = 1
+class_3 = af_night_star, af_dummy_simbion
+class_3_weights = 1, 1
+class_4 =
+class_4_weights =
+
+[spawn_family_electric]
+class_1 = af_electra_sparkler
+class_1_weights = 1
+class_2 = af_dummy_spring
+class_2_weights = 1
+class_3 = af_electra_moonlight, lz_nlc_af_dummy_battery
+class_3_weights = 1, 1
+class_4 = af_electra_flash
+class_4_weights = 1
+
+[spawn_family_chemical]
+class_1 = af_rusty_thorn, af_ameba_slime
+class_1_weights = 1, 1
+class_2 = af_rusty_kristall, af_ameba_slug
+class_2_weights = 1, 1
+class_3 = af_ameba_mica
+class_3_weights = 1
+class_4 = af_rusty_sea-urchin, af_dummy_pellicle
+class_4_weights = 1, 1
+
+[spawn_family_gravitational]
+class_1 = af_vyvert, af_blood
+class_1_weights = 1, 1
+class_2 = af_gravi, af_mincer_meat
+class_2_weights = 1, 1
+class_3 = af_gold_fish
+class_3_weights = 1
+class_4 = af_soul, af_dummy_kolobok
+class_4_weights = 1, 1
+
+[spawn_family_thermal]
+class_1 = af_drops
+class_1_weights = 1
+class_2 = af_fireball
+class_2_weights = 1
+class_3 = af_cristall
+class_3_weights = 1
+class_4 = lz_nlc_af_dummy_glassbeads, lz_nlc_af_dummy_dummy
+class_4_weights = 1, 1
+
+; ID = основное семейство зоны. Названия приведены комментариями, чтобы
+; балансировщик мог быстро сопоставить таблицу с картой.
+[spawn_zones]
+01 = gravitational ; Жаркая воронка
+02 = chemical      ; Кислый омут
+03 = electric      ; Помеха
+04 = chemical      ; Ржавая чаша
+05 = psi           ; Морок
+06 = psi           ; Глушняк
+07 = thermal       ; Горелый след
+08 = thermal       ; Огнёвка
+09 = gravitational ; Мёртвый двор
+10 = electric      ; Громовище
+11 = gravitational ; Кривой лес
+12 = chemical      ; Едкий лес
+13 = thermal       ; Жаркая кишка
+14 = thermal       ; Сухое пекло
+15 = electric      ; Гремучка
+16 = chemical      ; Кислая лужа
+17 = gravitational ; Чёрный песок
+18 = psi           ; Холодный шов
+19 = psi           ; Шорох
+20 = electric      ; Мёртвая фаза
+21 = psi           ; Дурман
+22 = gravitational ; Седая воронка
+23 = thermal       ; Бесов костёр
+24 = electric      ; Шаровая тропа
+25 = chemical      ; Зелёная лужа
+26 = gravitational ; Медвежья яма
+27 = chemical      ; Горький берег
+28 = gravitational ; Фонящие камни
+29 = psi           ; Тихое место
+30 = electric      ; Катушка
+31 = thermal       ; Горелая поляна
+32 = gravitational ; Кривая площадка
+33 = electric      ; Пробой
+34 = thermal       ; Прогар
+35 = psi           ; Чёрная заводь
+36 = gravitational ; Жерло
+37 = chemical      ; Кислая низина
+38 = thermal       ; Кровавый уголь
+39 = chemical      ; Ржавая лужа
+40 = electric      ; Белая дуга
+41 = psi           ; Глушилка

@@ -1,0 +1,79 @@
+; Fixed static-spawn population for normal and developer games.
+; The mode and native ALife distance policy are read once per process.
+[pf_procedural_anomalies_test]
+mode = static_spawn_test
+online_distance = 100
+offline_distance = 125
+online_transition_delay_ms = 50
+
+#include "zones\pf_procedural_anomaly_zones.ltx"
+
+; Point anomalies and the four damaging group auras are registered with the
+; HUD detector.  Neutral gravitational/electric shells stay unregistered.
+![all_zone_detector]
+zone_class_65 = pf_proc_gravitational_weak
+zone_freq_65 = 0.05, 2
+zone_sound_65_ = detectors\DA-2_beep1
+zone_class_66 = pf_proc_gravitational_average
+zone_freq_66 = 0.05, 2
+zone_sound_66_ = detectors\DA-2_beep1
+zone_class_67 = pf_proc_gravitational_strong
+zone_freq_67 = 0.05, 2
+zone_sound_67_ = detectors\DA-2_beep1
+zone_class_68 = pf_proc_electric_weak
+zone_freq_68 = 0.05, 2
+zone_sound_68_ = detectors\DA-2_beep1
+zone_class_69 = pf_proc_electric_average
+zone_freq_69 = 0.05, 2
+zone_sound_69_ = detectors\DA-2_beep1
+zone_class_70 = pf_proc_electric_strong
+zone_freq_70 = 0.05, 2
+zone_sound_70_ = detectors\DA-2_beep1
+zone_class_71 = pf_proc_chemical_weak
+zone_freq_71 = 0.05, 2
+zone_sound_71_ = detectors\DA-2_beep1
+zone_class_72 = pf_proc_chemical_average
+zone_freq_72 = 0.05, 2
+zone_sound_72_ = detectors\DA-2_beep1
+zone_class_73 = pf_proc_chemical_strong
+zone_freq_73 = 0.05, 2
+zone_sound_73_ = detectors\DA-2_beep1
+zone_class_74 = pf_proc_thermal_weak
+zone_freq_74 = 0.05, 2
+zone_sound_74_ = detectors\DA-2_beep1
+zone_class_75 = pf_proc_thermal_average
+zone_freq_75 = 0.05, 2
+zone_sound_75_ = detectors\DA-2_beep1
+zone_class_76 = pf_proc_thermal_strong
+zone_freq_76 = 0.05, 2
+zone_sound_76_ = detectors\DA-2_beep1
+zone_class_77 = pf_proc_psi_weak
+zone_freq_77 = 0.05, 2
+zone_sound_77_ = detectors\DA-2_beep1
+zone_class_78 = pf_proc_psi_average
+zone_freq_78 = 0.05, 2
+zone_sound_78_ = detectors\DA-2_beep1
+zone_class_79 = pf_proc_psi_strong
+zone_freq_79 = 0.05, 2
+zone_sound_79_ = detectors\DA-2_beep1
+
+zone_class_80 = pf_proc_aura_chemical
+zone_freq_80 = 0.05, 2
+zone_sound_80_ = detectors\DA-2_beep1
+zone_class_81 = pf_proc_aura_thermal
+zone_freq_81 = 0.05, 2
+zone_sound_81_ = detectors\DA-2_beep1
+zone_class_82 = pf_proc_aura_psi
+zone_freq_82 = 0.05, 2
+zone_sound_82_ = detectors\DA-2_beep1
+zone_class_83 = pf_proc_aura_radioactive
+zone_freq_83 = 0.01, 2
+zone_sound_83_ = detectors\geiger_1
+zone_sound_83_1 = detectors\geiger_2
+zone_sound_83_2 = detectors\geiger_3
+zone_sound_83_3 = detectors\geiger_4
+zone_sound_83_4 = detectors\geiger_5
+zone_sound_83_5 = detectors\geiger_6
+zone_sound_83_6 = detectors\geiger_1
+zone_sound_83_7 = detectors\geiger_1
+zone_sound_83_8 = detectors\geiger_1

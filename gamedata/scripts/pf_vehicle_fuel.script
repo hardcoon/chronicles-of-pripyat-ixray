@@ -1,0 +1,94 @@
+local CANISTER_SECTION = "pf_vehicle_fuel_canister"
+local RAY_DISTANCE = 10.0
+local pending = {}
+
+local function notify(string_id, ...)
+	if not db.actor then return end
+	local message = game.translate_string(string_id)
+	if select("#", ...) > 0 then
+		message = string.format(message, ...)
+	end
+	db.actor:give_game_news(game.translate_string("st_tip"), message,
+		"pf_news_item_received", 0, 3500)
+end
+
+local function aimed_car()
+	if not db.actor then return nil, nil, "pf_vehicle_fuel_refuel_no_target" end
+
+	local ray = ray_pick()
+	ray:set_flags(3)
+	ray:set_range(RAY_DISTANCE)
+	ray:set_ignore_object(db.actor)
+	ray:set_position(vector():set(device().cam_pos))
+	ray:set_direction(vector():set(device().cam_dir):normalize())
+	if not ray:query() then return nil, nil, "pf_vehicle_fuel_refuel_no_target" end
+
+	local object = ray:get_object()
+	if not object then return nil, nil, "pf_vehicle_fuel_refuel_no_target" end
+	local ok, car = pcall(function() return object:get_car() end)
+	if not ok or not car then return nil, nil, "pf_vehicle_fuel_refuel_unsupported" end
+	if not car:fuel_system_enabled() then
+		return nil, nil, "pf_vehicle_fuel_refuel_unsupported"
+	end
+	if ray:get_distance() > car:fuel_refuel_distance() then
+		return nil, nil, "pf_vehicle_fuel_refuel_too_far"
+	end
+	if car:GetfHealth() <= 0 then return nil, nil, "pf_vehicle_fuel_refuel_destroyed" end
+	if not car:can_refuel_canister() then return nil, nil, "pf_vehicle_fuel_refuel_full" end
+
+	return object, car, nil
+end
+
+local function perform_refuel(item_id, car_id)
+	pending[item_id] = nil
+	if not db.actor or db.actor:get_current_holder() then
+		notify("pf_vehicle_fuel_refuel_inside")
+		return
+	end
+
+	local server_item = alife():object(item_id, true)
+	if not server_item or server_item:section_name() ~= CANISTER_SECTION or
+		tonumber(server_item.parent_id) ~= db.actor:id() then
+		notify("pf_vehicle_fuel_refuel_item_missing")
+		return
+	end
+
+	local object, car, error_id = aimed_car()
+	if not object or object:id() ~= car_id then
+		notify(error_id or "pf_vehicle_fuel_refuel_no_target")
+		return
+	end
+
+	local ok, amount = pcall(function() return car:try_refuel_canister() end)
+	if not ok or not amount or amount <= 0 then
+		notify("pf_vehicle_fuel_refuel_failed")
+		return
+	end
+
+	alife():release(server_item, true)
+	notify("pf_vehicle_fuel_refuel_success", amount, car.fuel, car.fuel_tank)
+end
+
+function use_canister(item)
+	if not item or not db.actor then return false end
+	if db.actor:get_current_holder() then
+		notify("pf_vehicle_fuel_refuel_inside")
+		return false
+	end
+	if pending[item:id()] then return false end
+
+	local object, car, error_id = aimed_car()
+	if not object or not car then
+		notify(error_id or "pf_vehicle_fuel_refuel_no_target")
+		return false
+	end
+
+	local item_id = item:id()
+	local car_id = object:id()
+	pending[item_id] = true
+	level.add_call(
+		function() return true end,
+		function() perform_refuel(item_id, car_id) end
+	)
+	return false
+end

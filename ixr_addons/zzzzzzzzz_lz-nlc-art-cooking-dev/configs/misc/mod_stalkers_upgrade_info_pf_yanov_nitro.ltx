@@ -1,0 +1,10 @@
+; Keep Azot's complete STCoP repair whitelist while removing story discounts.
+; Novikov's final coefficient is 1.65 * 0.75 = 1.2375; Azot uses
+; 1.2375 * 0.80 = 0.99 and is therefore 20% cheaper after all discounts.
+[pf_yanov_nitro]:jup_b217_stalker_tech
+discount_condlist = %=pf_yanov_nitro_price_profile(1.0)%
+he_upgrade_nothing = true
+pf_guardian_seva_outfit
+
+; Keep the personal table empty as a second config-level denial.
+[pf_yanov_nitro_upgr]

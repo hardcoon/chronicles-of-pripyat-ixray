@@ -1,0 +1,217 @@
+; Chronicles of Pripyat 4.26 / IX-Ray port of Utjan's PDA Hacking v1.23.
+; The original archive is used as a local donor. Public redistribution requires
+; the original author's permission.
+
+[lz_pda_hacking_settings]
+encryption_novice = 20
+encryption_stalker = 35
+encryption_veteran = 55
+encryption_master = 75
+script_power_min = 25
+script_power_max = 100
+decrypt_power_mult = 0.40
+usb_roll_chance = 50
+extract_reward_mult = 3.0
+sound_volume = 0.7
+command_chance = 40
+rescan_chance = 35
+extract_chance = 10
+skeleton_key_chance = 0.25
+trace_purple_offer_chance = 15
+trace_orange_offer_chance = 8
+trace_red_offer_chance = 3
+trace_purple_action_cost = 2
+trace_orange_action_cost = 3
+trace_red_action_cost = 4
+trace_purple_novice_min = 4
+trace_purple_novice_max = 8
+trace_purple_stalker_min = 7
+trace_purple_stalker_max = 14
+trace_purple_veteran_min = 14
+trace_purple_veteran_max = 24
+trace_purple_master_min = 20
+trace_purple_master_max = 30
+trace_orange_novice_min = 1
+trace_orange_novice_max = 1.5
+trace_orange_stalker_min = 2
+trace_orange_stalker_max = 5
+trace_orange_veteran_min = 10
+trace_orange_veteran_max = 17
+trace_orange_master_min = 17
+trace_orange_master_max = 24
+trace_red_novice_min = 0.5
+trace_red_novice_max = 0.8
+trace_red_stalker_min = 0.7
+trace_red_stalker_max = 2
+trace_red_veteran_min = 3
+trace_red_veteran_max = 8
+trace_red_master_min = 10
+trace_red_master_max = 17
+reflash_master_legendary_reward_chance = 40
+reflash_cyan_chance = 5
+reflash_purple_chance = 10
+reflash_orange_chance = 20
+reflash_red_chance = 30
+
+; Late overrides: removing this addon restores the original direct decoder.
+![pf_stash_pda_novice]
+use1_text = lz_ph_action_hack
+use1_functor = lz_pda_hacking.use_stash_pda
+
+![pf_stash_pda_stalker]
+use1_text = lz_ph_action_hack
+use1_functor = lz_pda_hacking.use_stash_pda
+
+![pf_stash_pda_veteran]
+use1_text = lz_ph_action_hack
+use1_functor = lz_pda_hacking.use_stash_pda
+
+![pf_stash_pda_master]
+use1_text = lz_ph_action_hack
+use1_functor = lz_pda_hacking.use_stash_pda
+
+; Failed variants share a dedicated locked-PDA icon: a horizontal red ERROR
+; label on a small irregular semi-transparent black patch in the icon's
+; bottom-right corner. A reflash module decodes them immediately without
+; reopening the hacking minigame.
+[lz_ph_failed_pda_novice]:pf_stash_pda_novice
+$spawn = ""
+inv_name = lz_ph_failed_pda_novice_name
+inv_name_short = lz_ph_failed_pda_novice_name
+description = lz_ph_failed_pda_descr
+icons_texture = ui\ui_pdahacking
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 8
+cost = 0
+can_trade = false
+use1_text = lz_ph_action_blocked
+use1_functor = lz_pda_hacking.use_failed_pda
+
+[lz_ph_failed_pda_stalker]:pf_stash_pda_stalker
+$spawn = ""
+inv_name = lz_ph_failed_pda_stalker_name
+inv_name_short = lz_ph_failed_pda_stalker_name
+description = lz_ph_failed_pda_descr
+icons_texture = ui\ui_pdahacking
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 8
+cost = 0
+can_trade = false
+use1_text = lz_ph_action_blocked
+use1_functor = lz_pda_hacking.use_failed_pda
+
+[lz_ph_failed_pda_veteran]:pf_stash_pda_veteran
+$spawn = ""
+inv_name = lz_ph_failed_pda_veteran_name
+inv_name_short = lz_ph_failed_pda_veteran_name
+description = lz_ph_failed_pda_descr
+icons_texture = ui\ui_pdahacking
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 8
+cost = 0
+can_trade = false
+use1_text = lz_ph_action_blocked
+use1_functor = lz_pda_hacking.use_failed_pda
+
+[lz_ph_failed_pda_master]:pf_stash_pda_master
+$spawn = ""
+inv_name = lz_ph_failed_pda_master_name
+inv_name_short = lz_ph_failed_pda_master_name
+description = lz_ph_failed_pda_descr
+icons_texture = ui\ui_pdahacking
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 8
+cost = 0
+can_trade = false
+use1_text = lz_ph_action_blocked
+use1_functor = lz_pda_hacking.use_failed_pda
+
+[pda_hack_usb_1]:identity_immunities
+GroupControlSection = spawn_group
+$spawn = "devices\pda_hack_usb_1"
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\equipments\quest\notes_writing_book_2.ogf
+description = lz_ph_usb1_descr
+inv_name = lz_ph_usb1_name
+inv_name_short = lz_ph_usb1_name
+inv_weight = 0.1
+icons_texture = ui\ui_pdahacking
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 17
+inv_grid_y = 0
+cost = 3500
+can_trade = true
+use_condition = false
+use1_text = lz_ph_action_install_usb
+use1_functor = lz_pda_hacking.install_usb_software
+command_points = 8
+initial_scripts = 5
+currency_extracts = 0
+
+[pda_hack_usb_2]:pda_hack_usb_1
+$spawn = "devices\pda_hack_usb_2"
+description = lz_ph_usb2_descr
+inv_name = lz_ph_usb2_name
+inv_name_short = lz_ph_usb2_name
+inv_grid_x = 18
+cost = 10000
+command_points = 11
+initial_scripts = 6
+currency_extracts = 1
+
+[pda_hack_usb_3]:pda_hack_usb_1
+$spawn = "devices\pda_hack_usb_3"
+description = lz_ph_usb3_descr
+inv_name = lz_ph_usb3_name
+inv_name_short = lz_ph_usb3_name
+inv_grid_x = 19
+cost = 25000
+command_points = 14
+initial_scripts = 7
+currency_extracts = 2
+
+; One-use emergency decoding tool. IX-Ray reads up to four native inventory
+; actions directly from the physical item's section. The section deliberately
+; has no static useN entries: lz_pda_hacking.on_item_focus_receive rebuilds
+; them immediately before RMB, only for locked-PDA ranks actually carried by
+; the actor. Every generated action validates its target again at click time.
+[lz_ph_reflash_module]:identity_immunities
+GroupControlSection = spawn_group
+$spawn = "devices\lz_ph_reflash_module"
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\equipments\quest\scanner_anomaly.ogf
+description = lz_ph_reflash_module_descr
+inv_name = lz_ph_reflash_module_name
+inv_name_short = lz_ph_reflash_module_name
+inv_weight = 0.8
+icons_texture = ui\ui_pdahacking
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 8
+cost = 15000
+can_trade = true
+use_condition = false
+
+[lz_ph_reflash_module_novice]:lz_ph_reflash_module
+$spawn = ""
+
+[lz_ph_reflash_module_stalker]:lz_ph_reflash_module
+$spawn = ""
+
+[lz_ph_reflash_module_veteran]:lz_ph_reflash_module
+$spawn = ""
+
+[lz_ph_reflash_module_master]:lz_ph_reflash_module
+$spawn = ""

@@ -1,0 +1,415 @@
+local beacon_tab_singleton = nil
+local beacon_name_dialog_singleton = nil
+local beacon_destroy_dialog_singleton = nil
+local weather_tab_singleton = nil
+
+function refresh_encyclopedia_marker(refresh_articles)
+	local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+	if not pda_menu then return false end
+
+	-- If the player is already reading this tab, a newly unlocked entry is
+	-- immediately considered seen and the visible article list is refreshed.
+	if pda_menu:IsShown() and pda_menu:GetActiveSection() == "eptEncyclopedia" then
+		lz_new_mechanics.mark_mechanics_encyclopedia_read()
+		if refresh_articles and ui_lz_encyclopedia_tab.refresh_if_created then
+			ui_lz_encyclopedia_tab.refresh_if_created()
+		end
+	end
+
+	local tabs = pda_menu:GetTabControl()
+	local button = tabs and tabs:GetButtonById("eptEncyclopedia") or nil
+	if not button then return false end
+	local string_id = lz_new_mechanics.mechanics_encyclopedia_has_unread() and
+		"pda_btn_encyclopedia_unread" or "pda_btn_encyclopedia"
+	button:SetTextST(string_id)
+	return true
+end
+
+class "lz_nm_order_row" (CUIScriptWnd)
+
+function lz_nm_order_row:__init(owner, order, accepted) super()
+	self.owner = owner
+	self.slot = order.slot
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pda_weather.xml")
+	xml:InitWindow("order_row", 0, self)
+	self.separator = xml:InitFrameLine("order_row:separator", self)
+	self.title = xml:InitTextWnd("order_row:title", self)
+	self.descr = xml:InitTextWnd("order_row:descr", self)
+	self.items = xml:InitTextWnd("order_row:items", self)
+	self.deadline = xml:InitTextWnd("order_row:deadline", self)
+	self.reward = xml:InitTextWnd("order_row:reward", self)
+	self.delivered_stamp = xml:InitStatic("order_row:delivered_stamp", self)
+	self.status = xml:InitTextWnd("order_row:status", self)
+	self.accept = xml:Init3tButton("order_row:accept", self)
+	self:Register(self.accept, "order_accept")
+	self:AddCallback("order_accept", ui_events.BUTTON_CLICKED, self.Accept, self)
+
+	self.title:SetText(order.title)
+	self.descr:SetText(order.descr)
+	self.items:SetText(order.items)
+	self.deadline:SetText(order.deadline)
+	self.reward:SetText(order.reward)
+	self.status:SetText(order.status or "")
+	self.delivered_stamp:Show(accepted == true and order.pending == true)
+	self.status:Show(accepted == true)
+	self.accept:Show(accepted ~= true)
+	self.accept:Enable(accepted ~= true and order.can_accept == true)
+	self:SetAutoDelete(false)
+	self:Show(true)
+	self:Enable(true)
+end
+
+function lz_nm_order_row:__finalize()
+end
+
+function lz_nm_order_row:Accept()
+	if self.slot then lz_orders.accept_order(self.slot) end
+end
+
+class "lz_nm_weather_tab" (CUIScriptWnd)
+
+function lz_nm_weather_tab:__init() super()
+	self.rows = {}
+	self.mode = "available"
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pda_weather.xml")
+	xml:InitFrame("frame1", self)
+	xml:InitFrame("frame2", self)
+	xml:InitFrame("border", self)
+	xml:InitStatic("frame1:caption", self)
+	self.available_button = xml:Init3tButton("available_button", self)
+	self.accepted_button = xml:Init3tButton("accepted_button", self)
+	self.counter = xml:InitTextWnd("counter", self)
+	self.point_state = xml:InitTextWnd("point_state", self)
+	xml:InitTextWnd("header:name", self)
+	xml:InitTextWnd("header:descr", self)
+	xml:InitTextWnd("header:items", self)
+	xml:InitTextWnd("header:deadline", self)
+	xml:InitTextWnd("header:reward", self)
+	xml:InitTextWnd("header:action", self)
+	self.empty = xml:InitTextWnd("empty", self)
+	self.list = xml:InitScrollView("list", self)
+	self:Register(self.available_button, "orders_available")
+	self:Register(self.accepted_button, "orders_accepted")
+	self:AddCallback("orders_available", ui_events.BUTTON_CLICKED, self.ShowAvailable, self)
+	self:AddCallback("orders_accepted", ui_events.BUTTON_CLICKED, self.ShowAccepted, self)
+	self:Reset()
+end
+
+function lz_nm_weather_tab:__finalize()
+end
+
+function lz_nm_weather_tab:ShowAvailable()
+	self.mode = "available"
+	self:Reset()
+end
+
+function lz_nm_weather_tab:ShowAccepted()
+	self.mode = "accepted"
+	self:Reset()
+end
+
+function lz_nm_weather_tab:Reset()
+	if not self.list or not lz_orders then return end
+	self.list:Clear()
+	self.rows = {}
+	local board = lz_orders.get_board_state()
+	self.counter:SetText(string.format(game.translate_string("lz_order_active_counter"), board.active, board.limit))
+	self.point_state:SetText(game.translate_string(board.point_ready and "lz_order_point_online" or "lz_order_point_offline"))
+	self.available_button:Enable(self.mode ~= "available")
+	self.accepted_button:Enable(self.mode ~= "accepted")
+	local orders = self.mode == "accepted" and lz_orders.get_accepted_orders() or lz_orders.get_available_orders()
+	self.empty:SetText(game.translate_string(self.mode == "accepted" and "lz_order_accepted_empty" or "lz_order_available_empty"))
+	self.empty:Show(#orders == 0)
+	for _, order in ipairs(orders) do
+		local row = lz_nm_order_row(self, order, self.mode == "accepted")
+		self.list:AddWindow(row, true)
+		row:SetAutoDelete(false)
+		table.insert(self.rows, row)
+	end
+end
+
+function get_weather_ui()
+	weather_tab_singleton = weather_tab_singleton or lz_nm_weather_tab()
+	weather_tab_singleton:Reset()
+	return weather_tab_singleton
+end
+
+function refresh_orders_ui()
+	if weather_tab_singleton then weather_tab_singleton:Reset() end
+end
+
+class "lz_nm_beacon_row" (CUIScriptWnd)
+
+function lz_nm_beacon_row:__init(owner, beacon) super()
+	self.owner = owner
+	self.beacon_id = beacon.id
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pda_beacons.xml")
+	xml:InitWindow("beacon_row", 0, self)
+
+	self.name_button = xml:Init3tButton("beacon_row:name", self)
+	self:Register(self.name_button, "row_name")
+	self.distance = xml:InitTextWnd("beacon_row:distance", self)
+	self.time = xml:InitTextWnd("beacon_row:time", self)
+	self.map_button = xml:Init3tButton("beacon_row:map_button", self)
+	self.map_button:SetTextureColor(GetARGB(255, 188, 138, 53))
+	self:Register(self.map_button, "row_map")
+	self.travel_button = xml:Init3tButton("beacon_row:travel_button", self)
+	self:Register(self.travel_button, "row_travel")
+
+	self.name_button:TextControl():SetText(beacon.name)
+	self.distance:SetText(string.format(game.translate_string("lz_nm_beacon_distance_format"), beacon.distance))
+	self.time:SetText(lz_new_mechanics.format_beacon_travel_time(beacon.hours))
+	self:AddCallback("row_name", ui_events.BUTTON_CLICKED, self.Rename, self)
+	self:AddCallback("row_map", ui_events.BUTTON_CLICKED, self.ShowOnMap, self)
+	self:AddCallback("row_travel", ui_events.BUTTON_CLICKED, self.AskTravel, self)
+	self:SetAutoDelete(false)
+	self:Show(true)
+	self:Enable(true)
+end
+
+function lz_nm_beacon_row:__finalize()
+end
+
+function lz_nm_beacon_row:Rename()
+	show_beacon_name_dialog(self.beacon_id)
+end
+
+function lz_nm_beacon_row:ShowOnMap()
+	lz_new_mechanics.show_beacon_on_map(self.beacon_id)
+end
+
+function lz_nm_beacon_row:AskTravel()
+	self.owner:AskTravel(self.beacon_id)
+end
+
+class "lz_nm_beacon_tab" (CUIScriptWnd)
+
+function lz_nm_beacon_tab:__init() super()
+	self.rows = {}
+	self.pending_travel_id = nil
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pda_beacons.xml")
+	xml:InitFrame("frame1", self)
+	xml:InitFrame("frame2", self)
+	xml:InitFrame("border", self)
+	xml:InitStatic("frame1:caption", self)
+	xml:InitTextWnd("header:name", self)
+	xml:InitTextWnd("header:distance", self)
+	xml:InitTextWnd("header:time", self)
+	xml:InitTextWnd("header:actions", self)
+	self.empty = xml:InitTextWnd("empty", self)
+	self.list = xml:InitScrollView("list", self)
+	self.confirm = CUIMessageBoxEx()
+	self:Register(self.confirm, "beacon_travel_confirm")
+	self:AddCallback("beacon_travel_confirm", ui_events.MESSAGE_BOX_YES_CLICKED, self.ConfirmTravel, self)
+	self:Reset()
+end
+
+function lz_nm_beacon_tab:__finalize()
+end
+
+function lz_nm_beacon_tab:Reset()
+	if not self.list then return end
+	self.list:Clear()
+	self.list:Show(true)
+	self.list:Enable(true)
+	self.rows = {}
+	local beacons = lz_new_mechanics.get_beacons()
+	self.empty:Show(#beacons == 0)
+	for _, beacon in ipairs(beacons) do
+		local row = lz_nm_beacon_row(self, beacon)
+		self.list:AddWindow(row, true)
+		row:SetAutoDelete(false)
+		table.insert(self.rows, row)
+	end
+end
+
+function lz_nm_beacon_tab:AskTravel(id)
+	local selected = nil
+	for _, beacon in ipairs(lz_new_mechanics.get_beacons()) do
+		if beacon.id == id then selected = beacon break end
+	end
+	if not selected then self:Reset() return end
+	self.pending_travel_id = id
+	self.confirm:InitMessageBox("message_box_yes_no")
+	self.confirm:SetText(string.format(
+		game.translate_string("lz_nm_beacon_travel_confirm"),
+		lz_new_mechanics.beacon_name_for_utf8(selected.name), selected.distance,
+		lz_new_mechanics.format_beacon_travel_time(selected.hours), selected.damage
+	))
+	self.confirm:ShowDialog(true)
+end
+
+function lz_nm_beacon_tab:ConfirmTravel()
+	local id = self.pending_travel_id
+	self.pending_travel_id = nil
+	if id then lz_new_mechanics.travel_to_beacon(id) end
+end
+
+function get_beacon_ui()
+	beacon_tab_singleton = beacon_tab_singleton or lz_nm_beacon_tab()
+	beacon_tab_singleton:Reset()
+	return beacon_tab_singleton
+end
+
+function refresh_beacon_ui()
+	if beacon_tab_singleton then beacon_tab_singleton:Reset() end
+end
+
+class "lz_nm_beacon_destroy_dialog" (CUIScriptWnd)
+
+function lz_nm_beacon_destroy_dialog:__init() super()
+	self.beacon_id = nil
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pda_beacon.xml")
+	xml:InitWindow("destroy_dialog", 0, self)
+	self.form = xml:InitStatic("destroy_dialog:form", self)
+	xml:InitTextWnd("destroy_dialog:form:question", self.form)
+	self.name = xml:InitTextWnd("destroy_dialog:form:name", self.form)
+	xml:InitTextWnd("destroy_dialog:form:warning", self.form)
+	self.confirm_button = xml:Init3tButton("destroy_dialog:form:confirm_button", self.form)
+	self:Register(self.confirm_button, "beacon_world_destroy_confirm")
+	self.cancel_button = xml:Init3tButton("destroy_dialog:form:cancel_button", self.form)
+	self:Register(self.cancel_button, "beacon_world_destroy_cancel")
+	self:AddCallback("beacon_world_destroy_confirm", ui_events.BUTTON_CLICKED, self.ConfirmDestroy, self)
+	self:AddCallback("beacon_world_destroy_cancel", ui_events.BUTTON_CLICKED, self.Cancel, self)
+	self:SetAutoDelete(false)
+end
+
+function lz_nm_beacon_destroy_dialog:__finalize()
+end
+
+function lz_nm_beacon_destroy_dialog:Open(id)
+	self.beacon_id = tonumber(id)
+	if not self.beacon_id then return false end
+	-- Static localized labels are parsed by the XML UI.  Keeping the dynamic
+	-- beacon name in its own control avoids feeding a formatted UTF-8 string
+	-- through CUIMessageBoxEx:SetTextST, which produced mojibake in Russian.
+	self.name:SetText(lz_new_mechanics.get_beacon_name(self.beacon_id))
+	self:ShowDialog(true)
+	return true
+end
+
+function lz_nm_beacon_destroy_dialog:ConfirmDestroy()
+	local id = self.beacon_id
+	self.beacon_id = nil
+	self:HideDialog()
+	if id then lz_new_mechanics.destroy_beacon_confirmed(id) end
+end
+
+function lz_nm_beacon_destroy_dialog:Cancel()
+	self.beacon_id = nil
+	self:HideDialog()
+end
+
+function lz_nm_beacon_destroy_dialog:OnKeyboard(dik, keyboard_action)
+	CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		if dik_to_bind(dik) == key_bindings.kQUIT then
+			self:Cancel()
+		elseif dik == 40 then
+			self:ConfirmDestroy()
+		end
+	end
+	return true
+end
+
+function show_beacon_destroy_confirmation(id)
+	beacon_destroy_dialog_singleton = beacon_destroy_dialog_singleton or lz_nm_beacon_destroy_dialog()
+	return beacon_destroy_dialog_singleton:Open(id)
+end
+
+class "lz_nm_beacon_name_dialog" (CUIScriptWnd)
+
+function lz_nm_beacon_name_dialog:__init() super()
+	self.beacon_id = nil
+	self.cancel_install = false
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pda_beacon.xml")
+	xml:InitWindow("name_dialog", 0, self)
+	xml:InitStatic("name_dialog:shade", self)
+	self.form = xml:InitStatic("name_dialog:form", self)
+	xml:InitTextWnd("name_dialog:form:caption", self.form)
+	xml:InitTextWnd("name_dialog:form:prompt", self.form)
+	self.edit = xml:InitEditBox("name_dialog:form:edit", self.form)
+	self:Register(self.edit, "beacon_name_edit")
+	self.save_button = xml:Init3tButton("name_dialog:form:save_button", self.form)
+	self:Register(self.save_button, "beacon_name_save")
+	self.cancel_button = xml:Init3tButton("name_dialog:form:cancel_button", self.form)
+	self:Register(self.cancel_button, "beacon_name_cancel")
+	self:AddCallback("beacon_name_edit", ui_events.EDIT_TEXT_COMMIT, self.Save, self)
+	self:AddCallback("beacon_name_save", ui_events.BUTTON_CLICKED, self.Save, self)
+	self:AddCallback("beacon_name_cancel", ui_events.BUTTON_CLICKED, self.Cancel, self)
+	self:SetAutoDelete(false)
+end
+
+function lz_nm_beacon_name_dialog:__finalize()
+end
+
+function lz_nm_beacon_name_dialog:Open(id, cancel_install)
+	self.beacon_id = tonumber(id)
+	if not self.beacon_id then return false end
+	self.cancel_install = cancel_install == true
+	self.edit:SetText(lz_new_mechanics.beacon_name_for_edit(self.beacon_id))
+	self:ShowDialog(true)
+	return true
+end
+
+function lz_nm_beacon_name_dialog:Save()
+	local id = self.beacon_id
+	local confirm_install = self.cancel_install
+	self.beacon_id = nil
+	self.cancel_install = false
+	if id then lz_new_mechanics.set_beacon_name(id, self.edit:GetText()) end
+	self:HideDialog()
+	if confirm_install and id then lz_new_mechanics.confirm_beacon_install(id) end
+	if beacon_tab_singleton then beacon_tab_singleton:Reset() end
+end
+
+function lz_nm_beacon_name_dialog:Cancel()
+	local id = self.beacon_id
+	local cancel_install = self.cancel_install
+	self.beacon_id = nil
+	self.cancel_install = false
+	self:HideDialog()
+	if cancel_install and id then lz_new_mechanics.cancel_beacon_install(id) end
+end
+
+function lz_nm_beacon_name_dialog:OnKeyboard(dik, keyboard_action)
+	CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		if dik_to_bind(dik) == key_bindings.kQUIT then
+			self:Cancel()
+		elseif dik == 40 then
+			self:Save()
+		end
+	end
+	return true
+end
+
+function show_beacon_name_dialog(id, cancel_install)
+	beacon_name_dialog_singleton = beacon_name_dialog_singleton or lz_nm_beacon_name_dialog()
+	return beacon_name_dialog_singleton:Open(id, cancel_install)
+end
+
+function set_active_subdialog(section)
+	if section == "eptEncyclopedia" then
+		lz_new_mechanics.mark_mechanics_encyclopedia_read()
+		local result = ui_lz_encyclopedia_tab.get_ui()
+		refresh_encyclopedia_marker(false)
+		return result
+	elseif section == "eptBeaconLocator" then
+		refresh_encyclopedia_marker(false)
+		return get_beacon_ui()
+	elseif section == "eptWeather" then
+		refresh_encyclopedia_marker(false)
+		return get_weather_ui()
+	end
+	refresh_encyclopedia_marker(false)
+	return nil
+end

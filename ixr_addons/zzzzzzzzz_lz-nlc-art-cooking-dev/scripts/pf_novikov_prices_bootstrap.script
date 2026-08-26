@@ -1,0 +1,7 @@
+-- Class registrators run before the level creates and caches inventory upgrade
+-- functors. Install the profile wrappers at that point, without registering a
+-- new game object class.
+
+function register(object_factory)
+	pf_novikov_prices.install_callbacks()
+end

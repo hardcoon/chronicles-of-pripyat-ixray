@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+	<dialog id="pf_yanov_nitro_services_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_yanov_nitro_services_greeting</text>
+				<next>1</next>
+				<next>7</next>
+				<next>10</next>
+				<next>20</next>
+				<next>900</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_yanov_nitro_services_intro_ask_who</text>
+				<precondition>pf_yanov_nitro_services.intro_unseen</precondition>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_yanov_nitro_services_intro_who_answer</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_yanov_nitro_services_intro_ask_repair</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_yanov_nitro_services_intro_repair_answer</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_yanov_nitro_services_intro_ask_upgrades</text>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_yanov_nitro_services_intro_upgrades_answer</text>
+				<action>pf_yanov_nitro_services.mark_intro_seen</action>
+				<next>7</next>
+				<next>10</next>
+				<next>900</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_yanov_nitro_services_pda_intro_actor_1</text>
+				<precondition>pf_yanov_nitro_services.pda_intro_unseen</precondition>
+				<next>8</next>
+			</phrase>
+			<phrase id="8">
+				<text>pf_yanov_nitro_services_pda_intro_npc_1</text>
+				<next>9</next>
+			</phrase>
+			<phrase id="9">
+				<text>pf_yanov_nitro_services_pda_intro_actor_2</text>
+				<next>12</next>
+			</phrase>
+			<phrase id="12">
+				<text>pf_yanov_nitro_services_pda_intro_npc_2</text>
+				<next>13</next>
+			</phrase>
+			<phrase id="13">
+				<text>pf_yanov_nitro_services_pda_intro_actor_3</text>
+				<action>pf_yanov_nitro_services.mark_pda_intro_seen</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="10">
+				<text>pf_yanov_nitro_services_ask_stock</text>
+				<precondition>pf_yanov_nitro_services.intro_seen</precondition>
+				<next>11</next>
+			</phrase>
+			<phrase id="11">
+				<text>pf_yanov_nitro_services_stock_intro</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>400</next>
+				<next>500</next>
+				<next>600</next>
+				<next>800</next>
+				<next>900</next>
+			</phrase>
+
+			<phrase id="20">
+				<text>pf_yanov_nitro_services_pda_service_actor</text>
+				<precondition>pf_yanov_nitro_services.has_any_locked_pda</precondition>
+				<next>21</next>
+			</phrase>
+			<phrase id="21">
+				<text>pf_yanov_nitro_services_pda_service_npc</text>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>79</next>
+			</phrase>
+			<phrase id="30">
+				<text>pf_yanov_nitro_services_pda_novice</text>
+				<precondition>pf_yanov_nitro_services.has_locked_novice</precondition>
+				<action>pf_yanov_nitro_services.reflash_locked_novice</action>
+				<next>70</next>
+				<next>71</next>
+				<next>72</next>
+			</phrase>
+			<phrase id="40">
+				<text>pf_yanov_nitro_services_pda_stalker</text>
+				<precondition>pf_yanov_nitro_services.has_locked_stalker</precondition>
+				<action>pf_yanov_nitro_services.reflash_locked_stalker</action>
+				<next>70</next>
+				<next>71</next>
+				<next>72</next>
+			</phrase>
+			<phrase id="50">
+				<text>pf_yanov_nitro_services_pda_veteran</text>
+				<precondition>pf_yanov_nitro_services.has_locked_veteran</precondition>
+				<action>pf_yanov_nitro_services.reflash_locked_veteran</action>
+				<next>70</next>
+				<next>71</next>
+				<next>72</next>
+			</phrase>
+			<phrase id="60">
+				<text>pf_yanov_nitro_services_pda_master</text>
+				<precondition>pf_yanov_nitro_services.has_locked_master</precondition>
+				<action>pf_yanov_nitro_services.reflash_locked_master</action>
+				<next>70</next>
+				<next>71</next>
+				<next>72</next>
+			</phrase>
+			<phrase id="70">
+				<text>pf_yanov_nitro_services_pda_done</text>
+				<precondition>pf_yanov_nitro_services.pda_transaction_succeeded</precondition>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>79</next>
+			</phrase>
+			<phrase id="71">
+				<text>pf_yanov_nitro_services_pda_no_money</text>
+				<precondition>pf_yanov_nitro_services.pda_transaction_no_money</precondition>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>79</next>
+			</phrase>
+			<phrase id="72">
+				<text>pf_yanov_nitro_services_pda_failed</text>
+				<precondition>pf_yanov_nitro_services.pda_transaction_failed</precondition>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>79</next>
+			</phrase>
+			<phrase id="79">
+				<text>pf_yanov_nitro_services_pda_back</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+
+			<phrase id="100">
+				<text>pf_yanov_nitro_services_module_rough</text>
+				<precondition>pf_yanov_nitro_services.offered_rough</precondition>
+				<action>pf_yanov_nitro_services.select_rough</action>
+				<next>101</next>
+			</phrase>
+			<phrase id="101">
+				<text>pf_yanov_nitro_services_recipe_rough</text>
+				<next>102</next>
+				<next>103</next>
+				<next>109</next>
+			</phrase>
+			<phrase id="102">
+				<text>pf_yanov_nitro_services_buy</text>
+				<precondition>pf_yanov_nitro_services.can_buy_selected</precondition>
+				<action>pf_yanov_nitro_services.buy_selected</action>
+				<next>150</next>
+			</phrase>
+			<phrase id="103">
+				<text>pf_yanov_nitro_services_missing</text>
+				<precondition>pf_yanov_nitro_services.cannot_buy_selected</precondition>
+				<next>151</next>
+			</phrase>
+			<phrase id="109">
+				<text>pf_yanov_nitro_services_back</text>
+				<next>11</next>
+			</phrase>
+
+			<phrase id="200">
+				<text>pf_yanov_nitro_services_module_fine</text>
+				<precondition>pf_yanov_nitro_services.offered_fine</precondition>
+				<action>pf_yanov_nitro_services.select_fine</action>
+				<next>201</next>
+			</phrase>
+			<phrase id="201">
+				<text>pf_yanov_nitro_services_recipe_fine</text>
+				<next>202</next>
+				<next>203</next>
+				<next>209</next>
+			</phrase>
+			<phrase id="202">
+				<text>pf_yanov_nitro_services_buy</text>
+				<precondition>pf_yanov_nitro_services.can_buy_selected</precondition>
+				<action>pf_yanov_nitro_services.buy_selected</action>
+				<next>150</next>
+			</phrase>
+			<phrase id="203">
+				<text>pf_yanov_nitro_services_missing</text>
+				<precondition>pf_yanov_nitro_services.cannot_buy_selected</precondition>
+				<next>151</next>
+			</phrase>
+			<phrase id="209">
+				<text>pf_yanov_nitro_services_back</text>
+				<next>11</next>
+			</phrase>
+
+			<phrase id="300">
+				<text>pf_yanov_nitro_services_module_soft</text>
+				<precondition>pf_yanov_nitro_services.offered_soft</precondition>
+				<action>pf_yanov_nitro_services.select_soft</action>
+				<next>301</next>
+			</phrase>
+			<phrase id="301">
+				<text>pf_yanov_nitro_services_recipe_soft</text>
+				<next>302</next>
+				<next>303</next>
+				<next>309</next>
+			</phrase>
+			<phrase id="302">
+				<text>pf_yanov_nitro_services_buy</text>
+				<precondition>pf_yanov_nitro_services.can_buy_selected</precondition>
+				<action>pf_yanov_nitro_services.buy_selected</action>
+				<next>150</next>
+			</phrase>
+			<phrase id="303">
+				<text>pf_yanov_nitro_services_missing</text>
+				<precondition>pf_yanov_nitro_services.cannot_buy_selected</precondition>
+				<next>151</next>
+			</phrase>
+			<phrase id="309">
+				<text>pf_yanov_nitro_services_back</text>
+				<next>11</next>
+			</phrase>
+
+			<phrase id="400">
+				<text>pf_yanov_nitro_services_module_calibration</text>
+				<precondition>pf_yanov_nitro_services.offered_calibration</precondition>
+				<action>pf_yanov_nitro_services.select_calibration</action>
+				<next>401</next>
+			</phrase>
+			<phrase id="401">
+				<text>pf_yanov_nitro_services_recipe_calibration</text>
+				<next>402</next>
+				<next>403</next>
+				<next>409</next>
+			</phrase>
+			<phrase id="402">
+				<text>pf_yanov_nitro_services_buy</text>
+				<precondition>pf_yanov_nitro_services.can_buy_selected</precondition>
+				<action>pf_yanov_nitro_services.buy_selected</action>
+				<next>150</next>
+			</phrase>
+			<phrase id="403">
+				<text>pf_yanov_nitro_services_missing</text>
+				<precondition>pf_yanov_nitro_services.cannot_buy_selected</precondition>
+				<next>151</next>
+			</phrase>
+			<phrase id="409">
+				<text>pf_yanov_nitro_services_back</text>
+				<next>11</next>
+			</phrase>
+
+			<phrase id="500">
+				<text>pf_yanov_nitro_services_module_blue</text>
+				<precondition>pf_yanov_nitro_services.offered_blue</precondition>
+				<action>pf_yanov_nitro_services.select_blue</action>
+				<next>501</next>
+			</phrase>
+			<phrase id="501">
+				<text>pf_yanov_nitro_services_recipe_blue</text>
+				<next>502</next>
+				<next>503</next>
+				<next>509</next>
+			</phrase>
+			<phrase id="502">
+				<text>pf_yanov_nitro_services_buy</text>
+				<precondition>pf_yanov_nitro_services.can_buy_selected</precondition>
+				<action>pf_yanov_nitro_services.buy_selected</action>
+				<next>150</next>
+			</phrase>
+			<phrase id="503">
+				<text>pf_yanov_nitro_services_missing</text>
+				<precondition>pf_yanov_nitro_services.cannot_buy_selected</precondition>
+				<next>151</next>
+			</phrase>
+			<phrase id="509">
+				<text>pf_yanov_nitro_services_back</text>
+				<next>11</next>
+			</phrase>
+
+			<phrase id="600">
+				<text>pf_yanov_nitro_services_module_green</text>
+				<precondition>pf_yanov_nitro_services.offered_green</precondition>
+				<action>pf_yanov_nitro_services.select_green</action>
+				<next>601</next>
+			</phrase>
+			<phrase id="601">
+				<text>pf_yanov_nitro_services_recipe_green</text>
+				<next>602</next>
+				<next>603</next>
+				<next>609</next>
+			</phrase>
+			<phrase id="602">
+				<text>pf_yanov_nitro_services_buy</text>
+				<precondition>pf_yanov_nitro_services.can_buy_selected</precondition>
+				<action>pf_yanov_nitro_services.buy_selected</action>
+				<next>150</next>
+			</phrase>
+			<phrase id="603">
+				<text>pf_yanov_nitro_services_missing</text>
+				<precondition>pf_yanov_nitro_services.cannot_buy_selected</precondition>
+				<next>151</next>
+			</phrase>
+			<phrase id="609">
+				<text>pf_yanov_nitro_services_back</text>
+				<next>11</next>
+			</phrase>
+
+			<phrase id="150">
+				<text>pf_yanov_nitro_services_done</text>
+				<next>10</next>
+			</phrase>
+			<phrase id="151">
+				<text>pf_yanov_nitro_services_missing_reply</text>
+				<next>10</next>
+				<next>900</next>
+			</phrase>
+			<phrase id="800">
+				<text>pf_yanov_nitro_services_ask_sold_out</text>
+				<precondition>pf_yanov_nitro_services.sold_out</precondition>
+				<next>801</next>
+			</phrase>
+			<phrase id="801">
+				<text>pf_yanov_nitro_services_sold_out</text>
+				<next>900</next>
+			</phrase>
+			<phrase id="900">
+				<text>pf_yanov_nitro_services_bye</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+</game_dialogs>

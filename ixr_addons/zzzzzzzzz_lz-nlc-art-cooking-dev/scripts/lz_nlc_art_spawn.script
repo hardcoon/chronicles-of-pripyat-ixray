@@ -1,0 +1,480 @@
+-- Persistent class I-IV artifact population for the 41 named anomaly groups.
+-- Only objects created by this module count toward its caps. Cooked, quest,
+-- QA and legacy artifacts never occupy a natural-spawn slot.
+
+local config = lz_nlc_art_spawn_config
+local settings = config.settings()
+local NO_PARENT_ID = 65535
+local INVALID_VERTEX_ID = 4294967295
+local state = {
+	initialized = false,
+	registry_ready = false,
+	update_due = 0,
+	scan_due = 0,
+	zones = {},
+	id_to_zone = {}
+}
+
+local function report(format, ...)
+	local ok, message = pcall(string.format, format, ...)
+	message = ok and message or tostring(format)
+	local text = "lz_nlc_art_spawn: " .. message
+	printf("%s", text)
+	pcall(function()
+		local path = getFS():update_path("$logs$", "lz_nlc_art_spawn_runtime.log")
+		local file = io.open(path, "a")
+		if file then
+			file:write(string.format("[%s] %s\n", tostring(time_global()), text))
+			file:close()
+		end
+	end)
+end
+
+local function storage()
+	local root = alife_storage_manager.get_state()
+	if type(root[settings.storage_key]) ~= "table" then
+		root[settings.storage_key] = {}
+	end
+	local data = root[settings.storage_key]
+	data.version = 3
+	data.prng_state = tonumber(data.prng_state) or settings.seed
+	if type(data.slots) ~= "table" then data.slots = {} end
+	if type(data.cooldowns) ~= "table" then data.cooldowns = {} end
+	return data
+end
+
+local function current_surges()
+	if xr_statistic and xr_statistic.actor_statistic then
+		return math.max(0, math.floor(
+			tonumber(xr_statistic.actor_statistic.surges) or 0
+		))
+	end
+	return 0
+end
+
+local function game_days()
+	local seconds = tonumber(game.get_game_time():diffSec(level.get_start_time())) or 0
+	return math.max(0, math.floor(seconds / 86400))
+end
+
+local function next_random(data, maximum)
+	data.prng_state = (data.prng_state * 48271) % 2147483647
+	if not maximum or maximum <= 1 then return 1 end
+	return math.floor(((data.prng_state - 1) * maximum) / 2147483646) + 1
+end
+
+local function distance_squared(first, second)
+	local dx = first.x - second.x
+	local dy = first.y - second.y
+	local dz = first.z - second.z
+	return dx * dx + dy * dy + dz * dz
+end
+
+local function on_screen(position)
+	local ok, screen = pcall(function() return game.world2ui(position, false) end)
+	if not ok or not screen then return false end
+	return screen.x >= 0 and screen.x <= 1024 and screen.y >= 0 and screen.y <= 768
+end
+
+local function point_is_hidden(point)
+	if not db.actor then return true end
+	local position = point.position
+	local radius = settings.actor_exclusion_radius
+	if distance_squared(position, db.actor:position()) < radius * radius then return false end
+	return not on_screen(position)
+end
+
+local function scan_registry()
+	state.zones = {}
+	state.id_to_zone = {}
+	local definitions = config.zones()
+	for id, definition in pairs(definitions) do
+		state.zones[id] = {
+			definition = definition,
+			anchor_found = false,
+			points = {}
+		}
+	end
+
+	for _, object in alife():objects() do
+		local name = object:name()
+		if type(name) == "string" then
+			local anchor_id = tonumber(string.match(name, "^pf_proc_fixed_g(%d%d)_a_base$"))
+			if anchor_id and state.zones[anchor_id] then
+				state.zones[anchor_id].anchor_found = true
+			else
+				local point_id = tonumber(string.match(name, "^pf_proc_fixed_g(%d%d)_p%d+$"))
+				if point_id and state.zones[point_id] and object.position and
+					tonumber(object.m_level_vertex_id) ~= INVALID_VERTEX_ID and
+					tonumber(object.m_game_vertex_id) ~= INVALID_VERTEX_ID then
+					table.insert(state.zones[point_id].points, {
+						position = vector():set(object.position),
+						level_vertex_id = object.m_level_vertex_id,
+						game_vertex_id = object.m_game_vertex_id
+					})
+				end
+			end
+		end
+	end
+
+	local ready = 0
+	for _, zone in pairs(state.zones) do
+		if zone.anchor_found and #zone.points > 0 then ready = ready + 1 end
+	end
+	state.registry_ready = ready == 41
+	if state.registry_ready then
+		report("registry ready, zones=[%s]", tostring(ready))
+	else
+		report("registry incomplete, ready=[%s/41]", tostring(ready))
+	end
+end
+
+local function weighted_section(data, pool)
+	if not pool or #pool.sections == 0 then return nil end
+	local total = 0
+	for index = 1, #pool.sections do total = total + (pool.weights[index] or 0) end
+	if total <= 0 then return pool.sections[next_random(data, #pool.sections)] end
+	local roll = next_random(data, total)
+	for index, section in ipairs(pool.sections) do
+		roll = roll - (pool.weights[index] or 0)
+		if roll <= 0 then return section end
+	end
+	return pool.sections[#pool.sections]
+end
+
+local function natural_counts(data)
+	local counts = { total = 0, [1] = 0, [2] = 0, [3] = 0, [4] = 0 }
+	for _, entry in pairs(data.slots) do
+		local artifact_class = config.artifact_class(entry.section) or
+			tonumber(entry.artifact_class)
+		if artifact_class and artifact_class >= 1 and artifact_class <= 4 then
+			counts.total = counts.total + 1
+			counts[artifact_class] = counts[artifact_class] + 1
+		end
+	end
+	return counts
+end
+
+local function release_slot(data, zone_key)
+	local entry = data.slots[zone_key]
+	if not entry then return end
+	state.id_to_zone[tonumber(entry.id)] = nil
+	data.slots[zone_key] = nil
+	data.cooldowns[zone_key] = math.max(
+		tonumber(data.cooldowns[zone_key]) or 0,
+		settings.empty_zone_cooldown_emissions
+	)
+end
+
+local function audit_slots(data)
+	state.id_to_zone = {}
+	local stale = {}
+	for zone_key, entry in pairs(data.slots) do
+		local id = tonumber(entry.id)
+		local object = id and alife():object(id, true) or nil
+		local parent_id = object and tonumber(object.parent_id) or nil
+		local section = object and object:section_name() or entry.section
+		local artifact_class = config.artifact_class(section)
+		if object and artifact_class and
+			(parent_id == nil or parent_id == NO_PARENT_ID) then
+			entry.section = section
+			entry.artifact_class = artifact_class
+			entry.tier = nil
+			state.id_to_zone[id] = zone_key
+		else
+			-- Version 1 could create cooked outputs or retired bases. Only objects
+			-- tracked by this module are removed during the one-time migration.
+			if object and not artifact_class and
+				(parent_id == nil or parent_id == NO_PARENT_ID) then
+				alife():release(object, true)
+			end
+			table.insert(stale, zone_key)
+		end
+	end
+	for _, zone_key in ipairs(stale) do release_slot(data, zone_key) end
+end
+
+local function candidate_points(zone)
+	local result = {}
+	for _, point in ipairs(zone.points) do
+		if point_is_hidden(point) then table.insert(result, point) end
+	end
+	return result
+end
+
+local function candidate_zones(data, artifact_class)
+	local result = {}
+	for id, zone in pairs(state.zones) do
+		local key = string.format("%02d", id)
+		local pool = config.family_pool(zone.definition.family, artifact_class)
+		if zone.anchor_found and #zone.points > 0 and #pool.sections > 0 and
+			not data.slots[key] and (tonumber(data.cooldowns[key]) or 0) <= 0 then
+			local points = candidate_points(zone)
+			if #points > 0 then
+				table.insert(result, {
+					id = id,
+					key = key,
+					zone = zone,
+					pool = pool,
+					points = points
+				})
+			end
+		end
+	end
+	return result
+end
+
+local function available_class_weights(data)
+	local weights = {}
+	local chances = config.class_chances()
+	for artifact_class = 1, 4 do
+		local allowed = chances[artifact_class] or 0
+		if allowed > 0 and #candidate_zones(data, artifact_class) > 0 then
+			weights[artifact_class] = allowed
+		end
+	end
+	return weights
+end
+
+local function choose_class(data, weights)
+	local total = 0
+	for artifact_class = 1, 4 do
+		total = total + (weights[artifact_class] or 0)
+	end
+	if total <= 0 then return nil end
+	local roll = next_random(data, total)
+	for artifact_class = 1, 4 do
+		roll = roll - (weights[artifact_class] or 0)
+		if roll <= 0 then return artifact_class end
+	end
+	return 1
+end
+
+local function spawn_one(data, phase, forced_class)
+	local counts = natural_counts(data)
+	if counts.total >= phase.total_cap then return false end
+	local artifact_class = forced_class
+	if not artifact_class then
+		artifact_class = choose_class(
+			data, available_class_weights(data)
+		)
+	end
+	if not artifact_class then return false end
+
+	local candidates = candidate_zones(data, artifact_class)
+	if #candidates == 0 then return false end
+	local candidate = candidates[next_random(data, #candidates)]
+	local section = weighted_section(data, candidate.pool)
+	local point = candidate.points[next_random(data, #candidate.points)]
+	if not section or not point then return false end
+	local position = vector():set(
+		point.position.x,
+		point.position.y + settings.spawn_height,
+		point.position.z
+	)
+	local created = alife():create(
+		section, position, point.level_vertex_id, point.game_vertex_id
+	)
+	if not created then
+		report(
+			"create failed, section=[%s], zone=[%s]",
+			tostring(section), candidate.key
+		)
+		return false
+	end
+	data.slots[candidate.key] = {
+		id = created.id,
+		section = section,
+		artifact_class = artifact_class,
+		family = candidate.zone.definition.family
+	}
+	state.id_to_zone[created.id] = candidate.key
+	report(
+		"created [%s], class=[%s], zone=[%s], id=[%s]",
+		section, tostring(artifact_class), candidate.key, tostring(created.id)
+	)
+	return true
+end
+
+local function spawn_batch(data, phase, requested, forced_class)
+	local created = 0
+	local attempts = 0
+	local maximum_attempts = math.max(1, requested * 4)
+	while created < requested and attempts < maximum_attempts do
+		attempts = attempts + 1
+		if not spawn_one(data, phase, forced_class) then break end
+		created = created + 1
+	end
+	return created
+end
+
+local function age_cooldowns(data)
+	for zone_key, remaining in pairs(data.cooldowns) do
+		remaining = math.max(0, math.floor(tonumber(remaining) or 0) - 1)
+		data.cooldowns[zone_key] = remaining > 0 and remaining or nil
+	end
+end
+
+local function process_emission(data)
+	local phase = config.phase_for_day(game_days())
+	audit_slots(data)
+	local created = spawn_batch(data, phase, settings.artifacts_per_emission)
+	age_cooldowns(data)
+	report(
+		"emission population day=[%s], requested=[%s], created=[%s], cap=[%s]",
+		tostring(game_days()), tostring(settings.artifacts_per_emission),
+		tostring(created), tostring(phase.total_cap)
+	)
+end
+
+local function initial_coverage_ready(counts)
+	for artifact_class = 1, 4 do
+		if counts[artifact_class] < settings.initial_minimum_per_class then
+			return false
+		end
+	end
+	return true
+end
+
+local function process_initial_population(data)
+	if not data.initial_pending then return end
+	local initial_phase = { total_cap = settings.initial_artifacts }
+	audit_slots(data)
+	local counts = natural_counts(data)
+	for artifact_class = 1, 4 do
+		local required = math.max(
+			0, settings.initial_minimum_per_class - counts[artifact_class]
+		)
+		if required > 0 then
+			local created = spawn_batch(
+				data, initial_phase, required, artifact_class
+			)
+			if created < required then
+				report(
+					"initial population deferred, class=[%s], missing=[%s]",
+					tostring(artifact_class), tostring(required - created)
+				)
+				return
+			end
+			counts = natural_counts(data)
+		end
+	end
+
+	local missing = math.max(0, settings.initial_artifacts - counts.total)
+	local created = spawn_batch(data, initial_phase, missing)
+	counts = natural_counts(data)
+	if created >= missing and counts.total >= settings.initial_artifacts and
+		initial_coverage_ready(counts) then
+		data.initial_pending = nil
+		report(
+			"initial population ready, created=[%s], classes=[%s/%s/%s/%s]",
+			tostring(created), tostring(counts[1]), tostring(counts[2]),
+			tostring(counts[3]), tostring(counts[4])
+		)
+	else
+		report(
+			"initial population deferred, missing=[%s]",
+			tostring(missing - created)
+		)
+	end
+end
+
+function new_game_start()
+	local data = storage()
+	if data.new_game_started then return end
+	data.new_game_started = true
+	data.initial_pending = true
+	data.slots = {}
+	data.cooldowns = {}
+	data.last_surges = current_surges()
+	data.prng_state = settings.seed
+	state.registry_ready = false
+	state.scan_due = 0
+	report("new-game population scheduled")
+end
+
+function actor_on_inventory_item_take(item)
+	if not item then return end
+	local data = storage()
+	local zone_key = state.id_to_zone[item:id()]
+	if zone_key then release_slot(data, zone_key) end
+end
+
+function actor_on_inventory_trade(item, sell_bye)
+	if sell_bye and item then actor_on_inventory_item_take(item) end
+end
+
+function on_game_load()
+	state.initialized = true
+	state.registry_ready = false
+	state.update_due = time_global() + 1000
+	state.scan_due = time_global()
+	state.zones = {}
+	state.id_to_zone = {}
+	local data = storage()
+	if data.last_surges == nil then data.last_surges = current_surges() end
+	audit_slots(data)
+end
+
+function update(now)
+	if not db.actor or level.name() ~= settings.level then return end
+	if not state.initialized then on_game_load() end
+	if now < state.update_due then return end
+	state.update_due = now + settings.update_interval_ms
+
+	if not state.registry_ready then
+		if now < state.scan_due then return end
+		state.scan_due = now + settings.scan_retry_ms
+		scan_registry()
+		if not state.registry_ready then return end
+	end
+
+	local data = storage()
+	audit_slots(data)
+	process_initial_population(data)
+	local surges = current_surges()
+	local previous = math.max(0, math.floor(tonumber(data.last_surges) or surges))
+	if surges > previous then
+		for _ = previous + 1, surges do process_emission(data) end
+	end
+	data.last_surges = surges
+end
+
+function status()
+	local data = storage()
+	local counts = natural_counts(data)
+	return {
+		ready = state.registry_ready,
+		total = counts.total,
+		class_1 = counts[1],
+		class_2 = counts[2],
+		class_3 = counts[3],
+		class_4 = counts[4],
+		surges = tonumber(data.last_surges) or 0
+	}
+end
+
+-- Developer-only smoke hook. It uses the same fail-closed flag as every QA
+-- item and never becomes available in a normal save.
+function debug_runtime_smoke()
+	if not pf_stash_qa or not pf_stash_qa.is_developer_mode or
+		pf_stash_qa.is_developer_mode() ~= true then
+		report("debug smoke denied outside developer mode")
+		return false
+	end
+	if not db.actor or level.name() ~= settings.level then
+		report("debug smoke requires the configured level")
+		return false
+	end
+	if not state.registry_ready then scan_registry() end
+	local current = status()
+	report(
+		"smoke ready=[%s], total=[%s], c1=[%s], c2=[%s], c3=[%s], c4=[%s]",
+		tostring(current.ready), tostring(current.total), tostring(current.class_1),
+		tostring(current.class_2), tostring(current.class_3),
+		tostring(current.class_4)
+	)
+	return current.ready
+end
+
+report("module loaded")

@@ -1,0 +1,1474 @@
+-- Fixed post-document-10 encounter for the Pripyat Full personal story.
+-- Runtime spawning keeps the branch compatible with existing saves and avoids
+-- coupling it to the rotating dynamic-stash catalogue.
+
+local LEVEL_NAME = "pripyat_full"
+local STASH_SECTION = "pf_story_legendary_stash"
+local PREACHER_SECTION = "pf_story_preacher"
+local PENDANT_SECTION = "pf_story_brother_pendant"
+local STASH_MARKER = "pf_stash_orange"
+local STASH_HINT = "pf_story_legendary_stash_name"
+local PREACHER_IMPORTANT_MARKER = "ui_pda2_quest_npc_location"
+local PREACHER_IMPORTANT_HINT = "pf_story_preacher_name"
+local MONOLITH_NEUTRAL_APPLIED_INFO = "pf_story_monolith_neutral_doc12_v17"
+local CHECK_INTERVAL_MS = 1000
+local PREACHER_HIT_CHECK_INTERVAL_MS = 100
+local PREACHER_PRAYER_SOUND_THRESHOLD = 1000
+local PREACHER_FACING_RETRY_INTERVAL_MS = 500
+-- Distance checks remain as a fallback for old saves. New progress creates
+-- Sergey server-side together with the legendary stash; ALife keeps him
+-- offline until the actor approaches, so the sermon still cannot start from
+-- across the city.
+-- Both objects must use an AI vertex from the same physical floor as their
+-- world position. This building has vertically stacked nodes at identical
+-- X/Z coordinates; choosing the lower one makes DetailPathManager loop.
+local STASH_POSITION = { 130.2, 11.56, -137.2 }
+local STASH_LEVEL_VERTEX_ID = 7679080
+-- The stock upper-floor campfire is at 131.263, 8.051, -164.320 (spawn 142).
+-- Node 7687018 is a verified walkable point about two metres from its flame.
+local CAMPFIRE_POSITION = { 131.263, 8.051, -164.320 }
+local PREACHER_POSITION = {
+	131.6, 7.667, -162.4,
+	look = CAMPFIRE_POSITION
+}
+local PREACHER_LEVEL_VERTEX_ID = 7687018
+-- Save only after ALife has brought Sergey online and the actor is genuinely
+-- approaching the Monolith base, not immediately after document ten is read.
+local PREACHER_BASE_AUTOSAVE_DISTANCE_SQR = 90 * 90
+local ENCOUNTER_GAME_VERTEX_ID = 17
+-- Keep offline yaw synchronized with the authored look target at the flame.
+local PREACHER_SERMON_YAW = -2.967841675
+-- A dedicated loose copy of the original CoP preacher recording avoids
+-- archive-only sound_object lookup failures and leaves the stock scene intact.
+local SERMON_SOUND_PATH = "characters_voice\\scenario\\pripyat\\pf_story_sergey_sermon"
+local SERMON_SOUND_VOLUME = 1.0
+local SERMON_SOUND_MAX_DISTANCE = 35
+-- Also catches legacy objects still reporting the old embedded Y=11 position
+-- before the client-side physics state has finished falling.
+local LOWER_FLOOR_MIGRATION_Y = 11.3
+local CAMPFIRE_SEARCH_DISTANCE_SQR = 60 * 60
+local CAMPFIRE_MAX_FLOOR_DELTA = 3
+local CAMPFIRE_APPROACH_DISTANCE = 1.8
+local CAMPFIRE_REACHED_DISTANCE_SQR = 1.2 * 1.2
+local PREACHER_TURN_MIN_MS = 1500
+local PREACHER_TURN_TIMEOUT_MS = 6000
+local PREACHER_FACING_DOT_MIN = 0.92
+local PREACHER_SEATED_FACING_DOT_MIN = 0.90
+
+local next_check = 0
+local next_preacher_hit_check = 0
+local preacher_base_migrations_checked = false
+local preacher_branch_migrations_complete = false
+local stash_id = nil
+local preacher_id = nil
+local sermon_sound = nil
+local sermon_sound_owner_id = nil
+local sermon_sound_resolved_path = nil
+local post_dialog_destination = nil
+local post_dialog_campfire_id = nil
+local south_turn_started_at = nil
+local last_trace_section = nil
+local seated_state_applied_id = nil
+local reunion_seated_applied_id = nil
+local next_preacher_facing_retry = 0
+-- relation_registry community relations are process-global rather than scoped
+-- to the loaded save. Remember every value changed by this story so loading a
+-- pre-document-12 save in the same xrEngine process can restore the matrix.
+local monolith_relation_baselines = {}
+local monolith_relations_neutralized = {}
+local monolith_story_reward_applied_this_load = false
+local monolith_online_relations_checked = {}
+local activate_monolith_story_reward
+
+local function info_value(info_id)
+	return db.actor and db.actor:has_info(info_id) and 1 or 0
+end
+
+local function make_position(values)
+	return vector():set(values[1], values[2], values[3])
+end
+
+local function distance_sqr(first, second)
+	local dx = first.x - second[1]
+	local dy = first.y - second[2]
+	local dz = first.z - second[3]
+	return dx * dx + dy * dy + dz * dz
+end
+
+local function find_server_object(section)
+	for _, object in alife():objects() do
+		if object:section_name() == section then return object end
+	end
+	return nil
+end
+
+local function server_object(object_id)
+	return object_id and alife():object(object_id, true) or nil
+end
+
+local function trace_preacher_state(server_npc, label)
+	if not db.actor then
+		printf("[PF TRACE][%s] actor=nil", tostring(label))
+		return
+	end
+	if not server_npc then
+		printf(
+			"[PF TRACE][%s] preacher=nil doc10=%d revealed=%d dead=%d seen=%d ready=%d started=%d done=%d",
+			tostring(label),
+			info_value("pf_story_doc_10_found"),
+			info_value("pf_story_legendary_revealed"),
+			info_value("pf_story_preacher_dead"),
+			info_value("pf_story_preacher_seen"),
+			info_value("pf_story_preacher_actor_ready"),
+			info_value("pf_story_preacher_sermon_started"),
+			info_value("pf_story_preacher_sermon_done")
+		)
+		return
+	end
+
+	local client_npc = level.object_by_id(server_npc.id)
+	local storage = db.storage[server_npc.id]
+	local section = storage and storage.active_section or "nil"
+	local scheme = storage and storage.active_scheme or "nil"
+	local position = client_npc and client_npc:position() or server_npc.position
+	local direction = client_npc and client_npc:direction() or vector():set(0, 0, 0)
+	local actor_position = db.actor:position()
+	local dx = actor_position.x - position.x
+	local dy = actor_position.y - position.y
+	local dz = actor_position.z - position.z
+	local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+	local sound_state = "nil"
+	if sermon_sound then sound_state = sermon_sound:playing() and "playing" or "stopped" end
+	local xr_theme = xr_sound and xr_sound.sound_table and xr_sound.sound_table[server_npc.id]
+	local xr_theme_name = xr_theme and (xr_theme.section or xr_theme.path or "occupied") or "nil"
+
+	if section ~= last_trace_section then
+		printf("[PF TRACE][SECTION] %s -> %s (scheme=%s)",
+			tostring(last_trace_section), tostring(section), tostring(scheme))
+		last_trace_section = section
+	end
+	printf(
+		"[PF TRACE][%s] id=%d online=%d section=%s scheme=%s dist=%.2f dir=(%.3f,%.3f,%.3f) flags seen=%d ready=%d started=%d done=%d choice=%d spared=%d dead=%d sound=%s owner=%s path=%s xr_theme=%s",
+		tostring(label), server_npc.id, client_npc and 1 or 0,
+		tostring(section), tostring(scheme), distance,
+		direction.x, direction.y, direction.z,
+		info_value("pf_story_preacher_seen"),
+		info_value("pf_story_preacher_actor_ready"),
+		info_value("pf_story_preacher_sermon_started"),
+		info_value("pf_story_preacher_sermon_done"),
+		info_value("pf_story_preacher_choice_ready"),
+		info_value("pf_story_preacher_spared"),
+		info_value("pf_story_preacher_dead"),
+		sound_state, tostring(sermon_sound_owner_id),
+		tostring(sermon_sound_resolved_path), tostring(xr_theme_name)
+	)
+end
+
+local function stop_quiet_sermon()
+	if sermon_sound then
+		printf("[PF TRACE][SOUND] stop requested; playing=%s owner=%s path=%s",
+			tostring(sermon_sound:playing()), tostring(sermon_sound_owner_id),
+			tostring(sermon_sound_resolved_path))
+		sermon_sound:stop()
+	end
+	sermon_sound = nil
+	sermon_sound_owner_id = nil
+end
+
+local function stop_legacy_sermon(npc_id)
+	-- A save made with the former play_sound implementation may restore the
+	-- loud stock theme. Clear only Sergey's active theme before starting the
+	-- locally controlled 3D sound object.
+	if xr_sound and xr_sound.sound_table and xr_sound.sound_table[npc_id] then
+		local theme = xr_sound.sound_table[npc_id]
+		if theme.reset then theme:reset(npc_id) end
+		xr_sound.sound_table[npc_id] = nil
+	end
+end
+
+local function resolve_sermon_sound_path()
+	if sermon_sound_resolved_path == false then
+		printf("[PF TRACE][SOUND] path cache contains previous failure")
+		return nil
+	end
+	if sermon_sound_resolved_path then
+		printf("[PF TRACE][SOUND] using cached path=%s", sermon_sound_resolved_path)
+		return sermon_sound_resolved_path
+	end
+	local fs = getFS()
+	printf("[PF TRACE][SOUND] checking $game_sounds$\\%s.ogg", SERMON_SOUND_PATH)
+	if fs:exist("$game_sounds$", SERMON_SOUND_PATH .. ".ogg") then
+		sermon_sound_resolved_path = SERMON_SOUND_PATH
+		printf("[PF TRACE][SOUND] loose OGG found: %s.ogg", sermon_sound_resolved_path)
+		return sermon_sound_resolved_path
+	end
+	-- npc_sound collections use path1.ogg, path2.ogg, ... when no unsuffixed
+	-- file exists. The preacher has one continuous sermon, so use its first file.
+	for index = 1, 16 do
+		local candidate = SERMON_SOUND_PATH .. tostring(index)
+		if fs:exist("$game_sounds$", candidate .. ".ogg") then
+			sermon_sound_resolved_path = candidate
+			printf("[PF TRACE][SOUND] numbered OGG found: %s.ogg", sermon_sound_resolved_path)
+			return sermon_sound_resolved_path
+		end
+	end
+	printf("[PF STORY] ERROR: preacher sermon OGG was not found at %s", SERMON_SOUND_PATH)
+	sermon_sound_resolved_path = false
+	return nil
+end
+
+local function finish_quiet_sermon(client_npc)
+	printf("[PF TRACE][SOUND] playback ended; client=%s", tostring(client_npc and client_npc:id()))
+	stop_quiet_sermon()
+	local sermon_just_finished = not db.actor:has_info("pf_story_preacher_sermon_done")
+	if not db.actor:has_info("pf_story_preacher_sermon_done") then
+		db.actor:give_info_portion("pf_story_preacher_sermon_done")
+	end
+	if not db.actor:has_info("pf_story_preacher_choice_ready") then
+		db.actor:give_info_portion("pf_story_preacher_choice_ready")
+	end
+	if sermon_just_finished then
+		xr_effects.scenario_autosave(
+			db.actor, client_npc, {"st_save_pf_story_sermon_finished"})
+	end
+	printf("[PF STORY] quiet preacher sermon finished")
+end
+
+local function migrate_preacher_proximity_gate()
+	if db.actor:has_info("pf_story_preacher_proximity_gate_v2") then return end
+	-- Previous builds started the ninety-second timer as soon as Sergey became
+	-- online, often finishing the sermon before the actor reached the stash.
+	-- Replay only unfinished encounter branches; completed/dead/final branches
+	-- keep their established story state.
+	if db.actor:has_info("pf_story_doc_10_found") and
+		not db.actor:has_info("pf_story_doc_12_found") and
+		not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_pendant_found") and
+		not db.actor:has_info("pf_story_preacher_spared") and
+		(db.actor:has_info("pf_story_preacher_sermon_started") or
+		 db.actor:has_info("pf_story_preacher_sermon_done") or
+		 db.actor:has_info("pf_story_preacher_choice_ready")) then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		printf("[PF STORY] migrated premature preacher sermon; waiting for actor proximity")
+	end
+	db.actor:give_info_portion("pf_story_preacher_proximity_gate_v2")
+end
+
+local function migrate_preacher_sermon_behavior()
+	if db.actor:has_info("pf_story_preacher_behavior_v3") then return end
+	-- Older saves may retain the completed/threat state from the version where
+	-- a recurring set_sight call suppressed the prayer animation. Replay only
+	-- an unfinished branch and leave every resolved outcome intact.
+	if db.actor:has_info("pf_story_doc_10_found") and
+		not db.actor:has_info("pf_story_doc_12_found") and
+		not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_pendant_found") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		printf("[PF STORY] restored preacher prayer/sermon state for behavior v3")
+	end
+	db.actor:give_info_portion("pf_story_preacher_behavior_v3")
+end
+
+local function migrate_preacher_sermon_v5()
+	if db.actor:has_info("pf_story_preacher_sermon_v5") then return end
+	-- Do not consume the one-shot migration before this story branch exists.
+	-- Otherwise a player visiting Pripyat before document 10 would permanently
+	-- skip the repair when the encounter is revealed later.
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	-- Document 12 can be obtained through the independent archive route before
+	-- the actor ever visits Sergey. Therefore even final-document saves must
+	-- replay an unresolved sermon instead of inheriting an old completed flag.
+	if not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_pendant_found") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		printf("[PF STORY] sermon v5 reset unresolved encounter for prayer replay")
+	end
+	db.actor:give_info_portion("pf_story_preacher_sermon_v5")
+end
+
+local function migrate_preacher_sermon_v6()
+	if db.actor:has_info("pf_story_preacher_sermon_v6") then return end
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	-- Replay an unresolved encounter once after installing the dedicated loose
+	-- sermon file. Saves from the silent build may already contain sermon_done.
+	if not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_pendant_found") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		printf("[PF STORY] sermon v6 reset silent encounter for voiced replay")
+	end
+	db.actor:give_info_portion("pf_story_preacher_sermon_v6")
+end
+
+local function migrate_preacher_sermon_v7()
+	if db.actor:has_info("pf_story_preacher_sermon_v7") then return end
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	-- The previous direct sound_object implementation could remain silent even
+	-- with a valid loose OGG. Replay only an unresolved meeting once and let the
+	-- stock xr_sound preacher theme own both playback and sound_end signalling.
+	if not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		printf("[PF STORY] sermon v7 reset unresolved meeting for stock voiced replay")
+	end
+	db.actor:give_info_portion("pf_story_preacher_sermon_v7")
+end
+
+local function migrate_preacher_encounter_v8()
+	if db.actor:has_info("pf_story_preacher_encounter_v8") then return end
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	-- V7 applied the south vector immediately before xr_remark changed state;
+	-- that state activation could clear the sight command. Replay an unresolved
+	-- meeting once with a dedicated two-second facing phase before the prayer.
+	if not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_south_ready")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		south_turn_started_at = nil
+		printf("[PF STORY] encounter v8 reset unresolved meeting for south-facing voiced replay")
+	end
+	db.actor:give_info_portion("pf_story_preacher_encounter_v8")
+end
+
+local function migrate_preacher_encounter_v9()
+	if db.actor:has_info("pf_story_preacher_encounter_v9") then return end
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	-- V8 deliberately faced Sergey south. At his actual indoor placement that
+	-- points him into the wall. Replay an unresolved meeting once and turn him
+	-- toward the actor instead of relying on a world-space compass direction.
+	if not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_actor_ready")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		south_turn_started_at = nil
+		printf("[PF STORY] encounter v9 reset meeting for actor-facing prayer")
+	end
+	db.actor:give_info_portion("pf_story_preacher_encounter_v9")
+end
+
+local function migrate_preacher_encounter_v10()
+	if db.actor:has_info("pf_story_preacher_encounter_v10") then return end
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	-- Restore the strict encounter order for saves touched by V8/V9:
+	-- proximity -> face actor -> prayer -> verified direct sound playback.
+	if not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_actor_ready")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		south_turn_started_at = nil
+		printf("[PF STORY] encounter v10 restored ordered facing and direct sermon playback")
+	end
+	db.actor:give_info_portion("pf_story_preacher_encounter_v10")
+end
+
+local function migrate_preacher_encounter_v12()
+	if db.actor:has_info("pf_story_preacher_encounter_v12") then return end
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	-- V11 fixed the stacked AI vertex but saves tested on that build may retain
+	-- actor_ready/started without ever entering remark@sermon. Replay the one
+	-- unresolved meeting with explicit logic-section activation.
+	if not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_preacher_spared") then
+		stop_quiet_sermon()
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_actor_ready")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		south_turn_started_at = nil
+		printf("[PF STORY] encounter v12 reset for forced prayer section and sermon")
+	end
+	db.actor:give_info_portion("pf_story_preacher_encounter_v12")
+end
+
+local function migrate_preacher_campfire_v13()
+	if db.actor:has_info("pf_story_preacher_campfire_v13") then return end
+	if not db.actor:has_info("pf_story_doc_10_found") then return end
+	stop_quiet_sermon()
+	if not db.actor:has_info("pf_story_preacher_dead") then
+		-- Retire the old sermon/facing state machine. The replacement has only a
+		-- passive campfire prayer and combat after a fresh direct hit by the actor.
+		db.actor:disable_info_portion("pf_story_preacher_seen")
+		db.actor:disable_info_portion("pf_story_preacher_actor_ready")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+		db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+		db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+		db.actor:disable_info_portion("pf_story_preacher_attacked")
+	end
+	south_turn_started_at = nil
+	db.actor:give_info_portion("pf_story_preacher_campfire_v13")
+	printf("[PF STORY] preacher v13 switched to passive campfire prayer")
+end
+
+local function clear_preacher_enemy_memory(client_npc)
+	if not client_npc then return end
+	local enemy = client_npc:best_enemy()
+	if enemy then
+		client_npc:enable_memory_object(enemy, false)
+		printf("[PF STORY] cleared stale best_enemy before campfire animation")
+	end
+end
+
+local function suppress_preacher_campfire_perception(client_npc)
+	-- The fixed prayer/reunion pose must not be interrupted by visual contact,
+	-- sound danger or xr_meet's contact action. Dialog usability is controlled
+	-- separately and does not require Sergey to track the actor with AI memory.
+	client_npc:set_visual_memory_enabled(false)
+	client_npc:set_sound_threshold(PREACHER_PRAYER_SOUND_THRESHOLD)
+	client_npc:enable_memory_object(db.actor, false)
+	clear_preacher_enemy_memory(client_npc)
+end
+
+local function set_preacher_prayer_relation(client_npc)
+	if not client_npc or not client_npc:alive() then return end
+	-- HUDTarget.cpp asks for Sergey -> actor, so this direction must be a real
+	-- enemy relation to keep the name red after document ten. Prevent state_mgr
+	-- from seeing best_enemy by suspending perception during scripted prayer;
+	-- combat_ignore alone does not bypass state_mgr's direct best_enemy check.
+	client_npc:set_relation(game_object.enemy, db.actor)
+	client_npc:force_set_goodwill(-1000, db.actor)
+	db.actor:set_relation(game_object.enemy, client_npc)
+	suppress_preacher_campfire_perception(client_npc)
+end
+
+local function set_preacher_neutral_relation(client_npc)
+	if not client_npc or not client_npc:alive() then return end
+	client_npc:set_relation(game_object.neutral, db.actor)
+	client_npc:force_set_goodwill(0, db.actor)
+	db.actor:set_relation(game_object.neutral, client_npc)
+	-- Document 12 changes only the relation and dialog. Keep exactly the same
+	-- passive perception lock as document 10 so the actor cannot steal the
+	-- campfire-facing sit state merely by approaching.
+	suppress_preacher_campfire_perception(client_npc)
+end
+
+local function set_preacher_hostile_relation(client_npc)
+	if not client_npc or not client_npc:alive() then return end
+	client_npc:set_visual_memory_enabled(true)
+	client_npc:restore_sound_threshold()
+	client_npc:set_relation(game_object.enemy, db.actor)
+	client_npc:force_set_goodwill(-1000, db.actor)
+	db.actor:set_relation(game_object.enemy, client_npc)
+	client_npc:enable_memory_object(db.actor, true)
+end
+
+local function clear_preacher_hit_event(storage)
+	-- db.storage[id].hit is the persistent xr_hit scheme storage, not merely
+	-- the last event. Never replace the table: its action owns the subscribed
+	-- callback. Clear only transient event fields after they have been handled.
+	local hit = storage and storage.hit or nil
+	if not hit then return end
+	hit.who = nil
+	hit.bone_index = nil
+	hit.deadly_hit = false
+end
+
+local function update_quiet_sermon(server_npc)
+	if db.actor:has_info("pf_story_preacher_sermon_done") then
+		if sermon_sound then printf("[PF TRACE][SOUND] done flag detected while sound exists") end
+		stop_quiet_sermon()
+		return
+	end
+	-- Never let the persistent started flag skip the actor-facing phase. The
+	-- direct player becomes eligible only after Lua verifies the orientation.
+	if not db.actor:has_info("pf_story_preacher_sermon_started") then
+		if not db.actor:has_info("pf_story_preacher_actor_ready") then
+			printf("[PF TRACE][SOUND] waiting: actor-facing phase is not ready")
+			return
+		end
+		printf("[PF TRACE][SOUND] granting sermon_started after verified facing")
+		db.actor:give_info_portion("pf_story_preacher_sermon_started")
+	end
+	local client_npc = server_npc and level.object_by_id(server_npc.id) or nil
+	if not client_npc then
+		printf("[PF TRACE][SOUND] waiting: preacher is offline")
+		stop_quiet_sermon()
+		return
+	end
+	if not sermon_sound then
+		printf("[PF TRACE][SOUND] creating direct sound object for online NPC id=%d", client_npc:id())
+		stop_legacy_sermon(client_npc:id())
+		local sound_path = resolve_sermon_sound_path()
+		if not sound_path then
+			printf("[PF TRACE][SOUND] creation aborted: path resolution failed")
+			return
+		end
+		sermon_sound = sound_object(sound_path)
+		printf("[PF TRACE][SOUND] sound_object created=%s; calling play_at_pos", tostring(sermon_sound))
+		sermon_sound:play_at_pos(client_npc, client_npc:position())
+		-- play_at_pos restores OGG metadata, so apply overrides afterwards.
+		sermon_sound.max_distance = SERMON_SOUND_MAX_DISTANCE
+		sermon_sound.volume = SERMON_SOUND_VOLUME
+		sermon_sound_owner_id = client_npc:id()
+		printf("[PF TRACE][SOUND] play_at_pos returned; playing=%s volume=%.2f range=%dm path=%s",
+			tostring(sermon_sound:playing()), SERMON_SOUND_VOLUME,
+			SERMON_SOUND_MAX_DISTANCE, sound_path)
+	elseif sermon_sound_owner_id == client_npc:id() and sermon_sound:playing() then
+		printf("[PF TRACE][SOUND] playback alive; updating 3D position")
+		sermon_sound:set_position(client_npc:position())
+	else
+		printf("[PF TRACE][SOUND] playback no longer alive or owner mismatch: playing=%s owner=%s npc=%d",
+			tostring(sermon_sound:playing()), tostring(sermon_sound_owner_id), client_npc:id())
+		finish_quiet_sermon(client_npc)
+	end
+end
+
+local function ensure_preacher_pendant(npc)
+	if not npc or not db.actor or db.actor:has_info("pf_story_pendant_found") then return end
+	for child_id in alife():get_children(npc) do
+		local child = alife():object(child_id, true)
+		if child and child:section_name() == PENDANT_SECTION then return end
+	end
+	local pendant = alife():create(PENDANT_SECTION, vector(), 0, 0, npc.id)
+	if pendant then
+		printf("[PF STORY] guaranteed brother pendant attached to preacher (item id=%d)", pendant.id)
+	end
+end
+
+local function face_preacher_for_sermon(npc)
+	if not npc or not db.actor or db.actor:has_info("pf_story_preacher_sermon_done") then return end
+	-- Server angles do not reliably rotate an already-online stalker. Use them
+	-- only while he is offline; the neutral facing phase handles the client.
+	if level.object_by_id(npc.id) then return end
+	local actor_position = db.actor:position()
+	local dx = actor_position.x - npc.position.x
+	local dz = actor_position.z - npc.position.z
+	local yaw = dx * dx + dz * dz > 0.0001 and math.atan2(dx, dz) or PREACHER_SERMON_YAW
+	npc.angle = vector():set(0, yaw, 0)
+end
+
+local function force_preacher_logic_section(client_npc, section, reason)
+	if not client_npc then
+		printf("[PF TRACE][SECTION] force %s failed: client=nil (%s)",
+			tostring(section), tostring(reason))
+		return false
+	end
+	local storage = db.storage[client_npc:id()]
+	if not storage or not storage.ini then
+		printf("[PF TRACE][SECTION] force %s failed: storage/ini=nil id=%d (%s)",
+			tostring(section), client_npc:id(), tostring(reason))
+		return false
+	end
+	local before = storage.active_section
+	local switched = xr_logic.switch_to_section(client_npc, storage.ini, section)
+	storage = db.storage[client_npc:id()]
+	printf("[PF TRACE][SECTION] forced %s -> %s result=%s (%s)",
+		tostring(before), tostring(storage and storage.active_section),
+		tostring(switched), tostring(reason))
+	return storage and storage.active_section == section
+end
+
+local function preacher_seated_facing_dot(client_npc)
+	if not client_npc then return -1 end
+	local npc_position = client_npc:position()
+	local dx = PREACHER_POSITION.look[1] - npc_position.x
+	local dz = PREACHER_POSITION.look[3] - npc_position.z
+	local target_length = math.sqrt(dx * dx + dz * dz)
+	local direction = client_npc:direction()
+	local direction_length = math.sqrt(
+		direction.x * direction.x + direction.z * direction.z)
+	if target_length <= 0.001 or direction_length <= 0.001 then return -1 end
+	return direction.x / direction_length * dx / target_length +
+		direction.z / direction_length * dz / target_length
+end
+
+local function refresh_preacher_seated_facing(client_npc, storage, reason)
+	if not client_npc or not storage or not storage.state_mgr then return false end
+	local npc_position = client_npc:position()
+	local dx = PREACHER_POSITION.look[1] - npc_position.x
+	local dz = PREACHER_POSITION.look[3] - npc_position.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	if length <= 0.001 then return false end
+	client_npc:set_desired_direction(vector():set(dx / length, 0, dz / length))
+	-- set_state updates look_position even when target_state is unchanged.
+	-- This repairs the target that xr_remark clears when campfire_prayer has no
+	-- LTX target, without replaying idle or resetting the sitting animation.
+	storage.state_mgr:set_state(
+		pf_story_preacher_pose.STATE_NAME, nil, nil,
+		{look_position = make_position(PREACHER_POSITION.look)})
+	next_preacher_facing_retry = time_global() + PREACHER_FACING_RETRY_INTERVAL_MS
+	printf("[PF STORY] seated facing refreshed, dot=%.3f (%s)",
+		preacher_seated_facing_dot(client_npc), tostring(reason))
+	return true
+end
+
+local function force_preacher_campfire_sitting(client_npc, storage, reason)
+	if not client_npc or not storage or not storage.state_mgr then return false end
+	local previous_state = storage.state_mgr:get_state()
+	local target = {look_position = make_position(PREACHER_POSITION.look)}
+	local npc_position = client_npc:position()
+	local dx = PREACHER_POSITION.look[1] - npc_position.x
+	local dz = PREACHER_POSITION.look[3] - npc_position.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	clear_preacher_hit_event(storage)
+	client_npc:clear_animations()
+	-- Give state_mgr a real look target. Changing only the server yaw does not
+	-- rotate a stalker that is already online, which left Sergey standing and
+	-- looking past the fire in existing saves.
+	if length > 0.001 then
+		client_npc:set_desired_direction(vector():set(dx / length, 0, dz / length))
+	end
+	storage.state_mgr:set_state("idle", nil, nil, target, {fast_set = true})
+	storage.state_mgr:set_state(
+		pf_story_preacher_pose.STATE_NAME, nil, nil, target, {fast_set = true})
+	next_preacher_facing_retry = time_global() + PREACHER_FACING_RETRY_INTERVAL_MS
+	printf("[PF STORY] campfire pose reset: %s -> %s, facing flame (%s)",
+		tostring(previous_state), pf_story_preacher_pose.STATE_NAME, tostring(reason))
+	return true
+end
+
+local function update_preacher_campfire(server_npc)
+	local client_npc = server_npc and level.object_by_id(server_npc.id) or nil
+	if not client_npc or not client_npc:alive() then return end
+	local storage = db.storage[client_npc:id()]
+	local hit = storage and storage.hit or nil
+	if not db.actor:has_info("pf_story_preacher_attacked") and hit and
+		hit.who == db.actor:id() then
+		db.actor:give_info_portion("pf_story_preacher_attacked")
+		seated_state_applied_id = nil
+		force_preacher_logic_section(client_npc, "remark@hostile", "actor hit preacher")
+		set_preacher_hostile_relation(client_npc)
+		printf("[PF STORY] actor hit Sergey; campfire prayer ended and combat enabled")
+		return
+	end
+	if db.actor:has_info("pf_story_preacher_attacked") then
+		if not storage or storage.active_section ~= "remark@hostile" then
+			force_preacher_logic_section(client_npc, "remark@hostile", "persist attacked state")
+		end
+		set_preacher_hostile_relation(client_npc)
+		return
+	end
+	if not storage or storage.active_section ~= "remark@campfire_prayer" then
+		force_preacher_logic_section(client_npc, "remark@campfire_prayer", "passive campfire state")
+		storage = db.storage[client_npc:id()]
+	end
+	-- Relation is applied after the section switch because root LTX relation
+	-- handling runs during activation and otherwise can overwrite the story.
+	set_preacher_prayer_relation(client_npc)
+	local state_mgr = storage and storage.state_mgr or nil
+	local wrong_state = state_mgr and
+		state_mgr:get_state() ~= pf_story_preacher_pose.STATE_NAME
+	if seated_state_applied_id ~= client_npc:id() or wrong_state then
+		if force_preacher_campfire_sitting(
+			client_npc, storage, "upper campfire prayer") then
+			seated_state_applied_id = client_npc:id()
+			printf("[PF STORY] Sergey is seated facing the upper campfire (vertex=%d)",
+				PREACHER_LEVEL_VERTEX_ID)
+		end
+	elseif preacher_seated_facing_dot(client_npc) < PREACHER_SEATED_FACING_DOT_MIN and
+		time_global() >= next_preacher_facing_retry then
+		refresh_preacher_seated_facing(
+			client_npc, storage, "upper campfire direction drift")
+	end
+end
+
+local function prepare_preacher_actor_turn(npc)
+	if not npc then
+		printf("[PF TRACE][FACE] cannot prepare: server NPC is nil")
+		return false
+	end
+	local client_npc = level.object_by_id(npc.id)
+	if not client_npc then
+		printf("[PF TRACE][FACE] cannot prepare: NPC id=%d is offline", npc.id)
+		return false
+	end
+	db.actor:disable_info_portion("pf_story_preacher_actor_ready")
+	south_turn_started_at = time_global()
+	force_preacher_logic_section(client_npc, "remark@face_actor", "actor entered sermon radius")
+	printf("[PF STORY] preacher actor-facing phase started")
+	return true
+end
+
+local function update_preacher_actor_turn(npc)
+	if not npc or not db.actor:has_info("pf_story_preacher_seen") or
+		db.actor:has_info("pf_story_preacher_actor_ready") or
+		db.actor:has_info("pf_story_preacher_sermon_started") then return end
+	local client_npc = level.object_by_id(npc.id)
+	if not client_npc then
+		printf("[PF TRACE][FACE] waiting: NPC id=%d went offline", npc.id)
+		return
+	end
+	if not south_turn_started_at then south_turn_started_at = time_global() end
+	-- Repeat this only during the short wait_na phase. Once aligned, the prayer
+	-- animation owns the NPC and no sight command can interrupt it.
+	local actor_position = db.actor:position()
+	local npc_position = client_npc:position()
+	local dx = actor_position.x - npc_position.x
+	local dz = actor_position.z - npc_position.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	if length < 0.01 then
+		printf("[PF TRACE][FACE] waiting: actor and NPC horizontal positions coincide")
+		return
+	end
+	local toward_actor = vector():set(dx / length, 0, dz / length)
+	client_npc:set_desired_direction(toward_actor)
+	client_npc:set_sight(look.direction, toward_actor, true)
+	local elapsed = time_global() - south_turn_started_at
+	local direction = client_npc:direction()
+	local facing_dot = direction.x * toward_actor.x + direction.z * toward_actor.z
+	printf("[PF TRACE][FACE] elapsed=%dms desired=(%.3f,%.3f) actual=(%.3f,%.3f) dot=%.3f",
+		elapsed, toward_actor.x, toward_actor.z, direction.x, direction.z, facing_dot)
+	if elapsed < PREACHER_TURN_MIN_MS then return end
+	if facing_dot < PREACHER_FACING_DOT_MIN and elapsed < PREACHER_TURN_TIMEOUT_MS then return end
+	if facing_dot < PREACHER_FACING_DOT_MIN then
+		printf("[PF STORY] WARNING: actor-facing turn timed out; direction=(%.3f, %.3f, %.3f)",
+			direction.x, direction.y, direction.z)
+	end
+	local yaw = math.atan2(toward_actor.x, toward_actor.z)
+	npc.angle = vector():set(0, yaw, 0)
+	db.actor:give_info_portion("pf_story_preacher_actor_ready")
+	local section_ready = force_preacher_logic_section(
+		client_npc, "remark@sermon", "actor-facing direction verified")
+	local storage = db.storage[client_npc:id()]
+	if storage and storage.state_mgr then
+		-- Do not wait another planner frame for xr_remark to apply the animation.
+		-- This also provides a fallback if an old save restored a stale action.
+		storage.state_mgr:set_state("pri_a17_pray_in")
+		printf("[PF TRACE][ANIM] requested pri_a17_pray_in section_ready=%s",
+			tostring(section_ready))
+	else
+		printf("[PF TRACE][ANIM] failed: state_mgr=nil id=%d", client_npc:id())
+	end
+	printf("[PF STORY] preacher facing actor; dot=%.3f direction=(%.3f, %.3f, %.3f)",
+		facing_dot, direction.x, direction.y, direction.z)
+end
+
+local function nearest_same_floor_campfire(npc)
+	local nearest = nil
+	local nearest_distance = CAMPFIRE_SEARCH_DISTANCE_SQR
+	for _, object in alife():objects() do
+		local section = object:section_name()
+		local position = object.position
+		if section and position and string.find(section, "campfire", 1, true) and
+			math.abs(position.y - npc.position.y) <= CAMPFIRE_MAX_FLOOR_DELTA then
+			local dx = position.x - npc.position.x
+			local dy = position.y - npc.position.y
+			local dz = position.z - npc.position.z
+			local current_distance = dx * dx + dy * dy + dz * dz
+			if current_distance < nearest_distance then
+				nearest = object
+				nearest_distance = current_distance
+			end
+		end
+	end
+	return nearest
+end
+
+local function build_campfire_approach(client_npc, server_npc, campfire)
+	local fire_position = campfire.position
+	local dx = server_npc.position.x - fire_position.x
+	local dz = server_npc.position.z - fire_position.z
+	local horizontal_distance = math.sqrt(dx * dx + dz * dz)
+	if horizontal_distance < 0.01 then
+		return fire_position, level.vertex_id(fire_position)
+	end
+	local target = vector():set(
+		fire_position.x + dx / horizontal_distance * CAMPFIRE_APPROACH_DISTANCE,
+		fire_position.y,
+		fire_position.z + dz / horizontal_distance * CAMPFIRE_APPROACH_DISTANCE
+	)
+	local vertex_id = level.vertex_id(target)
+	if not client_npc:accessible(vertex_id) then
+		local accessible_position = vector()
+		vertex_id, accessible_position = client_npc:accessible_nearest(target, accessible_position)
+		target = accessible_position
+	end
+	return target, vertex_id
+end
+
+local function update_preacher_retreat(server_npc)
+	if not db.actor:has_info("pf_story_preacher_spared") or
+		db.actor:has_info("pf_story_preacher_at_fire") then return end
+	local client_npc = level.object_by_id(server_npc.id)
+	if not client_npc then return end
+	if not post_dialog_destination then
+		local campfire = nearest_same_floor_campfire(server_npc)
+		if not campfire then
+			-- A prayer in place is safer than sending Sergey through another floor
+			-- if a level variant contains no campfire near this encounter.
+			db.actor:give_info_portion("pf_story_preacher_at_fire")
+			printf("[PF STORY] no same-floor campfire found; Sergey prays in place")
+			return
+		end
+		local target, vertex_id = build_campfire_approach(client_npc, server_npc, campfire)
+		post_dialog_destination = { position = target, vertex_id = vertex_id }
+		post_dialog_campfire_id = campfire.id
+		printf("[PF STORY] Sergey is walking to nearby campfire (id=%d, vertex=%d)",
+			post_dialog_campfire_id, vertex_id)
+	end
+	if client_npc:position():distance_to_sqr(post_dialog_destination.position) <=
+		CAMPFIRE_REACHED_DISTANCE_SQR then
+		db.actor:give_info_portion("pf_story_preacher_at_fire")
+		client_npc:set_desired_position()
+		client_npc:set_desired_direction()
+		printf("[PF STORY] Sergey reached the campfire and started praying")
+		return
+	end
+	client_npc:set_dest_level_vertex_id(post_dialog_destination.vertex_id)
+	client_npc:set_path_type(game_object.level_path)
+	client_npc:set_movement_type(move.walk)
+	client_npc:set_body_state(move.standing)
+	client_npc:set_mental_state(anim.free)
+	client_npc:set_sight(look.path_dir, nil, 0)
+end
+
+local function add_stash_marker(box)
+	if not box or db.actor:has_info("pf_story_legendary_searched") then return end
+	if level.map_has_object_spot(box.id, STASH_MARKER) == 0 then
+		level.map_add_object_spot_ser(box.id, STASH_MARKER, STASH_HINT)
+	end
+end
+
+local function remove_stash_marker(box_id)
+	if box_id and level.map_has_object_spot(box_id, STASH_MARKER) ~= 0 then
+		level.map_remove_object_spot(box_id, STASH_MARKER)
+	end
+end
+
+local function place_at_level_vertex(object, values, level_vertex_id)
+	if not object then return end
+	local position = make_position(values)
+	object.position = position
+	object.m_level_vertex_id = level_vertex_id
+	object.m_game_vertex_id = ENCOUNTER_GAME_VERTEX_ID
+	local client_object = level.object_by_id(object.id)
+	if client_object then
+		if object:section_name() == PREACHER_SECTION then
+			-- set_npc_position invalidates the current detail path. The old
+			-- force_set_position call moved only the visual/physics object and
+			-- left Sergey attached to the lower-floor AI vertex.
+			client_object:set_desired_position()
+			client_object:set_desired_direction()
+			client_object:set_npc_position(position)
+		else
+			client_object:force_set_position(position, true)
+		end
+	end
+end
+
+local function apply_preacher_placement(npc)
+	if not npc or not db.actor then return end
+	if not db.actor:has_info("pf_story_preacher_face_campfire_v18") and
+		not db.actor:has_info("pf_story_preacher_dead") and
+		not db.actor:has_info("pf_story_preacher_attacked") then
+		npc.angle = vector():set(0, PREACHER_SERMON_YAW, 0)
+		seated_state_applied_id = nil
+		reunion_seated_applied_id = nil
+		db.actor:give_info_portion("pf_story_preacher_face_campfire_v18")
+		printf("[PF STORY] Sergey campfire-facing migration applied")
+	end
+	if not db.actor:has_info("pf_story_preacher_placement_157") then
+		place_at_level_vertex(npc, PREACHER_POSITION, PREACHER_LEVEL_VERTEX_ID)
+		db.actor:give_info_portion("pf_story_preacher_placement_157")
+		printf("[PF STORY] preacher placed at verified encounter vertex %d", PREACHER_LEVEL_VERTEX_ID)
+	end
+	if not db.actor:has_info("pf_story_preacher_vertex_v11") then
+		-- Preserve completed branches while still allowing the v13 block below to
+		-- finish its own migration bookkeeping.
+		if db.actor:has_info("pf_story_preacher_dead") or
+			db.actor:has_info("pf_story_preacher_spared") then
+			db.actor:give_info_portion("pf_story_preacher_vertex_v11")
+		else
+			local client_npc = level.object_by_id(npc.id)
+			local old_server_vertex = npc.m_level_vertex_id
+			local old_client_vertex = client_npc and client_npc:level_vertex_id() or 4294967295
+			printf("[PF TRACE][VERTEX] repair start server=%s client=%s target=%d online=%d",
+				tostring(old_server_vertex), tostring(old_client_vertex),
+				PREACHER_LEVEL_VERTEX_ID, client_npc and 1 or 0)
+			stop_quiet_sermon()
+			db.actor:disable_info_portion("pf_story_preacher_seen")
+			db.actor:disable_info_portion("pf_story_preacher_actor_ready")
+			db.actor:disable_info_portion("pf_story_preacher_sermon_started")
+			db.actor:disable_info_portion("pf_story_preacher_sermon_done")
+			db.actor:disable_info_portion("pf_story_preacher_choice_ready")
+			south_turn_started_at = nil
+			place_at_level_vertex(npc, PREACHER_POSITION, PREACHER_LEVEL_VERTEX_ID)
+			client_npc = level.object_by_id(npc.id)
+			printf("[PF TRACE][VERTEX] repair done server=%s client=%s pos=(%.3f,%.3f,%.3f)",
+				tostring(npc.m_level_vertex_id),
+				tostring(client_npc and client_npc:level_vertex_id() or 4294967295),
+				npc.position.x, npc.position.y, npc.position.z)
+			db.actor:give_info_portion("pf_story_preacher_vertex_v11")
+		end
+	end
+	if not db.actor:has_info("pf_story_preacher_facing_v7") then
+		npc.angle = vector():set(0, PREACHER_SERMON_YAW, 0)
+	end
+	if not db.actor:has_info("pf_story_preacher_campfire_placement_v13") then
+		if not db.actor:has_info("pf_story_preacher_dead") then
+			stop_quiet_sermon()
+			place_at_level_vertex(npc, PREACHER_POSITION, PREACHER_LEVEL_VERTEX_ID)
+			npc.angle = vector():set(0, PREACHER_SERMON_YAW, 0)
+			local client_npc = level.object_by_id(npc.id)
+			local storage = client_npc and db.storage[client_npc:id()] or nil
+			clear_preacher_hit_event(storage)
+			if client_npc then
+				force_preacher_logic_section(
+					client_npc, "remark@campfire_prayer", "v13 campfire placement")
+			end
+			printf("[PF STORY] Sergey moved beside upper campfire at vertex %d",
+				PREACHER_LEVEL_VERTEX_ID)
+		end
+		db.actor:give_info_portion("pf_story_preacher_campfire_placement_v13")
+	end
+end
+
+local function remove_preacher_important_marker(object_id)
+	if object_id and level.map_has_object_spot(object_id, PREACHER_IMPORTANT_MARKER) ~= 0 then
+		level.map_remove_object_spot(object_id, PREACHER_IMPORTANT_MARKER)
+	end
+end
+
+local function apply_preacher_reunion_at_campfire(npc)
+	if not npc or not db.actor or
+		not db.actor:has_info("pf_story_path_continues_achievement_gained") or
+		db.actor:has_info("pf_story_preacher_dead") then return false end
+	local reunion_finished = db.actor:has_info("pf_story_preacher_reunion_finished")
+	local desired_section = reunion_finished and "remark@entrance_idle" or
+		"remark@entrance_dialog"
+	local migrate_to_campfire = not db.actor:has_info(
+		"pf_story_preacher_campfire_reunion_v15")
+	db.actor:disable_info_portion("pf_story_preacher_attacked")
+	if not db.actor:has_info("pf_story_preacher_face_campfire_v18") then
+		npc.angle = vector():set(0, PREACHER_SERMON_YAW, 0)
+		seated_state_applied_id = nil
+		reunion_seated_applied_id = nil
+		db.actor:give_info_portion("pf_story_preacher_face_campfire_v18")
+		printf("[PF STORY] Sergey campfire-facing migration applied")
+	end
+	if migrate_to_campfire then
+		-- Document 12 unlocks Sergey's dialog and neutralizes the Monolith, but he
+		-- stays beside the same upper-floor campfire. The distance check moves
+		-- back only saves already affected by the retired entrance teleport.
+		local dx = npc.position.x - PREACHER_POSITION[1]
+		local dy = npc.position.y - PREACHER_POSITION[2]
+		local dz = npc.position.z - PREACHER_POSITION[3]
+		if db.actor:has_info("pf_story_preacher_entrance_placement_v14") and
+			dx * dx + dy * dy + dz * dz > 4 then
+			place_at_level_vertex(npc, PREACHER_POSITION, PREACHER_LEVEL_VERTEX_ID)
+			printf("[PF STORY] legacy entrance Sergey returned to upper campfire")
+		end
+		npc.angle = vector():set(0, PREACHER_SERMON_YAW, 0)
+		db.actor:give_info_portion("pf_story_preacher_campfire_reunion_v15")
+	end
+	local client_npc = level.object_by_id(npc.id)
+	local storage = client_npc and db.storage[client_npc:id()] or nil
+	clear_preacher_hit_event(storage)
+	if client_npc then
+		if not storage or storage.active_section ~= desired_section then
+			force_preacher_logic_section(
+				client_npc, desired_section, "document 12 campfire reunion")
+			storage = db.storage[client_npc:id()]
+		end
+		-- Section activation must happen first: an LTX relation applied here used
+		-- to restore Sergey's personal -1000 goodwill after document twelve.
+		set_preacher_neutral_relation(client_npc)
+		local state_mgr = storage and storage.state_mgr or nil
+		local wrong_state = state_mgr and
+			state_mgr:get_state() ~= pf_story_preacher_pose.STATE_NAME
+		if reunion_seated_applied_id ~= client_npc:id() or wrong_state then
+			if force_preacher_campfire_sitting(
+				client_npc, storage, "document 12 reunion") then
+				reunion_seated_applied_id = client_npc:id()
+			end
+		elseif preacher_seated_facing_dot(client_npc) < PREACHER_SEATED_FACING_DOT_MIN and
+			time_global() >= next_preacher_facing_retry then
+			refresh_preacher_seated_facing(
+				client_npc, storage, "document 12 campfire direction drift")
+		end
+	end
+	if reunion_finished then
+		remove_preacher_important_marker(npc.id)
+	elseif level.map_has_object_spot(npc.id, PREACHER_IMPORTANT_MARKER) == 0 then
+		level.map_add_object_spot_ser(
+			npc.id, PREACHER_IMPORTANT_MARKER, PREACHER_IMPORTANT_HINT)
+	end
+	return true
+end
+
+local function migrate_from_lower_floor(object, values, level_vertex_id)
+	if object and object.position and object.position.y < LOWER_FLOOR_MIGRATION_Y then
+		place_at_level_vertex(object, values, level_vertex_id)
+		printf("[PF STORY] moved %s from lower floor to upper encounter floor", object:section_name())
+	end
+end
+
+local function create_object(section, values, level_vertex_id)
+	local position = make_position(values)
+	if not level_vertex_id or level_vertex_id == 4294967295 then
+		printf("[PF STORY] no level vertex for %s at %.1f, %.1f, %.1f",
+			section, values[1], values[2], values[3])
+		return nil
+	end
+	return alife():create(section, position, level_vertex_id, ENCOUNTER_GAME_VERTEX_ID)
+end
+
+local function spawn_legendary_stash()
+	local existing = find_server_object(STASH_SECTION)
+	if existing then
+		migrate_from_lower_floor(existing, STASH_POSITION, STASH_LEVEL_VERTEX_ID)
+		stash_id = existing.id
+		add_stash_marker(existing)
+		return existing
+	end
+
+	local box = create_object(STASH_SECTION, STASH_POSITION, STASH_LEVEL_VERTEX_ID)
+	if not box then return nil end
+	box.angle = vector():set(0, 0, 0)
+	stash_id = box.id
+	pf_dynamic_stashes.fill_story_legendary_stash(box.id)
+	add_stash_marker(box)
+	printf("[PF STORY] legendary cache spawned on upper floor at 130.2, 11.56, -137.2 (id=%d)", box.id)
+	return box
+end
+
+local function spawn_preacher()
+	local existing = find_server_object(PREACHER_SECTION)
+	if existing then
+		apply_preacher_placement(existing)
+		ensure_preacher_pendant(existing)
+		preacher_id = existing.id
+		return existing
+	end
+	local npc = create_object(PREACHER_SECTION, PREACHER_POSITION, PREACHER_LEVEL_VERTEX_ID)
+	if not npc then return nil end
+	-- Face the stock upper-floor campfire.
+	npc.angle = vector():set(0, PREACHER_SERMON_YAW, 0)
+	if not db.actor:has_info("pf_story_preacher_placement_157") then
+		db.actor:give_info_portion("pf_story_preacher_placement_157")
+	end
+	if not db.actor:has_info("pf_story_preacher_vertex_v11") then
+		db.actor:give_info_portion("pf_story_preacher_vertex_v11")
+	end
+	if not db.actor:has_info("pf_story_preacher_campfire_placement_v13") then
+		db.actor:give_info_portion("pf_story_preacher_campfire_placement_v13")
+	end
+	ensure_preacher_pendant(npc)
+	preacher_id = npc.id
+	printf("[PF STORY] passive preacher spawned beside campfire at vertex %d (id=%d)",
+		PREACHER_LEVEL_VERTEX_ID, npc.id)
+	return npc
+end
+
+function reveal_legendary_stash()
+	if not db.actor or level.name() ~= LEVEL_NAME then return false end
+	local box = spawn_legendary_stash()
+	if not box then return false end
+	-- Sergey must exist from document ten onward even if the player chooses the
+	-- independent archive route first. This makes "did not kill him" a genuine
+	-- survival outcome when document twelve is obtained.
+	spawn_preacher()
+	if not db.actor:has_info("pf_story_legendary_revealed") then
+		db.actor:give_info_portion("pf_story_legendary_revealed")
+		news_manager.send_tip(db.actor, "pf_story_legendary_revealed_news", nil, nil, nil, nil)
+	end
+	return true
+end
+
+local function on_pendant_taken()
+	if db.actor:has_info("pf_story_pendant_found") then return false end
+	db.actor:give_info_portion("pf_story_pendant_found")
+	news_manager.send_tip(db.actor, "pf_story_pendant_found_news", nil, nil, nil, nil)
+	xr_effects.scenario_autosave(db.actor, nil, {"st_save_pf_story_pendant_found"})
+	printf("[PF STORY] brother pendant found; the independent document chain remains available")
+	return true
+end
+
+-- Called by the voluntary hand-over dialog. The inventory callback may also
+-- report the transfer, so both halves are deliberately idempotent.
+function on_pendant_given_alive(npc)
+	if not db.actor then return end
+	if not db.actor:has_info("pf_story_preacher_spared") then
+		db.actor:give_info_portion("pf_story_preacher_spared")
+	end
+	on_pendant_taken()
+	printf("[PF STORY] Sergey handed over the pendant and remains alive")
+end
+
+local function remember_monolith_relation_baseline(actor_community)
+	local baseline = monolith_relation_baselines[actor_community]
+	if baseline then return baseline end
+	baseline = {
+		monolith_to_actor = relation_registry.community_relation(
+			"monolith", actor_community),
+		actor_to_monolith = relation_registry.community_relation(
+			actor_community, "monolith")
+	}
+	monolith_relation_baselines[actor_community] = baseline
+	return baseline
+end
+
+local function ensure_monolith_neutral_baseline()
+	local actor_community = db.actor and db.actor:character_community() or nil
+	if not actor_community then return end
+	remember_monolith_relation_baseline(actor_community)
+	relation_registry.set_community_relation("monolith", actor_community, 0)
+	relation_registry.set_community_relation(actor_community, "monolith", 0)
+	monolith_relations_neutralized[actor_community] = true
+end
+
+local function restore_monolith_relation_baselines()
+	for actor_community in pairs(monolith_relations_neutralized) do
+		local baseline = monolith_relation_baselines[actor_community]
+		if baseline then
+			relation_registry.set_community_relation(
+				"monolith", actor_community, baseline.monolith_to_actor)
+			relation_registry.set_community_relation(
+				actor_community, "monolith", baseline.actor_to_monolith)
+		end
+		monolith_relations_neutralized[actor_community] = nil
+	end
+end
+
+local function neutralize_new_online_monolith()
+	-- Scan only currently bound objects once per story tick. This catches
+	-- Monolith NPCs which come online after document twelve without repeatedly
+	-- walking the full ALife registry or erasing later player-caused hostility.
+	for object_id in pairs(db.storage) do
+		if not monolith_online_relations_checked[object_id] then
+			local client_npc = level.object_by_id(object_id)
+			if client_npc then
+				monolith_online_relations_checked[object_id] = true
+				if IsStalker(client_npc) and client_npc:alive() and
+					client_npc:character_community() == "monolith" then
+					client_npc:set_relation(game_object.neutral, db.actor)
+					client_npc:force_set_goodwill(0, db.actor)
+					db.actor:set_relation(game_object.neutral, client_npc)
+				end
+			end
+		end
+	end
+end
+
+
+activate_monolith_story_reward = function()
+	-- Document 12 is the single authoritative trigger for faction neutrality.
+	-- The saved baseline still lets an earlier save restore normal hostility
+	-- when both saves are loaded in the same xrEngine process.
+	ensure_monolith_neutral_baseline()
+	db.actor:set_community_goodwill("monolith", 0)
+	for _, server_npc in alife():objects() do
+		local client_npc = level.object_by_id(server_npc.id)
+		if client_npc and IsStalker(client_npc) and client_npc:alive() and
+			client_npc:character_community() == "monolith" then
+			client_npc:set_relation(game_object.neutral, db.actor)
+			client_npc:force_set_goodwill(0, db.actor)
+			db.actor:set_relation(game_object.neutral, client_npc)
+			monolith_online_relations_checked[server_npc.id] = true
+		end
+	end
+	monolith_story_reward_applied_this_load = true
+
+	if not db.actor:has_info(MONOLITH_NEUTRAL_APPLIED_INFO) then
+		db.actor:give_info_portion(MONOLITH_NEUTRAL_APPLIED_INFO)
+	end
+end
+
+local function enable_monolith_story_npcs()
+	-- Faction neutrality begins at document 12, but the Keeper and later story
+	-- content still require the reunion dialog to be completed.
+	if not db.actor:has_info("pf_monolith_story_npcs_enabled") then
+		db.actor:give_info_portion("pf_monolith_story_npcs_enabled")
+	end
+end
+
+function on_preacher_reunion_finished(npc)
+	if not db.actor then return end
+	if not db.actor:has_info("pf_story_preacher_spared") then
+		db.actor:give_info_portion("pf_story_preacher_spared")
+	end
+	local reunion_just_finished = not db.actor:has_info("pf_story_preacher_reunion_finished")
+	if not db.actor:has_info("pf_story_preacher_reunion_finished") then
+		db.actor:give_info_portion("pf_story_preacher_reunion_finished")
+	end
+	enable_monolith_story_npcs()
+	-- Create the Keeper before the reunion autosave. Relying only on the next
+	-- periodic actor update left valid completed saves without his server object.
+	if pf_monolith_guardian and pf_monolith_guardian.ensure_story_spawn then
+		pf_monolith_guardian.ensure_story_spawn()
+	end
+	post_dialog_destination = nil
+	post_dialog_campfire_id = nil
+	if reunion_just_finished then
+		xr_effects.scenario_autosave(
+			db.actor, npc, {"st_save_pf_story_brothers_reunited"})
+	end
+	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+	if preacher then remove_preacher_important_marker(preacher.id) end
+	printf("[PF STORY] reunion dialog finished; Sergey remains seated at the upper campfire")
+end
+
+local function preacher_is_alive()
+	if not db.actor or db.actor:has_info("pf_story_preacher_dead") then return false end
+	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+	if not preacher then return false end
+	preacher_id = preacher.id
+	local client_object = level.object_by_id(preacher.id)
+	return not client_object or client_object:alive()
+end
+
+local function autosave_preacher_base_approach(preacher)
+	if not preacher or not db.actor or
+		db.actor:has_info("pf_story_preacher_base_autosaved") or
+		db.actor:has_info("pf_story_preacher_dead") or
+		not db.actor:has_info("pf_story_doc_10_found") then return end
+	local client_npc = level.object_by_id(preacher.id)
+	if not client_npc or not client_npc:alive() then return end
+	if distance_sqr(db.actor:position(), PREACHER_POSITION) >
+		PREACHER_BASE_AUTOSAVE_DISTANCE_SQR then return end
+	db.actor:give_info_portion("pf_story_preacher_base_autosaved")
+	-- Deliberately no news/tip here: the neutral save name does not reveal who
+	-- appeared at the base or what the actor is about to encounter.
+	xr_effects.scenario_autosave(
+		db.actor, client_npc, {"st_save_pf_story_checkpoint"})
+end
+
+-- Achievement #4 condition: Sergey must still exist and be alive at the
+-- exact moment document twelve is unlocked.
+function on_final_document_found()
+	if not db.actor then return end
+	-- This faction change belongs to the document itself, not to Sergey's
+	-- survival, achievement #4 or the optional reunion dialog.
+	activate_monolith_story_reward()
+	if db.actor:has_info("pf_story_path_continues_achievement_gained") then return end
+	if not preacher_is_alive() then
+		printf("[PF STORY] achievement #4 failed: Sergey did not survive to document 12")
+		return
+	end
+	db.actor:give_info_portion("pf_story_path_continues_achievement_gained")
+	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+	if preacher then
+		preacher_id = preacher.id
+		apply_preacher_reunion_at_campfire(preacher)
+	end
+	news_manager.send_tip(
+		db.actor, "pf_story_path_continues_achievement_news",
+		nil, "friend_of_stalkers", nil, nil)
+	printf("[PF STORY] achievement #4 awarded; Monolith neutral since document 12")
+end
+
+function path_continues_achievement_functor()
+	return db.actor ~= nil and db.actor:has_info("pf_story_path_continues_achievement_gained")
+end
+
+function on_actor_item_take(item, previous_owner_id)
+	if not db.actor or level.name() ~= LEVEL_NAME or not item then return end
+	local server_item = alife():object(item:id(), true)
+	local section = server_item and server_item:section_name() or item:section()
+	if section == PENDANT_SECTION then on_pendant_taken() end
+
+	local owner = previous_owner_id and alife():object(previous_owner_id, true) or nil
+	if owner and owner:section_name() == STASH_SECTION then
+		pf_dynamic_stashes.apply_story_legendary_item_condition(item)
+		if not db.actor:has_info("pf_story_legendary_searched") then
+			db.actor:give_info_portion("pf_story_legendary_searched")
+			remove_stash_marker(owner.id)
+			news_manager.send_tip(db.actor, "pf_story_legendary_searched_news", nil, nil, nil, nil)
+			xr_effects.scenario_autosave(
+				db.actor, nil, {"st_save_pf_story_legendary_searched"})
+		end
+	end
+end
+
+function update()
+	if not db.actor then return end
+	-- Register only after the common state tables exist. Early DLTX registration
+	-- races their creation during startup; the resident update is the accepted
+	-- project pattern for direction-neutral scenario poses.
+	if not pf_story_preacher_pose.ensure_registered() then return end
+	-- In saves made before the dedicated completion flag, "spared" could only
+	-- persist after the reunion dialog. Preserve that completed story state.
+	if db.actor:has_info("pf_story_preacher_spared") and
+		db.actor:has_info("pf_story_path_continues_achievement_gained") and
+		not db.actor:has_info("pf_story_preacher_reunion_finished") then
+		db.actor:give_info_portion("pf_story_preacher_reunion_finished")
+	end
+	if db.actor:has_info("pf_story_preacher_reunion_finished") then
+		enable_monolith_story_npcs()
+	end
+	pf_monolith_guardian.update()
+	local now = time_global()
+	-- Hit response is intentionally independent of the heavier one-second story
+	-- update, so Sergey leaves prayer almost immediately after the actor shoots.
+	if level.name() == LEVEL_NAME and preacher_id and
+		not db.actor:has_info("pf_story_path_continues_achievement_gained") and
+		now >= next_preacher_hit_check then
+		next_preacher_hit_check = now + PREACHER_HIT_CHECK_INTERVAL_MS
+		local active_preacher = server_object(preacher_id)
+		if active_preacher then update_preacher_campfire(active_preacher) end
+	end
+	if now < next_check then return end
+	next_check = now + CHECK_INTERVAL_MS
+	if db.actor:has_info("pf_story_doc_12_found") then
+		ensure_monolith_neutral_baseline()
+		if not monolith_story_reward_applied_this_load then
+			activate_monolith_story_reward()
+		end
+		neutralize_new_online_monolith()
+	else
+		restore_monolith_relation_baselines()
+		monolith_story_reward_applied_this_load = false
+		monolith_online_relations_checked = {}
+	end
+	if level.name() ~= LEVEL_NAME then return end
+	-- The first two migrations are valid before this branch is revealed and need
+	-- one check per load. The remaining historical migrations become applicable
+	-- only after document 10 and then complete in a single ordered pass.
+	if not preacher_base_migrations_checked then
+		migrate_preacher_proximity_gate()
+		migrate_preacher_sermon_behavior()
+		preacher_base_migrations_checked = true
+	end
+	if not preacher_branch_migrations_complete and
+		db.actor:has_info("pf_story_doc_10_found") then
+		migrate_preacher_sermon_v5()
+		migrate_preacher_sermon_v6()
+		migrate_preacher_sermon_v7()
+		migrate_preacher_encounter_v8()
+		migrate_preacher_encounter_v9()
+		migrate_preacher_encounter_v10()
+		migrate_preacher_encounter_v12()
+		migrate_preacher_campfire_v13()
+		preacher_branch_migrations_complete = true
+	end
+	-- Recovery for saves where document 12 was already taken before the campfire
+	-- reunion stage existed. The same survival condition remains authoritative.
+	if db.actor:has_info("pf_story_doc_12_found") and
+		not db.actor:has_info("pf_story_path_continues_achievement_gained") and
+		not db.actor:has_info("pf_story_preacher_dead") then
+		on_final_document_found()
+	end
+	-- Save migration and safety net: document eleven is unlocked by #10, not
+	-- by the pendant. Recreate its cyan hand-off if an older build removed it.
+	if db.actor:has_info("pf_story_doc_10_found") and
+		not db.actor:has_info("pf_story_doc_11_found") then
+		pf_dynamic_stashes.grant_story_document_hint(11)
+	end
+
+	if db.actor:has_info("pf_story_doc_10_found") and
+		not db.actor:has_info("pf_story_legendary_revealed") then
+		reveal_legendary_stash()
+	end
+	if not db.actor:has_info("pf_story_legendary_revealed") then return end
+
+	local box = server_object(stash_id) or find_server_object(STASH_SECTION)
+	if box then
+		migrate_from_lower_floor(box, STASH_POSITION, STASH_LEVEL_VERTEX_ID)
+		stash_id = box.id
+		add_stash_marker(box)
+	elseif not db.actor:has_info("pf_story_legendary_searched") then
+		spawn_legendary_stash()
+	end
+
+	if db.actor:has_info("pf_story_preacher_dead") then
+		stop_quiet_sermon()
+		-- Restore the clue on corpses from saves made before it was added to the
+		-- active death-manager keep list.
+		local corpse = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+		if corpse then
+			preacher_id = corpse.id
+			remove_preacher_important_marker(corpse.id)
+			apply_preacher_placement(corpse)
+			ensure_preacher_pendant(corpse)
+		end
+		return
+	end
+	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+	if preacher then
+		if db.actor:has_info("pf_story_path_continues_achievement_gained") then
+			apply_preacher_reunion_at_campfire(preacher)
+		else
+			apply_preacher_placement(preacher)
+		end
+		ensure_preacher_pendant(preacher)
+		preacher_id = preacher.id
+	elseif db.actor:has_info("pf_story_doc_10_found") then
+		preacher = spawn_preacher()
+	end
+	if preacher then
+		autosave_preacher_base_approach(preacher)
+		if db.actor:has_info("pf_story_path_continues_achievement_gained") then
+			apply_preacher_reunion_at_campfire(preacher)
+		else
+			update_preacher_campfire(preacher)
+		end
+	end
+end
+
+function reset()
+	stop_quiet_sermon()
+	pf_monolith_guardian.reset()
+	next_check = 0
+	next_preacher_hit_check = 0
+	preacher_base_migrations_checked = false
+	preacher_branch_migrations_complete = false
+	stash_id = nil
+	preacher_id = nil
+	post_dialog_destination = nil
+	post_dialog_campfire_id = nil
+	south_turn_started_at = nil
+	last_trace_section = nil
+	seated_state_applied_id = nil
+	reunion_seated_applied_id = nil
+	next_preacher_facing_retry = 0
+	monolith_story_reward_applied_this_load = false
+	monolith_online_relations_checked = {}
+end
+
+-- QA shortcut: run_string pf_story_encounter.debug_reveal()
+function debug_reveal()
+	return reveal_legendary_stash()
+end
+
+-- QA: run_string pf_story_encounter.debug_status()
+function debug_status()
+	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+	trace_preacher_state(preacher, "MANUAL")
+	return preacher ~= nil
+end
+
+-- QA: run_string pf_story_encounter.debug_reset_campfire_prayer()
+function debug_reset_campfire_prayer()
+	if not db.actor then return false end
+	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+	if not preacher then return false end
+	db.actor:disable_info_portion("pf_story_preacher_attacked")
+	db.actor:disable_info_portion("pf_story_preacher_campfire_placement_v13")
+	seated_state_applied_id = nil
+	apply_preacher_placement(preacher)
+	update_preacher_campfire(preacher)
+	return true
+end

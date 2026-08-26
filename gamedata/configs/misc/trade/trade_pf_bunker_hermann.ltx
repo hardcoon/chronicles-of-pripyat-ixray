@@ -1,0 +1,1192 @@
+; Deterministic daily supply profile for pf_bunker_hermann.
+; Stock refresh is owned by pf_hermann_trade.script; trade_manager must not restock it.
+
+[trader]
+buy_condition = trade_pf_bunker_hermann_buy
+sell_condition = trade_pf_bunker_hermann_sell
+buy_item_condition_factor = 0.7
+
+[trade_pf_bunker_hermann_buy]
+; Strict whitelist derived from the project's inventory_sort_registry.
+; One group coefficient keeps immediate trophy resale visibly below the
+; corresponding PDA Taskboard contracts without per-section micro-tuning.
+mutant_part_boar_chop                  = 0.20, 0.20
+mutant_part_boar_chop_cook             = 0.20, 0.20
+mutant_part_boar_leg                   = 0.20, 0.20
+mutant_part_burer_hand                 = 0.20, 0.20
+mutant_part_cat_tail                   = 0.20, 0.20
+mutant_part_chimera_claw               = 0.20, 0.20
+mutant_part_chimera_kogot              = 0.20, 0.20
+mutant_part_chimera_meat               = 0.20, 0.20
+mutant_part_chimera_meat_cook          = 0.20, 0.20
+mutant_part_controller_glass           = 0.20, 0.20
+mutant_part_controller_hand            = 0.20, 0.20
+mutant_part_dog_meat                   = 0.20, 0.20
+mutant_part_dog_meat_cook              = 0.20, 0.20
+mutant_part_dog_tail                   = 0.20, 0.20
+mutant_part_flesh_eye                  = 0.20, 0.20
+mutant_part_flesh_meat                 = 0.20, 0.20
+mutant_part_flesh_meat_cook            = 0.20, 0.20
+mutant_part_fracture_hand              = 0.20, 0.20
+mutant_part_krovosos_jaw               = 0.20, 0.20
+mutant_part_krovosos_meat              = 0.20, 0.20
+mutant_part_krovosos_meat_cook         = 0.20, 0.20
+mutant_part_pseudogigant_eye           = 0.20, 0.20
+mutant_part_pseudogigant_hand          = 0.20, 0.20
+mutant_part_psevdodog_meat             = 0.20, 0.20
+mutant_part_psevdodog_meat_cook        = 0.20, 0.20
+mutant_part_psevdodog_tail             = 0.20, 0.20
+mutant_part_snork_hand                 = 0.20, 0.20
+mutant_part_tushkano_head              = 0.20, 0.20
+mutant_part_tushkano_meat              = 0.20, 0.20
+mutant_part_tushkano_meat_cook         = 0.20, 0.20
+mutant_part_zombi_hand                 = 0.20, 0.20
+
+; Hermann is the specialist buyer for non-quest artifacts. The fixed 60%
+; coefficient keeps their cash return below the nominal item cost regardless
+; of goodwill while preserving the complete cooking-stage progression.
+af_ameba_mica                           = 0.60, 0.60
+af_ameba_slug                           = 0.60, 0.60
+af_ameba_slime                          = 0.60, 0.60
+af_baloon                               = 0.60, 0.60
+af_blood                                = 0.60, 0.60
+af_cristall                             = 0.60, 0.60
+af_cristall_flower                      = 0.60, 0.60
+af_drops                                = 0.60, 0.60
+af_dummy_battery                        = 0.60, 0.60
+af_dummy_dummy                          = 0.60, 0.60
+af_dummy_glassbeads                     = 0.60, 0.60
+af_electra_flash                        = 0.60, 0.60
+af_electra_moonlight                    = 0.60, 0.60
+af_electra_sparkler                     = 0.60, 0.60
+af_eye                                  = 0.60, 0.60
+af_fire                                 = 0.60, 0.60
+af_fireball                             = 0.60, 0.60
+af_fuzz_kolobok                         = 0.60, 0.60
+af_glass                                = 0.60, 0.60
+af_gold_fish                            = 0.60, 0.60
+af_gravi                                = 0.60, 0.60
+af_ice                                  = 0.60, 0.60
+af_medusa                               = 0.60, 0.60
+af_mincer_meat                          = 0.60, 0.60
+af_night_star                           = 0.60, 0.60
+af_polarity                             = 0.60, 0.60
+af_rusty_kristall                       = 0.60, 0.60
+af_rusty_sea-urchin                     = 0.60, 0.60
+af_rusty_thorn                          = 0.60, 0.60
+af_soul                                 = 0.60, 0.60
+af_vyvert                               = 0.60, 0.60
+
+; Complete NLC chain: 7 class-IV bases, 4 stages in each family and the
+; low-value failed result. Quest turn-ins still remove their items directly
+; and therefore do not pass through this monetary trade list.
+af_armor_1                              = 0.60, 0.60
+af_armor_2                              = 0.60, 0.60
+af_armor_3                              = 0.60, 0.60
+af_armor_4                              = 0.60, 0.60
+af_babka_1                              = 0.60, 0.60
+af_babka_2                              = 0.60, 0.60
+af_babka_3                              = 0.60, 0.60
+af_babka_4                              = 0.60, 0.60
+af_cry_1                                = 0.60, 0.60
+af_cry_2                                = 0.60, 0.60
+af_cry_3                                = 0.60, 0.60
+af_cry_4                                = 0.60, 0.60
+af_dik_1                                = 0.60, 0.60
+af_dik_2                                = 0.60, 0.60
+af_dik_3                                = 0.60, 0.60
+af_dik_4                                = 0.60, 0.60
+af_dummy_buliz                          = 0.60, 0.60
+af_dummy_kolobok                        = 0.60, 0.60
+af_dummy_pellicle                       = 0.60, 0.60
+af_dummy_simbion                        = 0.60, 0.60
+af_dummy_spring                         = 0.60, 0.60
+af_kol_1                                = 0.60, 0.60
+af_kol_2                                = 0.60, 0.60
+af_kol_3                                = 0.60, 0.60
+af_kol_4                                = 0.60, 0.60
+af_pudd_1                               = 0.60, 0.60
+af_pudd_2                               = 0.60, 0.60
+af_pudd_3                               = 0.60, 0.60
+af_pudd_4                               = 0.60, 0.60
+af_spirit_1                             = 0.60, 0.60
+af_spirit_2                             = 0.60, 0.60
+af_spirit_3                             = 0.60, 0.60
+af_spirit_4                             = 0.60, 0.60
+lz_nlc_af_dummy_battery                 = 0.60, 0.60
+lz_nlc_af_dummy_dummy                   = 0.60, 0.60
+lz_nlc_af_dummy_glassbeads              = 0.60, 0.60
+
+; All other registered inventory sections are explicitly disabled.
+
+; Active add-on inventory/quest sections absent from inventory_sort_registry.
+; They remain denied so the artifact exception does not reopen general trade.
+flesh_up_a_novice_outfit
+flesh_up_ab_pkm
+flesh_up_ab_svu
+flesh_up_abcd_pkm
+flesh_up_abcd_svu
+flesh_up_ac_ak74u
+flesh_up_ac_desert_eagle
+flesh_up_ac_mp5
+flesh_up_ac_spas12
+flesh_up_ac_wincheaster1300
+flesh_up_aceg_scientific_outfit
+flesh_up_bd_desert_eagle
+flesh_up_bd_mp5
+flesh_up_bd_wincheaster1300
+flesh_up_bdfh_scientific_outfit
+flesh_up_cd_pkm
+flesh_up_cd_svu
+flesh_up_fh_scientific_outfit
+lz_nlc_anomaly_analyzer
+lz_nlc_qa_art_stash
+lz_nm_backpack_box
+lz_nm_lore_test_stash
+lz_nm_order_dropbox
+lz_nm_start_stash
+pf_fixed_house_stash_backpack
+pf_fixed_house_stash_wood_box
+pf_npc_editor_tool_native
+pf_npc_route_editor_tool_native
+pf_story_legendary_stash
+
+1p78
+1pn93-1
+1pn93-4
+ac10632
+acog
+af_compass
+af_oasis_heart
+af_quest_b14_twisted
+aimpoint
+ammo_11.43x23_fmj
+ammo_11.43x23_hydro
+ammo_12.7x55_fmj
+ammo_12x70_buck
+ammo_12x76_zhekan
+ammo_12x76_zhekan_heli
+ammo_20x70_buck
+ammo_357
+ammo_5.45x39_ap
+ammo_5.45x39_fmj
+ammo_5.56x45_ap
+ammo_5.56x45_ss190
+ammo_5.7x28_ap
+ammo_5.7x28_fmj
+ammo_50ae
+ammo_50bmg
+ammo_7.62x25_p
+ammo_7.62x25_ps
+ammo_7.62x39_ap
+ammo_7.62x39_fmj
+ammo_7.62x51_ap
+ammo_7.62x51_fmj
+ammo_7.62x54_7h1
+ammo_7.62x54_7h14
+ammo_7.62x54_ap
+ammo_9x18_fmj
+ammo_9x18_pmm
+ammo_9x19_fmj
+ammo_9x19_pbp
+ammo_9x39_ap
+ammo_9x39_pab9
+ammo_9x39_sp5
+ammo_gauss
+ammo_gauss_cardan
+ammo_m209
+ammo_og-7b
+ammo_pkm_100
+ammo_vog-25
+ammo_vog-25p
+anomaly_scaner
+antirad
+attachable_item
+bandage
+bandage_army
+bandit_blackrain_outfit
+bandit_brownrain_outfit
+bandit_light_outfit
+bandit_outfit
+bread
+conserva
+cs_heavy_outfit
+custom_script_object
+da_lore_note_base
+detector_advanced
+detector_elite
+detector_scientific
+detector_simple
+dev_flash_1
+dev_flash_2
+device_flash_snag
+device_pda
+device_pda_port_bandit_leader
+device_pda_zat_b5_dealer
+device_torch
+document
+dolg_exo_outfit
+dolg_heavy_outfit
+dolg_outfit
+dolg_scientific_outfit
+drug_anabiotic
+drug_antidot
+drug_booster
+drug_coagulant
+drug_psy_blockade
+drug_radioprotector
+drug_sleep
+ecolog_outfit
+ekp
+energy_drink
+energy_drink1
+eot
+exo_outfit
+explosive_barrel
+explosive_barrel_low
+explosive_dinamit
+explosive_fuelcan
+explosive_gaz_balon
+explosive_grenade
+explosive_hide
+explosive_mobiltank
+explosive_particle
+explosive_tank
+flyaga
+galil_scope
+grenade_f1
+grenade_gd-05
+grenade_rgd5
+guitar_a
+hand_radio
+hand_radio_r
+harmonica_a
+helm_battle
+helm_hardhat
+helm_protective
+helm_respirator
+helm_tactic
+helmet
+itm_backpack
+itm_field_upgrade_kit_base
+itm_field_upgrade_kit_blue
+itm_field_upgrade_kit_green
+itm_field_upgrade_kit_red
+itm_field_upgrade_kit_yellow
+itm_gunsmith_toolkit
+itm_outfit_toolkit
+itm_repairkit_tier_1
+itm_repairkit_tier_2
+itm_repairkit_tier_3
+itm_repairkit_tier_soft
+itm_sleepbag
+jup_a9_conservation_info
+jup_a9_delivery_info
+jup_a9_evacuation_info
+jup_a9_losses_info
+jup_a9_meeting_info
+jup_a9_power_info
+jup_a9_way_info
+jup_b10_notes_01
+jup_b10_notes_02
+jup_b10_notes_03
+jup_b10_ufo_memory
+jup_b10_ufo_memory_2
+jup_b1_half_artifact
+jup_b200_tech_materials_acetone
+jup_b200_tech_materials_capacitor
+jup_b200_tech_materials_textolite
+jup_b200_tech_materials_transistor
+jup_b200_tech_materials_wire
+jup_b202_bandit_pda
+jup_b205_sokolov_note
+jup_b206_plant
+jup_b207_merc_pda_with_contract
+jup_b209_monster_scanner
+jup_b32_scanner_device
+jup_b46_duty_founder_pda
+jup_b47_jupiter_products_info
+jup_b47_merc_pda
+jup_b9_blackbox
+kobra
+kolbasa
+letter_ecologist_report_1_of_3
+letter_ecologist_report_2_of_3
+letter_ecologist_report_3_of_3
+letter_freedom_manual_1_of_2
+letter_freedom_manual_2_of_2
+letter_letter_to_outside
+letter_memoirs_1_of_2
+letter_memoirs_2_of_2
+letter_mercenary
+letter_military_log
+letter_military_stalker
+letter_monolith_prayer_1_of_3
+letter_monolith_prayer_2_of_3
+letter_monolith_prayer_3_of_3
+letter_monolithian_thoughts
+letter_stalker_letter_1_of_2
+letter_stalker_letter_2_of_2
+letter_stalker_letter_3
+lx8_service_instruction
+lz_lore_abandoned_animals_report
+lz_lore_belongings_disposal_act
+lz_lore_derkonis_house_card
+lz_lore_driver_kislytskyi
+lz_lore_ignatenko_testimony
+lz_lore_kuzmina_mothers_letter
+lz_lore_kuznetsov_letter
+lz_lore_kyiv_women_letter
+lz_lore_liquidators_collective_letter
+lz_lore_lukatsky_testimony
+lz_lore_memorial_visit_permit
+lz_lore_petrus_family_register
+lz_lore_pravik_hospital_letter
+lz_lore_separated_family_letter
+lz_lore_shpakovych_family_card
+lz_lore_three_days_for_pets
+lz_lore_unprocessed_pripyat_film
+lz_lore_veteran_on_silence
+lz_nm_armor_disassembly_kit
+lz_nm_armor_pouch
+lz_nm_backpack_fold_control
+lz_nm_combat_boots
+lz_nm_krona_battery
+lz_nm_metal_part
+lz_nm_radio_beacon
+lz_nm_recovered_upgrade
+lz_nm_rubber_padding
+lz_nm_stash_beacon
+lz_nm_strange_drink
+lz_nm_strange_shot
+lz_nm_strange_stew
+lz_nm_used_filter
+lz_nm_weapon_disassembly_kit
+lz_ph_failed_pda_master
+lz_ph_failed_pda_novice
+lz_ph_failed_pda_stalker
+lz_ph_failed_pda_veteran
+lz_ph_reflash_module
+lz_ph_reflash_module_master
+lz_ph_reflash_module_novice
+lz_ph_reflash_module_stalker
+lz_ph_reflash_module_veteran
+m_car
+medkit
+medkit_army
+medkit_scientic
+merc_exo_outfit
+merc_outfit
+military_outfit
+mineral_water
+monolith_exo_outfit
+monolith_outfit
+monolith_scientific_outfit
+mutant_part_general
+mutant_part_general_meat
+mutant_part_snork_leg
+new_attachable_item
+novice_outfit
+okp
+pda_hack_usb_1
+pda_hack_usb_2
+pda_hack_usb_3
+pf_bunker_light_point_tool
+pf_bunker_reload_tool
+pf_door_spawn_tool
+pf_guardian_compass
+pf_guardian_seva_outfit
+pf_interior_teleport_tool
+pf_key_charon
+pf_key_hacker
+pf_key_home
+pf_key_hunter
+pf_key_liquidator
+pf_key_strelok
+pf_key_zulus
+pf_lore_notes_tool
+pf_metal_detector_homemade
+pf_metal_detector_magnet
+pf_metal_detector_wave
+pf_npc_spawn_point_tool
+pf_outdoor_teleport_tool
+pf_scientist_teleport_tool
+pf_stash_aim_remove_tool
+pf_stash_catalog_markers_tool
+pf_stash_crosshair_rejection_tool
+pf_stash_delete_tool
+pf_stash_markers_tool
+pf_stash_pda_master
+pf_stash_pda_novice
+pf_stash_pda_stalker
+pf_stash_pda_veteran
+pf_stash_rejection_tool
+pf_stash_spawn_tool
+pf_stash_teleport_tool
+pf_stash_undo_tool
+pf_story_brother_pendant
+pf_story_debug_archive
+pf_story_document_01
+pf_story_document_02
+pf_story_document_03
+pf_story_document_04
+pf_story_document_05
+pf_story_document_06
+pf_story_document_07
+pf_story_document_08
+pf_story_document_09
+pf_story_document_10
+pf_story_document_11
+pf_story_document_12
+pf_story_document_base
+pf_story_document_tool
+pn23
+pri_a15_documents
+pri_a15_wpn_ak74
+pri_a15_wpn_ak74u
+pri_a15_wpn_svu
+pri_a15_wpn_wincheaster1300
+pri_a17_gauss_rifle
+pri_a19_american_experiment_info
+pri_a19_lab_x10_info
+pri_a19_lab_x16_info
+pri_a19_lab_x18_info
+pri_a19_lab_x7_info
+pri_a25_antenna_grenade
+pri_a25_enter_door_explosive_grenade
+pri_a25_explosive_charge_item
+pri_b306_envoy_pda
+pri_b35_lab_x8_key
+pri_b36_monolith_hiding_place_pda
+pso1m2
+pso1m21
+pu
+scientific_outfit
+sil_45
+sil_556
+sil_57
+sil_6p9
+sil_762_nato
+sil_939
+sil_aps
+sil_hexagon
+sil_pbs1
+sil_pbs4
+sil_sniper
+sil_tgp-a
+sil_tgp-v
+snickers
+specops_outfit
+stalker_outfit
+stalker_outfit_barge
+svoboda_exo_outfit
+svoboda_heavy_outfit
+svoboda_light_outfit
+svoboda_outfit
+svoboda_scientific_outfit
+toolkit_1
+toolkit_2
+toolkit_3
+vodka
+vodka_script
+wpn_abakan
+wpn_abakan_1p78
+wpn_abakan_1pn93-1
+wpn_abakan_ekp
+wpn_abakan_kobra
+wpn_abakan_okp
+wpn_ace52
+wpn_ace52_ac10632
+wpn_ace52_acog
+wpn_ace52_aimpoint
+wpn_ace52_eot
+wpn_ace52_pn23
+wpn_addon_grenade_launcher
+wpn_addon_grenade_launcher_ag36
+wpn_addon_grenade_launcher_fn40gl
+wpn_addon_grenade_launcher_gp34
+wpn_addon_grenade_launcher_m203
+wpn_addon_grenade_launcher_m320
+wpn_addon_scope
+wpn_addon_scope_detector
+wpn_addon_scope_night
+wpn_addon_scope_susat
+wpn_addon_scope_susat_custom
+wpn_addon_scope_susat_dusk
+wpn_addon_scope_susat_night
+wpn_addon_scope_susat_x1.6
+wpn_addon_scope_x2.7
+wpn_addon_silencer
+wpn_aek971
+wpn_aek971_1p78
+wpn_aek971_1pn93-1
+wpn_aek971_ekp
+wpn_aek971_kobra
+wpn_aek971_okp
+wpn_agram2000
+wpn_ak101
+wpn_ak101_1p78
+wpn_ak101_1pn93-1
+wpn_ak101_ekp
+wpn_ak101_kobra
+wpn_ak101_okp
+wpn_ak103
+wpn_ak103_1p78
+wpn_ak103_1pn93-1
+wpn_ak103_ekp
+wpn_ak103_kobra
+wpn_ak103_okp
+wpn_ak104
+wpn_ak104_1p78
+wpn_ak104_1pn93-1
+wpn_ak104_ekp
+wpn_ak104_kobra
+wpn_ak104_okp
+wpn_ak105
+wpn_ak105_1p78
+wpn_ak105_1pn93-1
+wpn_ak105_ekp
+wpn_ak105_kobra
+wpn_ak105_okp
+wpn_ak12
+wpn_ak12_ac10632
+wpn_ak12_acog
+wpn_ak12_aimpoint
+wpn_ak12_eot
+wpn_ak12_m1
+wpn_ak12_m1_ac10632
+wpn_ak12_m1_acog
+wpn_ak12_m1_aimpoint
+wpn_ak12_m1_eot
+wpn_ak12_m1_pn23
+wpn_ak12_pn23
+wpn_ak74
+wpn_ak74_1p78
+wpn_ak74_1pn93-1
+wpn_ak74_ekp
+wpn_ak74_kobra
+wpn_ak74_okp
+wpn_ak74u
+wpn_ak74u_1p78
+wpn_ak74u_1pn93-1
+wpn_ak74u_ekp
+wpn_ak74u_kobra
+wpn_ak74u_okp
+wpn_ak74u_snag
+wpn_ak74u_snag_1p78
+wpn_ak74u_snag_1pn93-1
+wpn_ak74u_snag_ekp
+wpn_ak74u_snag_kobra
+wpn_ak74u_snag_okp
+wpn_akm
+wpn_akm_1p78
+wpn_akm_1pn93-1
+wpn_akm_ekp
+wpn_akm_kobra
+wpn_akm_okp
+wpn_akms
+wpn_akms_1p78
+wpn_akms_1pn93-1
+wpn_akms_ekp
+wpn_akms_kobra
+wpn_akms_okp
+wpn_aps
+wpn_aug_a3
+wpn_aug_a3_ac10632
+wpn_aug_a3_acog
+wpn_aug_a3_aimpoint
+wpn_aug_a3_eot
+wpn_aug_a3_pn23
+wpn_beretta
+wpn_binoc
+wpn_bizon
+wpn_bizon_1p78
+wpn_bizon_1pn93-1
+wpn_bizon_ekp
+wpn_bizon_kobra
+wpn_bizon_okp
+wpn_bm16
+wpn_bm16_full
+wpn_colt1911
+wpn_cz75
+wpn_desert_eagle
+wpn_desert_eagle_nimble
+wpn_desert_eagle_sk1
+wpn_dvl10
+wpn_fal
+wpn_fal_ac10632
+wpn_fal_acog
+wpn_fal_aimpoint
+wpn_fal_eot
+wpn_fal_pn23
+wpn_famas
+wpn_famas_ac10632
+wpn_famas_acog
+wpn_famas_aimpoint
+wpn_famas_eot
+wpn_famas_pn23
+wpn_fn2000
+wpn_fn2000_nimble
+wpn_fn57
+wpn_fnc
+wpn_fnc_ac10632
+wpn_fnc_acog
+wpn_fnc_aimpoint
+wpn_fnc_eot
+wpn_fnc_pn23
+wpn_fnx45
+wpn_fort
+wpn_fort_snag
+wpn_g36
+wpn_g36_nimble
+wpn_g36c
+wpn_g36c_ac10632
+wpn_g36c_acog
+wpn_g36c_aimpoint
+wpn_g36c_eot
+wpn_g36c_pn23
+wpn_galil
+wpn_galil_galil_scope
+wpn_gauss
+wpn_glock
+wpn_groza
+wpn_groza_nimble
+wpn_groza_nimble_ac10632
+wpn_groza_nimble_acog
+wpn_groza_nimble_aimpoint
+wpn_groza_nimble_eot
+wpn_groza_nimble_pn23
+wpn_groza_nimble_wpn_addon_scope
+wpn_groza_specops
+wpn_groza_wpn_addon_scope
+wpn_gsh18
+wpn_hk416
+wpn_hk416_ac10632
+wpn_hk416_acog
+wpn_hk416_aimpoint
+wpn_hk416_eot
+wpn_hk416_pn23
+wpn_hpsa
+wpn_izh18
+wpn_izh18_ac10632
+wpn_izh18_acog
+wpn_izh18_aimpoint
+wpn_izh18_eot
+wpn_izh18_pn23
+wpn_kiparis
+wpn_knife
+wpn_knife_mp
+wpn_kriss_vector
+wpn_kriss_vector_ac10632
+wpn_kriss_vector_acog
+wpn_kriss_vector_aimpoint
+wpn_kriss_vector_eot
+wpn_kriss_vector_pn23
+wpn_l85
+wpn_l85_ac10632
+wpn_l85_acog
+wpn_l85_aimpoint
+wpn_l85_eot
+wpn_l85_pn23
+wpn_l85_wpn_addon_scope_susat
+wpn_l96
+wpn_lr300
+wpn_lr300_ac10632
+wpn_lr300_acog
+wpn_lr300_aimpoint
+wpn_lr300_eot
+wpn_lr300_pn23
+wpn_m16a2
+wpn_m24
+wpn_m249
+wpn_m249_ac10632
+wpn_m249_acog
+wpn_m249_aimpoint
+wpn_m249_eot
+wpn_m249_pn23
+wpn_m79
+wpn_m98b
+wpn_mac10
+wpn_mk14
+wpn_mk14_ac10632
+wpn_mk14_acog
+wpn_mk14_aimpoint
+wpn_mk14_eot
+wpn_mk14_pn23
+wpn_mosin
+wpn_mosin_pu
+wpn_mp5
+wpn_mp5_ac10632
+wpn_mp5_acog
+wpn_mp5_aimpoint
+wpn_mp5_eot
+wpn_mp5_nimble
+wpn_mp5_nimble_ac10632
+wpn_mp5_nimble_acog
+wpn_mp5_nimble_aimpoint
+wpn_mp5_nimble_eot
+wpn_mp5_nimble_pn23
+wpn_mp5_pn23
+wpn_mr153
+wpn_oc33
+wpn_p90
+wpn_pb
+wpn_pkm
+wpn_pkm_zulus
+wpn_pm
+wpn_pm_actor
+wpn_pmm
+wpn_pp2000
+wpn_pp2000_ac10632
+wpn_pp2000_acog
+wpn_pp2000_aimpoint
+wpn_pp2000_eot
+wpn_pp2000_pn23
+wpn_ppsh41
+wpn_protecta
+wpn_protecta_ac10632
+wpn_protecta_acog
+wpn_protecta_aimpoint
+wpn_protecta_eot
+wpn_protecta_nimble
+wpn_protecta_pn23
+wpn_remington700
+wpn_rg-6
+wpn_rpd
+wpn_rpg7
+wpn_rpk
+wpn_rpk74
+wpn_rpk74_1p78
+wpn_rpk74_1pn93-1
+wpn_rpk74_ekp
+wpn_rpk74_kobra
+wpn_rpk74_okp
+wpn_rpk_1p78
+wpn_rpk_1pn93-1
+wpn_rpk_ekp
+wpn_rpk_kobra
+wpn_rpk_okp
+wpn_sa58
+wpn_sa58_ac10632
+wpn_sa58_acog
+wpn_sa58_aimpoint
+wpn_sa58_eot
+wpn_sa58_pn23
+wpn_saiga
+wpn_saiga_1p78
+wpn_saiga_1pn93-1
+wpn_saiga_ekp
+wpn_saiga_kobra
+wpn_saiga_okp
+wpn_scar
+wpn_scar_ac10632
+wpn_scar_acog
+wpn_scar_aimpoint
+wpn_scar_eot
+wpn_scar_pn23
+wpn_sig220
+wpn_sig220_nimble
+wpn_sig550
+wpn_sig550_ac10632
+wpn_sig550_acog
+wpn_sig550_aimpoint
+wpn_sig550_eot
+wpn_sig550_luckygun
+wpn_sig550_luckygun_ac10632
+wpn_sig550_luckygun_acog
+wpn_sig550_luckygun_aimpoint
+wpn_sig550_luckygun_eot
+wpn_sig550_luckygun_pn23
+wpn_sig550_pn23
+wpn_sig552
+wpn_sig552_ac10632
+wpn_sig552_acog
+wpn_sig552_aimpoint
+wpn_sig552_eot
+wpn_sig552_pn23
+wpn_sks
+wpn_sks_1p78
+wpn_sks_1pn93-1
+wpn_sks_ekp
+wpn_sks_kobra
+wpn_sks_okp
+wpn_spas12
+wpn_spas12_nimble
+wpn_sv98
+wpn_svd
+wpn_svd_1p78
+wpn_svd_1pn93-4
+wpn_svd_ekp
+wpn_svd_kobra
+wpn_svd_nimble
+wpn_svd_okp
+wpn_svd_pso1m2
+wpn_svu
+wpn_svu_1p78
+wpn_svu_1pn93-4
+wpn_svu_ekp
+wpn_svu_kobra
+wpn_svu_nimble
+wpn_svu_okp
+wpn_svu_pso1m2
+wpn_toz106
+wpn_toz106_tacticool
+wpn_toz34
+wpn_toz34_obrez
+wpn_tt33
+wpn_tt33_sk1
+wpn_type63
+wpn_type63_pu
+wpn_ump45
+wpn_ump45_ac10632
+wpn_ump45_acog
+wpn_ump45_aimpoint
+wpn_ump45_eot
+wpn_ump45_pn23
+wpn_usp
+wpn_usp_nimble
+wpn_val
+wpn_val_1p78
+wpn_val_1pn93-1
+wpn_val_ekp
+wpn_val_kobra
+wpn_val_okp
+wpn_val_pso1m21
+wpn_vepr
+wpn_vepr_1p78
+wpn_vepr_1pn93-1
+wpn_vepr_ekp
+wpn_vepr_kobra
+wpn_vepr_okp
+wpn_vihr
+wpn_vihr_1p78
+wpn_vihr_1pn93-1
+wpn_vihr_ekp
+wpn_vihr_kobra
+wpn_vihr_okp
+wpn_vihr_pso1m21
+wpn_vintorez
+wpn_vintorez_1p78
+wpn_vintorez_1pn93-1
+wpn_vintorez_ekp
+wpn_vintorez_kobra
+wpn_vintorez_nimble
+wpn_vintorez_nimble_1p78
+wpn_vintorez_nimble_1pn93-1
+wpn_vintorez_nimble_ekp
+wpn_vintorez_nimble_kobra
+wpn_vintorez_nimble_okp
+wpn_vintorez_nimble_pso1m21
+wpn_vintorez_okp
+wpn_vintorez_pso1m21
+wpn_vityaz
+wpn_vityaz_ac10632
+wpn_vityaz_acog
+wpn_vityaz_aimpoint
+wpn_vityaz_eot
+wpn_vityaz_pn23
+wpn_vsk94
+wpn_vsk94_1p78
+wpn_vsk94_1pn93-1
+wpn_vsk94_ekp
+wpn_vsk94_kobra
+wpn_vsk94_okp
+wpn_vsk94_pso1m21
+wpn_vssk
+wpn_walther
+wpn_win1873
+wpn_wincheaster1300
+wpn_wincheaster1300_trapper
+wpn_wincheaster1300_trapper_ac10632
+wpn_wincheaster1300_trapper_acog
+wpn_wincheaster1300_trapper_aimpoint
+wpn_wincheaster1300_trapper_eot
+wpn_wincheaster1300_trapper_pn23
+zat_a23_access_card
+zat_a23_gauss_rifle_docs
+zat_a23_labx8_key
+zat_b12_documents_1
+zat_b12_documents_2
+zat_b12_key_1
+zat_b12_key_2
+zat_b20_noah_pda
+zat_b22_medic_pda
+zat_b33_safe_container
+zat_b39_joker_pda
+zat_b40_notebook
+zat_b40_pda_1
+zat_b40_pda_2
+zat_b44_barge_pda
+zat_b57_gas
+[trade_pf_bunker_hermann_sell]
+; NPC owner's technical PDA must never appear on the shelf.
+device_pda
+
+; Basic food and water
+bread                      = 1, 2.2
+kolbasa                    = 1, 2.2
+conserva                   = 1, 2.2
+mineral_water              = 1, 2.2
+
+; Basic medicine
+bandage                    = 1, 2.2
+medkit                     = 1, 2.2
+antirad                    = 1, 2.2
+drug_coagulant             = 1, 2.2
+drug_radioprotector        = 1, 2.2
+drug_sleep                 = 1, 2.2
+
+; Detector power: 650 base cost * 1.538462 = 1000 RU.
+lz_nm_krona_battery        = 1.538462, 1.538462
+
+[supplies_pf_bunker_hermann_daily_base]
+; One detector cell is guaranteed in every calendar rotation.
+lz_nm_krona_battery        = 1, 1.00
+
+; Calendar rotation 01; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_01]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 4, 1.00
+medkit                       = 2, 1.00
+antirad                      = 3, 1.00
+
+; Calendar rotation 02; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_02]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 03; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_03]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 04; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_04]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 2, 1.00
+conserva                     = 3, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 05; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_05]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 4, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 06; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_06]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 4, 1.00
+medkit                       = 2, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 07; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_07]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 2, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 08; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_08]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 3, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 09; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_09]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 10; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_10]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 2, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 4, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 11; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_11]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 4, 1.00
+medkit                       = 2, 1.00
+antirad                      = 3, 1.00
+
+; Calendar rotation 12; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_12]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 3, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 13; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_13]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 14; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_14]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 2, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 15; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_15]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 4, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 16; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_16]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 3, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 4, 1.00
+medkit                       = 2, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 17; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_17]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 2, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 18; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_18]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 19; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_19]:supplies_pf_bunker_hermann_daily_base
+bread                        = 1, 1.00
+kolbasa                      = 1, 1.00
+conserva                     = 2, 1.00
+mineral_water                = 3, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00
+
+; Calendar rotation 20; the full 20-day cycle preserves prior expected quantities.
+[supplies_pf_bunker_hermann_daily_20]:supplies_pf_bunker_hermann_daily_base
+bread                        = 2, 1.00
+kolbasa                      = 2, 1.00
+conserva                     = 3, 1.00
+mineral_water                = 4, 1.00
+bandage                      = 5, 1.00
+medkit                       = 3, 1.00
+antirad                      = 3, 1.00
+drug_coagulant               = 1, 1.00
+drug_radioprotector          = 1, 1.00
+drug_sleep                   = 1, 1.00

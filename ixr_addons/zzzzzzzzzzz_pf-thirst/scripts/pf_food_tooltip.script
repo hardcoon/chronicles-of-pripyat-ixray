@@ -1,0 +1,20 @@
+-- Ordinary food keeps its short stock booster without advertising a formal
+-- duration in the inventory tooltip. Real timed consumables remain untouched.
+
+local booster_by_section = {
+	bread = "pf_food_health_restore_5s",
+	kolbasa = "pf_food_health_restore_5s",
+	conserva = "pf_food_health_restore_5s",
+	mineral_water = "pf_food_power_restore_1s",
+	flyaga = "pf_food_power_restore_1s"
+}
+
+function on_inventory_eat(actor, item)
+	if not actor or not item then return true end
+
+	local booster_section = booster_by_section[item:section()]
+	if booster_section then
+		actor:apply_booster(booster_section)
+	end
+	return true
+end

@@ -1,0 +1,32 @@
+; QA-only copy of the stock unlocked door scheme. The final physic_door has a
+; fixed frame, so IX-Ray applies ignore_static to its physics shell: the leaf
+; passes through level geometry while dynamic actor collision remains enabled.
+[collide]
+ignore_static = true
+
+[logic]
+active = ph_door@close
+
+[ph_door@close]
+locked = false
+closed = true
+snd_open_start = wood_small_open
+snd_close_start = wood_small_close_start
+snd_close_stop = wood_small_close_stop
+on_use = ph_door@open
+hit_on_bone = 1|ph_door@free|2|ph_door@free
+
+[ph_door@open]
+locked = false
+closed = false
+snd_open_start = wood_small_open
+snd_close_start = wood_small_close_start
+snd_close_stop = wood_small_close_stop
+on_use = ph_door@close
+hit_on_bone = 1|ph_door@free|2|ph_door@free
+
+[ph_door@free]
+locked = false
+closed = true
+no_force = true
+on_use = ph_door@open

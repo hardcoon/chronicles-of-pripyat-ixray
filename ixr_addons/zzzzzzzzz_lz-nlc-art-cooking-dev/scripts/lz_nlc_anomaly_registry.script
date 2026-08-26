@@ -1,0 +1,246 @@
+-- Single source of truth for NLC artifact cooking, anomaly labels and stages.
+
+local chemical = { 105, 220, 120 }
+local electric = { 105, 185, 235 }
+local gravity = { 255, 220, 70 }
+local thermal = { 235, 105, 90 }
+
+local anomaly_families = {
+	{
+		prefix = "zone_burning_fuzz", family = "chemical", name = "st_lz_nlc_anomaly_burning_fuzz",
+		color = chemical, icon = "ui_lz_nlc_anomaly_icon_acid", visible = true,
+		role = "buzz"
+	},
+	{
+		prefix = "zone_buzz", family = "chemical", name = "st_lz_nlc_anomaly_buzz",
+		color = chemical, icon = "ui_lz_nlc_anomaly_icon_acid", visible = true,
+		role = "buzz"
+	},
+	{
+		prefix = "zone_field_acidic", family = "chemical", name = "st_lz_nlc_anomaly_acid_field",
+		color = chemical, icon = "ui_lz_nlc_anomaly_icon_acid", visible = true,
+		role = "buzz"
+	},
+	{
+		prefix = "zone_field_radioactive", family = "radioactive",
+		name = "st_lz_nlc_anomaly_radioactive_field", visible = false
+	},
+	{
+		prefix = "zone_field_thermal", family = "thermal", name = "st_lz_nlc_anomaly_thermal_field",
+		color = thermal, icon = "ui_lz_nlc_anomaly_icon_fire", visible = true,
+		role = "zharka"
+	},
+	{
+		prefix = "zone_mine_acidic", family = "chemical", name = "st_lz_nlc_anomaly_acid",
+		color = chemical, icon = "ui_lz_nlc_anomaly_icon_acid", visible = true,
+		role = "buzz"
+	},
+	{
+		prefix = "zone_mine_electric", family = "electric", name = "st_lz_nlc_anomaly_electra",
+		color = electric, icon = "ui_lz_nlc_anomaly_icon_electro", visible = true,
+		role = "galant"
+	},
+	{
+		prefix = "zone_mine_gravitational_weak", family = "gravitational",
+		name = "st_lz_nlc_anomaly_springboard", color = gravity,
+		icon = "ui_lz_nlc_anomaly_icon_gravity", visible = true, role = "mosquito_bald"
+	},
+	{
+		prefix = "zone_mine_gravitational_average", family = "gravitational",
+		name = "st_lz_nlc_anomaly_vortex", color = gravity,
+		icon = "ui_lz_nlc_anomaly_icon_gravity", visible = true, role = "gravi_zone"
+	},
+	{
+		prefix = "zone_mine_gravitational_strong", family = "gravitational",
+		name = "st_lz_nlc_anomaly_whirligig", color = gravity,
+		icon = "ui_lz_nlc_anomaly_icon_gravity", visible = true, role = "mincer"
+	},
+	{
+		prefix = "zone_mosquito_bald", family = "gravitational",
+		name = "st_lz_nlc_anomaly_springboard", color = gravity,
+		icon = "ui_lz_nlc_anomaly_icon_gravity", visible = true, role = "mosquito_bald"
+	},
+	{
+		prefix = "zone_gravi_zone", family = "gravitational",
+		name = "st_lz_nlc_anomaly_vortex", color = gravity,
+		icon = "ui_lz_nlc_anomaly_icon_gravity", visible = true, role = "gravi_zone"
+	},
+	{
+		prefix = "zone_mincer", family = "gravitational",
+		name = "st_lz_nlc_anomaly_whirligig", color = gravity,
+		icon = "ui_lz_nlc_anomaly_icon_gravity", visible = true, role = "mincer"
+	},
+	{
+		prefix = "zone_mine_thermal", family = "thermal", name = "st_lz_nlc_anomaly_zharka",
+		color = thermal, icon = "ui_lz_nlc_anomaly_icon_fire", visible = true,
+		role = "zharka"
+	},
+	{
+		prefix = "zone_zharka_static", family = "thermal", name = "st_lz_nlc_anomaly_zharka",
+		color = thermal, icon = "ui_lz_nlc_anomaly_icon_fire", visible = true,
+		role = "zharka"
+	}
+}
+
+-- resolve() receives the concrete section name and cannot see its LTX parent.
+-- Map procedural point zones to their native anomaly classes. Gravitational
+-- weak/average/strong sections are different lore anomalies with different
+-- engine classes, particles and reactions; do not collapse them by danger.
+-- Psi fields and aura shells remain absent because no cooking recipe uses them.
+local section_aliases = {
+	lz_nlc_qa_zone_mosquito_bald = "zone_mine_gravitational_weak",
+	lz_nlc_qa_zone_gravi_zone = "zone_mine_gravitational_average",
+	lz_nlc_qa_zone_mincer = "zone_mine_gravitational_strong",
+	lz_nlc_qa_zone_galant = "zone_mine_electric_strong",
+	lz_nlc_qa_zone_buzz = "zone_buzz_weak",
+	lz_nlc_qa_zone_zharka = "zone_zharka_static_strong",
+	pf_proc_gravitational_weak = "zone_mine_gravitational_weak",
+	pf_proc_gravitational_average = "zone_mine_gravitational_average",
+	pf_proc_gravitational_strong = "zone_mine_gravitational_strong",
+	pf_proc_electric_weak = "zone_mine_electric_weak",
+	pf_proc_electric_average = "zone_mine_electric_average",
+	pf_proc_electric_strong = "zone_mine_electric_strong",
+	pf_proc_chemical_weak = "zone_buzz_weak",
+	pf_proc_chemical_average = "zone_buzz_average",
+	pf_proc_chemical_strong = "zone_buzz_strong",
+	pf_proc_thermal_weak = "zone_zharka_static_weak",
+	pf_proc_thermal_average = "zone_zharka_static_average",
+	pf_proc_thermal_strong = "zone_zharka_static_strong"
+}
+
+local artifacts_by_tier = {
+	[1] = {
+		"af_soul", "af_electra_flash", "af_rusty_sea-urchin",
+		"af_dummy_kolobok", "lz_nlc_af_dummy_glassbeads", "lz_nlc_af_dummy_dummy",
+		"af_dummy_pellicle"
+	},
+	[2] = {
+		"af_spirit_1", "af_cry_1", "af_dik_1", "af_kol_1",
+		"af_babka_1", "af_pudd_1", "af_armor_1"
+	},
+	[3] = {
+		"af_spirit_2", "af_cry_2", "af_dik_2", "af_kol_2",
+		"af_babka_2", "af_pudd_2", "af_armor_2"
+	},
+	[4] = {
+		"af_spirit_3", "af_cry_3", "af_dik_3", "af_kol_3",
+		"af_babka_3", "af_pudd_3", "af_armor_3"
+	},
+	[5] = {
+		"af_spirit_4", "af_cry_4", "af_dik_4", "af_kol_4",
+		"af_babka_4", "af_pudd_4", "af_armor_4"
+	}
+}
+
+local artifact_tiers = { af_dummy_buliz = 1 }
+local artifact_families = {}
+local absolutes = {}
+local all_artifacts = {}
+for tier = 1, 5 do
+	for family_index, section in ipairs(artifacts_by_tier[tier]) do
+		artifact_tiers[section] = tier
+		artifact_families[section] = family_index
+		table.insert(all_artifacts, section)
+		if tier == 5 then absolutes[section] = true end
+	end
+end
+
+local recipes = {}
+local recipe_info_by_result = {}
+local function add_chain(base, family, roles)
+	local source = base
+	for stage = 1, 4 do
+		local result = "af_" .. family .. "_" .. tostring(stage)
+		local success = 90 - stage * 5
+		local returned = 5 + stage * 5
+		recipes[source] = {
+			source = source, result = result, anomaly = roles[stage],
+			success = success, returned = returned, boulder = 5, stage = stage,
+			family = family
+		}
+		-- Cash orders deliberately stop at hypermodifications. Absolutes remain
+		-- reserved for their dedicated progression and Guardian exchange.
+		if stage <= 3 then
+			recipe_info_by_result[result] =
+				"lz_nlc_recipe_" .. family .. "_" .. tostring(stage) .. "_known"
+		end
+		source = result
+	end
+end
+
+add_chain("af_soul", "spirit", { "zharka", "galant", "zharka", "galant" })
+add_chain("af_electra_flash", "cry", { "galant", "zharka", "buzz", "galant" })
+add_chain("af_rusty_sea-urchin", "dik", { "zharka", "galant", "buzz", "mosquito_bald" })
+add_chain("af_dummy_kolobok", "kol", { "mosquito_bald", "mincer", "buzz", "zharka" })
+add_chain("lz_nlc_af_dummy_glassbeads", "babka", { "galant", "buzz", "mincer", "zharka" })
+add_chain("lz_nlc_af_dummy_dummy", "pudd", { "zharka", "buzz", "zharka", "buzz" })
+add_chain("af_dummy_pellicle", "armor", { "mosquito_bald", "mincer", "buzz", "zharka" })
+
+local function variant_of(section)
+	if string.find(section, "_weak", 1, true) then return "weak" end
+	if string.find(section, "_average", 1, true) then return "average" end
+	if string.find(section, "_strong", 1, true) then return "strong" end
+	return "base"
+end
+
+function resolve(section_name)
+	if type(section_name) ~= "string" then return nil end
+	local alias = section_aliases[section_name]
+	local source = alias or section_name
+	for _, descriptor in ipairs(anomaly_families) do
+		if string.find(source, descriptor.prefix, 1, true) == 1 then
+			return {
+				section = section_name,
+				family = descriptor.family,
+				variant = variant_of(source),
+				name = descriptor.name,
+				color = descriptor.color,
+				icon = descriptor.icon,
+				visible = descriptor.visible == true,
+				role = descriptor.role
+			}
+		end
+	end
+	return nil
+end
+
+function cooking_role(section_name)
+	local descriptor = resolve(section_name)
+	return descriptor and descriptor.role or nil
+end
+
+function is_absolute(section_name)
+	return absolutes[section_name] == true
+end
+
+function artifact_tier(section_name)
+	return artifact_tiers[section_name]
+end
+
+function artifact_family(section_name)
+	return artifact_families[section_name]
+end
+
+function recipe(section_name)
+	return recipes[section_name]
+end
+
+function recipe_info_for_result(section_name)
+	return recipe_info_by_result[section_name]
+end
+
+function recipes_table()
+	return recipes
+end
+
+function artifacts_for_tier(tier)
+	return artifacts_by_tier[tonumber(tier)] or {}
+end
+
+function all_artifacts_table()
+	return all_artifacts
+end
+
+function absolute_artifacts()
+	return artifacts_by_tier[5]
+end

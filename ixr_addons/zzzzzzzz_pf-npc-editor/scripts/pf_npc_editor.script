@@ -1,0 +1,3910 @@
+-- Standalone in-game NPC editor for Chronicles of Pripyat / IX-Ray.
+-- Editor-owned NPCs use one addon-owned remark section. Existing NPCs are
+-- edited as reversible previews and never have their xr_logic rebuilt.
+
+local STATE_KEY = "pf_npc_editor"
+local STATE_VERSION = 2
+local TOOL_SECTION = "pf_npc_editor_tool_native"
+local ROUTE_TOOL_SECTION = "pf_npc_route_editor_tool_native"
+local SETTINGS_SECTION = "pf_npc_editor_settings"
+local CATALOG_SECTION = "pf_npc_editor_catalog"
+local EDITOR_ACTIVE_SECTION = "remark@pf_npc_editor"
+local NO_SMART_TERRAIN_ID = 65535
+local INVALID_ACTION_ID = 4294967295
+local INVALID_LEVEL_VERTEX_ID = 4294967295
+local LIST_ROW_HEIGHT = 28
+local ROTATION_STEP = math.rad(5)
+local PLACEMENT_ROTATION_STEP = math.rad(10)
+local PLACEMENT_MODE_HOTKEYS = 3
+local PLACEMENT_MODE_CURSOR = 4
+local PLACEMENT_MODE_CROSSHAIR = 5
+local PLACEMENT_MODE_DETAIL = 6
+local PASSIVE_SOUND_THRESHOLD = 1000000
+local PLACEMENT_DEFAULT_DISTANCE = 4
+local BBOX_WIDTH = 0.72
+local BBOX_DEPTH = 0.72
+local BBOX_HEIGHT = 1.82
+
+local settings_ini = system_ini()
+local impl = {
+	tool_access = {
+		actor_id = nil, developer = nil, complete = false, next_update = 0,
+		pending_id = nil, route_pending_id = nil, section_missing_reported = false,
+		developer_start_hook_installed = false,
+	},
+}
+
+function impl.setting_number(name, fallback)
+	if settings_ini:section_exist(SETTINGS_SECTION) and
+		settings_ini:line_exist(SETTINGS_SECTION, name) then
+		return settings_ini:r_float(SETTINGS_SECTION, name)
+	end
+	return fallback
+end
+
+local PLACEMENT_FLIGHT_SPEED = impl.setting_number("placement_flight_speed", 6)
+local FIRST_PERSON_RAY_OFFSET = math.max(
+	0, impl.setting_number("first_person_ray_offset", 0.85))
+
+function impl.setting_bool(name, fallback)
+	if settings_ini:section_exist(SETTINGS_SECTION) and
+		settings_ini:line_exist(SETTINGS_SECTION, name) then
+		return settings_ini:r_bool(SETTINGS_SECTION, name)
+	end
+	return fallback
+end
+
+function impl.setting_string(name, fallback)
+	if settings_ini:section_exist(SETTINGS_SECTION) and
+		settings_ini:line_exist(SETTINGS_SECTION, name) then
+		return settings_ini:r_string(SETTINGS_SECTION, name)
+	end
+	return fallback
+end
+
+local MAX_EDIT_DISTANCE = impl.setting_number("max_edit_distance", 50)
+local POSITION_TOLERANCE_SQR = impl.setting_number("position_tolerance", 0.25) ^ 2
+local DIRECTION_DOT = impl.setting_number("direction_dot", 0.995)
+local DIRECTION_RETRY_MS = impl.setting_number("direction_retry_ms", 2000)
+local PLACEMENT_DIRECTION_REFRESH_MS = impl.setting_number("placement_direction_refresh_ms", 50)
+local PLACEMENT_DIRECTION_DOT = impl.setting_number("placement_direction_dot", 0.9995)
+local UPDATE_INTERVAL_MS = impl.setting_number("update_interval_ms", 250)
+local ONLINE_WARNING_COUNT = impl.setting_number("online_warning_count", 20)
+local EXPORT_FILE = impl.setting_string("export_file", "pf_npc_editor_export.ltx")
+
+local callbacks_registered = false
+local dialog_singleton = nil
+local route_adapter = nil
+local dialog_open_request = 0
+local profiles = nil
+local profiles_by_specific = {}
+local profiles_by_visual = {}
+local states = nil
+local states_by_name = {}
+local compatible_state_count = 0
+local previews = {}
+local history = {}
+local prepared_online = {}
+local pose_applied = {}
+local next_direction_retry = {}
+local next_update = 0
+local input_actor_id = nil
+local runtime_ready_at = nil
+local update_seen = false
+local runtime_ready_reported = false
+local optional_namespaces = {}
+local smoke_test = {
+	started = false, done = false, id = nil, deadline = 0, next_report = 0,
+	placement_checked = false, editor_reopen_pending = false,
+	scenario_checked = false, scenario_phase = nil, scenario_started_at = 0,
+	scenario_deadline = 0,
+	invalid_state_checked = false,
+	direction_checked = false, direction_pending = false,
+	direction_yaw = nil, direction_deadline = 0,
+}
+
+local placement = {
+	active = false,
+	target_id = nil,
+	owned = false,
+	position = nil,
+	yaw = 0,
+	level_vertex_id = nil,
+	game_vertex_id = nil,
+	valid = false,
+	invalid_reason = nil,
+	snapshot = nil,
+	target_ray = nil,
+	ground_ray = nil,
+	collision_ray = nil,
+	hud = nil,
+	mode = PLACEMENT_MODE_CURSOR,
+	step = 0.1,
+	last_applied_position = nil,
+	direction_retry_at = nil,
+	state = nil,
+	off_mesh = false,
+	camera_was_first_person = nil,
+	camera_is_first_person = false,
+	camera_changed = false,
+	actor_legs_hidden = false,
+	flight_actions = {},
+	route_context = nil,
+}
+
+local bbox_edges = {
+	{ 1, 2 }, { 1, 3 }, { 2, 4 }, { 3, 4 },
+	{ 5, 6 }, { 5, 7 }, { 6, 8 }, { 7, 8 },
+	{ 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 },
+}
+
+local flight_bindings = {
+	[key_bindings.kFWD] = true,
+	[key_bindings.kBACK] = true,
+	[key_bindings.kL_STRAFE] = true,
+	[key_bindings.kR_STRAFE] = true,
+	[key_bindings.kJUMP] = true,
+	[key_bindings.kCROUCH] = true,
+}
+
+local placement_mode_text = {
+	[PLACEMENT_MODE_HOTKEYS] = "pf_ne_placement_mode_hotkeys",
+	[PLACEMENT_MODE_CURSOR] = "pf_ne_placement_mode_cursor",
+	[PLACEMENT_MODE_CROSSHAIR] = "pf_ne_placement_mode_crosshair",
+	[PLACEMENT_MODE_DETAIL] = "pf_ne_placement_mode_detail",
+}
+
+function impl.tr(id)
+	local value = game.translate_string(id) or id
+	return string.gsub(value, "\\n", "\n")
+end
+
+function impl.trf(id, ...)
+	local ok, result = pcall(string.format, impl.tr(id), ...)
+	return ok and result or impl.tr(id)
+end
+
+function impl.report(message)
+	local text = "[PF NPC EDITOR] " .. tostring(message)
+	printf("%s", text)
+	pcall(function()
+		local path = getFS():update_path("$logs$", "pf_npc_editor_runtime.log")
+		local file = io.open(path, "a")
+		if file then
+			file:write(string.format("[%s] %s\n", tostring(time_global()), text))
+			file:close()
+		end
+	end)
+end
+
+function impl.ui_status(id, ...)
+	local text = impl.trf(id, ...)
+	if dialog_singleton and dialog_singleton.status then
+		dialog_singleton.status:SetText(text)
+	end
+	impl.report(text)
+	return text
+end
+
+function impl.copy_vector(value)
+	return vector():set(value.x, value.y, value.z)
+end
+
+function impl.horizontal_distance_sqr(left, right)
+	local x = left.x - right.x
+	local z = left.z - right.z
+	return x * x + z * z
+end
+
+function impl.valid_level_vertex_id(vertex_id)
+	return vertex_id ~= nil and vertex_id ~= INVALID_LEVEL_VERTEX_ID and
+		level.valid_vertex_id(vertex_id)
+end
+
+function impl.horizontal_direction(yaw)
+	return vector():set(math.sin(yaw), 0, math.cos(yaw))
+end
+
+function impl.direction_yaw(direction)
+	local x = direction.x
+	local z = direction.z
+	if math.atan2 then return math.atan2(x, z) end
+	if math.abs(z) < 0.000001 then
+		return x >= 0 and math.pi * 0.5 or -math.pi * 0.5
+	end
+	local result = math.atan(x / z)
+	if z < 0 then result = result + (x >= 0 and math.pi or -math.pi) end
+	return result
+end
+
+function impl.normalize_yaw(yaw)
+	while yaw > math.pi do yaw = yaw - math.pi * 2 end
+	while yaw < -math.pi do yaw = yaw + math.pi * 2 end
+	return yaw
+end
+
+function impl.sanitize_ltx(value)
+	value = tostring(value or "")
+	value = string.gsub(value, "[\r\n;]", " ")
+	return value
+end
+
+function impl.split_pipe(value)
+	local result = {}
+	for part in string.gmatch((value or "") .. "|", "(.-)|") do
+		result[#result + 1] = part
+	end
+	return result
+end
+
+function impl.current_state_root()
+	local root = alife_storage_manager.get_state()
+	if type(root[STATE_KEY]) ~= "table" then
+		root[STATE_KEY] = {
+			version = STATE_VERSION,
+			tool_issued = false,
+			route_tool_issued = false,
+			npcs = {},
+		}
+	end
+	local state = root[STATE_KEY]
+	-- Version 1 records are valid editor-owned NPCs. Earlier code replaced the
+	-- complete table on a version mismatch; route support migrates in place so
+	-- existing authored NPCs and their IDs remain intact.
+	local version = tonumber(state.version) or 1
+	if version < STATE_VERSION then
+		state.version = STATE_VERSION
+	elseif version > STATE_VERSION then
+		impl.report(string.format(
+			"save state version %s is newer than supported %s; preserving data",
+			tostring(version), tostring(STATE_VERSION)))
+	end
+	if type(state.npcs) ~= "table" then state.npcs = {} end
+	return state
+end
+
+function impl.record_key(id)
+	return tostring(tonumber(id) or id)
+end
+
+function impl.get_record(id)
+	return impl.current_state_root().npcs[impl.record_key(id)]
+end
+
+function impl.put_record(record)
+	impl.current_state_root().npcs[impl.record_key(record.id)] = record
+end
+
+function impl.remove_record(id)
+	local route = pf_npc_route_editor
+	if route and route.on_record_removed then route.on_record_removed(id) end
+	impl.current_state_root().npcs[impl.record_key(id)] = nil
+	prepared_online[id] = nil
+	pose_applied[id] = nil
+	next_direction_retry[id] = nil
+end
+
+function impl.load_profiles()
+	if profiles then return profiles end
+	profiles = {}
+	profiles_by_specific = {}
+	profiles_by_visual = {}
+	if not settings_ini:section_exist(CATALOG_SECTION) then
+		impl.report("catalog section is missing")
+		return profiles
+	end
+	local count = settings_ini:r_u32(CATALOG_SECTION, "count")
+	for index = 1, count do
+		local key = string.format("entry_%04d", index)
+		if settings_ini:line_exist(CATALOG_SECTION, key) then
+			local values = impl.split_pipe(settings_ini:r_string(CATALOG_SECTION, key))
+			local item = {
+				index = index,
+				wrapper = values[1],
+				profile = values[2],
+				specific = values[3],
+				name = values[4],
+				community = values[5],
+				visual = values[6],
+				risk = values[7] ~= "" and values[7] or "story",
+				weapon = values[8] ~= "" and values[8] or "unarmed",
+			}
+			profiles[#profiles + 1] = item
+			profiles_by_specific[item.specific] = item
+			local visual = string.lower(item.visual or "")
+			if visual ~= "" and not profiles_by_visual[visual] then
+				profiles_by_visual[visual] = item
+			end
+		end
+	end
+	return profiles
+end
+
+function impl.state_animation_name(definition)
+	if not definition then return "nil" end
+	if type(definition.animation) == "string" then return definition.animation end
+	return tostring(definition.animation or "nil")
+end
+
+function impl.state_runtime_compatibility(definition)
+	if type(definition) ~= "table" then return false, "state definition" end
+	local animation = definition.animation
+	if animation ~= nil and (type(animation) ~= "string" or
+		type(state_mgr_animation_list) ~= "table" or
+		type(state_mgr_animation_list.animations) ~= "table" or
+		type(state_mgr_animation_list.animations[animation]) ~= "table") then
+		return false, "animation: " .. tostring(animation)
+	end
+	local animstate = definition.animstate
+	if animstate ~= nil and (type(animstate) ~= "string" or
+		type(state_mgr_animstate_list) ~= "table" or
+		type(state_mgr_animstate_list.animations) ~= "table" or
+		type(state_mgr_animstate_list.animations[animstate]) ~= "table") then
+		return false, "animstate: " .. tostring(animstate)
+	end
+	return true, nil
+end
+
+function impl.classify_state(name, definition)
+	local safe = definition and definition.movement == move.stand or false
+	local weapon = definition and definition.weapon or nil
+	if weapon == "fire" or weapon == "sniper_fire" or weapon == "drop" then safe = false end
+	if string.find(name, "wounded", 1, true) or string.find(name, "psy", 1, true) or
+		string.find(name, "trans_", 1, true) or string.find(name, "punch", 1, true) or
+		string.find(name, "dynamite", 1, true) or string.find(name, "search_corpse", 1, true) then
+		safe = false
+	end
+	local animation_name = impl.state_animation_name(definition)
+	local animation_definition = state_mgr_animation_list and
+		state_mgr_animation_list.animations and
+		state_mgr_animation_list.animations[animation_name] or nil
+	local animation_props = type(animation_definition) == "table" and
+		animation_definition.prop or nil
+	if type(animation_props) == "table" and animation_props.moving == true then
+		safe = false
+	end
+	-- A scenario with only an INTO clip is a one-shot action, not a stable pose.
+	-- It needs an explicit fast exit when the user selects the next preview.
+	if type(animation_definition) == "table" and animation_definition.into ~= nil and
+		animation_definition.idle == nil and animation_definition.rnd == nil then
+		safe = false
+	end
+	return safe
+end
+
+function impl.state_direction_limited(definition)
+	if type(definition) ~= "table" then return false end
+	if definition.direction ~= nil and CSightParams and
+		definition.direction == CSightParams.eSightTypeAnimationDirection then
+		return true
+	end
+	local animation_name = impl.state_animation_name(definition)
+	local animation_definition = state_mgr_animation_list and
+		state_mgr_animation_list.animations and
+		state_mgr_animation_list.animations[animation_name] or nil
+	local props = type(animation_definition) == "table" and animation_definition.prop or nil
+	return type(props) == "table" and props.moving == true
+end
+
+function impl.load_states()
+	if states then return states end
+	states = {}
+	states_by_name = {}
+	compatible_state_count = 0
+	for name, definition in pairs(state_lib.states or {}) do
+		local compatible, compatibility_issue = impl.state_runtime_compatibility(definition)
+		local item = {
+			name = name,
+			definition = definition,
+			safe = compatible and impl.classify_state(name, definition) or false,
+			compatible = compatible,
+			compatibility_issue = compatibility_issue,
+			direction_limited = compatible and impl.state_direction_limited(definition) or false,
+			animation = impl.state_animation_name(definition),
+			weapon = definition.weapon or "nil",
+			movement = definition.movement == move.stand and "stand" or tostring(definition.movement),
+		}
+		states[#states + 1] = item
+		states_by_name[name] = item
+		if compatible then compatible_state_count = compatible_state_count + 1 end
+	end
+	table.sort(states, function(left, right)
+		if left.compatible ~= right.compatible then return left.compatible end
+		if left.safe ~= right.safe then return left.safe end
+		return left.name < right.name
+	end)
+	return states
+end
+
+function impl.state_prefix(item)
+	if not item then return "" end
+	if not item.compatible then return impl.tr("pf_ne_state_blocked_tag") end
+	return (item.direction_limited and impl.tr("pf_ne_state_direction_tag") or "") ..
+		(item.safe and "[OK] " or "[!] ")
+end
+
+function impl.state_is_compatible(state_name)
+	local item = states_by_name and states_by_name[state_name] or nil
+	return item ~= nil and item.compatible == true
+end
+
+function impl.compatible_state_name(state_name)
+	if impl.state_is_compatible(state_name) then return state_name end
+	if impl.state_is_compatible("wait_trade") then return "wait_trade" end
+	return impl.state_is_compatible("idle") and "idle" or nil
+end
+
+function impl.developer_mode_enabled()
+	local ok, enabled = pcall(function()
+		return pf_stash_qa and pf_stash_qa.is_developer_mode and
+			pf_stash_qa.is_developer_mode() == true
+	end)
+	return ok and enabled == true
+end
+
+function impl.is_editor_tool_section(section)
+	return section == TOOL_SECTION or section == ROUTE_TOOL_SECTION
+end
+
+function impl.actor_has_item_section(section)
+	if not db.actor then return false end
+	local found = false
+	db.actor:iterate_inventory(function(_, item)
+		if item and item:section() == section then found = true end
+	end, db.actor)
+	return found
+end
+
+function impl.editor_tool_section_available()
+	local ok, exists = pcall(function()
+		return settings_ini:section_exist(TOOL_SECTION) and
+			(not impl.setting_bool("route_editor_enabled", true) or
+			settings_ini:section_exist(ROUTE_TOOL_SECTION))
+	end)
+	if ok and exists then
+		impl.tool_access.section_missing_reported = false
+		return true
+	end
+	if not impl.tool_access.section_missing_reported then
+		impl.tool_access.section_missing_reported = true
+		impl.report("QA tool section is unavailable; fully restart xrEngine.exe")
+	end
+	return false
+end
+
+function issue_tool(force)
+	-- force requests a fresh reconciliation, but never bypasses Developer mode.
+	if not db.actor or not impl.developer_mode_enabled() then return false end
+	-- A Lua reload cannot add a new LTX section to an already running engine.
+	-- Fail closed instead of passing an unknown section to alife():create.
+	if not impl.editor_tool_section_available() then return false end
+	if force then impl.tool_access.complete = false end
+	local editor_ok = impl.ensure_tool(
+		TOOL_SECTION, "pending_id", "tool_issued", "NPC editor")
+	local route_ok = not impl.setting_bool("route_editor_enabled", true) or
+		impl.ensure_tool(
+		ROUTE_TOOL_SECTION, "route_pending_id", "route_tool_issued",
+		"NPC route editor")
+	return editor_ok and route_ok
+end
+
+function impl.on_developer_inventory_prepared()
+	-- pf_stash_qa deliberately removes every non-essential inventory item while
+	-- preparing a fresh Developer game. Issue both addon-owned tools only after
+	-- that cleanup has finished, otherwise the first update can create an item
+	-- which the same frame immediately deletes again.
+	impl.tool_access.pending_id = nil
+	impl.tool_access.route_pending_id = nil
+	impl.tool_access.complete = false
+	if not impl.setting_bool("auto_issue_tool", true) then return end
+	local ok, issued = pcall(issue_tool, true)
+	if not ok then
+		impl.report("Developer-start QA tool issue failed: " .. tostring(issued))
+	elseif issued then
+		impl.report("Developer-start NPC editor tools issued after inventory setup")
+	end
+end
+
+function impl.install_developer_start_hook()
+	local qa = rawget(_G, "pf_stash_qa")
+	if not qa or type(qa.prepare_developer_new_game) ~= "function" then
+		return false
+	end
+	if qa._pf_npc_editor_developer_start_hook_owner == impl and
+		type(qa._pf_npc_editor_developer_start_hook) == "function" and
+		qa.prepare_developer_new_game == qa._pf_npc_editor_developer_start_hook then
+		impl.tool_access.developer_start_hook_installed = true
+		return true
+	end
+
+	-- Preserve the original function across script reloads instead of wrapping
+	-- an older copy of this addon's hook and issuing duplicate tools.
+	local original = qa._pf_npc_editor_prepare_developer_new_game_original
+	if type(original) ~= "function" then
+		original = qa.prepare_developer_new_game
+		qa._pf_npc_editor_prepare_developer_new_game_original = original
+	end
+	local hook = function(...)
+		local result = original(...)
+		impl.on_developer_inventory_prepared()
+		return result
+	end
+	qa._pf_npc_editor_developer_start_hook_owner = impl
+	qa._pf_npc_editor_developer_start_hook = hook
+	qa.prepare_developer_new_game = hook
+	impl.tool_access.developer_start_hook_installed = true
+	impl.report("Developer-start inventory hook installed")
+	return true
+end
+
+function impl.remove_tool_outside_developer_mode()
+	local actor = db.actor
+	local sim = alife()
+	if not actor or not sim then return false end
+
+	local ids = {}
+	local seen = {}
+	actor:iterate_inventory(function(_, item)
+		if item and impl.is_editor_tool_section(item:section()) then
+			local id = item:id()
+			ids[#ids + 1] = id
+			seen[id] = true
+		end
+	end, actor)
+	if impl.tool_access.pending_id and not seen[impl.tool_access.pending_id] then
+		ids[#ids + 1] = impl.tool_access.pending_id
+	end
+	if impl.tool_access.route_pending_id and
+		not seen[impl.tool_access.route_pending_id] then
+		ids[#ids + 1] = impl.tool_access.route_pending_id
+	end
+
+	local removed = 0
+	local complete = true
+	for _, id in ipairs(ids) do
+		local server_item = sim:object(id, true)
+		if server_item then
+			sim:release(server_item, true)
+			removed = removed + 1
+		else
+			complete = false
+		end
+	end
+	impl.tool_access.pending_id = nil
+	impl.tool_access.route_pending_id = nil
+	impl.current_state_root().tool_issued = false
+	impl.current_state_root().route_tool_issued = false
+	if removed > 0 then
+		impl.report(string.format(
+			"removed %d NPC editor QA tool(s) outside Developer mode", removed
+		))
+	end
+	return complete
+end
+
+function impl.sync_tool_access()
+	if not db.actor then return end
+	local actor_id = db.actor:id()
+	local developer = impl.developer_mode_enabled()
+	if impl.tool_access.actor_id ~= actor_id then
+		impl.tool_access.actor_id = actor_id
+		impl.tool_access.pending_id = nil
+		impl.tool_access.route_pending_id = nil
+		impl.tool_access.complete = false
+	end
+	if impl.tool_access.developer ~= developer then
+		impl.tool_access.developer = developer
+		impl.tool_access.complete = false
+	end
+	if developer then
+		if not impl.editor_tool_section_available() then return end
+		if not impl.setting_bool("auto_issue_tool", true) then
+			impl.tool_access.pending_id = nil
+			impl.tool_access.route_pending_id = nil
+			impl.tool_access.complete = true
+			return
+		end
+		-- Developer startup may clear inventory after this addon first issues its
+		-- standalone QA item. Confirm the actual item every reconciliation pass;
+		-- a still-pending server object is accepted to avoid duplicate spawns.
+		local route_required = impl.setting_bool("route_editor_enabled", true)
+		if impl.actor_has_item_section(TOOL_SECTION) and
+			(not route_required or
+			impl.actor_has_item_section(ROUTE_TOOL_SECTION)) then
+			local editor_was_pending = impl.tool_access.pending_id ~= nil
+			local route_was_pending = impl.tool_access.route_pending_id ~= nil
+			impl.tool_access.pending_id = nil
+			impl.tool_access.route_pending_id = nil
+			impl.tool_access.complete = true
+			impl.current_state_root().tool_issued = true
+			impl.current_state_root().route_tool_issued = true
+			if editor_was_pending then
+				impl.report("NPC editor QA tool confirmed in Developer inventory")
+			end
+			if route_was_pending then
+				impl.report("NPC route editor QA tool confirmed in Developer inventory")
+			end
+			return
+		end
+		impl.tool_access.complete = issue_tool(false)
+	else
+		if impl.tool_access.complete then return end
+		impl.tool_access.complete = impl.remove_tool_outside_developer_mode()
+	end
+end
+
+function impl.planner_status(planner)
+	if not planner then return false, INVALID_ACTION_ID end
+	local ok_init, initialized = pcall(function() return planner:initialized() end)
+	local ok_action, action = pcall(function() return planner:current_action_id() end)
+	return ok_init and initialized == true,
+		ok_action and action or INVALID_ACTION_ID
+end
+
+function impl.ready_remark_object(object, editor_owned)
+	if not object then return false, nil, "offline" end
+	local storage = db.storage[object:id()]
+	if not storage or not storage.state_mgr then return false, storage, "state_mgr" end
+	local active = storage.active_section or ""
+	if editor_owned then
+		if active ~= EDITOR_ACTIVE_SECTION then return false, storage, "active_section" end
+	elseif string.sub(active, 1, 7) ~= "remark@" then
+		return false, storage, "active_section"
+	end
+	local top_initialized, top_action = impl.planner_status(object:motivation_action_manager())
+	if not top_initialized then return false, storage, "top_planner" end
+	if top_action ~= xr_actions_id.zmey_remark_base + 1 then
+		return false, storage, "remark_action"
+	end
+	local nested_initialized, nested_action = impl.planner_status(storage.state_mgr.planner)
+	if not nested_initialized or nested_action == INVALID_ACTION_ID then
+		return false, storage, "state_planner"
+	end
+	return true, storage, nil
+end
+
+function impl.object_has_weapon(object)
+	if not object then return false end
+	local ok, result = pcall(function()
+		return object:item_in_slot(2) ~= nil or object:item_in_slot(3) ~= nil
+	end)
+	return ok and result or false
+end
+
+function impl.weapon_transition_stable(object)
+	if not object then return false end
+	local ok_unstrapped, unstrapped = pcall(function()
+		return object:weapon_unstrapped()
+	end)
+	local ok_strapped, strapped = pcall(function()
+		return object:weapon_strapped()
+	end)
+	return ok_unstrapped and ok_strapped and
+		(unstrapped == true or strapped == true)
+end
+
+function impl.state_weapon_compatible(object, state_item)
+	local weapon = state_item and state_item.weapon or "nil"
+	if weapon == "unstrapped" or weapon == "fire" or weapon == "sniper_fire" then
+		return impl.object_has_weapon(object)
+	end
+	return true
+end
+
+function impl.state_is_static(state_item)
+	return state_item ~= nil and state_item.compatible == true and
+		state_item.safe == true and state_item.definition ~= nil and
+		state_item.definition.movement == move.stand
+end
+
+function impl.static_state_for_object(object)
+	for _, state_name in ipairs({ "wait_trade", "wait", "idle" }) do
+		local item = states_by_name[state_name]
+		if impl.state_is_static(item) and impl.state_weapon_compatible(object, item) then
+			return state_name
+		end
+	end
+	for _, item in ipairs(states or {}) do
+		if impl.state_is_static(item) and impl.state_weapon_compatible(object, item) then
+			return item.name
+		end
+	end
+	return nil
+end
+
+function impl.state_look(position, yaw)
+	local direction = impl.horizontal_direction(yaw)
+	local look = vector():set(
+		position.x + direction.x * 10,
+		position.y + 1.5,
+		position.z + direction.z * 10
+	)
+	return direction, look
+end
+
+function impl.set_personal_neutrality(object)
+	if not object or not db.actor then return end
+	pcall(function() object:set_relation(game_object.neutral, db.actor) end)
+	pcall(function() object:force_set_goodwill(0, db.actor) end)
+	pcall(function() db.actor:set_relation(game_object.neutral, object) end)
+end
+
+function impl.disable_editor_perception(object)
+	pcall(function() object:set_visual_memory_enabled(false) end)
+	pcall(function() object:set_sound_threshold(PASSIVE_SOUND_THRESHOLD) end)
+	local enemy = object:best_enemy()
+	if enemy then pcall(function() object:enable_memory_object(enemy, false) end) end
+end
+
+function impl.apply_state_target(object, storage, state_name, position, yaw, fast_transition)
+	local requested = states_by_name and states_by_name[state_name] or nil
+	if not requested or not requested.compatible then
+		impl.report(string.format(
+			"blocked incompatible state '%s' (%s)", tostring(state_name),
+			tostring(requested and requested.compatibility_issue or "missing state")))
+		return false
+	end
+	-- Stock state_mgr_animation treats a command during a weapon strap/unstrap
+	-- transition as a fatal script error. Callers already retry failed applies,
+	-- so fail closed for this short transitional window.
+	if not impl.weapon_transition_stable(object) then return false end
+	local direction, look = impl.state_look(position, yaw)
+	object:set_desired_direction(direction)
+	if fast_transition then
+		local manager = storage.state_mgr
+		local definition = requested.definition or {}
+		local function reset_mismatched_executor(executor, desired_state)
+			local executor_states = executor and executor.states or nil
+			if not executor_states or not executor.set_state then return false end
+			local busy = executor_states.current_state ~= nil or
+				executor_states.target_state ~= nil or executor_states.anim_marker ~= nil
+			local matches = executor_states.current_state == desired_state and
+				executor_states.target_state == desired_state
+			if not busy or matches then return false end
+			-- Stock fast_set is consumed by the stop action, but a scenario or
+			-- animpoint can still be locked before that action becomes selectable.
+			-- Clear only the mismatched executor once for an explicit user change.
+			executor:set_state(nil, true)
+			return true
+		end
+		-- state_mgr owns two independent executors. Ordinary poses use animation;
+		-- blue animpoint poses use animstate. Resetting only the former left the
+		-- latter visually stuck while get_state() already returned the new name.
+		reset_mismatched_executor(manager.animation, definition.animation)
+		reset_mismatched_executor(manager.animstate, definition.animstate)
+	end
+	storage.state_mgr:set_state(
+		state_name, nil, nil, { look_position = look },
+		fast_transition and { fast_set = true } or nil
+	)
+	next_direction_retry[object:id()] = time_global() + DIRECTION_RETRY_MS
+	return direction
+end
+
+function impl.pin_server_record(server_object, record)
+	if not server_object then return end
+	server_object.position = vector():set(record.x, record.y, record.z)
+	server_object.angle = vector():set(0, record.yaw, 0)
+	server_object.m_level_vertex_id = record.level_vertex_id
+	server_object.m_game_vertex_id = record.game_vertex_id
+	server_object.m_smart_terrain_id = NO_SMART_TERRAIN_ID
+end
+
+function impl.apply_owned_online(object, server_object, record)
+	local ready, storage = impl.ready_remark_object(object, true)
+	if not ready then return end
+	local desired_position = vector():set(record.x, record.y, record.z)
+	if not prepared_online[object:id()] or
+		impl.horizontal_distance_sqr(object:position(), desired_position) > POSITION_TOLERANCE_SQR then
+		object:set_npc_position(impl.copy_vector(desired_position))
+		pose_applied[object:id()] = nil
+		next_direction_retry[object:id()] = nil
+	end
+	impl.disable_editor_perception(object)
+	impl.set_personal_neutrality(object)
+	prepared_online[object:id()] = true
+
+	if object:best_enemy() or object:best_danger() then return end
+	local state_item = states_by_name[record.state]
+	if not state_item or not state_item.compatible then
+		local invalid_state = record.state
+		record.state = "wait_trade"
+		impl.put_record(record)
+		pose_applied[object:id()] = nil
+		state_item = states_by_name[record.state]
+		impl.report(string.format(
+			"NPC id=%s state '%s' migrated to wait_trade: %s",
+			tostring(record.id), tostring(invalid_state),
+			tostring(states_by_name[invalid_state] and
+				states_by_name[invalid_state].compatibility_issue or "missing state")))
+	end
+	if record.off_mesh == true and not impl.state_is_static(state_item) then
+		local previous_state = record.state
+		record.state = impl.static_state_for_object(object)
+		if not record.state then return end
+		impl.put_record(record)
+		pose_applied[object:id()] = nil
+		state_item = states_by_name[record.state]
+		impl.report(string.format(
+			"NPC id=%s off-mesh state '%s' migrated to static '%s'",
+			tostring(record.id), tostring(previous_state), tostring(record.state)))
+	end
+	if not state_item or not state_item.compatible or
+		not impl.state_weapon_compatible(object, state_item) then return end
+	local current = state_mgr.get_state(object)
+	local signature = record.state .. ":" .. string.format("%.6f", record.yaw)
+	if current ~= record.state or pose_applied[object:id()] ~= signature then
+		if impl.apply_state_target(object, storage, record.state, desired_position, record.yaw) then
+			pose_applied[object:id()] = signature
+		end
+	end
+
+	local desired_direction = impl.horizontal_direction(record.yaw)
+	local actual_direction = object:direction()
+	local dot = actual_direction.x * desired_direction.x + actual_direction.z * desired_direction.z
+	if dot < DIRECTION_DOT then
+		local now = time_global()
+		if not next_direction_retry[object:id()] or now >= next_direction_retry[object:id()] then
+			impl.apply_state_target(object, storage, record.state, desired_position, record.yaw)
+		end
+	else
+		next_direction_retry[object:id()] = nil
+	end
+end
+
+function impl.process_editor_records()
+	local state = impl.current_state_root()
+	local route = pf_npc_route_editor
+	for key, record in pairs(state.npcs) do
+		local id = tonumber(record.id) or tonumber(key)
+		local server_object = id and alife():object(id, true) or nil
+		local client_object = id and level.object_by_id(id) or nil
+		if placement.active and placement.target_id == id then
+			-- The placement tool temporarily owns the client transform.
+		elseif record.pending_delete then
+			if time_global() >= (record.delete_after or 0) and not client_object then
+				if server_object then alife():release(server_object, true) end
+				impl.remove_record(id)
+				impl.report(string.format("safe offline deletion completed id=%s", tostring(id)))
+			end
+		elseif route and route.owns_npc and
+			route.owns_npc(record) then
+			-- A configured route is the sole owner of movement, pose and the
+			-- current ALife transform. This remains true while the test switch is
+			-- disabled: pausing the feature must not snap an NPC back to point 1.
+		elseif server_object then
+			if client_object then
+				impl.apply_owned_online(client_object, server_object, record)
+			else
+				impl.pin_server_record(server_object, record)
+			end
+		end
+	end
+end
+
+function impl.current_level_id()
+	local actor_server = alife() and alife():actor() or nil
+	if not actor_server then return nil end
+	return game_graph():vertex(actor_server.m_game_vertex_id):level_id()
+end
+
+function impl.current_level_server_npcs(filter)
+	local result = {}
+	local level_id = impl.current_level_id()
+	if level_id == nil then return result end
+	filter = string.lower(filter or "")
+	for _, server_object in alife():objects() do
+		if IsStalker(nil, server_object:clsid()) and
+			game_graph():vertex(server_object.m_game_vertex_id):level_id() == level_id then
+			local client = level.object_by_id(server_object.id)
+			local name = client and client:character_name() or server_object:character_name_str()
+			name = game.translate_string(name or "") or name or ""
+			local record = impl.get_record(server_object.id)
+			local search = string.lower(table.concat({
+				tostring(server_object.id), server_object:section_name(), name,
+				record and record.label or ""
+			}, " "))
+			if filter == "" or string.find(search, filter, 1, true) then
+				result[#result + 1] = {
+					id = server_object.id,
+					section = server_object:section_name(),
+					name = name,
+					online = client ~= nil,
+					owned = record ~= nil,
+					record = record,
+				}
+			end
+		end
+	end
+	table.sort(result, function(left, right)
+		if left.online ~= right.online then return left.online end
+		if left.owned ~= right.owned then return left.owned end
+		return (left.name .. left.section) < (right.name .. right.section)
+	end)
+	return result
+end
+
+function impl.profile_filter(filter)
+	local result = {}
+	filter = string.lower(filter or "")
+	for _, item in ipairs(impl.load_profiles()) do
+		local search = string.lower(table.concat({
+			item.specific or "", item.name or "", item.community or "",
+			item.visual or "", item.risk or ""
+		}, " "))
+		if filter == "" or string.find(search, filter, 1, true) then
+			result[#result + 1] = item
+		end
+	end
+	return result
+end
+
+function impl.target_transform(id)
+	local record = impl.get_record(id)
+	if record then
+		return {
+			position = vector():set(record.x, record.y, record.z),
+			yaw = record.yaw,
+			level_vertex_id = record.level_vertex_id,
+			game_vertex_id = record.game_vertex_id,
+			state = record.state,
+			label = record.label,
+			off_mesh = record.off_mesh == true,
+		}
+	end
+	local server_object = alife():object(id, true)
+	local client = level.object_by_id(id)
+	if not server_object then return nil end
+	local yaw = server_object.angle and server_object.angle.y or 0
+	if client then yaw = impl.direction_yaw(client:direction()) end
+	return {
+		position = client and impl.copy_vector(client:position()) or impl.copy_vector(server_object.position),
+		yaw = yaw,
+		level_vertex_id = server_object.m_level_vertex_id,
+		game_vertex_id = server_object.m_game_vertex_id,
+		state = client and state_mgr.get_state(client) or nil,
+		label = client and client:character_name() or server_object:section_name(),
+		off_mesh = false,
+	}
+end
+
+function impl.snapshot_existing(id)
+	if previews[id] then return previews[id] end
+	local server_object = alife():object(id, true)
+	local client = level.object_by_id(id)
+	local ready, storage = impl.ready_remark_object(client, false)
+	if not server_object or not ready then return nil, storage end
+	local transform = impl.target_transform(id)
+	local snapshot = {
+		id = id,
+		section = server_object:section_name(),
+		position = impl.copy_vector(transform.position),
+		yaw = transform.yaw,
+		direction = impl.copy_vector(client:direction()),
+		level_vertex_id = server_object.m_level_vertex_id,
+		game_vertex_id = server_object.m_game_vertex_id,
+		smart_terrain_id = server_object.m_smart_terrain_id,
+		state = transform.state or "idle",
+		active_section = storage.active_section,
+		authored = nil,
+	}
+	previews[id] = snapshot
+	return snapshot, storage
+end
+
+function impl.apply_existing_transform(
+	id, position, yaw, state_name, label, fast_transition,
+	level_vertex_id, game_vertex_id
+)
+	local snapshot, storage = impl.snapshot_existing(id)
+	local server_object = alife():object(id, true)
+	local client = level.object_by_id(id)
+	if not snapshot or not server_object or not client then return false end
+	state_name = state_name or snapshot.state
+	if not impl.state_is_compatible(state_name) then return false end
+	level_vertex_id = impl.valid_level_vertex_id(level_vertex_id) and
+		level_vertex_id or level.vertex_id(position)
+	if not impl.valid_level_vertex_id(level_vertex_id) then return false end
+	game_vertex_id = game_vertex_id or db.actor:game_vertex_id()
+	client:set_npc_position(impl.copy_vector(position))
+	server_object.position = impl.copy_vector(position)
+	server_object.angle = vector():set(0, yaw, 0)
+	server_object.m_level_vertex_id = level_vertex_id
+	server_object.m_game_vertex_id = game_vertex_id
+	if not impl.apply_state_target(client, storage, state_name, position, yaw, fast_transition) then
+		return false
+	end
+	snapshot.authored = {
+		position = impl.copy_vector(position),
+		yaw = yaw,
+		state = state_name,
+		label = label or snapshot.section,
+		level_vertex_id = level_vertex_id,
+		game_vertex_id = game_vertex_id,
+	}
+	return true
+end
+
+function impl.restore_existing_preview(id)
+	local snapshot = previews[id]
+	if not snapshot then return true end
+	local server_object = alife():object(id, true)
+	local client = level.object_by_id(id)
+	if server_object then
+		server_object.position = impl.copy_vector(snapshot.position)
+		server_object.angle = vector():set(0, snapshot.yaw, 0)
+		server_object.m_level_vertex_id = snapshot.level_vertex_id
+		server_object.m_game_vertex_id = snapshot.game_vertex_id
+		server_object.m_smart_terrain_id = snapshot.smart_terrain_id
+	end
+	if client then
+		local ready, storage = impl.ready_remark_object(client, false)
+		if ready and storage.active_section == snapshot.active_section then
+			client:set_npc_position(impl.copy_vector(snapshot.position))
+			impl.apply_state_target(
+				client, storage, impl.compatible_state_name(snapshot.state),
+				snapshot.position, snapshot.yaw, true)
+		end
+	end
+	previews[id] = nil
+	return true
+end
+
+function impl.restore_all_existing_previews()
+	local ids = {}
+	for id in pairs(previews) do ids[#ids + 1] = id end
+	for _, id in ipairs(ids) do impl.restore_existing_preview(id) end
+end
+
+function impl.push_history(entry)
+	history[#history + 1] = entry
+	if #history > 30 then table.remove(history, 1) end
+end
+
+function impl.record_snapshot(record)
+	return {
+		id = record.id,
+		x = record.x, y = record.y, z = record.z,
+		yaw = record.yaw,
+		state = record.state,
+		label = record.label,
+		level_vertex_id = record.level_vertex_id,
+		game_vertex_id = record.game_vertex_id,
+		off_mesh = record.off_mesh == true,
+		pending_delete = record.pending_delete,
+	}
+end
+
+function impl.restore_record_snapshot(snapshot)
+	local record = impl.get_record(snapshot.id)
+	if not record then return false end
+	for key, value in pairs(snapshot) do record[key] = value end
+	record.state = impl.compatible_state_name(record.state)
+	if not record.state then return false end
+	impl.put_record(record)
+	local server_object = alife():object(record.id, true)
+	local client = level.object_by_id(record.id)
+	if server_object then impl.pin_server_record(server_object, record) end
+	if client then
+		local ready, storage = impl.ready_remark_object(client, true)
+		if ready then
+			client:set_npc_position(vector():set(record.x, record.y, record.z))
+			impl.apply_state_target(client, storage, record.state,
+				vector():set(record.x, record.y, record.z), record.yaw, true)
+		end
+	end
+	pose_applied[record.id] = nil
+	return true
+end
+
+function impl.ground_position(
+	x, z, reference_y, ignored_object, allow_off_mesh,
+	preferred_level_vertex_id, preferred_game_vertex_id
+)
+	local origin = vector():set(x, reference_y + 3, z)
+	local direction = vector():set(0, -1, 0)
+	local ray = ray_pick()
+	ray:set_flags(3)
+	ray:set_range(30)
+	ray:set_ignore_object(ignored_object or db.actor)
+	ray:set_position(origin)
+	ray:set_direction(direction)
+	if not ray:query() then return nil, nil, nil, "surface" end
+	local position = vector():set(origin)
+	position:mad(origin, direction, ray:get_distance())
+	local level_vertex_id = level.vertex_id(position)
+	if allow_off_mesh then
+		-- An ALife stalker still needs a valid graph anchor for serialization and
+		-- online/offline switching. Its authored world position may be outside the
+		-- AI mesh; a stationary remark never asks DetailPathManager to walk there.
+		if impl.valid_level_vertex_id(preferred_level_vertex_id) then
+			level_vertex_id = preferred_level_vertex_id
+		elseif not impl.valid_level_vertex_id(level_vertex_id) and db.actor then
+			level_vertex_id = db.actor:level_vertex_id()
+		end
+		if not impl.valid_level_vertex_id(level_vertex_id) then
+			return nil, nil, nil, "ai_mesh"
+		end
+		return position, level_vertex_id,
+			preferred_game_vertex_id or db.actor:game_vertex_id()
+	end
+	if not impl.valid_level_vertex_id(level_vertex_id) and db.actor then
+		local actor_vertex_id = db.actor:level_vertex_id()
+		if impl.valid_level_vertex_id(actor_vertex_id) then
+			local actor_vertex_position = level.vertex_position(actor_vertex_id)
+			if impl.horizontal_distance_sqr(actor_vertex_position, position) <= 36 and
+				math.abs(actor_vertex_position.y - position.y) <= 3 then
+				level_vertex_id = actor_vertex_id
+			end
+		end
+	end
+	if not impl.valid_level_vertex_id(level_vertex_id) then return nil, nil, nil, "ai_mesh" end
+	local vertex_position = level.vertex_position(level_vertex_id)
+	local dx = vertex_position.x - position.x
+	local dz = vertex_position.z - position.z
+	if dx * dx + dz * dz > 2.25 or math.abs(vertex_position.y - position.y) > 2.5 then
+		return nil, nil, nil, "ai_mesh"
+	end
+	return position, level_vertex_id, db.actor:game_vertex_id()
+end
+
+function impl.nearest_spawn_position(requested)
+	local direction = impl.copy_vector(db.actor:direction())
+	direction.y = 0
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	if length < 0.0001 then
+		direction:set(0, 0, 1)
+	else
+		direction.x = direction.x / length
+		direction.z = direction.z / length
+	end
+	local right_x, right_z = direction.z, -direction.x
+	-- A vertical ray may hit another NPC or a prop at the default point. Probe
+	-- nearby positions on the same floor instead of turning that local obstacle
+	-- into a generic creation failure.
+	local offsets = {
+		{ 0, 0 },
+		{ right_x * 1.25, right_z * 1.25 },
+		{ -right_x * 1.25, -right_z * 1.25 },
+		{ -direction.x * 1.0, -direction.z * 1.0 },
+		{ right_x * 2.0, right_z * 2.0 },
+		{ -right_x * 2.0, -right_z * 2.0 },
+	}
+	local last_reason = "surface"
+	for _, offset in ipairs(offsets) do
+		local grounded, level_vertex_id, game_vertex_id, reason = impl.ground_position(
+			requested.x + offset[1], requested.z + offset[2], requested.y, db.actor)
+		if grounded then
+			return grounded, level_vertex_id, game_vertex_id
+		end
+		last_reason = reason or last_reason
+	end
+	return nil, nil, nil, last_reason
+end
+
+function impl.create_editor_npc(profile, position, yaw, state_name, label)
+	if not profile then return nil, "profile" end
+	if not db.actor or not alife() then return nil, "runtime" end
+	position = position or impl.copy_vector(db.actor:position()):add(impl.copy_vector(db.actor:direction()):mul(2.5))
+	local grounded, level_vertex_id, game_vertex_id, ground_reason =
+		impl.nearest_spawn_position(position)
+	if not grounded then
+		impl.report(string.format(
+			"NPC creation rejected before ALife: profile=%s wrapper=%s reason=%s position=%.3f,%.3f,%.3f",
+			tostring(profile.specific), tostring(profile.wrapper),
+			tostring(ground_reason), position.x, position.y, position.z))
+		return nil, ground_reason or "ground"
+	end
+	position = grounded
+	yaw = impl.normalize_yaw(yaw or impl.direction_yaw(db.actor:direction()))
+	local ok, server_object = pcall(function()
+		return alife():create(profile.wrapper, position, level_vertex_id, game_vertex_id)
+	end)
+	if not ok then
+		impl.report(string.format(
+			"NPC creation failed in ALife: profile=%s wrapper=%s error=%s position=%.3f,%.3f,%.3f lvid=%s gvid=%s",
+			tostring(profile.specific), tostring(profile.wrapper), tostring(server_object),
+			position.x, position.y, position.z,
+			tostring(level_vertex_id), tostring(game_vertex_id)))
+		return nil, "alife_exception"
+	end
+	if not server_object then
+		impl.report(string.format(
+			"NPC creation returned nil: profile=%s wrapper=%s position=%.3f,%.3f,%.3f lvid=%s gvid=%s",
+			tostring(profile.specific), tostring(profile.wrapper),
+			position.x, position.y, position.z,
+			tostring(level_vertex_id), tostring(game_vertex_id)))
+		return nil, "alife_nil"
+	end
+	local record = {
+		id = server_object.id,
+		wrapper = profile.wrapper,
+		profile = profile.profile,
+		specific = profile.specific,
+		level = level.name(),
+		x = position.x, y = position.y, z = position.z,
+		yaw = yaw,
+		state = impl.compatible_state_name(state_name),
+		label = impl.sanitize_ltx(label ~= "" and label or profile.specific),
+		level_vertex_id = level_vertex_id,
+		game_vertex_id = game_vertex_id,
+		off_mesh = false,
+		pending_delete = false,
+	}
+	if not record.state then
+		alife():release(server_object, true)
+		impl.report(string.format(
+			"NPC creation rolled back: profile=%s has no compatible state",
+			tostring(profile.specific)))
+		return nil, "state"
+	end
+	impl.put_record(record)
+	impl.pin_server_record(server_object, record)
+	impl.push_history({ kind = "create", id = record.id })
+	return record
+end
+
+function impl.online_owned_count()
+	local count = 0
+	for _, record in pairs(impl.current_state_root().npcs) do
+		if not record.pending_delete and level.object_by_id(record.id) then count = count + 1 end
+	end
+	return count
+end
+
+function impl.profile_for_existing(target)
+	if target.record then
+		for _, profile in ipairs(impl.load_profiles()) do
+			if profile.wrapper == target.record.wrapper then return profile end
+		end
+	end
+	local client = level.object_by_id(target.id)
+	if not client then return nil end
+	local ok, profile_name = pcall(function() return client:profile_name() end)
+	if ok and profiles_by_specific[profile_name] then return profiles_by_specific[profile_name] end
+	local visual = string.lower(client:get_visual_name() or "")
+	return profiles_by_visual[visual]
+end
+
+function impl.diagnostic_object_id(object)
+	if not object then return "nil" end
+	local ok, id = pcall(function() return object:id() end)
+	return ok and tostring(id) or "present"
+end
+
+function impl.diagnostic_line(id)
+	local server_object = alife():object(id, true)
+	local object = level.object_by_id(id)
+	local storage = db.storage[id]
+	local top_init, top_action = object and impl.planner_status(object:motivation_action_manager()) or false, INVALID_ACTION_ID
+	if object then top_init, top_action = impl.planner_status(object:motivation_action_manager()) end
+	local nested_init, nested_action = false, INVALID_ACTION_ID
+	if storage and storage.state_mgr then nested_init, nested_action = impl.planner_status(storage.state_mgr.planner) end
+	local current = object and state_mgr.get_state(object) or "offline"
+	local target_state = storage and storage.state_mgr and storage.state_mgr.target_state or "nil"
+	local animation_count = object and object:animation_count() or 0
+	local enemy = object and object:best_enemy() or nil
+	local danger = object and object:best_danger() or nil
+	local record = impl.get_record(id)
+	local drift, dot = -1, -1
+	if object and record then
+		drift = math.sqrt(impl.horizontal_distance_sqr(object:position(), vector():set(record.x, record.y, record.z)))
+		local desired = impl.horizontal_direction(record.yaw)
+		local actual = object:direction()
+		dot = actual.x * desired.x + actual.z * desired.z
+	end
+	return string.format(
+		"id=%s section=%s online=%s off_mesh=%s active=%s top_init=%s top_action=%s nested_init=%s nested_action=%s current=%s target=%s anim_count=%s enemy=%s danger=%s drift=%.3f dot=%.5f",
+		tostring(id), server_object and server_object:section_name() or "missing",
+		tostring(object ~= nil), tostring(record and record.off_mesh == true),
+		storage and storage.active_section or "nil",
+		tostring(top_init), tostring(top_action), tostring(nested_init), tostring(nested_action),
+		tostring(current), tostring(target_state), tostring(animation_count),
+		impl.diagnostic_object_id(enemy), impl.diagnostic_object_id(danger),
+		drift, dot
+	)
+end
+
+function impl.export_records()
+	local path = getFS():update_path("$logs$", EXPORT_FILE)
+	local file = io.open(path, "w")
+	if not file then return false, path, 0 end
+	file:write("; PF NPC Editor export. runtime_ms=" .. tostring(time_global()) .. "\n")
+	file:write("; Existing NPC entries are previews and were not made persistent.\n\n")
+	local rows = {}
+	for _, record in pairs(impl.current_state_root().npcs) do
+		if not record.pending_delete then
+			rows[#rows + 1] = {
+				ownership = "editor_owned", id = record.id,
+				section = record.wrapper, specific = record.specific,
+				level = record.level, position = vector():set(record.x, record.y, record.z),
+				yaw = record.yaw, state = record.state, label = record.label,
+				level_vertex_id = record.level_vertex_id, game_vertex_id = record.game_vertex_id,
+				off_mesh = record.off_mesh == true,
+			}
+		end
+	end
+	for id, preview in pairs(previews) do
+		if preview.authored then
+			local authored = preview.authored
+			rows[#rows + 1] = {
+				ownership = "existing_preview", id = id,
+				section = preview.section, specific = "existing",
+				level = level.name(), position = authored.position,
+				yaw = authored.yaw, state = authored.state, label = authored.label,
+				level_vertex_id = authored.level_vertex_id, game_vertex_id = authored.game_vertex_id,
+				off_mesh = false,
+			}
+		end
+	end
+	table.sort(rows, function(left, right) return tonumber(left.id) < tonumber(right.id) end)
+	file:write("[pf_npc_editor_export]\n")
+	file:write("format_version = 2\n")
+	file:write("record_count = " .. tostring(#rows) .. "\n\n")
+	for index, row in ipairs(rows) do
+		file:write(string.format("[pf_npc_editor_%03d]\n", index))
+		file:write("ownership = " .. row.ownership .. "\n")
+		file:write("alife_id = " .. tostring(row.id) .. "\n")
+		file:write("section = " .. impl.sanitize_ltx(row.section) .. "\n")
+		file:write("specific_character = " .. impl.sanitize_ltx(row.specific) .. "\n")
+		file:write("label = " .. impl.sanitize_ltx(row.label) .. "\n")
+		file:write("level = " .. impl.sanitize_ltx(row.level) .. "\n")
+		file:write(string.format("position = %.6f, %.6f, %.6f\n", row.position.x, row.position.y, row.position.z))
+		file:write(string.format("yaw = %.9f\n", row.yaw))
+		file:write("state = " .. impl.sanitize_ltx(row.state) .. "\n")
+		file:write("level_vertex_id = " .. tostring(row.level_vertex_id) .. "\n")
+		file:write("game_vertex_id = " .. tostring(row.game_vertex_id) .. "\n")
+		file:write("off_mesh_static = " .. tostring(row.off_mesh == true) .. "\n")
+		file:write("; " .. impl.diagnostic_line(row.id) .. "\n\n")
+	end
+	file:close()
+	return true, path, #rows
+end
+
+function impl.create_ray(range, ignored_object)
+	local ray = ray_pick()
+	ray:set_flags(3)
+	ray:set_range(range)
+	ray:set_ignore_object(ignored_object or db.actor)
+	return ray
+end
+
+function impl.bbox_vertices(position, yaw)
+	local half_width = BBOX_WIDTH * 0.5
+	local half_depth = BBOX_DEPTH * 0.5
+	-- Keep the lower collision ring clear of uneven terrain and road seams.
+	-- The old 12 cm clearance rejected otherwise walkable AI-mesh positions.
+	local low = 0.30
+	local high = BBOX_HEIGHT
+	local local_vertices = {
+		{ -half_width, low, -half_depth }, { half_width, low, -half_depth },
+		{ -half_width, low, half_depth }, { half_width, low, half_depth },
+		{ -half_width, high, -half_depth }, { half_width, high, -half_depth },
+		{ -half_width, high, half_depth }, { half_width, high, half_depth },
+	}
+	local cosine = math.cos(yaw)
+	local sine = math.sin(yaw)
+	local result = {}
+	for index, local_position in ipairs(local_vertices) do
+		local x = local_position[1] * cosine - local_position[3] * sine
+		local z = local_position[1] * sine + local_position[3] * cosine
+		result[index] = vector():set(
+			position.x + x,
+			position.y + local_position[2],
+			position.z + z
+		)
+	end
+	return result
+end
+
+function impl.bbox_collides(vertices, ignored_object)
+	if not placement.collision_ray then
+		placement.collision_ray = impl.create_ray(2, ignored_object)
+	else
+		placement.collision_ray:set_ignore_object(ignored_object or db.actor)
+	end
+	for _, edge in ipairs(bbox_edges) do
+		local left = vertices[edge[1]]
+		local right = vertices[edge[2]]
+		local length = left:distance_to(right)
+		local direction = vector():set(right):sub(left):normalize()
+		placement.collision_ray:set_range(length)
+		placement.collision_ray:set_position(left)
+		placement.collision_ray:set_direction(direction)
+		if placement.collision_ray:query() and
+			placement.collision_ray:get_distance() < length - 0.035 then
+			local hit_object = placement.collision_ray:get_object()
+			local hit_actor = placement.camera_is_first_person and db.actor and
+				hit_object and hit_object:id() == db.actor:id()
+			if not hit_actor then return true end
+		end
+	end
+	return false
+end
+
+local switch_placement_mode
+local nudge_placement_detail
+
+class "pf_ne_placement_hud" (CUIScriptWnd)
+
+function pf_ne_placement_hud:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_npc_editor.xml")
+	xml:InitWindow("placement", 0, self)
+	self.panel = xml:InitFrame("placement:panel", self)
+	self.bands = {}
+	for _, name in ipairs({ "commands", "pose", "status", "hint" }) do
+		self.bands[#self.bands + 1] =
+			xml:InitStatic("placement:panel:" .. name .. "_band", self.panel)
+	end
+	self.title = xml:InitTextWnd("placement:panel:title", self.panel)
+	self.controls = xml:InitTextWnd("placement:panel:controls", self.panel)
+	self.modes = xml:InitTextWnd("placement:panel:modes", self.panel)
+	self.adjust = xml:InitTextWnd("placement:panel:adjust", self.panel)
+	self.pose = xml:InitTextWnd("placement:panel:pose", self.panel)
+	self.angle = xml:InitTextWnd("placement:panel:angle", self.panel)
+	self.status = xml:InitTextWnd("placement:panel:status", self.panel)
+	self.hint = xml:InitTextWnd("placement:panel:hint", self.panel)
+	self.detail_panel = xml:InitFrame("placement:detail_panel", self)
+	self.detail_title = xml:InitTextWnd("placement:detail_panel:title", self.detail_panel)
+	self.detail_step = xml:InitTextWnd("placement:detail_panel:step", self.detail_panel)
+
+	local function detail_button(path, name, callback_function)
+		local control = xml:Init3tButton(path, self.detail_panel)
+		self:Register(control, name)
+		self:AddCallback(name, ui_events.BUTTON_CLICKED, callback_function, self)
+		return control
+	end
+	self.detail_up = detail_button(
+		"placement:detail_panel:up", "pf_ne_detail_up", self.OnDetailUp)
+	self.detail_left = detail_button(
+		"placement:detail_panel:left", "pf_ne_detail_left", self.OnDetailLeft)
+	self.detail_right = detail_button(
+		"placement:detail_panel:right", "pf_ne_detail_right", self.OnDetailRight)
+	self.detail_down = detail_button(
+		"placement:detail_panel:down", "pf_ne_detail_down", self.OnDetailDown)
+	self:SetAutoDelete(false)
+end
+
+function pf_ne_placement_hud:OnDetailUp()
+	if nudge_placement_detail then nudge_placement_detail("y", 1) end
+end
+
+function pf_ne_placement_hud:OnDetailDown()
+	if nudge_placement_detail then nudge_placement_detail("y", -1) end
+end
+
+function pf_ne_placement_hud:OnDetailLeft()
+	if nudge_placement_detail then nudge_placement_detail("z", -1) end
+end
+
+function pf_ne_placement_hud:OnDetailRight()
+	if nudge_placement_detail then nudge_placement_detail("z", 1) end
+end
+
+function pf_ne_placement_hud:SetValid(valid, state_name, invalid_reason)
+	local item = states_by_name[state_name]
+	local prefix = impl.state_prefix(item)
+	local mode = placement.mode or PLACEMENT_MODE_CURSOR
+	self.title:SetText(impl.trf(
+		placement.route_context and "pf_ne_route_placement_title_mode" or
+			"pf_ne_placement_title_mode", mode,
+		impl.tr(placement_mode_text[mode] or placement_mode_text[PLACEMENT_MODE_CURSOR])))
+	self.modes:SetText(impl.trf(
+		placement.route_context and "pf_ne_route_placement_modes_mesh" or
+			"pf_ne_placement_modes_mesh",
+		impl.tr(placement.off_mesh and "pf_ne_placement_mesh_off" or
+			"pf_ne_placement_mesh_on")))
+	self.hint:SetText(impl.tr("pf_ne_placement_hint_mode_" .. tostring(mode)))
+	self.detail_panel:Show(mode == PLACEMENT_MODE_DETAIL)
+	self.detail_step:SetText(impl.trf("pf_ne_placement_detail_step", placement.step or 0.1))
+	self.pose:SetText(impl.trf("pf_ne_placement_pose", prefix .. tostring(state_name or "nil")))
+	self.pose:SetTextColor(item and not item.compatible and GetARGB(255, 130, 130, 130) or
+		(item and item.direction_limited and GetARGB(255, 90, 190, 225) or
+		(item and not item.safe and GetARGB(255, 235, 165, 85) or
+		GetARGB(255, 125, 215, 150))))
+	self.angle:SetText(impl.trf(
+		"pf_ne_placement_angle", math.floor(math.deg(placement.yaw or 0) + 0.5)))
+	local status_id = valid and (placement.off_mesh and
+		"pf_ne_placement_valid_off_mesh" or "pf_ne_placement_valid") or
+		("pf_ne_placement_invalid_" .. tostring(invalid_reason or "unknown"))
+	self.status:SetText(impl.tr(status_id))
+	self.status:SetTextColor(valid and (placement.off_mesh and
+		GetARGB(255, 235, 175, 75) or GetARGB(255, 105, 225, 135)) or
+		GetARGB(255, 240, 105, 90))
+end
+
+function pf_ne_placement_hud:OnKeyboard(dik, keyboard_action)
+	-- IX-Ray dispatches presses to actor callbacks before the modal UI, but
+	-- releases reach the modal UI first. Forward releases explicitly so flight
+	-- directions cannot remain latched after WASD is released.
+	if keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+		on_key_release(dik)
+		return true
+	elseif keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+function impl.remove_placement_hud()
+	if placement.hud and placement.hud:IsShown() then placement.hud:HideDialog() end
+	placement.hud = nil
+end
+
+function impl.show_placement_hud()
+	if not placement.hud then
+		placement.hud = pf_ne_placement_hud()
+		-- A modal script window is the stock IX-Ray input mode which keeps the
+		-- current camera fixed and routes mouse movement to the visible UI cursor.
+		placement.hud:ShowDialog(false)
+	end
+	placement.hud:SetValid(placement.valid, placement.state, placement.invalid_reason)
+end
+
+function impl.placement_mode_has_cursor(mode)
+	return mode == PLACEMENT_MODE_CURSOR or mode == PLACEMENT_MODE_DETAIL
+end
+
+switch_placement_mode = function(mode, silent)
+	if not placement.active or not placement_mode_text[mode] then return false end
+	placement.mode = mode
+	placement.flight_actions = {}
+	if impl.placement_mode_has_cursor(mode) then
+		impl.show_placement_hud()
+	else
+		-- Without a modal window the stock IX-Ray input path owns mouse movement,
+		-- so the player can rotate the camera normally in modes 3 and 5.
+		impl.remove_placement_hud()
+	end
+	if not silent then
+		impl.report(string.format("3D mode %d: %s", mode, impl.tr(placement_mode_text[mode])))
+	end
+	return true
+end
+
+function impl.placement_target_object()
+	return placement.target_id and level.object_by_id(placement.target_id) or nil
+end
+
+function impl.route_vertex_accessible(object, level_vertex_id)
+	if not placement.route_context then return true end
+	if not object or not impl.valid_level_vertex_id(level_vertex_id) then return false end
+	local ok, accessible = pcall(function() return object:accessible(level_vertex_id) end)
+	return ok and accessible == true
+end
+
+function impl.command_placement_direction(object, storage, yaw)
+	if not object or not storage or not storage.state_mgr then return nil end
+	local desired, look_position = impl.state_look(object:position(), yaw)
+	-- During placement the editor owns the look target. Updating the manager
+	-- fields keeps its evaluators consistent, while set_sight bypasses the
+	-- asynchronous GOAP turn action that used to batch several wheel steps.
+	storage.state_mgr.look_position = look_position
+	storage.state_mgr.look_object = nil
+	object:set_sight(look.direction, desired, true)
+	object:set_desired_direction(desired)
+	return desired
+end
+
+function impl.cursor_ray_direction()
+	local render = device()
+	local direction = vector():set(render.cam_dir):normalize()
+	local ok, cursor = pcall(GetCursorPosition)
+	local aspect = tonumber(render.aspect_ratio)
+	local fov = tonumber(render.fov)
+	if not ok or not cursor or not aspect or math.abs(aspect) < 0.000001 or not fov then
+		return direction
+	end
+	-- GetCursorPosition uses the IX-Ray virtual 1024x768 UI space. Inverting
+	-- the engine projection builds a world-space ray through that cursor.
+	local tangent = math.tan(math.rad(fov) * 0.5)
+	local horizontal = (cursor.x / 512 - 1) * tangent / aspect
+	local vertical = (1 - cursor.y / 384) * tangent
+	direction:mad(direction, render.cam_right, horizontal)
+	direction:mad(direction, render.cam_top, vertical)
+	return direction:normalize()
+end
+
+function impl.placement_candidate(use_cursor)
+	local object = impl.placement_target_object()
+	if not object then return nil, nil, nil, nil, false, "target" end
+	local camera_position = vector():set(device().cam_pos)
+	local camera_direction = use_cursor == false and
+		vector():set(device().cam_dir):normalize() or impl.cursor_ray_direction()
+	-- cam_1 starts inside the actor's render/collision proxy (especially with
+	-- first-person legs addons). Start the placement ray beyond that proxy;
+	-- g_no_clip handles physical contact, while this prevents the actor from
+	-- becoming the first ray hit and blocking the intended world surface.
+	if placement.camera_is_first_person and FIRST_PERSON_RAY_OFFSET > 0 then
+		camera_position:mad(
+			camera_position, camera_direction, FIRST_PERSON_RAY_OFFSET)
+	end
+	if not placement.target_ray then
+		placement.target_ray = impl.create_ray(MAX_EDIT_DISTANCE, object)
+	else
+		placement.target_ray:set_ignore_object(object)
+	end
+	placement.target_ray:set_position(camera_position)
+	placement.target_ray:set_direction(camera_direction)
+	local hit = placement.target_ray:query()
+	local distance = hit and placement.target_ray:get_distance() or PLACEMENT_DEFAULT_DISTANCE
+	if distance > MAX_EDIT_DISTANCE then return nil, nil, nil, nil, false, "range" end
+	local raw = vector():set(camera_position)
+	raw:mad(camera_position, camera_direction, distance)
+	local position, level_vertex_id, game_vertex_id, ground_reason =
+		impl.ground_position(
+			raw.x, raw.z, raw.y, object, placement.off_mesh,
+			placement.level_vertex_id, placement.game_vertex_id)
+	if not position then return nil, nil, nil, nil, false, ground_reason or "surface" end
+	if not impl.route_vertex_accessible(object, level_vertex_id) then
+		return position, level_vertex_id, game_vertex_id, nil, false, "unreachable"
+	end
+	if position:distance_to(db.actor:position()) > MAX_EDIT_DISTANCE then
+		return nil, nil, nil, nil, false, "range"
+	end
+	local vertices = impl.bbox_vertices(position, placement.yaw)
+	if impl.bbox_collides(vertices, object) then
+		return position, level_vertex_id, game_vertex_id, vertices, false, "collision"
+	end
+	return position, level_vertex_id, game_vertex_id, vertices, true, nil
+end
+
+function impl.detail_placement_candidate(position)
+	local object = impl.placement_target_object()
+	if not object then return nil, nil, nil, nil, false, "target" end
+	if not position then return nil, nil, nil, nil, false, "unknown" end
+	if position:distance_to(db.actor:position()) > MAX_EDIT_DISTANCE then
+		return position, nil, nil, nil, false, "range"
+	end
+	-- Z still has to sit above valid world geometry. In normal mode the AI mesh
+	-- is also required; off-mesh mode keeps the previous valid ALife anchor. Y
+	-- remains exactly editor-controlled: the ray refreshes only graph metadata.
+	local _, level_vertex_id, game_vertex_id, ground_reason = impl.ground_position(
+		position.x, position.z, position.y + 10, object, placement.off_mesh,
+		placement.level_vertex_id, placement.game_vertex_id)
+	if not level_vertex_id then
+		return position, nil, nil, nil, false, ground_reason or "surface"
+	end
+	if not impl.route_vertex_accessible(object, level_vertex_id) then
+		return position, level_vertex_id, game_vertex_id, nil, false, "unreachable"
+	end
+	local vertices = impl.bbox_vertices(position, placement.yaw)
+	if impl.bbox_collides(vertices, object) then
+		return position, level_vertex_id, game_vertex_id, vertices, false, "collision"
+	end
+	return position, level_vertex_id, game_vertex_id, vertices, true, nil
+end
+
+function impl.apply_live_placement(
+	position, yaw, refresh_state, move_object, fast_transition
+)
+	local object = impl.placement_target_object()
+	if not object then return false end
+	if placement.off_mesh and not impl.state_is_static(states_by_name[placement.state]) then
+		return false
+	end
+	local ready, storage = impl.ready_remark_object(object, placement.owned)
+	if not ready then return false end
+	if move_object ~= false then
+		object:set_npc_position(impl.copy_vector(position))
+	end
+	-- set_npc_position is enough for live dragging. Re-sending the same state
+	-- on every mouse micro-movement restarts the animation planner and makes
+	-- the NPC visibly jerk. The state is refreshed only for pose changes.
+	if refresh_state then
+		if not impl.apply_state_target(
+			object, storage, placement.state or "wait_trade", position, yaw, fast_transition
+		) then return false end
+	end
+	impl.command_placement_direction(object, storage, yaw)
+	placement.direction_retry_at = time_global() + PLACEMENT_DIRECTION_REFRESH_MS
+	return true
+end
+
+nudge_placement_detail = function(axis, direction)
+	if not placement.active or placement.mode ~= PLACEMENT_MODE_DETAIL or
+		(axis ~= "y" and axis ~= "z") or not placement.position then
+		return false
+	end
+	local candidate = impl.copy_vector(placement.position)
+	local step = tonumber(placement.step) or 0.1
+	if step <= 0 then step = 0.1 end
+	local offset = step * (direction < 0 and -1 or 1)
+	if axis == "y" then candidate.y = candidate.y + offset
+	else candidate.z = candidate.z + offset end
+	local position, level_vertex_id, game_vertex_id, _, valid, invalid_reason =
+		impl.detail_placement_candidate(candidate)
+	placement.valid = valid == true
+	placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+	if position then
+		placement.position = position
+		placement.level_vertex_id = level_vertex_id
+		placement.game_vertex_id = game_vertex_id
+		if placement.valid then
+			if impl.apply_live_placement(position, placement.yaw, false, true) then
+				placement.last_applied_position = impl.copy_vector(position)
+			else
+				placement.valid = false
+				placement.invalid_reason = "target"
+			end
+		end
+	end
+	if placement.hud then
+		placement.hud:SetValid(placement.valid, placement.state, placement.invalid_reason)
+	end
+	return true
+end
+
+function impl.maintain_placement_direction()
+	local object = impl.placement_target_object()
+	if not object or not placement.position then return end
+	local desired = impl.horizontal_direction(placement.yaw)
+	local actual = object:direction()
+	local dot = actual.x * desired.x + actual.z * desired.z
+	if dot >= PLACEMENT_DIRECTION_DOT then
+		placement.direction_retry_at = nil
+		return
+	end
+	local now = time_global()
+	if placement.direction_retry_at and now < placement.direction_retry_at then return end
+	local ready, storage = impl.ready_remark_object(object, placement.owned)
+	if not ready then return end
+	impl.command_placement_direction(object, storage, placement.yaw)
+	placement.direction_retry_at = now + PLACEMENT_DIRECTION_REFRESH_MS
+end
+
+function impl.update_placement_flight(delta_override)
+	if not placement.active or not db.actor or not next(placement.flight_actions) then
+		return false
+	end
+	-- Input is pulse-driven: key_hold must refresh actions every frame. This
+	-- makes a lost key_release harmless instead of leaving permanent movement.
+	local actions = placement.flight_actions
+	placement.flight_actions = {}
+	local render = device()
+	local motion = vector():set(0, 0, 0)
+	local forward = vector():set(render.cam_dir):normalize()
+	local right = vector():set(render.cam_right):normalize()
+	if actions[key_bindings.kFWD] then motion:add(forward) end
+	if actions[key_bindings.kBACK] then motion:sub(forward) end
+	if actions[key_bindings.kR_STRAFE] then motion:add(right) end
+	if actions[key_bindings.kL_STRAFE] then motion:sub(right) end
+	if actions[key_bindings.kJUMP] then motion.y = motion.y + 1 end
+	if actions[key_bindings.kCROUCH] then motion.y = motion.y - 1 end
+	local length = math.sqrt(motion.x * motion.x + motion.y * motion.y + motion.z * motion.z)
+	if length < 0.00001 then return false end
+	motion:mul(1 / length)
+	local delta = math.min(math.max(
+		tonumber(delta_override) or tonumber(render.f_time_delta) or 0, 0), 0.1)
+	if delta <= 0 then return false end
+	local position = vector():set(db.actor:position())
+	position:mad(position, motion, PLACEMENT_FLIGHT_SPEED * delta)
+	db.actor:set_actor_position(position)
+	return true
+end
+
+function impl.ensure_actor_collision_disabled()
+	local console = get_console()
+	local checked, enabled = pcall(function() return console:get_bool("g_no_clip") end)
+	if not checked then
+		impl.report("3D placement could not read actor collision state")
+		return false
+	end
+	if enabled == true then return true end
+	local changed = pcall(function() console:execute("g_no_clip on") end)
+	local verified, now_enabled = pcall(function()
+		return console:get_bool("g_no_clip")
+	end)
+	if changed and verified and now_enabled == true then return true end
+	impl.report("3D placement could not disable actor collision")
+	return false
+end
+
+function impl.disable_actor_collision_for_placement()
+	return impl.ensure_actor_collision_disabled()
+end
+
+function impl.restore_actor_collision_after_placement()
+	local console = get_console()
+	local checked, enabled = pcall(function() return console:get_bool("g_no_clip") end)
+	if not checked then
+		impl.report("3D placement could not read actor collision state during cleanup")
+		return false
+	end
+	if enabled ~= true then return true end
+	local changed = pcall(function() console:execute("g_no_clip off") end)
+	local verified, still_enabled = pcall(function()
+		return console:get_bool("g_no_clip")
+	end)
+	if changed and verified and still_enabled == false then
+		impl.report("g_no_clip disabled outside 3D placement")
+		return true
+	end
+	impl.report("3D placement could not restore actor collision")
+	return false
+end
+
+function impl.set_placement_actor_legs_hidden(hidden)
+	hidden = hidden == true and
+		impl.setting_bool("hide_actor_legs_in_first_person", true)
+	if placement.actor_legs_hidden == hidden then return true end
+	-- IX-Ray implements show_legs as a reference counter, not a plain boolean.
+	-- Therefore every successful false call must have exactly one true call.
+	local changed = pcall(function() player_hud.show_legs(not hidden) end)
+	if not changed then
+		impl.report("3D placement could not change first-person actor model visibility")
+		return false
+	end
+	placement.actor_legs_hidden = hidden
+	return true
+end
+
+function impl.sync_placement_actor_for_camera(first_person)
+	placement.camera_is_first_person = first_person == true
+	if placement.camera_is_first_person then
+		impl.ensure_actor_collision_disabled()
+		return impl.set_placement_actor_legs_hidden(true)
+	end
+	return impl.set_placement_actor_legs_hidden(false)
+end
+
+function impl.restore_placement_actor_model()
+	impl.set_placement_actor_legs_hidden(false)
+	placement.camera_is_first_person = false
+end
+
+function impl.switch_placement_camera(first_person, silent)
+	if not placement.active then return false end
+	local checked, current_first = pcall(function() return is_first_person() end)
+	if not checked then
+		impl.report("3D placement could not read actor camera mode")
+		return false
+	end
+	local requested_first = first_person == true
+	if current_first ~= requested_first then
+		local switched = pcall(function()
+			if requested_first then set_first_person() else set_third_person() end
+		end)
+		if not switched then
+			impl.report("3D placement could not switch to " ..
+				(requested_first and "cam_1" or "cam_2"))
+			return false
+		end
+	end
+	placement.camera_changed = placement.camera_was_first_person ~= requested_first
+	impl.sync_placement_actor_for_camera(requested_first)
+	if not silent then
+		impl.report("3D camera: " .. (requested_first and "cam_1" or "cam_2"))
+	end
+	return true
+end
+
+function impl.enable_placement_camera()
+	placement.camera_was_first_person = nil
+	placement.camera_changed = false
+	local checked, was_first = pcall(function() return is_first_person() end)
+	if not checked then
+		impl.report("3D placement could not read actor camera mode")
+		return false
+	end
+	placement.camera_was_first_person = was_first == true
+	placement.camera_is_first_person = placement.camera_was_first_person
+	if not impl.setting_bool("force_second_person_on_placement", true) or
+		not placement.camera_was_first_person then
+		return impl.sync_placement_actor_for_camera(placement.camera_was_first_person)
+	end
+	return impl.switch_placement_camera(false, true)
+end
+
+function impl.restore_actor_camera_after_placement()
+	local original_first = placement.camera_was_first_person
+	if placement.camera_changed and original_first ~= nil then
+		local restored = pcall(function()
+			if original_first then set_first_person() else set_third_person() end
+		end)
+		if not restored then
+			impl.report("3D placement could not restore " ..
+				(original_first and "cam_1" or "cam_2"))
+		end
+	end
+	placement.camera_was_first_person = nil
+	placement.camera_is_first_person = false
+	placement.camera_changed = false
+end
+
+function impl.cycle_placement_state(direction)
+	if not placement.active or not placement.position then return false end
+	local object = impl.placement_target_object()
+	if not object or not states or #states == 0 then return false end
+	local current_index = 1
+	for index, item in ipairs(states) do
+		if item.name == placement.state then current_index = index break end
+	end
+	for offset = 1, #states do
+		local index = ((current_index - 1 + direction * offset) % #states) + 1
+		local item = states[index]
+		local route_allowed = not placement.route_context or
+			(not placement.route_context.is_state_allowed or
+				placement.route_context.is_state_allowed(item, object))
+		if item.compatible and impl.state_weapon_compatible(object, item) and
+			(not placement.off_mesh or impl.state_is_static(item)) and route_allowed then
+			local previous_state = placement.state
+			placement.state = item.name
+			-- A deliberate pose change gets one fast planner transition. This is
+			-- required to leave one-shot scenario clips such as Noah's jump, while
+			-- cursor dragging and direction retries keep the non-resetting path.
+			if impl.apply_live_placement(
+				placement.position, placement.yaw, true, false, true
+			) then
+				if placement.hud then
+					placement.hud:SetValid(
+						placement.valid, placement.state, placement.invalid_reason)
+				end
+				impl.report("3D pose: " .. placement.state)
+				return true
+			end
+			placement.state = previous_state
+			return false
+		end
+	end
+	return false
+end
+
+function impl.toggle_placement_off_mesh()
+	if not placement.active or not placement.position then return false end
+	if placement.route_context then
+		impl.report(impl.tr("pf_ne_route_ai_required"))
+		return false
+	end
+	if not placement.owned then
+		impl.report(impl.tr("pf_ne_placement_off_mesh_owned_only"))
+		return false
+	end
+	local object = impl.placement_target_object()
+	if not object then return false end
+	local enabled = not placement.off_mesh
+	if enabled then
+		local previous_state = placement.state
+		local item = states_by_name[placement.state]
+		if not impl.state_is_static(item) or not impl.state_weapon_compatible(object, item) then
+			local fallback = impl.static_state_for_object(object)
+			if not fallback then
+				impl.report(impl.tr("pf_ne_placement_off_mesh_no_static"))
+				return false
+			end
+			placement.state = fallback
+			if not impl.apply_live_placement(
+				placement.position, placement.yaw, true, false, true
+			) then
+				placement.state = previous_state
+				return false
+			end
+		end
+	end
+	placement.off_mesh = enabled
+	local position, level_vertex_id, game_vertex_id, _, valid, invalid_reason =
+		impl.detail_placement_candidate(impl.copy_vector(placement.position))
+	placement.valid = valid == true
+	placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+	if position then
+		placement.position = position
+		placement.level_vertex_id = level_vertex_id
+		placement.game_vertex_id = game_vertex_id
+	end
+	if placement.hud then
+		placement.hud:SetValid(placement.valid, placement.state, placement.invalid_reason)
+	end
+	impl.report(impl.tr(enabled and "pf_ne_placement_off_mesh_enabled" or
+		"pf_ne_placement_off_mesh_disabled"))
+	return true
+end
+
+function impl.clear_placement()
+	impl.restore_placement_actor_model()
+	impl.restore_actor_camera_after_placement()
+	impl.restore_actor_collision_after_placement()
+	impl.remove_placement_hud()
+	placement.active = false
+	placement.target_id = nil
+	placement.owned = false
+	placement.position = nil
+	placement.level_vertex_id = nil
+	placement.game_vertex_id = nil
+	placement.valid = false
+	placement.invalid_reason = nil
+	placement.snapshot = nil
+	placement.target_ray = nil
+	placement.ground_ray = nil
+	placement.collision_ray = nil
+	placement.mode = PLACEMENT_MODE_CURSOR
+	placement.step = 0.1
+	placement.last_applied_position = nil
+	placement.direction_retry_at = nil
+	placement.state = nil
+	placement.off_mesh = false
+	placement.flight_actions = {}
+	placement.route_context = nil
+	level.show_weapon(true)
+end
+
+function impl.reopen_editor_after_placement()
+	local editor = dialog_singleton
+	if not editor then return end
+	-- Reopen on the next update instead of inside the ESC event that closes the
+	-- placement dialog. This prevents the same key press from reaching the newly
+	-- restored editor window and closing it again.
+	level.add_call(
+		function() return not placement.active end,
+		function()
+			if editor ~= dialog_singleton or placement.active then return end
+			editor:Enable(true)
+			editor:ShowDialog(true)
+			editor:RefreshTargets(true)
+		end
+	)
+end
+
+function impl.cancel_placement(silent)
+	if not placement.active then return end
+	local id = placement.target_id
+	local snapshot = placement.snapshot
+	local route_context = placement.route_context
+	if snapshot then
+		if placement.owned then
+			local object = impl.placement_target_object()
+			local ready, storage = impl.ready_remark_object(object, true)
+			if ready then
+				object:set_npc_position(impl.copy_vector(snapshot.position))
+				impl.apply_state_target(
+					object, storage, snapshot.state, snapshot.position, snapshot.yaw, true)
+			end
+		else
+			impl.apply_existing_transform(
+				id, snapshot.position, snapshot.yaw, snapshot.state, snapshot.label, true)
+		end
+	end
+	impl.clear_placement()
+	if route_context and route_context.on_cancel then
+		route_context.on_cancel()
+	else
+		impl.reopen_editor_after_placement()
+	end
+	if not silent then impl.ui_status("pf_ne_placement_cancelled") end
+end
+
+function impl.confirm_placement()
+	if not placement.active or not placement.valid or not placement.position then return false end
+	local id = placement.target_id
+	local position = impl.copy_vector(placement.position)
+	local yaw = placement.yaw
+	local route_context = placement.route_context
+	if route_context then
+		local object = impl.placement_target_object()
+		if not impl.route_vertex_accessible(object, placement.level_vertex_id) then
+			placement.valid = false
+			placement.invalid_reason = "unreachable"
+			if placement.hud then
+				placement.hud:SetValid(false, placement.state, "unreachable")
+			end
+			return false
+		end
+		local snapshot = placement.snapshot
+		local result = {
+			position = position, yaw = yaw, state = placement.state,
+			level_vertex_id = placement.level_vertex_id,
+			game_vertex_id = placement.game_vertex_id,
+		}
+		if snapshot then
+			local object = impl.placement_target_object()
+			local ready, storage = impl.ready_remark_object(object, true)
+			if ready then
+				object:set_npc_position(impl.copy_vector(snapshot.position))
+				impl.apply_state_target(
+					object, storage, snapshot.state, snapshot.position,
+					snapshot.yaw, true)
+			end
+		end
+		impl.clear_placement()
+		if route_context.on_confirm then route_context.on_confirm(result) end
+		return true
+	end
+	if placement.owned then
+		local record = impl.get_record(id)
+		if not record then return false end
+		local item = states_by_name[placement.state]
+		if placement.off_mesh and not impl.state_is_static(item) then
+			impl.report(impl.tr("pf_ne_placement_off_mesh_static_only"))
+			return false
+		end
+		if not impl.valid_level_vertex_id(placement.level_vertex_id) then return false end
+		impl.push_history({ kind = "record", snapshot = impl.record_snapshot(record) })
+		record.x, record.y, record.z = position.x, position.y, position.z
+		record.yaw = yaw
+		record.state = placement.state or record.state
+		record.level_vertex_id = placement.level_vertex_id
+		record.game_vertex_id = placement.game_vertex_id
+		record.off_mesh = placement.off_mesh == true
+		impl.put_record(record)
+		local server_object = alife():object(id, true)
+		if server_object then impl.pin_server_record(server_object, record) end
+	else
+		local preview = previews[id]
+		local state_name = placement.state or
+			(preview and preview.authored and preview.authored.state) or
+			(preview and preview.state or "idle")
+		local label = preview and preview.authored and preview.authored.label or
+			(preview and preview.section or "existing")
+		if not impl.apply_existing_transform(
+			id, position, yaw, state_name, label, false,
+			placement.level_vertex_id, placement.game_vertex_id
+		) then return false end
+		impl.push_history({ kind = "existing", id = id, transform = placement.snapshot })
+	end
+	impl.clear_placement()
+	impl.reopen_editor_after_placement()
+	impl.ui_status("pf_ne_status_coords")
+	return true
+end
+
+function impl.begin_placement(id, detail_step, route_context)
+	if placement.active or not db.actor then return false end
+	local object = level.object_by_id(id)
+	local owned = impl.get_record(id) ~= nil
+	local ready = impl.ready_remark_object(object, owned)
+	if not object then impl.ui_status("pf_ne_status_offline") return false end
+	if not ready then impl.ui_status(owned and "pf_ne_status_not_ready" or "pf_ne_status_not_remark") return false end
+	if not owned and not impl.snapshot_existing(id) then
+		impl.ui_status("pf_ne_status_not_remark")
+		return false
+	end
+	local transform = impl.target_transform(id)
+	local initial = route_context and route_context.initial or nil
+	local initial_position = initial and initial.position or transform.position
+	local initial_yaw = initial and initial.yaw or transform.yaw
+	local initial_level_vertex_id = initial and initial.level_vertex_id or
+		transform.level_vertex_id
+	local initial_game_vertex_id = initial and initial.game_vertex_id or
+		transform.game_vertex_id
+	local requested_state = initial and initial.state or transform.state
+	local initial_state = impl.compatible_state_name(requested_state)
+	if not initial_state then
+		impl.ui_status("pf_ne_status_state_unavailable", tostring(transform.state))
+		return false
+	end
+	placement.active = true
+	placement.target_id = id
+	placement.owned = owned
+	placement.position = impl.copy_vector(initial_position)
+	placement.yaw = initial_yaw
+	placement.level_vertex_id = initial_level_vertex_id
+	placement.game_vertex_id = initial_game_vertex_id
+	placement.valid = true
+	placement.invalid_reason = nil
+	placement.mode = PLACEMENT_MODE_CURSOR
+	placement.step = tonumber(detail_step) or 0.1
+	if placement.step <= 0 then placement.step = 0.1 end
+	placement.state = initial_state
+	placement.route_context = route_context
+	placement.off_mesh = not route_context and owned and transform.off_mesh == true or false
+	if placement.off_mesh and not impl.state_is_static(states_by_name[placement.state]) then
+		placement.state = impl.static_state_for_object(object) or placement.state
+	end
+	local snapshot = route_context and route_context.snapshot or nil
+	placement.snapshot = snapshot and {
+		position = impl.copy_vector(snapshot.position), yaw = snapshot.yaw,
+		state = impl.compatible_state_name(snapshot.state), label = transform.label,
+	} or {
+		position = impl.copy_vector(transform.position), yaw = transform.yaw,
+		state = impl.compatible_state_name(transform.state), label = transform.label,
+	}
+	placement.last_applied_position = nil
+	placement.direction_retry_at = nil
+	placement.flight_actions = {}
+	level.show_weapon(false)
+	db.actor:activate_slot(0)
+	impl.disable_actor_collision_for_placement()
+	impl.enable_placement_camera()
+	if dialog_singleton then dialog_singleton:HideDialog() end
+	if route_context and route_context.hide_dialog then route_context.hide_dialog() end
+	switch_placement_mode(PLACEMENT_MODE_CURSOR, true)
+	return true
+end
+
+function impl.update_placement()
+	if not placement.active or not db.actor then return end
+	impl.update_placement_flight()
+	if placement.mode == PLACEMENT_MODE_CURSOR or
+		placement.mode == PLACEMENT_MODE_CROSSHAIR then
+		local position, level_vertex_id, game_vertex_id, _, valid, invalid_reason =
+			impl.placement_candidate(placement.mode == PLACEMENT_MODE_CURSOR)
+		placement.valid = valid == true
+		placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+		if position then
+			placement.position = position
+			placement.level_vertex_id = level_vertex_id
+			placement.game_vertex_id = game_vertex_id
+			if placement.valid and (not placement.last_applied_position or
+				impl.horizontal_distance_sqr(position, placement.last_applied_position) > 0.0004 or
+				math.abs(position.y - placement.last_applied_position.y) > 0.05) then
+				if impl.apply_live_placement(position, placement.yaw, false, true) then
+					placement.last_applied_position = impl.copy_vector(position)
+				end
+			end
+		end
+	end
+	if placement.hud then
+		placement.hud:SetValid(placement.valid, placement.state, placement.invalid_reason)
+	end
+	impl.maintain_placement_direction()
+end
+
+function impl.set_placement_flight_action(dik, active)
+	if not placement.active or not impl.placement_mode_has_cursor(placement.mode) then
+		-- Free-camera modes leave WASD to the stock actor input. The editor flight
+		-- shim is needed only while a modal cursor window blocks that input.
+		return false
+	end
+	local binding = dik_to_bind(dik)
+	if not flight_bindings[binding] then return false end
+	placement.flight_actions[binding] = active and true or nil
+	return true
+end
+
+function on_key_press(dik)
+	local doors = impl.optional_namespace("pf_door_qa")
+	if doors and doors.on_key_press and doors.on_key_press(dik) then return end
+	if not placement.active then return false end
+	if impl.setting_bool("smoke_test_on_load", false) and not smoke_test.done and
+		(smoke_test.scenario_phase or smoke_test.direction_pending) then
+		-- Keep the automated transition deterministic. This guard is unreachable
+		-- in normal gameplay because the shipped smoke setting is disabled.
+		return true
+	end
+	local binding = dik_to_bind(dik)
+	if impl.set_placement_flight_action(dik, true) then
+		return true
+	elseif dik == DIK_keys.DIK_1 then
+		impl.switch_placement_camera(true)
+	elseif dik == DIK_keys.DIK_2 then
+		impl.switch_placement_camera(false)
+	elseif dik == DIK_keys.DIK_3 then
+		switch_placement_mode(PLACEMENT_MODE_HOTKEYS)
+	elseif dik == DIK_keys.DIK_4 then
+		switch_placement_mode(PLACEMENT_MODE_CURSOR)
+	elseif dik == DIK_keys.DIK_5 then
+		switch_placement_mode(PLACEMENT_MODE_CROSSHAIR)
+	elseif dik == DIK_keys.DIK_6 then
+		switch_placement_mode(PLACEMENT_MODE_DETAIL)
+	elseif dik == DIK_keys.DIK_9 then
+		impl.toggle_placement_off_mesh()
+	elseif binding == key_bindings.kUSE or (dik == DIK_keys.MOUSE_1 and
+		(placement.mode == PLACEMENT_MODE_CURSOR or
+		placement.mode == PLACEMENT_MODE_CROSSHAIR)) then
+		impl.confirm_placement()
+	elseif dik == DIK_keys.DIK_Q then
+		impl.cycle_placement_state(-1)
+	elseif dik == DIK_keys.DIK_R then
+		impl.cycle_placement_state(1)
+	elseif dik == DIK_keys.MOUSE_2 or dik == DIK_keys.DIK_ESCAPE or
+		binding == key_bindings.kQUIT then
+		impl.cancel_placement(false)
+	end
+	return true
+end
+
+function on_key_release(dik)
+	local doors = impl.optional_namespace("pf_door_qa")
+	if doors and doors.on_key_release and doors.on_key_release(dik) then return end
+	return impl.set_placement_flight_action(dik, false) or placement.active
+end
+
+function on_key_hold(dik)
+	local doors = impl.optional_namespace("pf_door_qa")
+	if doors and doors.on_key_hold and doors.on_key_hold(dik) then return end
+	return impl.set_placement_flight_action(dik, true)
+end
+
+function on_mouse_wheel(direction)
+	if not placement.active then return false end
+	if impl.setting_bool("smoke_test_on_load", false) and not smoke_test.done and
+		(smoke_test.scenario_phase or smoke_test.direction_pending) then
+		return true
+	end
+	if direction == 0 then return true end
+	local yaw_step = direction > 0 and -PLACEMENT_ROTATION_STEP or
+		PLACEMENT_ROTATION_STEP
+	placement.yaw = impl.normalize_yaw(placement.yaw + yaw_step)
+	if placement.position then
+		-- Rotation changes only the look target. The pose planner is intentionally
+		-- left untouched so rapid wheel input cannot queue animation transitions.
+		impl.apply_live_placement(placement.position, placement.yaw, false, false)
+	end
+	return true
+end
+
+function impl.route_feature_enabled()
+	return impl.setting_bool("route_editor_enabled", true)
+end
+
+function impl.capture_owned_transform(id)
+	local record = impl.get_record(id)
+	local object = level.object_by_id(id)
+	if not record or not object then return nil end
+	return {
+		position = impl.copy_vector(object:position()),
+		yaw = impl.direction_yaw(object:direction()),
+		state = impl.compatible_state_name(state_mgr.get_state(object) or record.state),
+		level_vertex_id = object:level_vertex_id(),
+		game_vertex_id = record.game_vertex_id,
+	}
+end
+
+function impl.apply_route_base_point(id, point)
+	local record = impl.get_record(id)
+	if not record or not point then return false end
+	record.x, record.y, record.z = point.x, point.y, point.z
+	record.yaw = impl.normalize_yaw(point.yaw or record.yaw)
+	record.state = impl.compatible_state_name(point.state or record.state)
+	record.level_vertex_id = point.level_vertex_id
+	record.game_vertex_id = point.game_vertex_id
+	record.off_mesh = false
+	impl.put_record(record)
+	local server_object = alife():object(id, true)
+	if server_object then impl.pin_server_record(server_object, record) end
+	local object = level.object_by_id(id)
+	local ready, storage = impl.ready_remark_object(object, true)
+	if ready then
+		local position = vector():set(point.x, point.y, point.z)
+		object:set_npc_position(position)
+		impl.apply_state_target(object, storage, record.state, position, record.yaw, true)
+	end
+	pose_applied[id] = nil
+	return true
+end
+
+function impl.validate_route_point(id, x, y, z, yaw)
+	local object = level.object_by_id(id)
+	if not object then return nil, "offline" end
+	local _, level_vertex_id, game_vertex_id, reason = impl.ground_position(
+		x, z, y + 10, object, false)
+	if not level_vertex_id then return nil, reason or "surface" end
+	local ok, accessible = pcall(function() return object:accessible(level_vertex_id) end)
+	if not ok or not accessible then return nil, "unreachable" end
+	-- Manual point editing keeps the authored Y, matching detail placement mode.
+	-- The vertical ray above refreshes only surface and navigation metadata.
+	local position = vector():set(x, y, z)
+	local vertices = impl.bbox_vertices(position, impl.normalize_yaw(yaw or 0))
+	if impl.bbox_collides(vertices, object) then return nil, "collision" end
+	return {
+		position = position,
+		yaw = impl.normalize_yaw(yaw or 0),
+		level_vertex_id = level_vertex_id,
+		game_vertex_id = game_vertex_id,
+	}
+end
+
+function impl.get_route_adapter()
+	if route_adapter then return route_adapter end
+	route_adapter = {
+		get_record = impl.get_record,
+		put_record = impl.put_record,
+		get_records = function() return impl.current_state_root().npcs end,
+		get_states = impl.load_states,
+		get_state = function(name) return states_by_name[name] end,
+		state_weapon_compatible = impl.state_weapon_compatible,
+		object_has_weapon = impl.object_has_weapon,
+		weapon_transition_stable = impl.weapon_transition_stable,
+		ready_owned = function(object) return impl.ready_remark_object(object, true) end,
+		apply_state = impl.apply_state_target,
+		capture_transform = impl.capture_owned_transform,
+		apply_base_point = impl.apply_route_base_point,
+		validate_point = impl.validate_route_point,
+		begin_placement = impl.begin_placement,
+		feature_enabled = impl.route_feature_enabled,
+		developer_enabled = impl.developer_mode_enabled,
+		setting_number = impl.setting_number,
+		setting_string = impl.setting_string,
+		report = impl.report,
+		sanitize = impl.sanitize_ltx,
+		valid_level_vertex = impl.valid_level_vertex_id,
+		show_main = function()
+			if not dialog_singleton then return end
+			dialog_singleton:Enable(true)
+			dialog_singleton:ShowDialog(true)
+			dialog_singleton:RefreshTargets(true)
+		end,
+		hide_main = function()
+			if dialog_singleton then dialog_singleton:HideDialog() end
+		end,
+	}
+	return route_adapter
+end
+
+class "pf_ne_list_item" (CUIListBoxItem)
+
+function pf_ne_list_item:__init(text, data, color) super(LIST_ROW_HEIGHT)
+	self.data = data
+	self:SetWndSize(vector2():set(330, LIST_ROW_HEIGHT))
+	self.text = self:GetTextItem()
+	self.text:SetFont(GetFontLetterica16Russian())
+	self.text:SetEllipsis(true)
+	self.text:SetWndPos(vector2():set(5, 0))
+	self.text:SetWndSize(vector2():set(320, LIST_ROW_HEIGHT))
+	self.text:SetText(text)
+	if color then self:SetTextColor(color) end
+end
+
+function impl.translated_profile_name(profile)
+	local name = profile.name or ""
+	if name == "" or string.find(name, "GENERATE_NAME", 1, true) then return profile.specific end
+	local translated = game.translate_string(name)
+	if translated and translated ~= name then return translated end
+	return name
+end
+
+function impl.state_details(item)
+	if not item then return "" end
+	local safety = impl.tr(not item.compatible and "pf_ne_state_unavailable" or
+		(item.safe and "pf_ne_state_safe" or "pf_ne_state_risky"))
+	local unavailable = not item.compatible and
+		("\n" .. impl.trf("pf_ne_state_unavailable_reason", item.compatibility_issue)) or ""
+	local direction = item.direction_limited and
+		("\n" .. impl.tr("pf_ne_state_direction_limited")) or ""
+	return string.format(
+		"%s\nstate: %s\nanimation: %s   weapon: %s   movement: %s%s%s",
+		safety, item.name, item.animation, item.weapon, item.movement,
+		unavailable, direction
+	)
+end
+
+class "pf_ne_help_dialog" (CUIScriptWnd)
+
+function pf_ne_help_dialog:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_npc_editor.xml")
+	xml:InitWindow("help", 0, self)
+	xml:InitStatic("help:shade", self)
+	self.panel = xml:InitFrame("help:panel", self)
+	xml:InitTextWnd("help:panel:title", self.panel)
+	local groups = {
+		{ "profiles", { "g", "s", "x" } },
+		{ "npcs", { "on", "off", "dev", "no_ai", "id" } },
+		{ "poses", { "ok", "risk", "anim", "direction" } },
+		{ "actions", { "coords", "yaw", "disabled", "save" } },
+	}
+	self.legend_groups = {}
+	self.legend_rows = {}
+	for _, definition in ipairs(groups) do
+		local group_name = definition[1]
+		local group_path = "help:panel:" .. group_name
+		local group = xml:InitFrame(group_path, self.panel)
+		self.legend_groups[group_name] = group
+		xml:InitTextWnd(group_path .. ":title", group)
+		for _, row_name in ipairs(definition[2]) do
+			local row_path = group_path .. ":" .. row_name
+			table.insert(self.legend_rows, {
+				key = xml:InitTextWnd(row_path .. "_key", group),
+				text = xml:InitTextWnd(row_path .. "_text", group),
+			})
+		end
+	end
+	-- Kept as a stable construction marker for the runtime smoke test.
+	self.body = self.legend_groups
+	self.close_button = xml:Init3tButton("help:panel:close_button", self.panel)
+	self:Register(self.close_button, "pf_ne_help_close")
+	self:AddCallback("pf_ne_help_close", ui_events.BUTTON_CLICKED, self.OnClose, self)
+	self:SetAutoDelete(false)
+end
+
+function pf_ne_help_dialog:OnClose()
+	self:HideDialog()
+end
+
+function pf_ne_help_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and
+		dik_to_bind(dik) == key_bindings.kQUIT then
+		self:HideDialog()
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+class "pf_ne_editor_dialog" (CUIScriptWnd)
+
+function pf_ne_editor_dialog:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_npc_editor.xml")
+	xml:InitWindow("main", 0, self)
+	xml:InitStatic("main:shade", self)
+	self.form = xml:InitStatic("main:form", self)
+	xml:InitStatic("main:form:screen_noise", self.form)
+	xml:InitFrameLine("main:form:top_left_bar", self.form)
+	xml:InitFrameLine("main:form:top_right_bar", self.form)
+	xml:InitFrame("main:form:content_frame", self.form)
+	xml:InitTextWnd("main:form:caption", self.form)
+
+	self.target_panel = xml:InitFrame("main:form:target_panel", self.form)
+	xml:InitTextWnd("main:form:target_panel:title", self.target_panel)
+	self.target_list = xml:InitListBox("main:form:target_panel:list", self.target_panel)
+	self.target_list:ShowSelectedItem(true)
+	self:Register(self.target_list, "pf_ne_target_list")
+	self:AddCallback("pf_ne_target_list", ui_events.LIST_ITEM_CLICKED, self.OnTargetSelected, self)
+
+	self.state_panel = xml:InitFrame("main:form:state_panel", self.form)
+	xml:InitTextWnd("main:form:state_panel:title", self.state_panel)
+	self.state_list = xml:InitListBox("main:form:state_panel:list", self.state_panel)
+	self.state_list:ShowSelectedItem(true)
+	self:Register(self.state_list, "pf_ne_state_list")
+	self:AddCallback("pf_ne_state_list", ui_events.LIST_ITEM_CLICKED, self.OnStateSelected, self)
+	self.details = xml:InitTextWnd("main:form:state_panel:details", self.state_panel)
+
+	self.fields_panel = xml:InitFrame("main:form:fields_panel", self.form)
+	for _, path in ipairs({ "label_title", "x_title", "z_title", "yaw_title", "step_title" }) do
+		xml:InitTextWnd("main:form:fields_panel:" .. path, self.fields_panel)
+	end
+	self.label_edit = xml:InitEditBox("main:form:fields_panel:label_edit", self.fields_panel)
+	self.x_edit = xml:InitEditBox("main:form:fields_panel:x_edit", self.fields_panel)
+	self.z_edit = xml:InitEditBox("main:form:fields_panel:z_edit", self.fields_panel)
+	self.yaw_edit = xml:InitEditBox("main:form:fields_panel:yaw_edit", self.fields_panel)
+	self.step_edit = xml:InitEditBox("main:form:fields_panel:step_edit", self.fields_panel)
+	self.status = xml:InitTextWnd("main:form:fields_panel:status", self.fields_panel)
+	self.step_edit:SetText("0.10")
+
+	local function button(path, name, callback_function, parent)
+		local control = xml:Init3tButton(path, parent or self.form)
+		self:Register(control, name)
+		self:AddCallback(name, ui_events.BUTTON_CLICKED, callback_function, self)
+		return control
+	end
+
+	self.existing_button = button("main:form:existing_button", "pf_ne_existing", self.OnModeExisting)
+	self.profiles_button = button("main:form:profiles_button", "pf_ne_profiles", self.OnModeProfiles)
+	self.filter_edit = xml:InitEditBox("main:form:filter_edit", self.form)
+	button("main:form:filter_button", "pf_ne_filter", self.OnFilter)
+	button("main:form:refresh_button", "pf_ne_refresh", self.OnRefresh)
+	button("main:form:help_button", "pf_ne_help", self.OnHelp)
+	self.x_minus_button = button(
+		"main:form:fields_panel:x_minus", "pf_ne_x_minus", self.OnXMinus, self.fields_panel)
+	self.x_plus_button = button(
+		"main:form:fields_panel:x_plus", "pf_ne_x_plus", self.OnXPlus, self.fields_panel)
+	self.z_minus_button = button(
+		"main:form:fields_panel:z_minus", "pf_ne_z_minus", self.OnZMinus, self.fields_panel)
+	self.z_plus_button = button(
+		"main:form:fields_panel:z_plus", "pf_ne_z_plus", self.OnZPlus, self.fields_panel)
+	self.yaw_minus_button = button(
+		"main:form:fields_panel:yaw_minus", "pf_ne_yaw_minus", self.OnYawMinus, self.fields_panel)
+	self.yaw_plus_button = button(
+		"main:form:fields_panel:yaw_plus", "pf_ne_yaw_plus", self.OnYawPlus, self.fields_panel)
+	self.create_button = button("main:form:create_button", "pf_ne_create", self.OnCreateClone)
+	self.pose_button = button("main:form:pose_button", "pf_ne_pose", self.OnApplyPose)
+	self.coords_button = button("main:form:coords_button", "pf_ne_coords", self.OnApplyCoordinates)
+	self.place_button = button("main:form:place_button", "pf_ne_place", self.OnPlace3D)
+	self.undo_button = button("main:form:undo_button", "pf_ne_undo", self.OnUndo)
+	self.export_button = button("main:form:export_button", "pf_ne_export", self.OnExport)
+	self.delete_button = button("main:form:delete_button", "pf_ne_delete", self.OnDelete)
+	self.diagnostics_button = button(
+		"main:form:diagnostics_button", "pf_ne_diagnostics", self.OnDiagnostics)
+	self.route_button = button(
+		"main:form:route_button", "pf_ne_route", self.OnRoute, self.form)
+	self.hint = xml:InitTextWnd("main:form:hint", self.form)
+	button("main:form:close_button", "pf_ne_close", self.Abort)
+
+	self:SetAutoDelete(false)
+	self.mode = "existing"
+	self.selected_id = nil
+	self.selected_profile = nil
+	self.selected_state = "wait_trade"
+	self.pending_unsafe_state = nil
+	self.pending_unsafe_until = 0
+	self.help_dialog = nil
+	self:PopulateStates()
+	self:UpdateActionStates()
+end
+
+function pf_ne_editor_dialog:__finalize()
+end
+
+function pf_ne_editor_dialog:SelectedListData(list)
+	local item = list:GetSelectedItem()
+	return item and item.data or nil
+end
+
+function pf_ne_editor_dialog:SelectedTarget()
+	local data = self:SelectedListData(self.target_list)
+	if not data or data.kind ~= "target" then return nil end
+	return data.value
+end
+
+function pf_ne_editor_dialog:SelectedProfile()
+	local data = self:SelectedListData(self.target_list)
+	if not data or data.kind ~= "profile" then return nil end
+	return data.value
+end
+
+function pf_ne_editor_dialog:SelectedState()
+	local data = self:SelectedListData(self.state_list)
+	if data and data.kind == "state" then return data.value end
+	return states_by_name[self.selected_state]
+end
+
+function pf_ne_editor_dialog:StateDetails(item)
+	local details = impl.state_details(item)
+	local target = self.mode == "existing" and self:SelectedTarget() or nil
+	local object = target and level.object_by_id(target.id) or nil
+	if item and object and not impl.state_weapon_compatible(object, item) then
+		details = details .. "\n" .. impl.tr("pf_ne_status_weapon_block")
+	end
+	if item and target and target.record and target.record.off_mesh == true and
+		not impl.state_is_static(item) then
+		details = details .. "\n" .. impl.tr("pf_ne_placement_off_mesh_static_only")
+	end
+	return details
+end
+
+function pf_ne_editor_dialog:HasExportableRecords()
+	for _, record in pairs(impl.current_state_root().npcs) do
+		if not record.pending_delete then return true end
+	end
+	for _, preview in pairs(previews) do
+		if preview.authored then return true end
+	end
+	return false
+end
+
+function pf_ne_editor_dialog:UpdateActionStates()
+	local target = self.mode == "existing" and self:SelectedTarget() or nil
+	local profile = self.mode == "profiles" and self:SelectedProfile() or nil
+	local object = target and level.object_by_id(target.id) or nil
+	local route = pf_npc_route_editor
+	local route_owned = target and target.record and route and route.owns_npc and
+		route.owns_npc(target.record) or false
+	local ready = false
+	if object and target then ready = impl.ready_remark_object(object, target.owned) == true end
+	local state_item = self:SelectedState()
+	local can_create = profile ~= nil
+	if target then can_create = not route_owned and impl.profile_for_existing(target) ~= nil end
+	local can_coordinates = target ~= nil and (target.owned or ready) and not route_owned
+	local can_pose = object ~= nil and ready and state_item ~= nil and
+		state_item.compatible and impl.state_weapon_compatible(object, state_item) and
+		(not (target and target.record and target.record.off_mesh == true) or
+			impl.state_is_static(state_item)) and not route_owned
+	if self.mode == "profiles" and state_item and not state_item.compatible then
+		can_create = false
+	end
+	local can_place = object ~= nil and ready and not route_owned
+	local can_delete = target ~= nil and impl.get_record(target.id) ~= nil
+	local can_export = self:HasExportableRecords()
+	local can_route = impl.route_feature_enabled() and route ~= nil and
+		target ~= nil and target.owned == true and object ~= nil and ready and
+		not (target.record and target.record.off_mesh == true)
+
+	local existing_active = self.mode == "existing"
+	self.existing_button:Enable(not existing_active)
+	self.profiles_button:Enable(existing_active)
+	self.existing_button:SetText((existing_active and "> " or "") .. impl.tr("pf_ne_mode_existing"))
+	self.profiles_button:SetText((existing_active and "" or "> ") .. impl.tr("pf_ne_mode_profiles"))
+	self.label_edit:Enable(profile ~= nil or target ~= nil)
+	self.x_edit:Enable(can_coordinates)
+	self.z_edit:Enable(can_coordinates)
+	self.yaw_edit:Enable(can_coordinates)
+	self.step_edit:Enable(can_coordinates)
+	self.x_minus_button:Enable(can_coordinates)
+	self.x_plus_button:Enable(can_coordinates)
+	self.z_minus_button:Enable(can_coordinates)
+	self.z_plus_button:Enable(can_coordinates)
+	self.yaw_minus_button:Enable(can_coordinates)
+	self.yaw_plus_button:Enable(can_coordinates)
+	self.create_button:Enable(can_create)
+	self.pose_button:Enable(can_pose)
+	self.coords_button:Enable(can_coordinates)
+	self.place_button:Enable(can_place)
+	self.undo_button:Enable(#history > 0)
+	self.export_button:Enable(can_export)
+	self.delete_button:Enable(can_delete)
+	self.diagnostics_button:Enable(target ~= nil or can_export)
+	self.route_button:Enable(can_route)
+	self.route_button:Show(impl.route_feature_enabled())
+end
+
+function pf_ne_editor_dialog:PopulateStates()
+	self.state_list:RemoveAll()
+	local selected_index = nil
+	for index, item in ipairs(impl.load_states()) do
+		local prefix = impl.state_prefix(item)
+		local color = not item.compatible and GetARGB(255, 120, 120, 120) or
+			(item.direction_limited and GetARGB(255, 90, 190, 225) or
+			(item.safe and GetARGB(255, 115, 220, 135) or GetARGB(255, 235, 165, 85)))
+		local row = pf_ne_list_item(
+			prefix .. item.name .. "  <" .. item.animation .. ">",
+			{ kind = "state", value = item },
+			color
+		)
+		self.state_list:AddExistingItem(row)
+		if item.name == self.selected_state then selected_index = index - 1 end
+	end
+	if selected_index then self.state_list:SetSelectedIndex(selected_index) end
+	self.details:SetText(self:StateDetails(states_by_name[self.selected_state]))
+end
+
+function pf_ne_editor_dialog:RefreshTargets(preserve)
+	local preserved_id = preserve and self.selected_id or nil
+	local preserved_specific = preserve and self.selected_profile and self.selected_profile.specific or nil
+	self.target_list:RemoveAll()
+	local selected_index = nil
+	local filter = self.filter_edit:GetText() or ""
+	if self.mode == "profiles" then
+		local list = impl.profile_filter(filter)
+		for index, profile in ipairs(list) do
+			local risk_id = "pf_ne_profile_" .. profile.risk
+			local prefix = profile.risk == "generic" and "[G] " or profile.risk == "corpse" and "[X] " or "[S] "
+			local text = string.format(
+				"%s%s | %s | %s",
+				prefix, profile.community, profile.specific, impl.translated_profile_name(profile)
+			)
+			local color = profile.risk == "generic" and GetARGB(255, 190, 215, 190) or
+				profile.risk == "corpse" and GetARGB(255, 230, 105, 95) or GetARGB(255, 230, 175, 100)
+			self.target_list:AddExistingItem(pf_ne_list_item(
+				text, { kind = "profile", value = profile, risk_text = impl.tr(risk_id) }, color))
+			if profile.specific == preserved_specific then selected_index = index - 1 end
+		end
+		if #list == 0 then self.status:SetText(impl.tr("pf_ne_filter_empty"))
+		else self.status:SetText(impl.trf("pf_ne_status_profiles", #list)) end
+	else
+		local list = impl.current_level_server_npcs(filter)
+		for index, target in ipairs(list) do
+			local prefix = target.online and "[ON]" or "[OFF]"
+			if target.owned then prefix = prefix .. "[DEV]" end
+			if target.record and target.record.off_mesh == true then
+				prefix = prefix .. "[NO-AI]"
+			end
+			local text = string.format(
+				"%s %s | %s | #%s",
+				prefix, target.name ~= "" and target.name or target.section,
+				target.section, tostring(target.id)
+			)
+			local color = target.online and GetARGB(255, 195, 215, 195) or GetARGB(255, 130, 145, 135)
+			self.target_list:AddExistingItem(pf_ne_list_item(
+				text, { kind = "target", value = target }, color))
+			if target.id == preserved_id then selected_index = index - 1 end
+		end
+		if #list == 0 then self.status:SetText(impl.tr("pf_ne_filter_empty"))
+		else self.status:SetText(impl.trf("pf_ne_status_existing", #list)) end
+	end
+	if selected_index then
+		self.target_list:SetSelectedIndex(selected_index)
+		self:OnTargetSelected()
+	else
+		self.selected_id = nil
+		self.selected_profile = nil
+		self:SetFields(nil)
+		self:UpdateActionStates()
+	end
+end
+
+function pf_ne_editor_dialog:SetFields(transform)
+	if not transform then
+		self.label_edit:SetText("")
+		self.x_edit:SetText("")
+		self.z_edit:SetText("")
+		self.yaw_edit:SetText("")
+		return
+	end
+	self.label_edit:SetText(tostring(transform.label or ""))
+	self.x_edit:SetText(string.format("%.6f", transform.position.x))
+	self.z_edit:SetText(string.format("%.6f", transform.position.z))
+	self.yaw_edit:SetText(string.format("%.3f", math.deg(transform.yaw)))
+	if transform.state and states_by_name[transform.state] then
+		self.selected_state = transform.state
+		self:PopulateStates()
+	end
+end
+
+function pf_ne_editor_dialog:OnTargetSelected()
+	if self.mode == "profiles" then
+		local profile = self:SelectedProfile()
+		self.selected_profile = profile
+		self.selected_id = nil
+		if profile then
+			self.label_edit:SetText(impl.translated_profile_name(profile))
+			self.status:SetText(string.format(
+				"%s | %s | %s | %s",
+				profile.specific, profile.community, profile.risk, profile.weapon
+			))
+		else
+			self:SetFields(nil)
+		end
+		self:UpdateActionStates()
+		return
+	end
+	local target = self:SelectedTarget()
+	self.selected_id = target and target.id or nil
+	self.selected_profile = nil
+	if target then
+		self:SetFields(impl.target_transform(target.id))
+		self.status:SetText(impl.diagnostic_line(target.id))
+	else
+		self:SetFields(nil)
+	end
+	self:UpdateActionStates()
+end
+
+function pf_ne_editor_dialog:OnStateSelected()
+	local item = self:SelectedState()
+	if not item then return end
+	self.selected_state = item.name
+	self.details:SetText(self:StateDetails(item))
+	self:UpdateActionStates()
+end
+
+function pf_ne_editor_dialog:OnModeExisting()
+	self.mode = "existing"
+	self.selected_profile = nil
+	self:RefreshTargets(false)
+end
+
+function pf_ne_editor_dialog:OnModeProfiles()
+	self.mode = "profiles"
+	self.selected_id = nil
+	self:RefreshTargets(false)
+end
+
+function pf_ne_editor_dialog:OnFilter()
+	self:RefreshTargets(false)
+end
+
+function pf_ne_editor_dialog:OnRefresh()
+	self:RefreshTargets(true)
+end
+
+function pf_ne_editor_dialog:OnHelp()
+	if not self.help_dialog then self.help_dialog = pf_ne_help_dialog() end
+	self.help_dialog:Enable(true)
+	self.help_dialog:ShowDialog(false)
+end
+
+function pf_ne_editor_dialog:SelectTargetId(id)
+	for index = 0, self.target_list:GetSize() - 1 do
+		local item = self.target_list:GetItemByIndex(index)
+		if item and item.data and item.data.kind == "target" and item.data.value.id == id then
+			self.target_list:SetSelectedIndex(index)
+			self:OnTargetSelected()
+			return true
+		end
+	end
+	return false
+end
+
+function pf_ne_editor_dialog:OnCreateClone()
+	local profile, position, yaw, state_name, label
+	if self.mode == "profiles" then
+		profile = self:SelectedProfile()
+		if not profile then impl.ui_status("pf_ne_status_select_profile") return end
+		local selected_state = self:SelectedState()
+		state_name = impl.compatible_state_name(selected_state and selected_state.name)
+		label = self.label_edit:GetText()
+	else
+		local target = self:SelectedTarget()
+		if not target then impl.ui_status("pf_ne_status_select_target") return end
+		profile = impl.profile_for_existing(target)
+		if not profile then
+			self.status:SetText("No exact stock profile could be mapped for this NPC.")
+			return
+		end
+		local transform = impl.target_transform(target.id)
+		position = impl.copy_vector(transform.position)
+		position.x = position.x + 0.8
+		yaw = transform.yaw
+		state_name = impl.compatible_state_name(transform.state)
+		label = (transform.label or profile.specific) .. " copy"
+	end
+	local record, failure = impl.create_editor_npc(profile, position, yaw, state_name, label)
+	if not record then
+		self.status:SetText(string.format(
+			"NPC creation failed [%s]; see pf_npc_editor_runtime.log.",
+			tostring(failure or "unknown")))
+		return
+	end
+	self.mode = "existing"
+	self.selected_id = record.id
+	self:RefreshTargets(true)
+	self:SelectTargetId(record.id)
+	impl.ui_status("pf_ne_status_created")
+	local count = impl.online_owned_count()
+	if count >= ONLINE_WARNING_COUNT then impl.ui_status("pf_ne_status_online_warning", count) end
+end
+
+function pf_ne_editor_dialog:RequireEditableTarget()
+	local target = self:SelectedTarget()
+	if not target then impl.ui_status("pf_ne_status_select_target") return nil end
+	local object = level.object_by_id(target.id)
+	if not object and not target.owned then impl.ui_status("pf_ne_status_offline") return nil end
+	if object then
+		local ready = impl.ready_remark_object(object, target.owned)
+		if not ready then
+			impl.ui_status(target.owned and "pf_ne_status_not_ready" or "pf_ne_status_not_remark")
+			return nil
+		end
+	end
+	return target, object
+end
+
+function pf_ne_editor_dialog:OnApplyPose()
+	local target, object = self:RequireEditableTarget()
+	if not target then return end
+	local state_item = self:SelectedState()
+	if not state_item then impl.ui_status("pf_ne_status_select_state") return end
+	if not object then impl.ui_status("pf_ne_status_offline") return end
+	if not state_item.compatible then
+		impl.ui_status("pf_ne_status_state_unavailable", state_item.compatibility_issue)
+		return
+	end
+	if not impl.state_weapon_compatible(object, state_item) then
+		impl.ui_status("pf_ne_status_weapon_block")
+		return
+	end
+	if target.owned and target.record and target.record.off_mesh == true and
+		not impl.state_is_static(state_item) then
+		impl.ui_status("pf_ne_placement_off_mesh_static_only")
+		return
+	end
+	if not state_item.safe then
+		local now = time_global()
+		if self.pending_unsafe_state ~= state_item.name or now > self.pending_unsafe_until then
+			self.pending_unsafe_state = state_item.name
+			self.pending_unsafe_until = now + 5000
+			impl.ui_status("pf_ne_status_unsafe_confirm")
+			return
+		end
+	end
+	self.pending_unsafe_state = nil
+	local transform = impl.target_transform(target.id)
+	local label = self.label_edit:GetText()
+	if target.owned then
+		local record = impl.get_record(target.id)
+		record.state = impl.compatible_state_name(record.state)
+		if not record.state then
+			impl.ui_status("pf_ne_status_state_unavailable", "fallback state")
+			return
+		end
+		impl.push_history({ kind = "record", snapshot = impl.record_snapshot(record) })
+		record.state = state_item.name
+		record.label = impl.sanitize_ltx(label)
+		impl.put_record(record)
+		local ready, storage = impl.ready_remark_object(object, true)
+		if ready then
+			impl.apply_state_target(
+				object, storage, record.state, transform.position, record.yaw, true)
+			pose_applied[target.id] = record.state .. ":" .. string.format("%.6f", record.yaw)
+		end
+	else
+		impl.push_history({ kind = "existing", id = target.id, transform = transform })
+		impl.apply_existing_transform(
+			target.id, transform.position, transform.yaw, state_item.name, label, true)
+		impl.ui_status("pf_ne_status_preview")
+	end
+	self.selected_state = state_item.name
+	impl.ui_status("pf_ne_status_pose", state_item.name)
+	self:UpdateActionStates()
+end
+
+function pf_ne_editor_dialog:OnApplyCoordinates()
+	local target, object = self:RequireEditableTarget()
+	if not target then return end
+	local x = tonumber(self.x_edit:GetText())
+	local z = tonumber(self.z_edit:GetText())
+	local yaw_degrees = tonumber(self.yaw_edit:GetText())
+	if not x or not z or not yaw_degrees then impl.ui_status("pf_ne_status_invalid_coords") return end
+	local transform = impl.target_transform(target.id)
+	local position, level_vertex_id, game_vertex_id = impl.ground_position(
+		x, z, transform.position.y, object or db.actor,
+		target.owned and transform.off_mesh == true,
+		transform.level_vertex_id, transform.game_vertex_id)
+	if not position then impl.ui_status("pf_ne_status_ground_failed") return end
+	local yaw = impl.normalize_yaw(math.rad(yaw_degrees))
+	local label = self.label_edit:GetText()
+	if target.owned then
+		local record = impl.get_record(target.id)
+		record.state = impl.compatible_state_name(record.state)
+		if not record.state then
+			impl.ui_status("pf_ne_status_state_unavailable", "fallback state")
+			return
+		end
+		impl.push_history({ kind = "record", snapshot = impl.record_snapshot(record) })
+		record.x, record.y, record.z = position.x, position.y, position.z
+		record.yaw = yaw
+		record.label = impl.sanitize_ltx(label)
+		record.level_vertex_id = level_vertex_id
+		record.game_vertex_id = game_vertex_id
+		impl.put_record(record)
+		local server_object = alife():object(target.id, true)
+		if server_object then impl.pin_server_record(server_object, record) end
+		if object then
+			local ready, storage = impl.ready_remark_object(object, true)
+			if ready then
+				object:set_npc_position(impl.copy_vector(position))
+				impl.apply_state_target(object, storage, record.state, position, yaw)
+			end
+		end
+		pose_applied[target.id] = nil
+	else
+		impl.push_history({ kind = "existing", id = target.id, transform = transform })
+		impl.apply_existing_transform(target.id, position, yaw, transform.state, label)
+		impl.ui_status("pf_ne_status_preview")
+	end
+	self:SetFields(impl.target_transform(target.id))
+	impl.ui_status("pf_ne_status_coords")
+	self:UpdateActionStates()
+end
+
+function pf_ne_editor_dialog:Nudge(field, direction)
+	local step = tonumber(self.step_edit:GetText()) or 0.1
+	if step <= 0 then step = 0.1 end
+	local edit = field == "x" and self.x_edit or field == "z" and self.z_edit or self.yaw_edit
+	local value = tonumber(edit:GetText())
+	if not value then impl.ui_status("pf_ne_status_invalid_coords") return end
+	edit:SetText(string.format(field == "yaw" and "%.3f" or "%.6f", value + step * direction))
+	self:OnApplyCoordinates()
+end
+
+function pf_ne_editor_dialog:OnXMinus() self:Nudge("x", -1) end
+function pf_ne_editor_dialog:OnXPlus() self:Nudge("x", 1) end
+function pf_ne_editor_dialog:OnZMinus() self:Nudge("z", -1) end
+function pf_ne_editor_dialog:OnZPlus() self:Nudge("z", 1) end
+function pf_ne_editor_dialog:OnYawMinus() self:Nudge("yaw", -1) end
+function pf_ne_editor_dialog:OnYawPlus() self:Nudge("yaw", 1) end
+
+function pf_ne_editor_dialog:OnPlace3D()
+	local target = self:SelectedTarget()
+	if not target then impl.ui_status("pf_ne_status_select_target") return end
+	local step = tonumber(self.step_edit:GetText()) or 0.1
+	if step <= 0 then step = 0.1 end
+	impl.begin_placement(target.id, step)
+end
+
+function impl.undo_last_action()
+	local entry = table.remove(history)
+	if not entry then return false end
+	if entry.kind == "record" then
+		return impl.restore_record_snapshot(entry.snapshot)
+	elseif entry.kind == "existing" then
+		return impl.apply_existing_transform(
+			entry.id, entry.transform.position, entry.transform.yaw,
+			entry.transform.state, entry.transform.label)
+	elseif entry.kind == "create" then
+		local record = impl.get_record(entry.id)
+		if not record then return false end
+		record.pending_delete = true
+		record.delete_after = time_global() + 5000
+		impl.put_record(record)
+		return true
+	elseif entry.kind == "delete" then
+		local record = impl.get_record(entry.id)
+		if not record then return false end
+		record.pending_delete = false
+		record.delete_after = nil
+		impl.put_record(record)
+		return true
+	end
+	return false
+end
+
+function pf_ne_editor_dialog:OnUndo()
+	if impl.undo_last_action() then
+		self:RefreshTargets(true)
+		impl.ui_status("pf_ne_status_undo")
+	else
+		impl.ui_status("pf_ne_status_nothing_undo")
+	end
+	self:UpdateActionStates()
+end
+
+function pf_ne_editor_dialog:OnDelete()
+	local target = self:SelectedTarget()
+	if not target then impl.ui_status("pf_ne_status_select_target") return end
+	local record = impl.get_record(target.id)
+	if not record then impl.ui_status("pf_ne_status_delete_existing") return end
+	impl.push_history({ kind = "delete", id = record.id })
+	record.pending_delete = true
+	record.delete_after = time_global() + 5000
+	impl.put_record(record)
+	impl.ui_status("pf_ne_status_delete_pending")
+	self:RefreshTargets(true)
+end
+
+function pf_ne_editor_dialog:OnExport()
+	local ok, path, count = impl.export_records()
+	if ok then impl.ui_status("pf_ne_status_export", count, path)
+	else impl.ui_status("pf_ne_status_export_failed", path) end
+end
+
+function pf_ne_editor_dialog:OnDiagnostics()
+	local target = self:SelectedTarget()
+	if target then
+		impl.report("DIAG " .. impl.diagnostic_line(target.id))
+	else
+		for _, record in pairs(impl.current_state_root().npcs) do
+			impl.report("DIAG " .. impl.diagnostic_line(record.id))
+		end
+	end
+	impl.ui_status("pf_ne_status_diagnostics")
+end
+
+function pf_ne_editor_dialog:OnRoute()
+	local target = self:SelectedTarget()
+	local route = pf_npc_route_editor
+	if not impl.route_feature_enabled() or not route or not route.open then
+		impl.ui_status("pf_ne_route_disabled")
+		return
+	end
+	if not target or not target.owned then
+		impl.ui_status("pf_ne_route_dev_only")
+		return
+	end
+	if target.record and target.record.off_mesh == true then
+		impl.ui_status("pf_ne_route_ai_required")
+		return
+	end
+	local object = level.object_by_id(target.id)
+	local ready = object and impl.ready_remark_object(object, true) == true
+	if not ready then
+		impl.ui_status(object and "pf_ne_status_not_ready" or "pf_ne_status_offline")
+		return
+	end
+	local step = tonumber(self.step_edit:GetText()) or 0.1
+	if step <= 0 then step = 0.1 end
+	route.open(target.id, impl.get_route_adapter(), step)
+end
+
+function pf_ne_editor_dialog:Open()
+	self.mode = "existing"
+	self.selected_id = nil
+	self.selected_profile = nil
+	self.pending_unsafe_state = nil
+	self.filter_edit:SetText("")
+	self:RefreshTargets(false)
+	self:Enable(true)
+	self:ShowDialog(true)
+	impl.ui_status("pf_ne_status_ready")
+end
+
+function pf_ne_editor_dialog:Abort()
+	if self.help_dialog and self.help_dialog:IsShown() then self.help_dialog:HideDialog() end
+	impl.restore_all_existing_previews()
+	self:HideDialog()
+end
+
+function pf_ne_editor_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and
+		dik_to_bind(dik) == key_bindings.kQUIT then
+		self:Abort()
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+function impl.open_editor_dialog(request)
+	if request ~= dialog_open_request or not db.actor or placement.active then return end
+	local hud = get_hud()
+	if hud then hud:HideActorMenu() end
+	if not dialog_singleton then
+		local ok, created = pcall(function() return pf_ne_editor_dialog() end)
+		if not ok then
+			impl.report("UI creation failed: " .. tostring(created))
+			return
+		end
+		dialog_singleton = created
+	end
+	dialog_singleton:Open()
+end
+
+function impl.open_route_selector(request)
+	if request ~= dialog_open_request or not db.actor or placement.active then return end
+	local route = pf_npc_route_editor
+	if not impl.route_feature_enabled() or not route or not route.open_selector then
+		impl.report(impl.tr("pf_ne_route_disabled"))
+		return
+	end
+	local hud = get_hud()
+	if hud then hud:HideActorMenu() end
+	local ok, opened = pcall(function()
+		return route.open_selector(impl.get_route_adapter(), 0.1)
+	end)
+	if not ok then
+		impl.report("Route selector UI failed: " .. tostring(opened))
+	elseif not opened then
+		impl.report(impl.tr("pf_ne_route_disabled"))
+	end
+end
+
+function use_tool(item)
+	if not item or not db.actor then return false end
+	if not impl.developer_mode_enabled() then
+		impl.report("NPC editor is available only in Developer mode")
+		return false
+	end
+	dialog_open_request = dialog_open_request + 1
+	local request = dialog_open_request
+	local ready_at = time_global() + 1
+	level.add_call(
+		function() return time_global() >= ready_at end,
+		function() impl.open_editor_dialog(request) end
+	)
+	return false
+end
+
+function impl.ensure_tool(section, pending_field, state_field, label)
+	local state = impl.current_state_root()
+	if impl.actor_has_item_section(section) then
+		local was_pending = impl.tool_access[pending_field] ~= nil
+		impl.tool_access[pending_field] = nil
+		state[state_field] = true
+		if was_pending then
+			impl.report(label .. " QA tool confirmed in Developer inventory")
+		end
+		return true
+	end
+	local sim = alife()
+	local pending_id = impl.tool_access[pending_field]
+	if pending_id and sim and sim:object(pending_id, true) then
+		state[state_field] = true
+		return true
+	end
+	impl.tool_access[pending_field] = nil
+	if god and god.spawn_item_in_inv then
+		local spawned = god.spawn_item_in_inv(section, db.actor)
+		if not spawned then
+			impl.report(label .. " QA tool issue failed")
+			state[state_field] = false
+			return false
+		end
+		impl.tool_access[pending_field] = spawned.id
+		state[state_field] = true
+		impl.report(label .. " QA tool issued")
+		return true
+	end
+	return false
+end
+
+function use_route_tool(item)
+	if not item or not db.actor then return false end
+	if not impl.developer_mode_enabled() then
+		impl.report("NPC route editor is available only in Developer mode")
+		return false
+	end
+	dialog_open_request = dialog_open_request + 1
+	local request = dialog_open_request
+	local ready_at = time_global() + 1
+	level.add_call(
+		function() return time_global() >= ready_at end,
+		function() impl.open_route_selector(request) end
+	)
+	return false
+end
+
+function export_now()
+	local ok, path, count = impl.export_records()
+	if ok then impl.report(string.format("exported %d records to %s", count, path))
+	else impl.report("export failed: " .. tostring(path)) end
+	return ok, path, count
+end
+
+function diagnostics(id)
+	if id then
+		local line = impl.diagnostic_line(tonumber(id))
+		impl.report("DIAG " .. line)
+		return line
+	end
+	for _, record in pairs(impl.current_state_root().npcs) do
+		impl.report("DIAG " .. impl.diagnostic_line(record.id))
+	end
+	return true
+end
+
+function impl.reset_runtime()
+	local route = pf_npc_route_editor
+	if route and route.reset_runtime then route.reset_runtime() end
+	if placement.active then
+		local ok, error_message = pcall(impl.clear_placement)
+		if not ok then
+			impl.report("3D placement cleanup failed on load: " .. tostring(error_message))
+			impl.restore_placement_actor_model()
+			impl.restore_actor_camera_after_placement()
+			impl.restore_actor_collision_after_placement()
+			placement.active = false
+			placement.target_id = nil
+			placement.flight_actions = {}
+		end
+	end
+	-- g_no_clip is a process-wide archived console flag. A crash, forced load or
+	-- engine shutdown during placement can persist it as "on" in user.ltx. The
+	-- editor owns noclip only while placement.active, so every game/load boundary
+	-- must fail closed even when no live placement object survived the boundary.
+	impl.restore_actor_collision_after_placement()
+	if dialog_singleton then pcall(function() dialog_singleton:HideDialog() end) end
+	previews = {}
+	history = {}
+	prepared_online = {}
+	pose_applied = {}
+	next_direction_retry = {}
+	next_update = 0
+	input_actor_id = nil
+	runtime_ready_at = nil
+	update_seen = false
+	runtime_ready_reported = false
+	impl.tool_access.actor_id = nil
+	impl.tool_access.developer = nil
+	impl.tool_access.complete = false
+	impl.tool_access.next_update = 0
+	impl.tool_access.pending_id = nil
+	impl.tool_access.route_pending_id = nil
+	impl.tool_access.section_missing_reported = false
+	impl.tool_access.developer_start_hook_installed = false
+	smoke_test.started = false
+	smoke_test.done = false
+	smoke_test.id = nil
+	smoke_test.deadline = 0
+	smoke_test.next_report = 0
+	smoke_test.placement_checked = false
+	smoke_test.editor_reopen_pending = false
+	smoke_test.scenario_checked = false
+	smoke_test.scenario_phase = nil
+	smoke_test.scenario_started_at = 0
+	smoke_test.scenario_deadline = 0
+	smoke_test.invalid_state_checked = false
+	smoke_test.direction_checked = false
+	smoke_test.direction_pending = false
+	smoke_test.direction_yaw = nil
+	smoke_test.direction_deadline = 0
+end
+
+local input_proxy = {}
+
+function impl.optional_namespace(name)
+	local cached = optional_namespaces[name]
+	if cached == false then return nil end
+	if cached then return cached end
+	local ok, namespace = pcall(function() return _G[name] end)
+	if ok and namespace then
+		optional_namespaces[name] = namespace
+		return namespace
+	end
+	optional_namespaces[name] = false
+	return nil
+end
+
+function input_proxy:key_press(dik)
+	if pf_npc_editor.on_key_press(dik) then return end
+	local mechanics = impl.optional_namespace("lz_new_mechanics")
+	if mechanics and mechanics.beacon_on_key_press then
+		mechanics.beacon_on_key_press(dik)
+	end
+end
+
+function input_proxy:key_hold(dik)
+	if pf_npc_editor.on_key_hold(dik) then return end
+	if placement.active then return end
+	local mechanics = impl.optional_namespace("lz_new_mechanics")
+	if mechanics and mechanics.beacon_on_key_hold then
+		mechanics.beacon_on_key_hold(dik)
+	end
+end
+
+function input_proxy:key_release(dik)
+	if pf_npc_editor.on_key_release(dik) then return end
+	local mechanics = impl.optional_namespace("lz_new_mechanics")
+	if mechanics and mechanics.beacon_on_key_release then
+		mechanics.beacon_on_key_release(dik)
+	end
+end
+
+function input_proxy:mouse_wheel(direction)
+	if pf_npc_editor.on_mouse_wheel(direction) then return true end
+	local doors = impl.optional_namespace("pf_door_qa")
+	if doors and doors.on_mouse_wheel then
+		return doors.on_mouse_wheel(direction) == true
+	end
+	return false
+end
+
+function on_inventory_eat(actor, item)
+	local section = item and item:section() or nil
+	if section == TOOL_SECTION or section == ROUTE_TOOL_SECTION then
+		-- Current IX-Ray does not decrement this zero-effect reusable item, but
+		-- restoring the configured count also protects compatibility builds.
+		local ok, max_uses = pcall(function() return item:get_max_uses() end)
+		if ok and max_uses and max_uses > 0 then
+			pcall(function() item:set_remaining_uses(max_uses) end)
+		end
+		if section == ROUTE_TOOL_SECTION then use_route_tool(item)
+		else use_tool(item) end
+		return true
+	end
+
+	-- OnInventoryEat is a single global hook. Preserve the active project QA
+	-- bridge first; it already forwards ordinary items to lz_new_mechanics.
+	local stash = rawget(_G, "pf_stash_qa")
+	if stash and stash.on_inventory_eat then
+		return stash.on_inventory_eat(actor, item) ~= false
+	end
+	local mechanics = rawget(_G, "lz_new_mechanics")
+	if mechanics and mechanics.on_inventory_eat then
+		return mechanics.on_inventory_eat(actor, item) ~= false
+	end
+	return true
+end
+
+function on_before_hit_passthrough(actor, script_hit, bone_id)
+	-- IX-Ray expects a boolean: true continues its unmodified native hit path.
+	-- Preserve a real upstream implementation if a target project supplies it.
+	local mechanics = rawget(_G, "lz_new_mechanics")
+	if mechanics and type(mechanics.actor_before_hit) == "function" then
+		local ok, result = pcall(
+			mechanics.actor_before_hit, actor, script_hit, bone_id)
+		if ok then return result ~= false end
+	end
+	return true
+end
+
+function impl.bind_actor_input()
+	if not db.actor or input_actor_id == db.actor:id() then return end
+	db.actor:set_callback(callback.key_press, input_proxy.key_press, input_proxy)
+	db.actor:set_callback(callback.key_hold, input_proxy.key_hold, input_proxy)
+	db.actor:set_callback(callback.key_release, input_proxy.key_release, input_proxy)
+	db.actor:set_callback(callback.mouse_wheel, input_proxy.mouse_wheel, input_proxy)
+	input_actor_id = db.actor:id()
+	impl.report("actor input callbacks attached")
+end
+
+function impl.runtime_modules_ready()
+	local ok, ready = pcall(function()
+		return type(state_lib.states) == "table" and
+			state_lib.states.idle ~= nil and state_lib.states.wait_trade ~= nil and
+			type(state_mgr.get_state) == "function" and
+			type(state_mgr_animation_list.animations) == "table" and
+			type(state_mgr_animstate_list.animations) == "table" and
+			move.stand ~= nil and xr_actions_id.zmey_remark_base ~= nil and
+			type(alife_storage_manager.get_state) == "function"
+	end)
+	return ok and ready == true
+end
+
+function impl.start_smoke_test()
+	smoke_test.started = true
+	local direction_limited_count = 0
+	for _, item in ipairs(states) do
+		if item.direction_limited then
+			direction_limited_count = direction_limited_count + 1
+		end
+	end
+	if direction_limited_count == 0 then
+		impl.report("SMOKE FAIL: animation-direction state was not marked")
+		smoke_test.done = true
+		return
+	end
+	impl.report(string.format(
+		"SMOKE: %d animation-direction states marked", direction_limited_count))
+	local sleep_sit = states_by_name.sleep_sit
+	if not state_mgr_animation_list.animations.sleep_sit and
+		(not sleep_sit or sleep_sit.compatible or
+			sleep_sit.compatibility_issue ~= "animation: sleep_sit") then
+		impl.report("SMOKE FAIL: missing sleep_sit animation was not blocked")
+		smoke_test.done = true
+		return
+	end
+	impl.report("SMOKE: unavailable state references blocked")
+	local ui_ok, ui_error = pcall(function()
+		if not dialog_singleton then dialog_singleton = pf_ne_editor_dialog() end
+		dialog_singleton:RefreshTargets(false)
+		local help = pf_ne_help_dialog()
+		if not help.panel or not help.body or not help.close_button then
+			error("legend dialog controls are incomplete")
+		end
+	end)
+	if not ui_ok then
+		impl.report("SMOKE FAIL: UI: " .. tostring(ui_error))
+		smoke_test.done = true
+		return
+	end
+	impl.report("SMOKE: UI and legend constructed")
+
+	local profile = nil
+	for _, item in ipairs(profiles) do
+		if item.risk == "generic" then profile = item break end
+	end
+	if not profile then
+		impl.report("SMOKE FAIL: no generic profile")
+		smoke_test.done = true
+		return
+	end
+	local actor_vertex_id = db.actor:level_vertex_id()
+	if not impl.valid_level_vertex_id(actor_vertex_id) then
+		impl.report("SMOKE FAIL: actor has no valid level vertex")
+		smoke_test.done = true
+		return
+	end
+	-- The smoke test deliberately starts on the actor's known-good AI node.
+	-- Normal editor placement still uses the screen-cursor ray and the strict
+	-- geometry/AI-node checks in impl.ground_position().
+	local position = level.vertex_position(actor_vertex_id)
+	local record = impl.create_editor_npc(profile, position, nil, "wait_trade", "smoke_test_ephemeral")
+	if not record then
+		impl.report("SMOKE FAIL: NPC creation")
+		smoke_test.done = true
+		return
+	end
+	smoke_test.id = record.id
+	smoke_test.deadline = time_global() + 60000
+	smoke_test.next_report = time_global() + 5000
+	impl.report("SMOKE: NPC created id=" .. tostring(record.id))
+end
+
+function impl.update_smoke_test()
+	if smoke_test.done or not impl.setting_bool("smoke_test_on_load", false) then return end
+	if not smoke_test.started then impl.start_smoke_test() return end
+	if not smoke_test.id then return end
+	local object = level.object_by_id(smoke_test.id)
+	local record = impl.get_record(smoke_test.id)
+	if object and record then
+		local ready, storage = impl.ready_remark_object(object, true)
+		local desired = impl.horizontal_direction(record.yaw)
+		local actual = object:direction()
+		local dot = actual.x * desired.x + actual.z * desired.z
+		local drift = impl.horizontal_distance_sqr(
+			object:position(), vector():set(record.x, record.y, record.z))
+		if ready and smoke_test.scenario_phase then
+			local animation = storage.state_mgr.animation
+			local animation_state = animation and animation.states and
+				animation.states.current_state or nil
+			if smoke_test.scenario_phase == "wait_weapon" and
+				state_mgr.get_state(object) == "guard" and
+				object:weapon_unstrapped() and animation_state == "idle" and
+				object:animation_count() >= 1 then
+				placement.state = "zat_b20_noah_jump"
+				if not impl.apply_live_placement(
+					placement.position, placement.yaw, true, false, true
+				) then
+					impl.report("SMOKE FAIL: Noah one-shot did not start")
+					smoke_test.done = true
+					return
+				end
+				smoke_test.scenario_phase = "wait_noah"
+				smoke_test.scenario_started_at = time_global()
+				smoke_test.scenario_deadline = time_global() + 12000
+				impl.report("SMOKE: armed state ready; Noah one-shot requested")
+				return
+			elseif smoke_test.scenario_phase == "wait_noah" and
+				state_mgr.get_state(object) == "zat_b20_noah_jump" and
+				time_global() >= smoke_test.scenario_started_at + 500 then
+				placement.state = "wait_trade"
+				if not impl.apply_live_placement(
+					placement.position, placement.yaw, true, false, true
+				) then
+					impl.report("SMOKE FAIL: could not leave Noah one-shot")
+					smoke_test.done = true
+					return
+				end
+				smoke_test.scenario_phase = "wait_exit"
+				smoke_test.scenario_deadline = time_global() + 8000
+				return
+			elseif smoke_test.scenario_phase == "wait_exit" and
+				state_mgr.get_state(object) == "wait_trade" and
+				animation_state == states_by_name.wait_trade.animation and
+				object:animation_count() >= 1 then
+				impl.cancel_placement(true)
+				smoke_test.scenario_phase = nil
+				smoke_test.scenario_checked = true
+				impl.report("SMOKE: Noah one-shot exited to wait_trade")
+				return
+			end
+			if time_global() >= smoke_test.scenario_deadline then
+				impl.report(string.format(
+					"SMOKE FAIL: Noah transition phase=%s target=%s animation=%s count=%s",
+					tostring(smoke_test.scenario_phase), tostring(state_mgr.get_state(object)),
+					tostring(animation_state), tostring(object:animation_count())))
+				smoke_test.done = true
+			end
+			return
+		end
+		if ready and smoke_test.direction_pending then
+			local expected = impl.horizontal_direction(smoke_test.direction_yaw)
+			local direction = object:direction()
+			local direction_dot = direction.x * expected.x + direction.z * expected.z
+			if direction_dot >= DIRECTION_DOT then
+				impl.cancel_placement(true)
+				smoke_test.direction_pending = false
+				smoke_test.direction_checked = true
+				impl.report("SMOKE: mouse wheel direction changed without cursor movement")
+				return
+			end
+			if time_global() >= smoke_test.direction_deadline then
+				impl.report(string.format(
+					"SMOKE FAIL: mouse wheel direction dot=%.5f yaw=%.6f",
+					direction_dot, smoke_test.direction_yaw))
+				smoke_test.done = true
+			end
+			return
+		end
+		if ready and impl.valid_level_vertex_id(record.level_vertex_id) and
+			state_mgr.get_state(object) == record.state and
+			object:animation_count() >= 1 and not object:best_enemy() and
+			not object:best_danger() and
+			drift <= POSITION_TOLERANCE_SQR then
+			if not smoke_test.invalid_state_checked then
+				local previous_state = storage.state_mgr:get_state()
+				local blocked = state_mgr_animation_list.animations.sleep_sit == nil and
+					impl.apply_state_target(object, storage, "sleep_sit",
+						object:position(), record.yaw, true) == false
+				if state_mgr_animation_list.animations.sleep_sit == nil and
+					(not blocked or storage.state_mgr:get_state() ~= previous_state) then
+					impl.report("SMOKE FAIL: incompatible sleep_sit reached state manager")
+					smoke_test.done = true
+					return
+				end
+				if state_mgr_animation_list.animations.sleep_sit == nil then
+					record.state = "sleep_sit"
+					impl.put_record(record)
+					impl.apply_owned_online(object, alife():object(record.id, true), record)
+					if record.state ~= "wait_trade" then
+						impl.report("SMOKE FAIL: saved incompatible state was not migrated")
+						smoke_test.done = true
+						return
+					end
+				end
+				smoke_test.invalid_state_checked = true
+				impl.report("SMOKE: incompatible state rejected and saved value migrated")
+				return
+			end
+			if not smoke_test.scenario_checked then
+				local noah = states_by_name.zat_b20_noah_jump
+				if not noah or noah.safe or not impl.state_weapon_compatible(object, noah) then
+					impl.report("SMOKE FAIL: Noah one-shot classification or weapon compatibility")
+					smoke_test.done = true
+					return
+				end
+				if not impl.begin_placement(smoke_test.id) then
+					impl.report("SMOKE FAIL: Noah transition placement did not start")
+					smoke_test.done = true
+					return
+				end
+				placement.state = "guard"
+				if not impl.apply_live_placement(
+					placement.position, placement.yaw, true, false, true
+				) then
+					impl.report("SMOKE FAIL: armed preparation state did not start")
+					smoke_test.done = true
+					return
+				end
+				smoke_test.scenario_phase = "wait_weapon"
+				smoke_test.scenario_deadline = time_global() + 12000
+				impl.report("SMOKE: preparing unstrapped weapon for Noah one-shot")
+				return
+			end
+			if not smoke_test.direction_checked then
+				if not impl.begin_placement(smoke_test.id) then
+					impl.report("SMOKE FAIL: mouse wheel direction placement did not start")
+					smoke_test.done = true
+					return
+				end
+				local previous_yaw = placement.yaw
+				if not input_proxy:mouse_wheel(1) or
+					math.abs(impl.normalize_yaw(
+						placement.yaw - (previous_yaw - PLACEMENT_ROTATION_STEP))) > 0.00001 then
+					impl.report("SMOKE FAIL: wheel up did not change placement yaw by 10 degrees")
+					smoke_test.done = true
+					return
+				end
+				smoke_test.direction_pending = true
+				smoke_test.direction_yaw = placement.yaw
+				smoke_test.direction_deadline = time_global() + 4000
+				return
+			end
+			if smoke_test.editor_reopen_pending then
+				if not dialog_singleton or not dialog_singleton:IsShown() then
+					if time_global() >= smoke_test.deadline then
+						impl.report("SMOKE FAIL: ESC did not return to the NPC editor")
+						smoke_test.done = true
+					end
+					return
+				end
+				dialog_singleton:HideDialog()
+				smoke_test.editor_reopen_pending = false
+				impl.report("SMOKE: ESC returned to the NPC editor")
+				return
+			end
+			if not smoke_test.placement_checked then
+				local console = get_console()
+				local actor_noclip_before = console:get_bool("g_no_clip")
+				local actor_position_before = impl.copy_vector(db.actor:position())
+				local camera_query_ok, camera_initial_first = pcall(function()
+					return is_first_person()
+				end)
+				local original_state = record.state
+				if not impl.begin_placement(smoke_test.id) then
+					impl.report("SMOKE FAIL: 3D placement did not start")
+					smoke_test.done = true
+					return
+				end
+				local camera_after_ok, camera_after_first = pcall(function()
+					return is_first_person()
+				end)
+				local camera_second = camera_query_ok and camera_after_ok and
+					camera_after_first == false
+				local camera_hotkey_first_input = on_key_press(DIK_keys.DIK_1) == true
+				local camera_hotkey_first_ok, camera_hotkey_first_value = pcall(function()
+					return is_first_person()
+				end)
+				local camera_hotkey_first = camera_hotkey_first_input and
+					camera_hotkey_first_ok and camera_hotkey_first_value == true
+				local camera_hotkey_second_input = on_key_press(DIK_keys.DIK_2) == true
+				local camera_hotkey_second_ok, camera_hotkey_second_value = pcall(function()
+					return is_first_person()
+				end)
+				local camera_hotkey_second = camera_hotkey_second_input and
+					camera_hotkey_second_ok and camera_hotkey_second_value == false
+				local cursor = GetCursorPosition()
+				local center_ray = impl.cursor_ray_direction()
+				local render = device()
+				local cursor_centered = math.abs(cursor.x - 512) <= 1 and
+					math.abs(cursor.y - 384) <= 1
+				local center_aligned = center_ray:dotproduct(render.cam_dir) >= 0.999
+				SetCursorPosition(vector2():set(640, 384))
+				local right_ray = impl.cursor_ray_direction()
+				local cursor_ray_ok = cursor_centered and center_aligned and
+					right_ray:dotproduct(render.cam_right) > 0.01
+				SetCursorPosition(cursor)
+				local mode_hotkeys = on_key_press(DIK_keys.DIK_3) == true and
+					placement.mode == PLACEMENT_MODE_HOTKEYS and placement.hud == nil
+				local mode_crosshair = on_key_press(DIK_keys.DIK_5) == true and
+					placement.mode == PLACEMENT_MODE_CROSSHAIR and placement.hud == nil
+				local _, _, _, _, crosshair_valid, crosshair_reason =
+					impl.placement_candidate(false)
+				local crosshair_validation = crosshair_valid == true or crosshair_reason ~= nil
+				local mode_detail = on_key_press(DIK_keys.DIK_6) == true and
+					placement.mode == PLACEMENT_MODE_DETAIL and placement.hud and
+					placement.hud:IsShown() and placement.hud.detail_panel:IsShown()
+				local mode_cursor = on_key_press(DIK_keys.DIK_4) == true and
+					placement.mode == PLACEMENT_MODE_CURSOR and placement.hud and
+					placement.hud:IsShown() and not placement.hud.detail_panel:IsShown()
+				local modal_cursor = mode_cursor == true
+				local off_mesh_enabled = on_key_press(DIK_keys.DIK_9) == true and
+					placement.off_mesh == true and
+					impl.state_is_static(states_by_name[placement.state])
+				local off_mesh_disabled = on_key_press(DIK_keys.DIK_9) == true and
+					placement.off_mesh == false
+				local _, _, _, _, candidate_valid, candidate_reason = impl.placement_candidate()
+				local validation_explained = candidate_valid == true or candidate_reason ~= nil
+				local collision_disabled = console:get_bool("g_no_clip") == true
+				placement.flight_actions[key_bindings.kFWD] = true
+				local flight_applied = impl.update_placement_flight(0.1)
+				local flight_moved = flight_applied and
+					db.actor:position():distance_to(actor_position_before) > 0.1
+				local actor_position_after_pulse = impl.copy_vector(db.actor:position())
+				local flight_stopped_without_hold = not impl.update_placement_flight(0.1) and
+					db.actor:position():distance_to(actor_position_after_pulse) < 0.001
+				db.actor:set_actor_position(actor_position_before)
+				local pose_changed = on_key_press(DIK_keys.DIK_R) and
+					placement.state ~= original_state
+				local angle_widget = placement.hud and placement.hud.angle ~= nil
+				local escape_handled = on_key_press(DIK_keys.DIK_ESCAPE) == true and
+					not placement.active
+				local collision_restored =
+					actor_noclip_before == false and console:get_bool("g_no_clip") == false
+				local camera_restored_ok, camera_final_first = pcall(function()
+					return is_first_person()
+				end)
+				local camera_restored = camera_query_ok and camera_restored_ok and
+					camera_final_first == camera_initial_first
+				if not cursor_ray_ok or not modal_cursor or not angle_widget or
+					not validation_explained or not camera_second or not collision_disabled or
+					not camera_hotkey_first or not camera_hotkey_second or
+					not mode_hotkeys or not mode_crosshair or not crosshair_validation or
+					not mode_detail or not mode_cursor or not off_mesh_enabled or
+					not off_mesh_disabled or
+					not flight_moved or not flight_stopped_without_hold or
+					not pose_changed or not escape_handled or not collision_restored or
+					not camera_restored or placement.active then
+					impl.report(string.format(
+						"SMOKE FAIL: 3D cursor_ray=%s modal=%s validation=%s(%s) crosshair_validation=%s(%s) camera_second=%s hotkey_1=%s hotkey_2=%s mode3=%s mode5=%s mode6=%s mode4=%s offmesh9_on=%s offmesh9_off=%s collision_disabled=%s flight=%s flight_stop=%s pose_changed=%s escape=%s collision_restored=%s camera_restored=%s",
+						tostring(cursor_ray_ok), tostring(modal_cursor),
+						tostring(candidate_valid), tostring(candidate_reason),
+						tostring(crosshair_valid), tostring(crosshair_reason),
+						tostring(camera_second), tostring(camera_hotkey_first),
+						tostring(camera_hotkey_second), tostring(mode_hotkeys),
+						tostring(mode_crosshair), tostring(mode_detail), tostring(mode_cursor),
+						tostring(off_mesh_enabled), tostring(off_mesh_disabled),
+						tostring(collision_disabled),
+						tostring(flight_moved), tostring(flight_stopped_without_hold),
+						tostring(pose_changed),
+						tostring(escape_handled), tostring(collision_restored),
+						tostring(camera_restored)
+					))
+					smoke_test.done = true
+					return
+				end
+				smoke_test.placement_checked = true
+				smoke_test.editor_reopen_pending = true
+				impl.report(string.format(
+					"SMOKE: 3D modes 3/4/5/6, off-mesh hotkey 9, cursor/crosshair validation=%s(%s), cam_1/cam_2 hotkeys, flight, collision, pose, ESC and camera restore passed",
+					tostring(candidate_valid), tostring(candidate_reason)))
+				return
+			end
+			impl.export_records()
+			impl.report("SMOKE PASS: " .. impl.diagnostic_line(smoke_test.id))
+			smoke_test.done = true
+			return
+		end
+	end
+	if time_global() >= smoke_test.deadline then
+		impl.report("SMOKE FAIL: timeout: " .. impl.diagnostic_line(smoke_test.id))
+		smoke_test.done = true
+	elseif time_global() >= smoke_test.next_report then
+		impl.report("SMOKE WAIT: " .. impl.diagnostic_line(smoke_test.id))
+		smoke_test.next_report = time_global() + 5000
+	end
+end
+
+function impl.update()
+	if not update_seen then
+		update_seen = true
+		impl.report("update callback entered")
+	end
+	if placement.active then impl.update_placement() end
+	if not db.actor or not alife() then
+		runtime_ready_at = nil
+		return
+	end
+	local now = time_global()
+	if not impl.tool_access.developer_start_hook_installed then
+		impl.install_developer_start_hook()
+	end
+	if now >= impl.tool_access.next_update then
+		impl.tool_access.next_update = now + 1000
+		impl.sync_tool_access()
+	end
+	if not runtime_ready_at then
+		runtime_ready_at = now + 10000
+		return
+	end
+	if now < runtime_ready_at then return end
+	if not impl.runtime_modules_ready() then
+		runtime_ready_at = now + 1000
+		return
+	end
+	if not profiles then impl.load_profiles() end
+	if not states then impl.load_states() end
+	if not runtime_ready_reported then
+		runtime_ready_reported = true
+		impl.report(string.format(
+			"runtime ready: %d profiles, %d states (%d available, %d blocked)",
+			#profiles, #states, compatible_state_count, #states - compatible_state_count))
+	end
+	impl.bind_actor_input()
+	if now < next_update then return end
+	next_update = now + UPDATE_INTERVAL_MS
+	local route = pf_npc_route_editor
+	if route and route.update then
+		route.update(impl.get_route_adapter(), now)
+	end
+	impl.process_editor_records()
+	impl.update_smoke_test()
+end
+
+function on_game_start()
+	-- Correct an archived leak before the first actor update. The load callback
+	-- repeats this after starting a new game or loading another save.
+	if not placement.active then impl.restore_actor_collision_after_placement() end
+	impl.install_developer_start_hook()
+	if not callbacks_registered and type(RegisterScriptCallback) == "function" then
+		RegisterScriptCallback("update", impl.update)
+		RegisterScriptCallback("load", impl.reset_runtime)
+		callbacks_registered = true
+		impl.report("callbacks registered")
+	elseif not callbacks_registered then
+		impl.report("callback API unavailable")
+	end
+end
+
+-- mod_script imports modules but does not invoke this callback automatically.
+impl.report("module loaded")
+on_game_start()

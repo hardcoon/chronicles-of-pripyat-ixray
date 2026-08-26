@@ -1,0 +1,13 @@
+; The engine exposes one global native-use callback. The z-prefixed filename is
+; intentional: DLTX applies mod_game_global_*.ltx patches by filename, and this
+; patch must run after the installed pf_stash_qa bridge.
+;
+; pf_npc_editor handles its own reusable QA tool and forwards every other item
+; to pf_stash_qa/lz_new_mechanics from Lua.
+![callbacks]
+; The installed zz_lz-new-mechanics layer declares a missing
+; lz_new_mechanics.actor_before_hit. Register an addon-owned pass-through
+; functor instead of relying on DLTX property deletion: CActor::Hit always
+; resolves this symbol, while returning true preserves stock hit processing.
+OnBeforeHit = pf_npc_editor.on_before_hit_passthrough
+OnInventoryEat = pf_npc_editor.on_inventory_eat

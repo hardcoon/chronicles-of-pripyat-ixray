@@ -1,0 +1,355 @@
+-- Generated from reference_group_catalog_20260821.json.
+-- Dialogue-only facade for Novikov's anomaly-coordinate service. It performs
+-- no ALife scan and delegates persistent discovery to pf_proc_group_markers.
+
+local PRICE = 1000
+local selected_group_id = nil
+local family_groups = {
+	thermal = { 7, 8, 13, 14, 23, 31, 34, 38 },
+	chemical = { 2, 4, 12, 16, 25, 27, 37, 39 },
+	electric = { 3, 10, 15, 20, 24, 30, 33, 40 },
+	gravitational = { 1, 9, 11, 17, 22, 26, 28, 32, 36 },
+	psi = { 5, 6, 18, 19, 21, 29, 35, 41 },
+}
+
+local function marker_api_ready()
+	return pf_proc_group_markers ~= nil
+		and type(pf_proc_group_markers.is_ready) == "function"
+		and type(pf_proc_group_markers.is_group_available) == "function"
+		and type(pf_proc_group_markers.reveal_group) == "function"
+		and pf_proc_group_markers.is_ready() == true
+end
+
+local function group_available(group_id)
+	return marker_api_ready()
+		and pf_proc_group_markers.is_group_available(group_id) == true
+end
+
+local function family_available(family)
+	local groups = family_groups[family]
+	if not groups then return false end
+	for _, group_id in ipairs(groups) do
+		if group_available(group_id) then return true end
+	end
+	return false
+end
+
+local function select_group(group_id)
+	selected_group_id = group_available(group_id) and group_id or nil
+end
+
+function any_available(first_speaker, second_speaker)
+	if not marker_api_ready() then return false end
+	for group_id = 1, 41 do
+		if pf_proc_group_markers.is_group_available(group_id) then return true end
+	end
+	return false
+end
+
+function service_available(first_speaker, second_speaker)
+	return marker_api_ready()
+end
+
+function begin_purchase(first_speaker, second_speaker)
+	selected_group_id = nil
+end
+
+function clear_selection(first_speaker, second_speaker)
+	selected_group_id = nil
+end
+
+function can_pay_selected(first_speaker, second_speaker)
+	return selected_group_id ~= nil and group_available(selected_group_id)
+		and db.actor ~= nil and db.actor:money() >= PRICE
+end
+
+function cannot_pay_selected(first_speaker, second_speaker)
+	return selected_group_id ~= nil and group_available(selected_group_id)
+		and (db.actor == nil or db.actor:money() < PRICE)
+end
+
+function pay_selected(first_speaker, second_speaker)
+	local group_id = selected_group_id
+	if group_id == nil or db.actor == nil or db.actor:money() < PRICE
+		or not group_available(group_id) then
+		selected_group_id = nil
+		return false
+	end
+	-- Reveal first. Money is removed only after the persistent marker update
+	-- succeeds, preventing payment for a stale or unavailable catalogue item.
+	if not pf_proc_group_markers.reveal_group(group_id) then
+		selected_group_id = nil
+		return false
+	end
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, PRICE)
+	selected_group_id = nil
+	return true
+end
+
+function family_thermal_available(first_speaker, second_speaker)
+	return family_available("thermal")
+end
+
+function family_chemical_available(first_speaker, second_speaker)
+	return family_available("chemical")
+end
+
+function family_electric_available(first_speaker, second_speaker)
+	return family_available("electric")
+end
+
+function family_gravitational_available(first_speaker, second_speaker)
+	return family_available("gravitational")
+end
+
+function family_psi_available(first_speaker, second_speaker)
+	return family_available("psi")
+end
+
+function group_01_available(first_speaker, second_speaker)
+	return group_available(1)
+end
+function group_02_available(first_speaker, second_speaker)
+	return group_available(2)
+end
+function group_03_available(first_speaker, second_speaker)
+	return group_available(3)
+end
+function group_04_available(first_speaker, second_speaker)
+	return group_available(4)
+end
+function group_05_available(first_speaker, second_speaker)
+	return group_available(5)
+end
+function group_06_available(first_speaker, second_speaker)
+	return group_available(6)
+end
+function group_07_available(first_speaker, second_speaker)
+	return group_available(7)
+end
+function group_08_available(first_speaker, second_speaker)
+	return group_available(8)
+end
+function group_09_available(first_speaker, second_speaker)
+	return group_available(9)
+end
+function group_10_available(first_speaker, second_speaker)
+	return group_available(10)
+end
+function group_11_available(first_speaker, second_speaker)
+	return group_available(11)
+end
+function group_12_available(first_speaker, second_speaker)
+	return group_available(12)
+end
+function group_13_available(first_speaker, second_speaker)
+	return group_available(13)
+end
+function group_14_available(first_speaker, second_speaker)
+	return group_available(14)
+end
+function group_15_available(first_speaker, second_speaker)
+	return group_available(15)
+end
+function group_16_available(first_speaker, second_speaker)
+	return group_available(16)
+end
+function group_17_available(first_speaker, second_speaker)
+	return group_available(17)
+end
+function group_18_available(first_speaker, second_speaker)
+	return group_available(18)
+end
+function group_19_available(first_speaker, second_speaker)
+	return group_available(19)
+end
+function group_20_available(first_speaker, second_speaker)
+	return group_available(20)
+end
+function group_21_available(first_speaker, second_speaker)
+	return group_available(21)
+end
+function group_22_available(first_speaker, second_speaker)
+	return group_available(22)
+end
+function group_23_available(first_speaker, second_speaker)
+	return group_available(23)
+end
+function group_24_available(first_speaker, second_speaker)
+	return group_available(24)
+end
+function group_25_available(first_speaker, second_speaker)
+	return group_available(25)
+end
+function group_26_available(first_speaker, second_speaker)
+	return group_available(26)
+end
+function group_27_available(first_speaker, second_speaker)
+	return group_available(27)
+end
+function group_28_available(first_speaker, second_speaker)
+	return group_available(28)
+end
+function group_29_available(first_speaker, second_speaker)
+	return group_available(29)
+end
+function group_30_available(first_speaker, second_speaker)
+	return group_available(30)
+end
+function group_31_available(first_speaker, second_speaker)
+	return group_available(31)
+end
+function group_32_available(first_speaker, second_speaker)
+	return group_available(32)
+end
+function group_33_available(first_speaker, second_speaker)
+	return group_available(33)
+end
+function group_34_available(first_speaker, second_speaker)
+	return group_available(34)
+end
+function group_35_available(first_speaker, second_speaker)
+	return group_available(35)
+end
+function group_36_available(first_speaker, second_speaker)
+	return group_available(36)
+end
+function group_37_available(first_speaker, second_speaker)
+	return group_available(37)
+end
+function group_38_available(first_speaker, second_speaker)
+	return group_available(38)
+end
+function group_39_available(first_speaker, second_speaker)
+	return group_available(39)
+end
+function group_40_available(first_speaker, second_speaker)
+	return group_available(40)
+end
+function group_41_available(first_speaker, second_speaker)
+	return group_available(41)
+end
+
+function select_group_01(first_speaker, second_speaker)
+	select_group(1)
+end
+function select_group_02(first_speaker, second_speaker)
+	select_group(2)
+end
+function select_group_03(first_speaker, second_speaker)
+	select_group(3)
+end
+function select_group_04(first_speaker, second_speaker)
+	select_group(4)
+end
+function select_group_05(first_speaker, second_speaker)
+	select_group(5)
+end
+function select_group_06(first_speaker, second_speaker)
+	select_group(6)
+end
+function select_group_07(first_speaker, second_speaker)
+	select_group(7)
+end
+function select_group_08(first_speaker, second_speaker)
+	select_group(8)
+end
+function select_group_09(first_speaker, second_speaker)
+	select_group(9)
+end
+function select_group_10(first_speaker, second_speaker)
+	select_group(10)
+end
+function select_group_11(first_speaker, second_speaker)
+	select_group(11)
+end
+function select_group_12(first_speaker, second_speaker)
+	select_group(12)
+end
+function select_group_13(first_speaker, second_speaker)
+	select_group(13)
+end
+function select_group_14(first_speaker, second_speaker)
+	select_group(14)
+end
+function select_group_15(first_speaker, second_speaker)
+	select_group(15)
+end
+function select_group_16(first_speaker, second_speaker)
+	select_group(16)
+end
+function select_group_17(first_speaker, second_speaker)
+	select_group(17)
+end
+function select_group_18(first_speaker, second_speaker)
+	select_group(18)
+end
+function select_group_19(first_speaker, second_speaker)
+	select_group(19)
+end
+function select_group_20(first_speaker, second_speaker)
+	select_group(20)
+end
+function select_group_21(first_speaker, second_speaker)
+	select_group(21)
+end
+function select_group_22(first_speaker, second_speaker)
+	select_group(22)
+end
+function select_group_23(first_speaker, second_speaker)
+	select_group(23)
+end
+function select_group_24(first_speaker, second_speaker)
+	select_group(24)
+end
+function select_group_25(first_speaker, second_speaker)
+	select_group(25)
+end
+function select_group_26(first_speaker, second_speaker)
+	select_group(26)
+end
+function select_group_27(first_speaker, second_speaker)
+	select_group(27)
+end
+function select_group_28(first_speaker, second_speaker)
+	select_group(28)
+end
+function select_group_29(first_speaker, second_speaker)
+	select_group(29)
+end
+function select_group_30(first_speaker, second_speaker)
+	select_group(30)
+end
+function select_group_31(first_speaker, second_speaker)
+	select_group(31)
+end
+function select_group_32(first_speaker, second_speaker)
+	select_group(32)
+end
+function select_group_33(first_speaker, second_speaker)
+	select_group(33)
+end
+function select_group_34(first_speaker, second_speaker)
+	select_group(34)
+end
+function select_group_35(first_speaker, second_speaker)
+	select_group(35)
+end
+function select_group_36(first_speaker, second_speaker)
+	select_group(36)
+end
+function select_group_37(first_speaker, second_speaker)
+	select_group(37)
+end
+function select_group_38(first_speaker, second_speaker)
+	select_group(38)
+end
+function select_group_39(first_speaker, second_speaker)
+	select_group(39)
+end
+function select_group_40(first_speaker, second_speaker)
+	select_group(40)
+end
+function select_group_41(first_speaker, second_speaker)
+	select_group(41)
+end

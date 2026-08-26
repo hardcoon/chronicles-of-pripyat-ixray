@@ -1,0 +1,648 @@
+local level_name = "pripyat_full"
+local qa_runtime_config = "pf_bunker_qa_runtime.ltx"
+local bunker_center = vector():set(1277, 0, 74)
+local activation_distance_sqr = 250 * 250
+local update_interval = 500
+local actor_look_distance_sqr = 10 * 10
+local actor_look_release_distance_sqr = 12 * 12
+local greeting_distance_sqr = 3 * 3
+local greeting_release_distance_sqr = 4 * 4
+local cleanup_delay = 5000
+local cleanup_interval = 1000
+local position_tolerance_sqr = 0.25 * 0.25
+local direction_dot_threshold = 0.995
+local direction_retry_interval = 2000
+local passive_sound_threshold = 1000000
+local no_smart_terrain_id = 65535
+-- Positions come from the accepted Num7 records in pf_bunker_qa_npc_points.log;
+-- yaw and look vectors include the later authored rotation adjustments. The
+-- armed guards use the commander's guard state; unarmed scientists use its
+-- matching idle animation without a weapon precondition. Recorded look
+-- vectors remain the fallback when the actor is not close enough.
+local residents = {
+    {
+        section = "pf_bunker_novikov",
+        visual = "actors\\pripyat_full\\pf_bunker_novikov",
+        position = vector():set(1274.679321, -0.072798, 74.458542),
+        yaw = 1.570796327,
+        direction = vector():set(1, 0, 0),
+        look = vector():set(1284.679321, 1.427202, 74.458542),
+        level_vertex_id = 13998324,
+        game_vertex_id = 584,
+        -- Temporary direction-neutral clone of the requested stock CoP pose.
+        -- It keeps the lead_1 animation set but leaves the authored 90-degree
+        -- facing exclusively to these resident yaw/direction/look fields.
+        state = "pf_bunker_novikov_jup_b41_fixed",
+        fixed_direction = true,
+        greeting_hello = "jup_b6_scientist_medic_greeting",
+        greeting_bye = "jup_b6_scientist_medic_farewell",
+        logic_section = "remark@pf_bunker_novikov",
+    },
+    {
+        section = "pf_bunker_hermann",
+        position = vector():set(1269.282227, 0.147409, 82.302155),
+        yaw = 2.538623062,
+        direction = vector():set(0.567090891, 0, -0.823655220),
+        look = vector():set(1274.953136, 1.647409, 74.065603),
+        level_vertex_id = 13965791,
+        game_vertex_id = 584,
+        -- Hermann is unarmed as in stock CoP. wait_trade drives the same
+        -- state_mgr "idle" animation while explicitly requiring no weapon.
+        state = "wait_trade",
+        greeting_hello = "jup_b6_scientist_nuclear_physicist_greeting",
+        greeting_bye = "jup_b6_scientist_nuclear_physicist_farewell",
+        logic_section = "remark@pf_bunker_hermann",
+    },
+    {
+        section = "pf_bunker_guard_01",
+        visual = "actors\\stalker_soldier\\stalker_soldier_2",
+        fixed_name = "pf_bunker_guard_commander_name",
+        position = vector():set(1295.683105, -0.625042, 57.597500),
+        yaw = 0.739959136,
+        direction = vector():set(0.674257734, 0, 0.738496113),
+        look = vector():set(1302.425682, 0.874958, 64.982461),
+        level_vertex_id = 14118581,
+        game_vertex_id = 584,
+        state = "guard",
+        logic_section = "remark@pf_bunker_guard_commander",
+        guard = true,
+    },
+    {
+        section = "pf_bunker_guard_02",
+        name_subset = "private",
+        position = vector():set(1281.486816, 5.087826, 71.635094),
+        yaw = 2.346496662,
+        direction = vector():set(0.713930823, 0, -0.700216238),
+        look = vector():set(1288.626124, 6.587826, 64.632932),
+        level_vertex_id = 14038318,
+        game_vertex_id = 584,
+        state = "guard",
+        greeting_hello = "meet_hello",
+        logic_section = "remark@pf_bunker_guard_static",
+        guard = true,
+    },
+    {
+        section = "pf_bunker_guard_03",
+        visual = "actors\\stalker_soldier\\stalker_soldier_2",
+        name_subset = "private",
+        position = vector():set(1267.362915, 5.702414, 80.970695),
+        yaw = -0.780278690,
+        direction = vector():set(-0.703477502, 0, 0.710717499),
+        look = vector():set(1260.328140, 7.202414, 88.077870),
+        level_vertex_id = 13957733,
+        game_vertex_id = 584,
+        state = "binocular",
+        greeting_hello = "meet_hello",
+        logic_section = "remark@pf_bunker_guard_03",
+        guard = true,
+    },
+    {
+        section = "pf_bunker_guard_04",
+        visual = "actors\\stalker_soldier\\stalker_soldier_2",
+        name_subset = "private",
+        position = vector():set(1287.467163, -0.271441, 78.435860),
+        yaw = 1.584007587,
+        direction = vector():set(0.999912739, 0, -0.013210876),
+        look = vector():set(1297.466290, 1.228559, 78.303751),
+        level_vertex_id = 14070817,
+        game_vertex_id = 584,
+        state = "guard_chasovoy",
+        greeting_hello = "meet_hello",
+        logic_section = "remark@pf_bunker_guard_04",
+        guard = true,
+    },
+}
+
+local resident_by_section = {}
+for _, resident in ipairs(residents) do
+    resident_by_section[resident.section] = resident
+end
+
+local resident_ids = {}
+local prepared_online = {}
+local pose_applied = {}
+local looking_at_actor = {}
+local greeting_inside = {}
+local next_direction_retry = {}
+local cleanup_ids = {}
+local scanned = false
+local next_update = 0
+local cleanup_due = nil
+local qa_authored_direction_until = 0
+
+local function copy_vector(value)
+    return vector():set(value.x, value.y, value.z)
+end
+
+function teleport_actor_to_scientists()
+    local actor = db.actor
+    if actor == nil then
+        return false, "actor is not ready"
+    end
+    if level.name() ~= level_name then
+        return false, "scientist bunker is available only on pripyat_full"
+    end
+
+    local destination = copy_vector(bunker_center)
+    actor:set_actor_position(destination)
+    return true, destination
+end
+
+local function position_distance_sqr(left, right)
+    local x = left.x - right.x
+    local y = left.y - right.y
+    local z = left.z - right.z
+    return x * x + y * y + z * z
+end
+
+local function load_qa_runtime_overrides()
+    local config = ini_file(qa_runtime_config)
+    for _, resident in ipairs(residents) do
+        if config:section_exist(resident.section) and
+                config:line_exist(resident.section, "yaw") then
+            local yaw = config:r_float(resident.section, "yaw")
+            local direction = vector():set(math.sin(yaw), 0, math.cos(yaw))
+            resident.yaw = yaw
+            resident.direction = direction
+            resident.look = vector():set(
+                resident.position.x + direction.x * 10,
+                resident.position.y + 1.5,
+                resident.position.z + direction.z * 10
+            )
+        end
+    end
+end
+
+local function actor_is_near()
+    local actor = db.actor
+    if actor == nil then
+        return false
+    end
+    local position = actor:position()
+    local x = position.x - bunker_center.x
+    local z = position.z - bunker_center.z
+    return x * x + z * z <= activation_distance_sqr
+end
+
+local function pin_server_object(server_object, resident)
+    if server_object == nil then
+        return
+    end
+    server_object.position = copy_vector(resident.position)
+    server_object.angle = vector():set(0, resident.yaw, 0)
+    server_object.m_level_vertex_id = resident.level_vertex_id
+    server_object.m_game_vertex_id = resident.game_vertex_id
+    server_object.m_smart_terrain_id = no_smart_terrain_id
+    -- Runtime-created and migrated guards must remain eligible for the
+    -- actor PDA's native friend/neutral/enemy relation marker.
+    server_object:visible_for_map(true)
+end
+
+local function set_guard_neutrality(object, resident)
+    local actor = db.actor
+    if not resident.guard or actor == nil then
+        return
+    end
+    object:set_relation(game_object.neutral, actor)
+    object:force_set_goodwill(0, actor)
+    actor:set_relation(game_object.neutral, object)
+end
+
+local function disable_stationary_perception(object)
+    object:set_visual_memory_enabled(false)
+    object:set_sound_threshold(passive_sound_threshold)
+    local enemy = object:best_enemy()
+    if enemy ~= nil then
+        object:enable_memory_object(enemy, false)
+    end
+end
+
+local function should_look_at_actor(object, id, resident)
+    if time_global() < qa_authored_direction_until then
+        return false
+    end
+    local actor = db.actor
+    if actor == nil then
+        return false
+    end
+    if resident.fixed_direction then
+        return false
+    end
+    local distance_sqr = object:position():distance_to_sqr(actor:position())
+    if looking_at_actor[id] then
+        return distance_sqr <= actor_look_release_distance_sqr
+    end
+    return distance_sqr <= actor_look_distance_sqr
+end
+
+local function update_greeting(object, resident)
+    local actor = db.actor
+    if actor == nil then
+        return
+    end
+
+    local id = object:id()
+    local distance_sqr = object:position():distance_to_sqr(actor:position())
+    if not greeting_inside[id] then
+        if distance_sqr <= greeting_distance_sqr then
+            greeting_inside[id] = true
+            if resident.greeting_hello ~= nil then
+                xr_sound.set_sound_play(id, resident.greeting_hello)
+            end
+        end
+    elseif distance_sqr >= greeting_release_distance_sqr then
+        greeting_inside[id] = nil
+        if resident.greeting_bye ~= nil then
+            xr_sound.set_sound_play(id, resident.greeting_bye)
+        end
+    end
+end
+
+local function direction_to_actor(object, resident)
+    local actor = db.actor
+    if actor == nil then
+        return copy_vector(resident.direction)
+    end
+    local object_position = object:position()
+    local actor_position = actor:position()
+    local x = actor_position.x - object_position.x
+    local z = actor_position.z - object_position.z
+    local length = math.sqrt(x * x + z * z)
+    if length < 0.001 then
+        return copy_vector(resident.direction)
+    end
+    return vector():set(x / length, 0, z / length)
+end
+
+local function state_target(object, resident, look_at_actor)
+    if look_at_actor and db.actor ~= nil then
+        return { look_object = db.actor }, direction_to_actor(object, resident)
+    end
+    return { look_position = copy_vector(resident.look) },
+        copy_vector(resident.direction)
+end
+
+local function apply_state(object, resident, look_at_actor)
+    local storage = db.storage[object:id()]
+    if storage == nil or storage.state_mgr == nil then
+        return false
+    end
+
+    local target, desired_direction = state_target(
+        object, resident, look_at_actor)
+
+    object:set_desired_direction(desired_direction)
+    storage.state_mgr:set_state(
+        resident.state,
+        nil,
+        nil,
+        target,
+        nil
+    )
+    local id = object:id()
+    pose_applied[id] = true
+    looking_at_actor[id] = look_at_actor and true or nil
+    next_direction_retry[id] = time_global() + direction_retry_interval
+    return true
+end
+
+local function apply_online_object(object, resident, force_position)
+    local id = object:id()
+    local storage = db.storage[id]
+    if storage == nil or storage.state_mgr == nil then
+        return
+    end
+    if storage.active_section ~= resident.logic_section then
+        -- Never rebuild xr_logic on an already bound online NPC. IX-Ray keeps
+        -- ini_file-backed scheme objects in the planner; initializing them a
+        -- second time corrupts ownership and later crashes in luabind __eq.
+        return
+    end
+
+    -- The stock remark action owns the first state transition. Calling
+    -- state_mgr before the NPC's main planner is initialized leaves the
+    -- nested state planner without a valid first plan and produces a frozen
+    -- default pose. Wait for the same lifecycle point used by normal spawns.
+    local top_planner = object:motivation_action_manager()
+    if not top_planner:initialized() then
+        return
+    end
+    -- Wait until xr_remark has become the active top-level action. Its
+    -- initialize() clears desired direction, so applying the east target
+    -- before this point only lets remark erase it one frame later.
+    if top_planner:current_action_id() ~=
+            xr_actions_id.zmey_remark_base + 1 then
+        return
+    end
+
+    if resident.visual ~= nil and
+            object:get_visual_name() ~= resident.visual then
+        object:set_visual_name(resident.visual, true)
+        pose_applied[id] = nil
+        next_direction_retry[id] = nil
+    end
+
+    local position_drift = position_distance_sqr(
+        object:position(), resident.position) > position_tolerance_sqr
+
+    if force_position or position_drift then
+        -- remark is the sole owner of the stationary action. Do not toggle
+        -- movement_enabled here: state_mgr uses the movement executor for
+        -- scripted idle animations even when the requested movement is stand.
+        object:set_npc_position(copy_vector(resident.position))
+        pose_applied[id] = nil
+        next_direction_retry[id] = nil
+    end
+
+    disable_stationary_perception(object)
+    set_guard_neutrality(object, resident)
+    update_greeting(object, resident)
+
+    prepared_online[id] = true
+
+    local look_at_actor = should_look_at_actor(object, id, resident)
+    local current_state = state_mgr.get_state(object)
+    if not pose_applied[id] or current_state ~= resident.state or
+            (looking_at_actor[id] == true) ~= look_at_actor then
+        if not apply_state(object, resident, look_at_actor) then
+            return
+        end
+    end
+
+    local target, desired_direction = state_target(
+        object, resident, look_at_actor)
+    local current_direction = object:direction()
+    local dot = current_direction.x * desired_direction.x +
+        current_direction.z * desired_direction.z
+    if dot < direction_dot_threshold then
+        local now = time_global()
+        local retry_due = next_direction_retry[id]
+        if retry_due == nil or now >= retry_due then
+            -- Updating the target of the current state does not replay its
+            -- animation. Direction-neutral states keep the normal
+            -- look.direction path instead of yielding facing to the clip.
+            object:set_desired_direction(desired_direction)
+            storage.state_mgr:set_state(
+                resident.state,
+                nil,
+                nil,
+                target,
+                nil
+            )
+            next_direction_retry[id] = now + direction_retry_interval
+        end
+    else
+        next_direction_retry[id] = nil
+    end
+
+end
+
+local function queue_cleanup(id, section)
+    cleanup_ids[id] = section
+    if cleanup_due == nil then
+        cleanup_due = time_global() + cleanup_delay
+    end
+end
+
+local function ensure_persistent_guard_name(server_object, resident)
+    if resident.fixed_name ~= nil then
+        local current = server_object:character_name_str()
+        if current ~= resident.fixed_name then
+            server_object:set_character_name(resident.fixed_name)
+        end
+        return
+    end
+    if resident.name_subset == nil then
+        return
+    end
+    local current = server_object:character_name_str()
+    if current ~= nil and string.find(current, ":lname_", 1, true) ~= nil then
+        return
+    end
+
+    local subset = resident.name_subset
+    local section = "stalker_names_" .. subset
+    local config = system_ini()
+    local name_count = config:r_u32(section, "name_cnt")
+    local last_name_count = config:r_u32(section, "last_name_cnt")
+    local raw_name = string.format(
+        "name_%s_%d:lname_%s_%d",
+        subset,
+        math.random(0, name_count - 1),
+        subset,
+        math.random(0, last_name_count - 1)
+    )
+    -- m_character_name_raw is serialized by CSE_ALifeTraderAbstract. Once
+    -- assigned, this exact name survives online/offline and save reloads.
+    server_object:set_character_name(raw_name)
+    printf("~ [pf_scientist_bunker] persistent name assigned [%s] to [%s]",
+        raw_name, resident.section)
+end
+
+local function scan_existing_objects()
+    local sim = alife()
+    if sim == nil then
+        return
+    end
+
+    resident_ids = {}
+    for _, server_object in sim:objects() do
+        local section = server_object:section_name()
+        local resident = resident_by_section[section]
+        if resident ~= nil then
+            if resident_ids[section] == nil then
+                resident_ids[section] = server_object.id
+                pin_server_object(server_object, resident)
+                ensure_persistent_guard_name(server_object, resident)
+            else
+                queue_cleanup(server_object.id, section)
+            end
+        end
+    end
+    scanned = true
+end
+
+local function spawn_missing_objects()
+    local sim = alife()
+    if sim == nil then
+        return
+    end
+
+    for _, resident in ipairs(residents) do
+        local id = resident_ids[resident.section]
+        local server_object = id ~= nil and sim:object(id) or nil
+        if server_object == nil then
+            server_object = sim:create(
+                resident.section,
+                copy_vector(resident.position),
+                resident.level_vertex_id,
+                resident.game_vertex_id
+            )
+            if server_object ~= nil then
+                resident_ids[resident.section] = server_object.id
+                pin_server_object(server_object, resident)
+                ensure_persistent_guard_name(server_object, resident)
+                printf("~ [pf_scientist_bunker] spawned [%s], id [%s]",
+                    resident.section, tostring(server_object.id))
+            end
+        end
+    end
+end
+
+local function cleanup_one_object(now)
+    if cleanup_due == nil or now < cleanup_due then
+        return
+    end
+    local sim = alife()
+    if sim == nil then
+        cleanup_due = now + cleanup_interval
+        return
+    end
+
+    for id, section in pairs(cleanup_ids) do
+        local server_object = sim:object(id)
+        if server_object == nil then
+            cleanup_ids[id] = nil
+        else
+            local client_object = level.object_by_id(id)
+            if client_object ~= nil and db.storage[id] == nil then
+                cleanup_due = now + cleanup_interval
+                return
+            end
+            cleanup_ids[id] = nil
+            prepared_online[id] = nil
+            pose_applied[id] = nil
+            looking_at_actor[id] = nil
+            greeting_inside[id] = nil
+            next_direction_retry[id] = nil
+            sim:release(server_object, true)
+            printf("~ [pf_scientist_bunker] removed obsolete [%s], id [%s]",
+                section, tostring(id))
+            cleanup_due = now + cleanup_interval
+            return
+        end
+    end
+    cleanup_due = nil
+end
+
+function reset()
+    resident_ids = {}
+    prepared_online = {}
+    pose_applied = {}
+    looking_at_actor = {}
+    greeting_inside = {}
+    next_direction_retry = {}
+    cleanup_ids = {}
+    scanned = false
+    next_update = 0
+    cleanup_due = nil
+    qa_authored_direction_until = 0
+end
+
+function resident_id(section)
+    if resident_by_section[section] == nil then
+        return nil
+    end
+    return resident_ids[section]
+end
+
+function update()
+    if level.name() ~= level_name or db.actor == nil then
+        return
+    end
+
+    local now = time_global()
+    if not scanned then
+        scan_existing_objects()
+    end
+
+    cleanup_one_object(now)
+    if now < next_update then
+        return
+    end
+    next_update = now + update_interval
+
+    if actor_is_near() then
+        spawn_missing_objects()
+    end
+
+    local sim = alife()
+    if sim == nil then
+        return
+    end
+    for _, resident in ipairs(residents) do
+        local id = resident_ids[resident.section]
+        local server_object = id ~= nil and sim:object(id) or nil
+        if server_object ~= nil then
+            local object = level.object_by_id(id)
+            if object ~= nil then
+                apply_online_object(object, resident, not prepared_online[id])
+            else
+                -- Offline objects can be corrected safely. Rewriting the
+                -- online server transform every tick fights the client-side
+                -- animation in the same way as repeated teleportation.
+                pin_server_object(server_object, resident)
+                prepared_online[id] = nil
+                pose_applied[id] = nil
+                looking_at_actor[id] = nil
+                greeting_inside[id] = nil
+                next_direction_retry[id] = nil
+            end
+        end
+    end
+end
+
+-- QA inventory entry point. It reloads only the authoring LTX and keeps the
+-- live Lua namespace intact. Existing ALife NPCs are updated in place.
+function use_qa_tool(_item)
+    main()
+    return false
+end
+
+function main()
+    load_qa_runtime_overrides()
+    reset()
+    -- Make the authored direction visible even when the tester uses the item
+    -- while standing inside the normal look-at-actor radius.
+    qa_authored_direction_until = time_global() + 8000
+    update()
+    if db.actor ~= nil then
+        news_manager.send_tip(
+            db.actor,
+            "pf_bunker_reload_complete",
+            nil,
+            nil,
+            nil,
+            nil
+        )
+    end
+    printf("~ [pf_scientist_bunker] runtime placement refresh complete")
+end
+
+function before_npc_bind(object)
+    local section = object:section()
+    local resident = resident_by_section[section]
+    if resident == nil then
+        return false
+    end
+
+    -- CScriptBinder::reload calls this before xr_motivator has constructed
+    -- db.storage/state_mgr. Client movement and transform operations are not
+    -- valid at that stage in IX-Ray: an exception is swallowed by the C++
+    -- binder and leaves a visible NPC without any script binder. Only record
+    -- identity here; placement happens later in update().
+    resident_ids[section] = object:id()
+    return true
+end
+
+function after_npc_bind(object)
+    local resident = resident_by_section[object:section()]
+    if resident == nil then
+        return
+    end
+    -- bind_object only installs the Lua binder here; its reinit/net_spawn has
+    -- not run yet. Even "after" AddToMotivator is too early for movement,
+    -- transforms, trade_manager or state_mgr. The regular update waits for a
+    -- fully initialized storage and active logic section before doing work.
+    resident_ids[resident.section] = object:id()
+end

@@ -1,0 +1,1518 @@
+-- Route authoring and runtime subsystem for the standalone PF NPC editor.
+-- The main editor owns engine callbacks and 3D placement; this module owns
+-- route data, route UI, execution order, point waits and portable export.
+
+local C = {
+	VERSION = 1,
+	LIST_ROW_HEIGHT = 28,
+	STATUS = {
+		paused = true, walking = true, waiting = true,
+		completed = true, error = true,
+	},
+	ACTIVE = { walking = true, waiting = true },
+	DEFAULT_WAIT = 5,
+	MIN_WAIT = 0.1,
+	MAX_WAIT = 3600,
+	FALLBACK_STATE = "wait_trade",
+	EXPORT_SECTION = "pf_npc_route_export",
+}
+
+local state = {
+	adapter = nil,
+	dialog = nil,
+	selector = nil,
+	help = nil,
+	target_id = nil,
+	return_target = nil,
+	step = 0.1,
+	runtime = {},
+	history = {},
+	config = {},
+}
+
+local impl = {}
+
+function impl.yaw(direction)
+	if math.atan2 then return math.atan2(direction.x, direction.z) end
+	if math.abs(direction.z) < 0.000001 then
+		return direction.x >= 0 and math.pi * 0.5 or -math.pi * 0.5
+	end
+	local result = math.atan(direction.x / direction.z)
+	if direction.z < 0 then
+		result = result + (direction.x >= 0 and math.pi or -math.pi)
+	end
+	return result
+end
+
+function impl.tr(id)
+	local value = game.translate_string(id) or id
+	return string.gsub(value, "\\n", "\n")
+end
+
+function impl.trf(id, ...)
+	local ok, result = pcall(string.format, impl.tr(id), ...)
+	return ok and result or impl.tr(id)
+end
+
+function impl.report(message)
+	if state.adapter and state.adapter.report then
+		state.adapter.report("[ROUTE] " .. tostring(message))
+	else
+		printf("[PF NPC ROUTE] %s", tostring(message))
+	end
+end
+
+function impl.configure(adapter)
+	if adapter then state.adapter = adapter end
+	if not state.adapter then return false end
+	if state.config.ready then return true end
+	state.config.arrival_sqr =
+		(state.adapter.setting_number("route_arrival_distance", 0.65)) ^ 2
+	state.config.retry_ms = state.adapter.setting_number("route_path_retry_ms", 5000)
+	state.config.retry_count = math.max(
+		0, math.floor(state.adapter.setting_number("route_path_retry_count", 3)))
+	state.config.state_timeout = state.adapter.setting_number(
+		"route_state_timeout_ms", 8000)
+	state.config.animation_timeout = state.adapter.setting_number(
+		"route_animation_timeout_ms", 30000)
+	state.config.export_file = state.adapter.setting_string(
+		"route_export_file", "pf_npc_route_export.ltx")
+	state.config.ready = true
+	return true
+end
+
+function impl.copy(value)
+	if type(value) ~= "table" then return value end
+	local result = {}
+	for key, item in pairs(value) do result[impl.copy(key)] = impl.copy(item) end
+	return result
+end
+
+function impl.route(record, create)
+	if not record then return nil end
+	if type(record.route) ~= "table" then
+		if not create then return nil end
+		record.route = {
+			version = C.VERSION,
+			loop = false,
+			shuffle = false,
+			status = "paused",
+			current_point = 1,
+			execution_order = {},
+			execution_pos = 1,
+			points = {},
+		}
+	end
+	local route = record.route
+	route.version = C.VERSION
+	if type(route.points) ~= "table" then route.points = {} end
+	if type(route.execution_order) ~= "table" then route.execution_order = {} end
+	route.loop = route.loop == true
+	route.shuffle = route.shuffle == true
+	if not C.STATUS[route.status] then route.status = "paused" end
+	route.current_point = tonumber(route.current_point) or 1
+	route.execution_pos = tonumber(route.execution_pos) or 1
+	for index, point in ipairs(route.points) do
+		point.index = index
+		point.wait_seconds = math.max(C.MIN_WAIT, math.min(
+			C.MAX_WAIT, tonumber(point.wait_seconds) or C.DEFAULT_WAIT))
+		point.wait_mode = point.wait_mode == "animation_end" and
+			"animation_end" or "time"
+		point.yaw = tonumber(point.yaw) or 0
+	end
+	return route
+end
+
+function impl.record(id)
+	return state.adapter and state.adapter.get_record(tonumber(id)) or nil
+end
+
+function impl.save(record)
+	if record and state.adapter then state.adapter.put_record(record) end
+end
+
+function impl.runtime_key(record_or_id)
+	local value = type(record_or_id) == "table" and record_or_id.id or record_or_id
+	return tonumber(value) or value
+end
+
+function impl.status(record, id, ...)
+	local text = impl.trf(id, ...)
+	if state.dialog and state.dialog:IsShown() and
+		state.dialog.target_id == (record and record.id or state.target_id) then
+		state.dialog.status:SetText(text)
+	end
+	impl.report(text)
+	return text
+end
+
+function impl.status_label(value)
+	return impl.tr("pf_ne_route_label_" .. tostring(value))
+end
+
+function impl.is_one_shot(item)
+	if not item or not item.compatible or type(item.definition) ~= "table" then
+		return false
+	end
+	local animation_name = item.definition.animation
+	if type(animation_name) ~= "string" or type(state_mgr_animation_list) ~= "table" or
+		type(state_mgr_animation_list.animations) ~= "table" then return false end
+	local definition = state_mgr_animation_list.animations[animation_name]
+	if type(definition) ~= "table" or definition.into == nil or
+		definition.idle ~= nil or definition.rnd ~= nil then return false end
+	local props = definition.prop
+	return not (type(props) == "table" and props.moving == true)
+end
+
+function impl.required_weapon_slot_available(object, animation_definition)
+	local into = animation_definition and animation_definition.into
+	if type(into) ~= "table" then return false end
+	local slot = 0
+	if object then
+		local weapon = object:active_item()
+		local _, unstrapped = pcall(function() return object:weapon_unstrapped() end)
+		if weapon and unstrapped == true then
+			local ok, value = pcall(function() return weapon:animation_slot() end)
+			if ok then slot = tonumber(value) or 0 end
+		end
+	end
+	return into[slot] ~= nil or into[0] ~= nil
+end
+
+function impl.state_allowed(item, object)
+	if not item or not item.compatible or type(item.definition) ~= "table" or
+		item.definition.movement ~= move.stand then return false end
+	if not item.safe and not impl.is_one_shot(item) then return false end
+	if impl.is_one_shot(item) then
+		local animation_definition = state_mgr_animation_list.animations[
+			item.definition.animation]
+		if not impl.required_weapon_slot_available(object, animation_definition) then
+			return false
+		end
+	end
+	local weapon = item.weapon or "nil"
+	if (weapon == "unstrapped" or weapon == "fire" or
+		weapon == "sniper_fire") and (not state.adapter.object_has_weapon or
+		not state.adapter.object_has_weapon(object)) then return false end
+	return not state.adapter or not state.adapter.state_weapon_compatible or
+		state.adapter.state_weapon_compatible(object, item)
+end
+
+function impl.allowed_states(object)
+	local result = {}
+	for _, item in ipairs(state.adapter.get_states()) do
+		if impl.state_allowed(item, object) then result[#result + 1] = item end
+	end
+	return result
+end
+
+function impl.default_state(object, requested)
+	local item = requested and state.adapter.get_state(requested) or nil
+	if impl.state_allowed(item, object) then return requested end
+	for _, name in ipairs({ "wait_trade", "wait", "idle" }) do
+		item = state.adapter.get_state(name)
+		if impl.state_allowed(item, object) then return name end
+	end
+	local list = impl.allowed_states(object)
+	return list[1] and list[1].name or nil
+end
+
+function impl.point_from_placement(result, previous, object)
+	local state_name = impl.default_state(
+		object, result.state or (previous and previous.state))
+	if not state_name then return nil end
+	local item = state.adapter.get_state(state_name)
+	local wait_mode = previous and previous.wait_mode or "time"
+	if wait_mode == "animation_end" and not impl.is_one_shot(item) then
+		wait_mode = "time"
+	end
+	return {
+		x = result.position.x,
+		y = result.position.y,
+		z = result.position.z,
+		yaw = result.yaw,
+		level_vertex_id = result.level_vertex_id,
+		game_vertex_id = result.game_vertex_id,
+		state = state_name,
+		animation = item and item.animation or "nil",
+		wait_seconds = previous and previous.wait_seconds or C.DEFAULT_WAIT,
+		wait_mode = wait_mode,
+	}
+end
+
+function impl.push_history(record)
+	if not record then return end
+	local id = tonumber(record.id)
+	state.history[id] = state.history[id] or {}
+	local list = state.history[id]
+	list[#list + 1] = impl.copy(record.route)
+	if #list > 30 then table.remove(list, 1) end
+end
+
+function impl.pause_runtime(record, quiet)
+	local route = impl.route(record, false)
+	if not route then return false end
+	if C.ACTIVE[route.status] then
+		local object = level.object_by_id(record.id)
+		if object then
+			pcall(function() object:set_desired_position() end)
+			pcall(function() object:set_desired_direction() end)
+			local ready, storage = state.adapter.ready_owned(object)
+			if ready then
+				local position = object:position()
+				local direction = object:direction()
+				local yaw = impl.yaw(direction)
+				local fallback = impl.default_state(object, C.FALLBACK_STATE)
+				if fallback then
+					state.adapter.apply_state(
+						object, storage, fallback, position, yaw, false)
+				end
+			end
+		end
+	end
+	route.status = "paused"
+	route.error = nil
+	state.runtime[impl.runtime_key(record)] = nil
+	impl.save(record)
+	if not quiet then impl.status(record, "pf_ne_route_status_paused") end
+	return true
+end
+
+function impl.pause_for_edit(record)
+	impl.pause_runtime(record, true)
+	impl.push_history(record)
+end
+
+function impl.build_order(route)
+	local order = {}
+	if #route.points == 0 then return order end
+	order[1] = 1
+	for index = 2, #route.points do order[#order + 1] = index end
+	if route.shuffle then
+		for index = #order, 3, -1 do
+			local other = math.random(2, index)
+			order[index], order[other] = order[other], order[index]
+		end
+	end
+	return order
+end
+
+function impl.order_valid(route)
+	if #route.execution_order ~= #route.points or #route.points == 0 or
+		route.execution_order[1] ~= 1 then return false end
+	local seen = {}
+	for _, index in ipairs(route.execution_order) do
+		if index < 1 or index > #route.points or seen[index] then return false end
+		seen[index] = true
+	end
+	return true
+end
+
+function impl.start(record, restart)
+	local route = impl.route(record, true)
+	if #route.points == 0 then
+		impl.status(record, "pf_ne_route_status_no_points")
+		return false
+	end
+	local object = level.object_by_id(record.id)
+	if not object then
+		impl.status(record, "pf_ne_route_status_offline")
+		return false
+	end
+	if restart or not impl.order_valid(route) or route.status == "completed" or
+		route.status == "error" then
+		route.execution_order = impl.build_order(route)
+		route.execution_pos = 1
+		route.current_point = route.execution_order[1]
+	end
+	if not route.points[route.current_point] then
+		route.execution_order = impl.build_order(route)
+		route.execution_pos = 1
+		route.current_point = 1
+	end
+	route.status = "walking"
+	route.error = nil
+	state.runtime[impl.runtime_key(record)] = nil
+	impl.save(record)
+	impl.status(record, restart and "pf_ne_route_status_restarted" or
+		"pf_ne_route_status_started")
+	return true
+end
+
+function impl.advance(record, route)
+	state.runtime[impl.runtime_key(record)] = nil
+	route.execution_pos = route.execution_pos + 1
+	if route.execution_pos > #route.execution_order then
+		if not route.loop then
+			route.status = "completed"
+			route.current_point = route.execution_order[#route.execution_order] or
+				route.current_point
+			impl.save(record)
+			impl.status(record, "pf_ne_route_status_completed")
+			return
+		end
+		route.execution_order = impl.build_order(route)
+		route.execution_pos = 1
+	end
+	route.current_point = route.execution_order[route.execution_pos]
+	route.status = "walking"
+	impl.save(record)
+end
+
+function impl.fail(record, route, reason)
+	route.status = "error"
+	route.error = tostring(reason or "unknown")
+	state.runtime[impl.runtime_key(record)] = nil
+	impl.save(record)
+	impl.status(record, "pf_ne_route_status_error", route.current_point, route.error)
+end
+
+function impl.command_walk(record, route, runtime, object, storage, point, now)
+	local ok, accessible = pcall(function()
+		return object:accessible(point.level_vertex_id)
+	end)
+	if not ok or not accessible then
+		impl.fail(record, route, impl.tr("pf_ne_route_error_unreachable"))
+		return false
+	end
+	if state.adapter.weapon_transition_stable and
+		not state.adapter.weapon_transition_stable(object) then
+		-- state_mgr_animation aborts if an animation is queued while a weapon
+		-- is between strapped/unstrapped states. Retry after it stabilizes.
+		runtime.weapon_deadline = runtime.weapon_deadline or
+			(now + state.config.state_timeout)
+		if now >= runtime.weapon_deadline then
+			impl.fail(record, route, impl.tr("pf_ne_route_error_weapon_transition"))
+			return false
+		end
+		runtime.commanded = false
+		runtime.last_progress = now
+		return true
+	end
+	runtime.weapon_deadline = nil
+	local walk_state
+	if state.adapter.object_has_weapon(object) then
+		local weapon = object:active_item()
+		local _, unstrapped = pcall(function() return object:weapon_unstrapped() end)
+		if weapon and unstrapped == true then
+			walk_state = "patrol"
+		else
+			walk_state = "walk"
+		end
+	else
+		walk_state = "walk_noweap"
+	end
+	if not state.adapter.get_state(walk_state) then
+		impl.fail(record, route, impl.tr("pf_ne_route_error_walk_state"))
+		return false
+	end
+	local position = vector():set(point.x, point.y, point.z)
+	local success, failure = pcall(function()
+		object:set_desired_position(position)
+		object:set_dest_level_vertex_id(point.level_vertex_id)
+		object:set_path_type(game_object.level_path)
+		object:set_movement_type(move.walk)
+		object:set_body_state(move.standing)
+		object:set_mental_state(anim.free)
+		object:set_sight(look.path_dir, nil, 0)
+		storage.state_mgr:set_state(walk_state)
+	end)
+	if not success then
+		impl.fail(record, route, tostring(failure))
+		return false
+	end
+	runtime.commanded = true
+	runtime.last_progress = now
+	return true
+end
+
+function impl.apply_point_state(record, route, runtime, object, storage, point, now)
+	local item = state.adapter.get_state(point.state)
+	if not impl.state_allowed(item, object) then
+		impl.fail(record, route, impl.trf(
+			"pf_ne_route_error_state", tostring(point.state)))
+		return false
+	end
+	local stable = state.adapter.weapon_transition_stable == nil or
+		state.adapter.weapon_transition_stable(object)
+	if not stable then
+		local deadline = runtime.phase == "pose_weapon_wait" and
+			runtime.state_deadline or (now + state.config.state_timeout)
+		runtime.phase = "pose_weapon_wait"
+		runtime.state_deadline = deadline
+		return true
+	end
+	if not state.adapter.apply_state(
+		object, storage, point.state,
+		vector():set(point.x, point.y, point.z), point.yaw, false) then
+		impl.fail(record, route, impl.trf(
+			"pf_ne_route_error_state", tostring(point.state)))
+		return false
+	end
+	runtime.phase = "state_start"
+	runtime.state_deadline = now + state.config.state_timeout
+	runtime.one_shot = impl.is_one_shot(item)
+	runtime.animation_seen = false
+	return true
+end
+
+function impl.prepare_one_shot(record, route, runtime, object, storage, point, now)
+	if state.adapter.weapon_transition_stable and
+		not state.adapter.weapon_transition_stable(object) then
+		local deadline = runtime.phase == "prepare_weapon" and
+			runtime.state_deadline or (now + state.config.state_timeout)
+		runtime.phase = "prepare_weapon"
+		runtime.state_deadline = deadline
+		return true
+	end
+	local fallback = impl.default_state(object, C.FALLBACK_STATE)
+	if not fallback or not state.adapter.apply_state(
+		object, storage, fallback, object:position(), point.yaw, false) then
+		impl.fail(record, route, impl.tr("pf_ne_route_error_prepare_animation"))
+		return false
+	end
+	runtime.phase = "prepare_state"
+	runtime.fallback = fallback
+	runtime.state_deadline = now + state.config.state_timeout
+	return true
+end
+
+function impl.arrive(record, route, runtime, object, storage, point, now)
+	pcall(function() object:set_desired_position() end)
+	pcall(function() object:set_desired_direction() end)
+	route.status = "waiting"
+	impl.save(record)
+	local item = state.adapter.get_state(point.state)
+	if impl.is_one_shot(item) then
+		-- One-shot states must leave and re-enter their executor, otherwise the
+		-- same motion cannot be replayed at a later route point.
+		impl.prepare_one_shot(record, route, runtime, object, storage, point, now)
+	else
+		impl.apply_point_state(record, route, runtime, object, storage, point, now)
+	end
+end
+
+function impl.state_started(storage, point, object, runtime)
+	local manager = storage and storage.state_mgr
+	if not manager or manager.target_state ~= point.state then return false end
+	local item = state.adapter.get_state(point.state)
+	local definition = item and item.definition or nil
+	if not definition then return false end
+	if type(definition.animation) == "string" then
+		local executor = manager.animation
+		local values = executor and executor.states
+		local started = values and values.target_state == definition.animation and
+			(values.current_state == definition.animation or values.anim_marker ~= nil)
+		if started and runtime and impl.is_one_shot(item) then
+			local count = object and object:animation_count() or 0
+			if count > 0 or values.anim_marker ~= nil then
+				runtime.animation_seen = true
+			elseif values.current_state == definition.animation then
+				-- A short one-shot may start and finish between 250 ms updates. The
+				-- fallback phase proves this is a new entry, so this is completion,
+				-- not a stale state from the previous route point.
+				runtime.animation_completed = true
+			end
+		end
+		return started
+	end
+	if type(definition.animstate) == "string" then
+		local executor = manager.animstate
+		local values = executor and executor.states
+		return values and values.target_state == definition.animstate and
+			(values.current_state == definition.animstate or values.anim_marker ~= nil)
+	end
+	return true
+end
+
+function impl.fallback_ready(storage, fallback)
+	local manager = storage and storage.state_mgr
+	if not manager or manager.target_state ~= fallback then return false end
+	local item = state.adapter.get_state(fallback)
+	local definition = item and item.definition or nil
+	if not definition then return false end
+	if type(definition.animation) == "string" then
+		local values = manager.animation and manager.animation.states
+		return values and values.current_state == definition.animation and
+			values.anim_marker == nil
+	end
+	if type(definition.animstate) == "string" then
+		local values = manager.animstate and manager.animstate.states
+		return values and values.current_state == definition.animstate and
+			values.anim_marker == nil
+	end
+	return true
+end
+
+function impl.one_shot_finished(object, storage, point, runtime)
+	if runtime.animation_completed then return true end
+	local item = state.adapter.get_state(point.state)
+	local animation_name = item and item.definition and item.definition.animation
+	local executor = storage and storage.state_mgr and storage.state_mgr.animation
+	local values = executor and executor.states
+	if not values or values.target_state ~= animation_name then return false end
+	local count = object:animation_count()
+	if count > 0 or values.anim_marker ~= nil then runtime.animation_seen = true end
+	return runtime.animation_seen and count == 0 and values.anim_marker == nil and
+		values.current_state == animation_name
+end
+
+function impl.update_record(record, now)
+	local route = impl.route(record, false)
+	if not route or #route.points == 0 or not C.ACTIVE[route.status] then return end
+	local object = level.object_by_id(record.id)
+	if not object then
+		state.runtime[impl.runtime_key(record)] = nil
+		return
+	end
+	local ready, storage = state.adapter.ready_owned(object)
+	if not ready then return end
+	local runtime_key = impl.runtime_key(record)
+	local runtime = state.runtime[runtime_key]
+	if not runtime then
+		if route.status == "waiting" then route.status = "walking" end
+		if not impl.order_valid(route) then
+			route.execution_order = impl.build_order(route)
+			route.execution_pos = 1
+			route.current_point = route.execution_order[1]
+		end
+		runtime = {
+			phase = "walking", commanded = false, retries = 0,
+			last_progress = now,
+		}
+		state.runtime[runtime_key] = runtime
+		impl.save(record)
+	end
+	local point = route.points[route.current_point]
+	if not point then
+		impl.fail(record, route, impl.tr("pf_ne_route_error_missing_point"))
+		return
+	end
+	if runtime.phase == "walking" then
+		local target = vector():set(point.x, point.y, point.z)
+		local distance_sqr = object:position():distance_to_sqr(target)
+		if distance_sqr <= state.config.arrival_sqr then
+			impl.arrive(record, route, runtime, object, storage, point, now)
+			return
+		end
+		if not runtime.best_distance or distance_sqr + 0.01 < runtime.best_distance then
+			runtime.best_distance = distance_sqr
+			runtime.last_progress = now
+		end
+		if not runtime.commanded then
+			impl.command_walk(record, route, runtime, object, storage, point, now)
+		elseif now - runtime.last_progress >= state.config.retry_ms then
+			if runtime.retries >= state.config.retry_count then
+				impl.fail(record, route, impl.tr("pf_ne_route_error_stalled"))
+				return
+			end
+			runtime.retries = runtime.retries + 1
+			runtime.commanded = false
+			impl.command_walk(record, route, runtime, object, storage, point, now)
+		end
+		return
+	end
+	if runtime.phase == "prepare_state" then
+		if impl.fallback_ready(storage, runtime.fallback) then
+			impl.apply_point_state(record, route, runtime, object, storage, point, now)
+		elseif now >= runtime.state_deadline then
+			impl.fail(record, route, impl.tr("pf_ne_route_error_prepare_animation"))
+		end
+		return
+	end
+	if runtime.phase == "prepare_weapon" then
+		if state.adapter.weapon_transition_stable == nil or
+			state.adapter.weapon_transition_stable(object) then
+			impl.prepare_one_shot(record, route, runtime, object, storage, point, now)
+		elseif now >= runtime.state_deadline then
+			impl.fail(record, route, impl.tr("pf_ne_route_error_weapon_transition"))
+		end
+		return
+	end
+	if runtime.phase == "pose_weapon_wait" then
+		if state.adapter.weapon_transition_stable == nil or
+			state.adapter.weapon_transition_stable(object) then
+			impl.apply_point_state(record, route, runtime, object, storage, point, now)
+		elseif now >= runtime.state_deadline then
+			impl.fail(record, route, impl.tr("pf_ne_route_error_weapon_transition"))
+		end
+		return
+	end
+	if runtime.phase == "state_start" then
+		if impl.state_started(storage, point, object, runtime) then
+			if point.wait_mode == "animation_end" then
+				runtime.phase = "wait_animation"
+				runtime.animation_deadline = now + state.config.animation_timeout
+			else
+				runtime.phase = "wait_time"
+				runtime.wait_until = now + point.wait_seconds * 1000
+			end
+		elseif now >= runtime.state_deadline then
+			impl.fail(record, route, impl.trf(
+				"pf_ne_route_error_state_timeout", tostring(point.state)))
+		end
+		return
+	end
+	if runtime.phase == "wait_time" then
+		if now >= runtime.wait_until then impl.advance(record, route) end
+		return
+	end
+	if runtime.phase == "wait_animation" then
+		if impl.one_shot_finished(object, storage, point, runtime) then
+			impl.advance(record, route)
+		elseif now >= runtime.animation_deadline then
+			impl.fail(record, route, impl.tr("pf_ne_route_error_animation_timeout"))
+		end
+	end
+end
+
+function impl.current_point_row(route, index, point)
+	local marker = route.current_point == index and C.ACTIVE[route.status] and ">" or " "
+	local wait = point.wait_mode == "animation_end" and
+		impl.tr("pf_ne_route_row_animation_end") or
+		string.format("%.1fs", point.wait_seconds)
+	return string.format(
+		"%s%02d  X %.2f  Y %.2f  Z %.2f  | %s | %s",
+		marker, index, point.x, point.y, point.z, wait, point.state)
+end
+
+function impl.point_state_item(point)
+	return point and state.adapter.get_state(point.state) or nil
+end
+
+function impl.make_placement_context(dialog, operation, index)
+	local record = impl.record(dialog.target_id)
+	local route = impl.route(record, true)
+	local object = level.object_by_id(dialog.target_id)
+	if not object then
+		impl.status(record, "pf_ne_route_status_offline")
+		return nil
+	end
+	impl.pause_for_edit(record)
+	local previous = index and route.points[index] or
+		(operation == "add" and route.points[#route.points] or nil)
+	local captured = state.adapter.capture_transform(dialog.target_id)
+	if not captured then
+		impl.status(record, "pf_ne_route_status_offline")
+		return nil
+	end
+	local initial = previous and {
+		position = vector():set(previous.x, previous.y, previous.z),
+		yaw = previous.yaw,
+		state = previous.state,
+		level_vertex_id = previous.level_vertex_id,
+		game_vertex_id = previous.game_vertex_id,
+	} or {
+		position = vector():set(record.x, record.y, record.z),
+		yaw = record.yaw,
+		state = impl.default_state(object, dialog.selected_state or record.state),
+		level_vertex_id = record.level_vertex_id,
+		game_vertex_id = record.game_vertex_id,
+	}
+	return {
+		initial = initial,
+		snapshot = captured,
+		is_state_allowed = function(item, candidate)
+			return impl.state_allowed(item, candidate)
+		end,
+		hide_dialog = function() dialog:HideDialog() end,
+		on_cancel = function()
+			-- ESC is still being dispatched while the 3D window closes. Reopen on
+			-- the next update so that press cannot also close the route window.
+			level.add_call(
+				function() return true end,
+				function()
+					dialog:Open(dialog.target_id, true)
+					impl.status(record, "pf_ne_route_status_point_cancelled")
+				end
+			)
+		end,
+		on_confirm = function(result)
+			local latest = impl.record(dialog.target_id)
+			local latest_route = impl.route(latest, true)
+			local candidate = impl.point_from_placement(result, previous, object)
+			if not candidate then
+				dialog:Open(dialog.target_id, true)
+				impl.status(latest, "pf_ne_route_error_no_state")
+				return
+			end
+			if operation == "edit" and index and latest_route.points[index] then
+				latest_route.points[index] = candidate
+				dialog.selected_point = index
+			else
+				latest_route.points[#latest_route.points + 1] = candidate
+				dialog.selected_point = #latest_route.points
+			end
+			for number, point in ipairs(latest_route.points) do point.index = number end
+			latest_route.status = "paused"
+			latest_route.execution_order = {}
+			latest_route.execution_pos = 1
+			latest_route.current_point = 1
+			impl.save(latest)
+			if dialog.selected_point == 1 then
+				state.adapter.apply_base_point(dialog.target_id, candidate)
+			end
+			dialog:Open(dialog.target_id, true)
+			impl.status(latest, operation == "edit" and
+				"pf_ne_route_status_point_updated" or "pf_ne_route_status_point_added",
+				dialog.selected_point)
+		end,
+	}
+end
+
+function impl.sanitize(value)
+	return state.adapter.sanitize and state.adapter.sanitize(value) or tostring(value or "")
+end
+
+function impl.export_routes()
+	local records = {}
+	for _, record in pairs(state.adapter.get_records()) do
+		local route = impl.route(record, false)
+		if route and #route.points > 0 and record.level == level.name() and
+			not record.pending_delete then records[#records + 1] = record end
+	end
+	table.sort(records, function(left, right) return left.id < right.id end)
+	local path = getFS():update_path("$logs$", state.config.export_file)
+	local file, failure = io.open(path, "w")
+	if not file then return false, tostring(failure or path), 0 end
+	file:write("; PF NPC route export. Portable authoring data; it does not spawn NPCs.\n")
+	file:write("; runtime_ms=" .. tostring(time_global()) .. "\n\n")
+	file:write("[" .. C.EXPORT_SECTION .. "]\n")
+	file:write("format_version = 1\n")
+	file:write("level = " .. impl.sanitize(level.name()) .. "\n")
+	file:write("route_count = " .. tostring(#records) .. "\n\n")
+	for route_index, record in ipairs(records) do
+		local route = impl.route(record, false)
+		local section = string.format("pf_npc_route_%03d", route_index)
+		file:write("[" .. section .. "]\n")
+		file:write("runtime_id = " .. tostring(record.id) .. "\n")
+		file:write("wrapper = " .. impl.sanitize(record.wrapper) .. "\n")
+		file:write("profile = " .. impl.sanitize(record.profile) .. "\n")
+		file:write("specific = " .. impl.sanitize(record.specific) .. "\n")
+		file:write("label = " .. impl.sanitize(record.label) .. "\n")
+		file:write("level = " .. impl.sanitize(record.level) .. "\n")
+		file:write("loop = " .. tostring(route.loop) .. "\n")
+		file:write("shuffle = " .. tostring(route.shuffle) .. "\n")
+		file:write("point_count = " .. tostring(#route.points) .. "\n")
+		file:write("; runtime_status = " .. impl.sanitize(route.status) .. "\n\n")
+		for point_index, point in ipairs(route.points) do
+			local item = state.adapter.get_state(point.state)
+			file:write(string.format("[%s_point_%03d]\n", section, point_index))
+			file:write("order = " .. tostring(point_index) .. "\n")
+			file:write(string.format("position = %.6f, %.6f, %.6f\n",
+				point.x, point.y, point.z))
+			file:write(string.format("yaw = %.9f\n", point.yaw))
+			file:write("level_vertex_id = " .. tostring(point.level_vertex_id) .. "\n")
+			file:write("game_vertex_id = " .. tostring(point.game_vertex_id) .. "\n")
+			file:write("state = " .. impl.sanitize(point.state) .. "\n")
+			file:write("animation = " .. impl.sanitize(
+				item and item.animation or point.animation or "nil") .. "\n")
+			file:write(string.format("wait_seconds = %.3f\n", point.wait_seconds))
+			file:write("wait_mode = " .. impl.sanitize(point.wait_mode) .. "\n\n")
+		end
+	end
+	file:close()
+	return true, path, #records
+end
+
+function impl.has_exportable_routes()
+	for _, record in pairs(state.adapter.get_records()) do
+		local route = impl.route(record, false)
+		if route and #route.points > 0 and record.level == level.name() and
+			not record.pending_delete then return true end
+	end
+	return false
+end
+
+class "pf_nre_list_item" (CUIListBoxItem)
+
+function pf_nre_list_item:__init(text, data, color, width) super(C.LIST_ROW_HEIGHT)
+	self.data = data
+	width = tonumber(width) or 390
+	self:SetWndSize(vector2():set(width, C.LIST_ROW_HEIGHT))
+	self.text = self:GetTextItem()
+	self.text:SetFont(GetFontLetterica16Russian())
+	self.text:SetEllipsis(true)
+	self.text:SetWndPos(vector2():set(5, 0))
+	self.text:SetWndSize(vector2():set(width - 10, C.LIST_ROW_HEIGHT))
+	self.text:SetText(text)
+	if color then self:SetTextColor(color) end
+end
+
+class "pf_nre_selector_dialog" (CUIScriptWnd)
+
+function pf_nre_selector_dialog:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_npc_route_editor.xml")
+	xml:InitWindow("route_selector", 0, self)
+	xml:InitStatic("route_selector:shade", self)
+	self.form = xml:InitStatic("route_selector:form", self)
+	xml:InitStatic("route_selector:form:screen_noise", self.form)
+	xml:InitFrameLine("route_selector:form:top_left_bar", self.form)
+	xml:InitFrameLine("route_selector:form:top_right_bar", self.form)
+	xml:InitFrame("route_selector:form:content_frame", self.form)
+	xml:InitTextWnd("route_selector:form:caption", self.form)
+	self.panel = xml:InitFrame("route_selector:form:panel", self.form)
+	xml:InitTextWnd("route_selector:form:panel:hint", self.panel)
+	self.list = xml:InitListBox("route_selector:form:panel:list", self.panel)
+	self.list:ShowSelectedItem(true)
+	self:Register(self.list, "pf_nre_selector_list")
+	self:AddCallback("pf_nre_selector_list", ui_events.LIST_ITEM_CLICKED,
+		self.OnSelected, self)
+	self.status = xml:InitTextWnd("route_selector:form:status", self.form)
+	self.open_button = xml:Init3tButton(
+		"route_selector:form:open_button", self.form)
+	self.close_button = xml:Init3tButton(
+		"route_selector:form:close_button", self.form)
+	self:Register(self.open_button, "pf_nre_selector_open")
+	self:Register(self.close_button, "pf_nre_selector_close")
+	self:AddCallback("pf_nre_selector_open", ui_events.BUTTON_CLICKED,
+		self.OnOpenRoute, self)
+	self:AddCallback("pf_nre_selector_close", ui_events.BUTTON_CLICKED,
+		self.OnClose, self)
+	self:SetAutoDelete(false)
+	self.target_id = nil
+end
+
+function pf_nre_selector_dialog:SelectedData()
+	local item = self.list:GetSelectedItem()
+	return item and item.data or nil
+end
+
+function pf_nre_selector_dialog:Availability(record)
+	if not record or record.pending_delete or record.level ~= level.name() then
+		return false, "missing"
+	end
+	if record.off_mesh == true then return false, "off_mesh" end
+	local object = level.object_by_id(record.id)
+	if not object then return false, "offline" end
+	local ready = state.adapter.ready_owned(object) == true
+	if not ready then return false, "not_ready" end
+	return true, nil
+end
+
+function pf_nre_selector_dialog:UpdateActions()
+	local data = self:SelectedData()
+	self.target_id = data and data.id or nil
+	local record = self.target_id and impl.record(self.target_id) or nil
+	local available, reason = self:Availability(record)
+	self.open_button:Enable(available)
+	if not record then
+		self.status:SetText(impl.tr("pf_ne_route_selector_empty"))
+	elseif reason == "off_mesh" then
+		self.status:SetText(impl.tr("pf_ne_route_ai_required"))
+	elseif reason == "offline" then
+		self.status:SetText(impl.tr("pf_ne_status_offline"))
+	elseif reason == "not_ready" then
+		self.status:SetText(impl.tr("pf_ne_status_not_ready"))
+	else
+		self.status:SetText(impl.trf("pf_ne_route_selector_ready",
+			tostring(record.label or record.specific or record.profile or record.id)))
+	end
+end
+
+function pf_nre_selector_dialog:Refresh(preserve)
+	local wanted = preserve and self.target_id or nil
+	local rows = {}
+	for _, record in pairs(state.adapter.get_records()) do
+		if not record.pending_delete and record.level == level.name() then
+			table.insert(rows, record)
+		end
+	end
+	table.sort(rows, function(left, right)
+		local left_name = tostring(left.label or left.specific or left.profile or "")
+		local right_name = tostring(right.label or right.specific or right.profile or "")
+		if left_name == right_name then
+			return (tonumber(left.id) or 0) < (tonumber(right.id) or 0)
+		end
+		return left_name < right_name
+	end)
+	self.list:RemoveAll()
+	local wanted_index = nil
+	local first_available = nil
+	for index, record in ipairs(rows) do
+		local available, reason = self:Availability(record)
+		local prefix = available and "[ON]" or reason == "off_mesh" and
+			"[NO-AI]" or reason == "offline" and "[OFF]" or "[WAIT]"
+		local color = available and GetARGB(255, 125, 215, 150) or
+			GetARGB(255, 125, 125, 120)
+		local name = tostring(record.label or record.specific or record.profile or "NPC")
+		self.list:AddExistingItem(pf_nre_list_item(string.format(
+			"%s [DEV] %s | %s | #%s", prefix, name,
+			tostring(record.profile or record.specific or "?"), tostring(record.id)),
+			{ id = record.id }, color, 564))
+		if record.id == wanted then wanted_index = index - 1 end
+		if available and first_available == nil then first_available = index - 1 end
+	end
+	if #rows > 0 then
+		self.list:SetSelectedIndex(wanted_index or first_available or 0)
+	else
+		self.target_id = nil
+	end
+	self:UpdateActions()
+end
+
+function pf_nre_selector_dialog:Open(preserve)
+	self:Refresh(preserve)
+	self:Enable(true)
+	self:ShowDialog(true)
+	return true
+end
+
+function pf_nre_selector_dialog:OnSelected() self:UpdateActions() end
+
+function pf_nre_selector_dialog:OnOpenRoute()
+	local record = self.target_id and impl.record(self.target_id) or nil
+	local available = self:Availability(record)
+	if not available then self:UpdateActions() return end
+	open(self.target_id, state.adapter, state.step, "selector")
+end
+
+function pf_nre_selector_dialog:OnClose()
+	self:HideDialog()
+	state.return_target = nil
+end
+
+function pf_nre_selector_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and
+		dik_to_bind(dik) == key_bindings.kQUIT then
+		self:OnClose()
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+class "pf_nre_help_dialog" (CUIScriptWnd)
+
+function pf_nre_help_dialog:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_npc_route_editor.xml")
+	xml:InitWindow("route_help", 0, self)
+	xml:InitStatic("route_help:shade", self)
+	self.panel = xml:InitFrame("route_help:panel", self)
+	xml:InitTextWnd("route_help:panel:title", self.panel)
+	for _, group_name in ipairs({ "points", "wait", "order", "runtime" }) do
+		local group = xml:InitFrame("route_help:panel:" .. group_name, self.panel)
+		xml:InitTextWnd("route_help:panel:" .. group_name .. ":title", group)
+		xml:InitTextWnd("route_help:panel:" .. group_name .. ":body", group)
+	end
+	self.close_button = xml:Init3tButton("route_help:panel:close_button", self.panel)
+	self:Register(self.close_button, "pf_nre_help_close")
+	self:AddCallback("pf_nre_help_close", ui_events.BUTTON_CLICKED, self.OnClose, self)
+	self:SetAutoDelete(false)
+end
+
+function pf_nre_help_dialog:OnClose() self:HideDialog() end
+
+function pf_nre_help_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and
+		dik_to_bind(dik) == key_bindings.kQUIT then
+		self:HideDialog()
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+class "pf_nre_dialog" (CUIScriptWnd)
+
+function pf_nre_dialog:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_npc_route_editor.xml")
+	xml:InitWindow("route", 0, self)
+	xml:InitStatic("route:shade", self)
+	self.form = xml:InitStatic("route:form", self)
+	xml:InitStatic("route:form:screen_noise", self.form)
+	xml:InitFrameLine("route:form:top_left_bar", self.form)
+	xml:InitFrameLine("route:form:top_right_bar", self.form)
+	xml:InitFrame("route:form:content_frame", self.form)
+	xml:InitTextWnd("route:form:caption", self.form)
+	self.points_panel = xml:InitFrame("route:form:points_panel", self.form)
+	xml:InitTextWnd("route:form:points_panel:title", self.points_panel)
+	self.point_list = xml:InitListBox("route:form:points_panel:list", self.points_panel)
+	self.point_list:ShowSelectedItem(true)
+	self:Register(self.point_list, "pf_nre_points")
+	self:AddCallback("pf_nre_points", ui_events.LIST_ITEM_CLICKED,
+		self.OnPointSelected, self)
+	self.state_panel = xml:InitFrame("route:form:state_panel", self.form)
+	xml:InitTextWnd("route:form:state_panel:title", self.state_panel)
+	self.state_list = xml:InitListBox("route:form:state_panel:list", self.state_panel)
+	self.state_list:ShowSelectedItem(true)
+	self:Register(self.state_list, "pf_nre_states")
+	self:AddCallback("pf_nre_states", ui_events.LIST_ITEM_CLICKED,
+		self.OnStateSelected, self)
+	self.fields = xml:InitFrame("route:form:fields", self.form)
+	for _, name in ipairs({
+		"x_title", "y_title", "z_title", "yaw_title", "wait_title",
+		"wait_end_title", "loop_title", "shuffle_title"
+	}) do xml:InitTextWnd("route:form:fields:" .. name, self.fields) end
+	self.x_edit = xml:InitEditBox("route:form:fields:x_edit", self.fields)
+	self.y_edit = xml:InitEditBox("route:form:fields:y_edit", self.fields)
+	self.z_edit = xml:InitEditBox("route:form:fields:z_edit", self.fields)
+	self.yaw_edit = xml:InitEditBox("route:form:fields:yaw_edit", self.fields)
+	self.wait_edit = xml:InitEditBox("route:form:fields:wait_edit", self.fields)
+	self.wait_end = xml:InitCheck("route:form:fields:wait_end", self.fields)
+	self.loop_check = xml:InitCheck("route:form:fields:loop_check", self.fields)
+	self.shuffle_check = xml:InitCheck("route:form:fields:shuffle_check", self.fields)
+	self:Register(self.wait_end, "pf_nre_wait_end")
+	self:Register(self.loop_check, "pf_nre_loop")
+	self:Register(self.shuffle_check, "pf_nre_shuffle")
+	self:AddCallback("pf_nre_wait_end", ui_events.BUTTON_CLICKED,
+		self.OnWaitModeChanged, self)
+	self:AddCallback("pf_nre_loop", ui_events.BUTTON_CLICKED,
+		self.OnSettingsChanged, self)
+	self:AddCallback("pf_nre_shuffle", ui_events.BUTTON_CLICKED,
+		self.OnSettingsChanged, self)
+	self.status = xml:InitTextWnd("route:form:status", self.form)
+	self.runtime_status = xml:InitTextWnd("route:form:runtime_status", self.form)
+
+	local function button(path, name, callback_function)
+		local control = xml:Init3tButton(path, self.form)
+		self:Register(control, name)
+		self:AddCallback(name, ui_events.BUTTON_CLICKED, callback_function, self)
+		return control
+	end
+	self.add_button = button("route:form:add_button", "pf_nre_add", self.OnAdd)
+	self.edit_button = button("route:form:edit_button", "pf_nre_edit", self.OnEdit)
+	self.up_button = button("route:form:up_button", "pf_nre_up", self.OnUp)
+	self.down_button = button("route:form:down_button", "pf_nre_down", self.OnDown)
+	self.delete_button = button("route:form:delete_button", "pf_nre_delete", self.OnDelete)
+	self.apply_button = button("route:form:apply_button", "pf_nre_apply", self.OnApply)
+	self.undo_button = button("route:form:undo_button", "pf_nre_undo", self.OnUndo)
+	self.start_button = button("route:form:start_button", "pf_nre_start", self.OnStart)
+	self.pause_button = button("route:form:pause_button", "pf_nre_pause", self.OnPause)
+	self.restart_button = button("route:form:restart_button", "pf_nre_restart", self.OnRestart)
+	self.clear_button = button("route:form:clear_button", "pf_nre_clear", self.OnClear)
+	self.export_button = button("route:form:export_button", "pf_nre_export", self.OnExport)
+	self.help_button = button("route:form:help_button", "pf_nre_help", self.OnHelp)
+	self.back_button = button("route:form:back_button", "pf_nre_back", self.OnBack)
+	self:SetAutoDelete(false)
+	self.target_id = nil
+	self.selected_point = nil
+	self.selected_state = C.FALLBACK_STATE
+	self.route_signature = nil
+end
+
+function pf_nre_dialog:SelectedData(list)
+	local item = list:GetSelectedItem()
+	return item and item.data or nil
+end
+
+function pf_nre_dialog:Route()
+	return impl.route(impl.record(self.target_id), true)
+end
+
+function pf_nre_dialog:SelectedState()
+	local data = self:SelectedData(self.state_list)
+	return data and data.item or state.adapter.get_state(self.selected_state)
+end
+
+function pf_nre_dialog:PopulateStates()
+	self.state_list:RemoveAll()
+	local object = level.object_by_id(self.target_id)
+	local selected_index = nil
+	for index, item in ipairs(impl.allowed_states(object)) do
+		local one_shot = impl.is_one_shot(item)
+		local prefix = one_shot and "[A] " or "[T] "
+		local color = one_shot and GetARGB(255, 90, 190, 225) or
+			GetARGB(255, 125, 215, 150)
+		self.state_list:AddExistingItem(pf_nre_list_item(
+			prefix .. item.name .. "  <" .. item.animation .. ">",
+			{ item = item }, color, 340))
+		if item.name == self.selected_state then selected_index = index - 1 end
+	end
+	if selected_index then self.state_list:SetSelectedIndex(selected_index) end
+end
+
+function pf_nre_dialog:PopulatePoints(preserve)
+	local route = self:Route()
+	local wanted = preserve and self.selected_point or nil
+	self.point_list:RemoveAll()
+	for index, point in ipairs(route.points) do
+		local color = route.current_point == index and C.ACTIVE[route.status] and
+			GetARGB(255, 207, 151, 54) or GetARGB(255, 205, 210, 200)
+		self.point_list:AddExistingItem(pf_nre_list_item(
+			impl.current_point_row(route, index, point), { index = index }, color, 384))
+	end
+	if #route.points == 0 then
+		self.selected_point = nil
+		self:SetPointFields(nil)
+		self.status:SetText(impl.tr("pf_ne_route_empty_hint"))
+		return
+	end
+	wanted = math.max(1, math.min(#route.points, wanted or 1))
+	self.selected_point = wanted
+	self.point_list:SetSelectedIndex(wanted - 1)
+	self:SetPointFields(route.points[wanted])
+end
+
+function pf_nre_dialog:SetPointFields(point)
+	if not point then
+		for _, edit in ipairs({ self.x_edit, self.y_edit, self.z_edit,
+			self.yaw_edit, self.wait_edit }) do edit:SetText("") end
+		self.wait_end:SetCheck(false)
+		return
+	end
+	self.x_edit:SetText(string.format("%.6f", point.x))
+	self.y_edit:SetText(string.format("%.6f", point.y))
+	self.z_edit:SetText(string.format("%.6f", point.z))
+	self.yaw_edit:SetText(string.format("%.3f", math.deg(point.yaw)))
+	self.wait_edit:SetText(string.format("%.2f", point.wait_seconds))
+	self.wait_end:SetCheck(point.wait_mode == "animation_end")
+	self.selected_state = point.state
+	self:PopulateStates()
+	self:UpdateWaitControls()
+end
+
+function pf_nre_dialog:UpdateWaitControls()
+	local item = self:SelectedState()
+	local one_shot = impl.is_one_shot(item)
+	if not one_shot then self.wait_end:SetCheck(false) end
+	self.wait_end:Enable(self.selected_point ~= nil and one_shot)
+	self.wait_edit:Enable(self.selected_point ~= nil and not self.wait_end:GetCheck())
+end
+
+function pf_nre_dialog:UpdateActions()
+	local record = impl.record(self.target_id)
+	local route = impl.route(record, true)
+	local count = #route.points
+	local index = self.selected_point
+	local object = level.object_by_id(self.target_id)
+	local can_place = object ~= nil and record.off_mesh ~= true
+	local has_point = index ~= nil and route.points[index] ~= nil
+	for _, edit in ipairs({ self.x_edit, self.y_edit, self.z_edit,
+		self.yaw_edit }) do edit:Enable(has_point) end
+	self.add_button:Enable(can_place)
+	self.edit_button:Enable(can_place and has_point)
+	self.up_button:Enable(has_point and index > 1)
+	self.down_button:Enable(has_point and index < count)
+	self.delete_button:Enable(has_point)
+	self.apply_button:Enable(has_point)
+	self.undo_button:Enable(state.history[self.target_id] ~= nil and
+		#state.history[self.target_id] > 0)
+	self.start_button:Enable(object ~= nil and count > 0 and not C.ACTIVE[route.status])
+	self.pause_button:Enable(C.ACTIVE[route.status] == true)
+	self.restart_button:Enable(object ~= nil and count > 0)
+	self.clear_button:Enable(count > 0)
+	self.export_button:Enable(impl.has_exportable_routes())
+	self.runtime_status:SetText(impl.trf(
+		"pf_ne_route_runtime_status", impl.status_label(route.status),
+		tostring(route.current_point or "-"), tostring(count)))
+	self.route_signature = string.format("%s:%s:%d", tostring(route.status),
+		tostring(route.current_point), count)
+	self:UpdateWaitControls()
+end
+
+function pf_nre_dialog:RefreshRuntimeIfChanged()
+	local route = self:Route()
+	local signature = string.format("%s:%s:%d", tostring(route.status),
+		tostring(route.current_point), #route.points)
+	if self.route_signature ~= signature then self:PopulatePoints(true) end
+	self:UpdateActions()
+end
+
+function pf_nre_dialog:Open(id, preserve)
+	self.target_id = tonumber(id)
+	state.target_id = self.target_id
+	local record = impl.record(self.target_id)
+	if not record then return false end
+	local route = impl.route(record, true)
+	impl.save(record)
+	self.loop_check:SetCheck(route.loop)
+	self.shuffle_check:SetCheck(route.shuffle)
+	self.selected_state = impl.default_state(
+		level.object_by_id(self.target_id), self.selected_state or record.state)
+	self:PopulatePoints(preserve)
+	self:UpdateActions()
+	self:Enable(true)
+	self:ShowDialog(true)
+	return true
+end
+
+function pf_nre_dialog:OnPointSelected()
+	local data = self:SelectedData(self.point_list)
+	if not data then return end
+	self.selected_point = data.index
+	self:SetPointFields(self:Route().points[data.index])
+	self:UpdateActions()
+end
+
+function pf_nre_dialog:OnStateSelected()
+	local item = self:SelectedState()
+	if item then self.selected_state = item.name end
+	self:UpdateWaitControls()
+end
+
+function pf_nre_dialog:OnWaitModeChanged() self:UpdateWaitControls() end
+
+function pf_nre_dialog:OnSettingsChanged()
+	local record = impl.record(self.target_id)
+	impl.pause_for_edit(record)
+	local route = impl.route(record, true)
+	route.loop = self.loop_check:GetCheck() == true
+	route.shuffle = self.shuffle_check:GetCheck() == true
+	route.execution_order = {}
+	impl.save(record)
+	self:UpdateActions()
+	impl.status(record, "pf_ne_route_status_settings_saved")
+end
+
+function pf_nre_dialog:OnAdd()
+	local context = impl.make_placement_context(self, "add", nil)
+	if context then state.adapter.begin_placement(self.target_id, state.step, context) end
+end
+
+function pf_nre_dialog:OnEdit()
+	if not self.selected_point then return end
+	local context = impl.make_placement_context(self, "edit", self.selected_point)
+	if context then state.adapter.begin_placement(self.target_id, state.step, context) end
+end
+
+function pf_nre_dialog:OnApply()
+	local record = impl.record(self.target_id)
+	local route = impl.route(record, true)
+	local index = self.selected_point
+	local old = index and route.points[index] or nil
+	if not old then return end
+	local x, y, z = tonumber(self.x_edit:GetText()), tonumber(self.y_edit:GetText()),
+		tonumber(self.z_edit:GetText())
+	local yaw_degrees = tonumber(self.yaw_edit:GetText())
+	local wait_seconds = tonumber(self.wait_edit:GetText())
+	if not x or not y or not z or not yaw_degrees then
+		impl.status(record, "pf_ne_route_error_fields")
+		return
+	end
+	local item = self:SelectedState()
+	local object = level.object_by_id(self.target_id)
+	if not impl.state_allowed(item, object) then
+		impl.status(record, "pf_ne_route_error_no_state")
+		return
+	end
+	local wait_to_end = self.wait_end:GetCheck() and impl.is_one_shot(item)
+	if not wait_to_end and (not wait_seconds or wait_seconds < C.MIN_WAIT or
+		wait_seconds > C.MAX_WAIT) then
+		impl.status(record, "pf_ne_route_error_fields")
+		return
+	end
+	local validated, reason = state.adapter.validate_point(
+		self.target_id, x, y, z, math.rad(yaw_degrees))
+	if not validated then
+		impl.status(record, "pf_ne_route_error_point", tostring(reason))
+		return
+	end
+	impl.pause_for_edit(record)
+	old.x, old.y, old.z = validated.position.x, validated.position.y,
+		validated.position.z
+	old.yaw = validated.yaw
+	old.level_vertex_id = validated.level_vertex_id
+	old.game_vertex_id = validated.game_vertex_id
+	old.state = item.name
+	old.animation = item.animation
+	old.wait_seconds = wait_seconds or old.wait_seconds or C.DEFAULT_WAIT
+	old.wait_mode = wait_to_end and "animation_end" or "time"
+	route.execution_order = {}
+	impl.save(record)
+	if index == 1 then state.adapter.apply_base_point(self.target_id, old) end
+	self:PopulatePoints(true)
+	self:UpdateActions()
+	impl.status(record, "pf_ne_route_status_point_updated", index)
+end
+
+function pf_nre_dialog:MovePoint(direction)
+	local record = impl.record(self.target_id)
+	local route = impl.route(record, true)
+	local index = self.selected_point
+	local other = index and index + direction or nil
+	if not other or other < 1 or other > #route.points then return end
+	impl.pause_for_edit(record)
+	route.points[index], route.points[other] = route.points[other], route.points[index]
+	for number, point in ipairs(route.points) do point.index = number end
+	route.execution_order = {}
+	route.current_point = 1
+	self.selected_point = other
+	impl.save(record)
+	state.adapter.apply_base_point(self.target_id, route.points[1])
+	self:PopulatePoints(true)
+	self:UpdateActions()
+	impl.status(record, "pf_ne_route_status_reordered")
+end
+
+function pf_nre_dialog:OnUp() self:MovePoint(-1) end
+function pf_nre_dialog:OnDown() self:MovePoint(1) end
+
+function pf_nre_dialog:OnDelete()
+	local record = impl.record(self.target_id)
+	local route = impl.route(record, true)
+	local index = self.selected_point
+	if not index or not route.points[index] then return end
+	impl.pause_for_edit(record)
+	table.remove(route.points, index)
+	for number, point in ipairs(route.points) do point.index = number end
+	route.execution_order = {}
+	route.current_point = 1
+	self.selected_point = #route.points > 0 and math.min(index, #route.points) or nil
+	impl.save(record)
+	if route.points[1] then state.adapter.apply_base_point(self.target_id, route.points[1]) end
+	self:PopulatePoints(true)
+	self:UpdateActions()
+	impl.status(record, "pf_ne_route_status_point_deleted", index)
+end
+
+function pf_nre_dialog:OnUndo()
+	local record = impl.record(self.target_id)
+	local list = state.history[self.target_id]
+	if not record or not list or #list == 0 then return end
+	impl.pause_runtime(record, true)
+	record.route = table.remove(list)
+	local route = impl.route(record, true)
+	self.selected_point = #route.points > 0 and math.min(
+		self.selected_point or 1, #route.points) or nil
+	impl.save(record)
+	if route.points[1] then state.adapter.apply_base_point(self.target_id, route.points[1]) end
+	self:PopulatePoints(true)
+	self:UpdateActions()
+	impl.status(record, "pf_ne_route_status_undo")
+end
+
+function pf_nre_dialog:OnStart()
+	impl.start(impl.record(self.target_id), false)
+	self:PopulatePoints(true)
+	self:UpdateActions()
+end
+
+function pf_nre_dialog:OnPause()
+	impl.pause_runtime(impl.record(self.target_id), false)
+	self:PopulatePoints(true)
+	self:UpdateActions()
+end
+
+function pf_nre_dialog:OnRestart()
+	impl.start(impl.record(self.target_id), true)
+	self:PopulatePoints(true)
+	self:UpdateActions()
+end
+
+function pf_nre_dialog:OnClear()
+	local record = impl.record(self.target_id)
+	if not record or not record.route then return end
+	impl.pause_for_edit(record)
+	record.route = nil
+	state.runtime[self.target_id] = nil
+	impl.save(record)
+	self.selected_point = nil
+	self:PopulatePoints(false)
+	self:UpdateActions()
+	impl.status(record, "pf_ne_route_status_cleared")
+end
+
+function pf_nre_dialog:OnExport()
+	local ok, path, count = impl.export_routes()
+	local record = impl.record(self.target_id)
+	if ok then impl.status(record, "pf_ne_route_status_export", count, path)
+	else impl.status(record, "pf_ne_route_status_export_failed", path) end
+end
+
+function pf_nre_dialog:OnHelp()
+	if not state.help then state.help = pf_nre_help_dialog() end
+	state.help:Enable(true)
+	state.help:ShowDialog(false)
+end
+
+function pf_nre_dialog:OnBack()
+	if state.help and state.help:IsShown() then state.help:HideDialog() end
+	self:HideDialog()
+	if state.return_target == "selector" and state.selector then
+		state.selector:Open(true)
+	else
+		state.adapter.show_main()
+	end
+end
+
+function pf_nre_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and
+		dik_to_bind(dik) == key_bindings.kQUIT then
+		self:OnBack()
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+function open(id, adapter, step, return_target)
+	if not impl.configure(adapter) or not adapter.feature_enabled() or
+		not adapter.developer_enabled() then return false end
+	local record = adapter.get_record(id)
+	if not record or record.off_mesh == true or not level.object_by_id(id) then
+		return false
+	end
+	state.step = tonumber(step) or 0.1
+	if state.step <= 0 then state.step = 0.1 end
+	state.return_target = return_target == "selector" and "selector" or "main"
+	if state.return_target == "selector" then
+		if state.selector then state.selector:HideDialog() end
+	else
+		adapter.hide_main()
+	end
+	if not state.dialog then state.dialog = pf_nre_dialog() end
+	return state.dialog:Open(id, false)
+end
+
+function open_selector(adapter, step)
+	if not impl.configure(adapter) or not adapter.feature_enabled() or
+		not adapter.developer_enabled() then return false end
+	state.step = tonumber(step) or 0.1
+	if state.step <= 0 then state.step = 0.1 end
+	state.return_target = "selector"
+	adapter.hide_main()
+	if state.dialog and state.dialog:IsShown() then state.dialog:HideDialog() end
+	if not state.selector then state.selector = pf_nre_selector_dialog() end
+	return state.selector:Open(false)
+end
+
+function update(adapter, now)
+	if not impl.configure(adapter) then return end
+	if not adapter.feature_enabled() then
+		for _, record in pairs(adapter.get_records()) do
+			local route = impl.route(record, false)
+			if route and C.ACTIVE[route.status] then impl.pause_runtime(record, true) end
+		end
+		return
+	end
+	for _, record in pairs(adapter.get_records()) do
+		if not record.pending_delete then impl.update_record(record, now or time_global()) end
+	end
+	if state.dialog and state.dialog:IsShown() then
+		state.dialog:RefreshRuntimeIfChanged()
+	end
+	if state.selector and state.selector:IsShown() then
+		state.selector:UpdateActions()
+	end
+end
+
+function owns_npc(record)
+	local route = impl.route(record, false)
+	return route ~= nil and #route.points > 0 and C.STATUS[route.status] == true
+end
+
+function on_record_removed(id)
+	state.runtime[tonumber(id)] = nil
+	state.history[tonumber(id)] = nil
+	if state.target_id == tonumber(id) and state.dialog then
+		state.dialog:HideDialog()
+		state.target_id = nil
+	end
+	if state.selector and state.selector:IsShown() then state.selector:Refresh(true) end
+end
+
+function reset_runtime()
+	state.runtime = {}
+	state.history = {}
+	if state.dialog then pcall(function() state.dialog:HideDialog() end) end
+	if state.selector then pcall(function() state.selector:HideDialog() end) end
+	if state.help then pcall(function() state.help:HideDialog() end) end
+	state.target_id = nil
+	state.return_target = nil
+end
+
+function export_now(adapter)
+	if not impl.configure(adapter or state.adapter) then return false, "adapter", 0 end
+	return impl.export_routes()
+end

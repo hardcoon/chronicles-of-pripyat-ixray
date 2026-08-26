@@ -1,0 +1,94 @@
+; Native reusable QA tool for the in-game NPC editor.
+[pf_npc_editor_tool_native]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "food and drugs\pf_npc_editor_tool_native"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+
+inv_name = pf_npc_editor_tool_name
+inv_name_short = pf_npc_editor_tool_name
+description = pf_npc_editor_tool_descr
+inv_weight = 0.01
+cost = 0
+can_trade = false
+quest_item = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 6
+inv_grid_y = 13
+
+; IX-Ray's stock INVENTORY_EAT_ACTION opens the editor through OnInventoryEat,
+; while this zero-effect payload keeps the item reusable.
+class = S_FOOD
+use_text = st_use
+
+eat_health = 0
+eat_satiety = 0
+eat_power = 0
+eat_max_power = 0
+eat_radiation = 0
+eat_alcohol = 0
+wounds_heal_perc = 0
+eat_portions_num = 2
+remove_after_use = false
+consume_charge_on_use = false
+use_condition = false
+
+boost_time = 0
+boost_max_weight = 0
+boost_health_restore = 0
+boost_power_restore = 0
+boost_radiation_restore = 0
+boost_bleeding_restore = 0
+boost_radiation_protection = 0
+boost_telepat_protection = 0
+boost_chemburn_protection = 0
+boost_burn_immunity = 0
+boost_shock_immunity = 0
+boost_radiation_immunity = 0
+boost_telepat_immunity = 0
+boost_chemburn_immunity = 0
+boost_strike_immunity = 0
+boost_wound_immunity = 0
+boost_explosion_immunity = 0
+boost_fire_wound_immunity = 0
+
+; Dedicated route QA tool. Its stock Use action is routed through the same
+; global OnInventoryEat bridge, but opens the route target selector directly.
+[pf_npc_route_editor_tool_native]:pf_npc_editor_tool_native
+$spawn = "food and drugs\pf_npc_route_editor_tool_native"
+inv_name = pf_npc_route_editor_tool_name
+inv_name_short = pf_npc_route_editor_tool_name
+description = pf_npc_route_editor_tool_descr
+use_text = pf_npc_editor_route_tool_use
+
+[pf_npc_editor_settings]
+auto_issue_tool = true
+smoke_test_on_load = false
+max_edit_distance = 50
+position_tolerance = 0.25
+direction_dot = 0.995
+direction_retry_ms = 2000
+placement_direction_refresh_ms = 50
+placement_direction_dot = 0.9995
+update_interval_ms = 250
+online_warning_count = 20
+force_second_person_on_placement = true
+placement_flight_speed = 6
+hide_actor_legs_in_first_person = true
+first_person_ray_offset = 0.85
+export_file = pf_npc_editor_export.ltx
+route_editor_enabled = true
+route_export_file = pf_npc_route_export.ltx
+route_arrival_distance = 0.65
+route_path_retry_ms = 5000
+route_path_retry_count = 3
+route_state_timeout_ms = 8000
+route_animation_timeout_ms = 30000
+
+![inventory_sort_registry]
+pf_npc_editor_tool_native = qa
+pf_npc_route_editor_tool_native = qa

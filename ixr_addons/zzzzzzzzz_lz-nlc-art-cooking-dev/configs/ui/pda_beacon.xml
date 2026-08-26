@@ -1,0 +1,63 @@
+<w>
+	<!-- Reuse the universal 4:3 dialog panel and button atlas already used by
+	     message_box.xml. No beacon-specific background textures are required. -->
+	<destroy_dialog x="0" y="0" width="1024" height="768">
+		<form x="282" y="321" width="460" height="126" stretch="1">
+			<texture>ui\ui_pf_universal_dialog_4_3</texture>
+			<question x="24" y="8" width="412" height="22">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_body" r="205" g="197" b="178">pf_beacon_destroy_question</text>
+			</question>
+			<name x="24" y="31" width="412" height="24">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_body" r="205" g="146" b="44"/>
+			</name>
+			<warning x="24" y="57" width="412" height="27">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_body" r="205" g="197" b="178">pf_beacon_destroy_warning</text>
+			</warning>
+			<confirm_button x="28" y="96" width="190" height="24" check_mode="0">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_button" r="205" g="146" b="44">pf_ui_yes_action</text>
+				<texture_e>ui_pf_sleep_button_4_3_e</texture_e>
+				<texture_t>ui_pf_sleep_button_4_3_t</texture_t>
+				<texture_d>ui_pf_sleep_button_4_3_d</texture_d>
+				<texture_h>ui_pf_sleep_button_4_3_h</texture_h>
+			</confirm_button>
+			<cancel_button x="242" y="96" width="190" height="24" check_mode="0">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_button" r="205" g="146" b="44">pf_ui_no_action</text>
+				<texture_e>ui_pf_sleep_button_4_3_e</texture_e>
+				<texture_t>ui_pf_sleep_button_4_3_t</texture_t>
+				<texture_d>ui_pf_sleep_button_4_3_d</texture_d>
+				<texture_h>ui_pf_sleep_button_4_3_h</texture_h>
+			</cancel_button>
+		</form>
+	</destroy_dialog>
+
+	<name_dialog x="0" y="0" width="1024" height="768">
+		<shade x="0" y="0" width="1024" height="768"/>
+		<form x="272" y="299" width="480" height="170" stretch="1">
+			<texture>ui\ui_pf_universal_dialog_4_3</texture>
+			<caption x="24" y="8" width="432" height="22">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_body" r="205" g="146" b="44">lz_nm_beacon_name_caption</text>
+			</caption>
+			<prompt x="24" y="31" width="432" height="42">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_body" complex_mode="1" r="205" g="197" b="178">lz_nm_beacon_name_prompt</text>
+			</prompt>
+			<edit x="34" y="79" width="412" height="28" max_symb_count="32">
+				<text font="ui_font_pf_dialog_body" r="205" g="197" b="178"/>
+				<texture>ui_inGame2_edit_box_2</texture>
+			</edit>
+			<save_button x="24" y="126" width="212" height="30" stretch="1">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_button" r="205" g="146" b="44">lz_nm_beacon_name_save</text>
+				<texture_e>ui_pf_sleep_button_4_3_e</texture_e>
+				<texture_t>ui_pf_sleep_button_4_3_t</texture_t>
+				<texture_d>ui_pf_sleep_button_4_3_d</texture_d>
+				<texture_h>ui_pf_sleep_button_4_3_h</texture_h>
+			</save_button>
+			<cancel_button x="244" y="126" width="212" height="30" stretch="1">
+				<text align="c" vert_align="c" font="ui_font_pf_dialog_button" r="205" g="146" b="44">lz_nm_beacon_name_cancel</text>
+				<texture_e>ui_pf_sleep_button_4_3_e</texture_e>
+				<texture_t>ui_pf_sleep_button_4_3_t</texture_t>
+				<texture_d>ui_pf_sleep_button_4_3_d</texture_d>
+				<texture_h>ui_pf_sleep_button_4_3_h</texture_h>
+			</cancel_button>
+		</form>
+	</name_dialog>
+</w>

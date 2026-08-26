@@ -1,0 +1,650 @@
+local INTRO_PSTOR_KEY = "pf_yanov_nimble_intro_v1"
+local FUEL_ORDER_STATE_KEY = "pf_yanov_nimble_fuel_order_v1_state"
+local FUEL_ORDER_DUE_KEY = "pf_yanov_nimble_fuel_order_v1_due"
+local FUEL_ORDER_NOTICE_KEY = "pf_yanov_nimble_fuel_order_v1_notice"
+local FUEL_ORDER_PRICE = 6000
+local FUEL_ORDER_MIN_HOURS = 6
+local FUEL_ORDER_MAX_HOURS = 18
+local FUEL_SALE_COOLDOWN_DUE_KEY = "pf_yanov_nimble_fuel_sale_v1_due"
+local FUEL_SALE_MIN_DAYS = 3
+local FUEL_SALE_MAX_DAYS = 6
+local SECONDS_PER_HOUR = 3600
+local HOURS_PER_DAY = 24
+local FUEL_CANISTER_SECTION = "pf_vehicle_fuel_canister"
+local ORDER_IDLE = 0
+local ORDER_WAITING = 1
+local ORDER_READY = 2
+local VEHICLE_SALE_FUEL = { minimum_liters = 5, maximum_liters = 15 }
+local VEHICLE_MARKER_TYPE = "pf_yanov_nimble_uaz_location"
+local VEHICLE_LEGACY_MARKER_TYPE = "primary_object"
+local VEHICLE_MATCH_DISTANCE_SQR = 1
+local VEHICLE_MARKER_REVEAL_DISTANCE_SQR = 5 * 5
+
+local function new_vehicle_sale(id, price, section, marker_hint, position, angle,
+	level_vertex_id, game_vertex_id)
+	local key_prefix = "pf_yanov_nimble_" .. id .. "_v1_"
+	return {
+		id = id,
+		purchased_key = key_prefix .. "purchased",
+		object_id_key = key_prefix .. "object_id",
+		price = price,
+		section = section,
+		position = position,
+		angle = angle,
+		level_vertex_id = level_vertex_id,
+		game_vertex_id = game_vertex_id,
+		match_distance_sqr = VEHICLE_MATCH_DISTANCE_SQR,
+		marker_type = VEHICLE_MARKER_TYPE,
+		legacy_marker_type = VEHICLE_LEGACY_MARKER_TYPE,
+		marker_hint = marker_hint,
+		marker_reached_key = key_prefix .. "marker_reached",
+		marker_reveal_distance_sqr = VEHICLE_MARKER_REVEAL_DISTANCE_SQR,
+		initial_fuel_key = key_prefix .. "initial_fuel",
+		initial_fuel_applied_key = key_prefix .. "initial_fuel_applied"
+	}
+end
+
+local VEHICLE_SALES = {
+	new_vehicle_sale("zaz968", 50000, "veh_dcp_zaz968_2",
+		"pf_yanov_nimble_vehicle_marker_zaz968",
+		{ x = -11.921363, y = 0.047370, z = -832.641663 },
+		{ x = 0.002344, y = -0.287371, z = -0.000325 }, 6944448, 313),
+	new_vehicle_sale("lada_2101", 60000, "veh_dcp_lada_2101",
+		"pf_yanov_nimble_vehicle_marker_lada_2101",
+		{ x = 1220.631592, y = 0.035765, z = -1287.699463 },
+		{ x = 0.005601, y = 0.455188, z = -0.016860 }, 9067470, 731),
+	new_vehicle_sale("gaz24", 85000, "veh_dcp_gaz24",
+		"pf_yanov_nimble_vehicle_marker_gaz24",
+		{ x = 542.499878, y = -0.038409, z = -235.199524 },
+		{ x = 0.002802, y = 0.000006, z = -0.000004 }, 9867258, 130),
+	new_vehicle_sale("moskvich_412", 65000, "veh_dcp_moskvich_412",
+		"pf_yanov_nimble_vehicle_marker_moskvich_412",
+		{ x = 1265.461914, y = 0.179267, z = -668.784546 },
+		{ x = 0.000215, y = 1.110818, z = 0.015052 }, 13895443, 617),
+	new_vehicle_sale("raf_2203", 75000, "veh_dcp_raf",
+		"pf_yanov_nimble_vehicle_marker_raf_2203",
+		{ x = 904.333801, y = 0.052480, z = -820.752258 },
+		{ x = 0.001789, y = 2.987715, z = 0.000001 }, 11901870, 682),
+	new_vehicle_sale("moskvich_2715", 70000, "veh_dcp_moskvich_2715",
+		"pf_yanov_nimble_vehicle_marker_moskvich_2715",
+		{ x = 662.899841, y = 0.052675, z = 666.400940 },
+		{ x = 0.003242, y = 0.000003, z = 0.000006 }, 10527546, 240),
+	new_vehicle_sale("mercedes_w123", 95000, "veh_dcp_mercedes_w123",
+		"pf_yanov_nimble_vehicle_marker_mercedes_w123",
+		{ x = 46.899883, y = 0.003230, z = 300.300598 },
+		{ x = 0.002365, y = 0.000002, z = 0.000040 }, 7249014, 106),
+	new_vehicle_sale("lada_2107", 75000, "veh_dcp_lada_2107",
+		"pf_yanov_nimble_vehicle_marker_lada_2107",
+		{ x = -770.599731, y = -0.044436, z = 709.251099 },
+		{ x = 0.002034, y = 0.028341, z = 0.056946 }, 678267, 470),
+	new_vehicle_sale("lada_2108", 85000, "veh_dcp_lada_2108",
+		"pf_yanov_nimble_vehicle_marker_lada_2108",
+		{ x = -687.102905, y = 0.010304, z = 433.370911 },
+		{ x = -0.000882, y = -0.337859, z = -0.000037 }, 3725474, 269),
+	new_vehicle_sale("uaz_van_broken", 70000, "veh_dcp_uaz_van_broken",
+		"pf_yanov_nimble_uaz_van_marker",
+		{ x = -866.272888, y = 0.011846, z = -653.678162 },
+		{ x = 0.001570, y = 1.956118, z = 0.000014 }, 2666028, 744),
+	new_vehicle_sale("gaz69", 75000, "veh_dcp_uaz_broken",
+		"pf_yanov_nimble_vehicle_marker_gaz69",
+		{ x = 1603.773071, y = -9.427285, z = -1154.049927 },
+		{ x = 0.002532, y = 0.549672, z = -0.002563 }, 15591155, 647),
+	new_vehicle_sale("niva_white", 85000, "veh_dcp_niva",
+		"pf_yanov_nimble_vehicle_marker_niva_white",
+		{ x = 532.843567, y = 0.105640, z = -1021.273743 },
+		{ x = 0.001528, y = -2.478417, z = 0.008320 }, 9808053, 711),
+	new_vehicle_sale("niva_green", 85000, "veh_dcp_niva_green",
+		"pf_yanov_nimble_vehicle_marker_niva_green",
+		{ x = -644.319092, y = 0.006486, z = -489.573090 },
+		{ x = 0.016444, y = -1.188145, z = -0.004984 }, 3758917, 754),
+	new_vehicle_sale("uaz_hunter", 95000, "veh_dcp_uaz",
+		"pf_yanov_nimble_vehicle_marker_uaz_hunter",
+		{ x = -184.593048, y = 0.014939, z = 601.237915 },
+		{ x = -0.000409, y = 3.115421, z = 0.000001 }, 6119007, 165),
+	new_vehicle_sale("niva_2329", 110000, "veh_dcp_niva_2329",
+		"pf_yanov_nimble_vehicle_marker_niva_2329",
+		{ x = 422.975128, y = 0.000478, z = 910.573486 },
+		{ x = 0.007571, y = -2.118350, z = -0.000002 }, 9267647, 557),
+	new_vehicle_sale("zil130", 105000, "veh_dcp_zil",
+		"pf_yanov_nimble_vehicle_marker_zil130",
+		{ x = -340.528656, y = 0.045634, z = -1234.993896 },
+		{ x = 0.002365, y = 0.533258, z = 0.000172 }, 5348864, 801),
+	new_vehicle_sale("zil131", 120000, "veh_dcp_zil131",
+		"pf_yanov_nimble_vehicle_marker_zil131",
+		{ x = 3.422040, y = -2.620258, z = -259.964325 },
+		{ x = -0.009180, y = -0.010571, z = 0.000006 }, 7120271, 154),
+	new_vehicle_sale("kamaz_tent", 150000, "veh_dcp_kamaz_army_tent",
+		"pf_yanov_nimble_vehicle_marker_kamaz_tent",
+		{ x = -1177.843140, y = -0.006631, z = -13.014608 },
+		{ x = -0.020098, y = -2.770224, z = -0.003349 }, 1444771, 773)
+}
+local VEHICLE_SALES_BY_ID = {}
+for _, sale in ipairs(VEHICLE_SALES) do
+	VEHICLE_SALES_BY_ID[sale.id] = sale
+end
+local UAZ_VAN_SALE = VEHICLE_SALES_BY_ID.uaz_van_broken
+local runtime = {
+	selected_vehicle_sale_id = nil,
+	marker_cleanup_complete = {},
+	fuel_complete = {}
+}
+
+function reset_vehicle_sales_runtime()
+	runtime.selected_vehicle_sale_id = nil
+	runtime.marker_cleanup_complete = {}
+	runtime.fuel_complete = {}
+end
+
+function reset_uaz_van_marker_runtime()
+	reset_vehicle_sales_runtime()
+end
+
+local function stored(key, default)
+	if db.actor == nil then return default end
+	return xr_logic.pstor_retrieve(db.actor, key, default)
+end
+
+local function save(key, value)
+	if db.actor ~= nil then xr_logic.pstor_store(db.actor, key, value) end
+end
+
+local function prepare_vehicle_sale_fuel(sale)
+	local amount = math.random(
+		VEHICLE_SALE_FUEL.minimum_liters,
+		VEHICLE_SALE_FUEL.maximum_liters
+	)
+	save(sale.initial_fuel_key, amount)
+	save(sale.initial_fuel_applied_key, false)
+	runtime.fuel_complete[sale.object_id_key] = nil
+	return amount
+end
+
+local function vehicle_sale_fuel_amount(sale)
+	local amount = tonumber(stored(sale.initial_fuel_key, -1)) or -1
+	if amount < VEHICLE_SALE_FUEL.minimum_liters or
+			amount > VEHICLE_SALE_FUEL.maximum_liters then
+		amount = math.random(
+			VEHICLE_SALE_FUEL.minimum_liters,
+			VEHICLE_SALE_FUEL.maximum_liters
+		)
+		save(sale.initial_fuel_key, amount)
+	end
+	return amount
+end
+
+local function update_vehicle_sale_fuel(sale)
+	local runtime_key = sale.object_id_key
+	if runtime.fuel_complete[runtime_key] or
+			stored(sale.purchased_key, false) ~= true then
+		return
+	end
+	if stored(sale.initial_fuel_applied_key, false) == true then
+		runtime.fuel_complete[runtime_key] = true
+		return
+	end
+
+	local object_id = tonumber(stored(sale.object_id_key, -1)) or -1
+	if object_id < 0 or level == nil or
+			type(level.object_by_id) ~= "function" then
+		return
+	end
+	local client_object = level.object_by_id(object_id)
+	if client_object == nil then return end
+
+	local requested = vehicle_sale_fuel_amount(sale)
+	local ok, applied = pcall(function()
+		local car = client_object:get_car()
+		if car == nil then return nil end
+		local capacity = tonumber(car.fuel_tank) or 0
+		if capacity <= 0 then return nil end
+		local amount = math.min(requested, capacity)
+		car.fuel = amount
+		return amount
+	end)
+	if not ok or applied == nil then return end
+
+	save(sale.initial_fuel_applied_key, true)
+	runtime.fuel_complete[runtime_key] = true
+	printf(
+		"[PF YANOV NIMBLE] initial vehicle fuel applied section=%s object_id=%s fuel=%d",
+		sale.section,
+		tostring(object_id),
+		applied
+	)
+end
+
+local function map_spot_api_available()
+	return level ~= nil and
+		type(level.map_has_object_spot) == "function" and
+		type(level.map_add_object_spot_ser) == "function" and
+		type(level.map_remove_object_spot) == "function"
+end
+
+local function remove_map_spots(object_id, marker_type)
+	while level.map_has_object_spot(object_id, marker_type) ~= 0 do
+		level.map_remove_object_spot(object_id, marker_type)
+	end
+end
+
+local function ensure_vehicle_marker(sale, object_id)
+	remove_map_spots(object_id, sale.legacy_marker_type)
+	if level.map_has_object_spot(object_id, sale.marker_type) == 0 then
+		level.map_add_object_spot_ser(
+			object_id,
+			sale.marker_type,
+			sale.marker_hint
+		)
+	end
+end
+
+local function current_game_seconds()
+	if game == nil or level == nil or game.get_game_time == nil or
+			level.get_start_time == nil then
+		return nil
+	end
+	return math.max(0, math.floor(tonumber(
+		game.get_game_time():diffSec(level.get_start_time())
+	) or 0))
+end
+
+local function notify_order_ready()
+	if tonumber(stored(FUEL_ORDER_NOTICE_KEY, 0)) == 1 then return end
+	if news_manager ~= nil and type(news_manager.send_tip) == "function" then
+		news_manager.send_tip(
+			db.actor,
+			"pf_yanov_nimble_fuel_order_ready_tip",
+			nil,
+			nil,
+			nil,
+			nil
+		)
+	end
+	save(FUEL_ORDER_NOTICE_KEY, 1)
+end
+
+local function fuel_order_state()
+	if db.actor == nil then return ORDER_IDLE end
+	local state = tonumber(stored(FUEL_ORDER_STATE_KEY, ORDER_IDLE)) or ORDER_IDLE
+	if state ~= ORDER_WAITING then return state end
+
+	local now = current_game_seconds()
+	local due = tonumber(stored(FUEL_ORDER_DUE_KEY, -1)) or -1
+	if now == nil then return state end
+	if due < 0 then
+		due = now + math.random(FUEL_ORDER_MIN_HOURS, FUEL_ORDER_MAX_HOURS) * SECONDS_PER_HOUR
+		save(FUEL_ORDER_DUE_KEY, due)
+	end
+	if now >= due then
+		state = ORDER_READY
+		save(FUEL_ORDER_STATE_KEY, state)
+		notify_order_ready()
+		printf("[PF YANOV NIMBLE] fuel order ready at game_second=%d", now)
+	end
+	return state
+end
+
+function intro_done(first_speaker, second_speaker)
+	return db.actor ~= nil
+		and xr_logic.pstor_retrieve(db.actor, INTRO_PSTOR_KEY, false) == true
+end
+
+function needs_intro(first_speaker, second_speaker)
+	return not intro_done(first_speaker, second_speaker)
+end
+
+function complete_intro(first_speaker, second_speaker)
+	if db.actor == nil then return false end
+	xr_logic.pstor_store(db.actor, INTRO_PSTOR_KEY, true)
+	return true
+end
+
+function fuel_sale_available(first_speaker, second_speaker)
+	if not intro_done(first_speaker, second_speaker) then return false end
+	local now = current_game_seconds()
+	if now == nil then return false end
+	local due = tonumber(stored(FUEL_SALE_COOLDOWN_DUE_KEY, 0)) or 0
+	return now >= due
+end
+
+function fuel_sale_unavailable(first_speaker, second_speaker)
+	return intro_done(first_speaker, second_speaker) and
+		not fuel_sale_available(first_speaker, second_speaker)
+end
+
+function can_buy_fuel_canister(first_speaker, second_speaker)
+	return fuel_sale_available(first_speaker, second_speaker) and
+		db.actor:money() >= FUEL_ORDER_PRICE
+end
+
+function cannot_afford_fuel_canister(first_speaker, second_speaker)
+	return fuel_sale_available(first_speaker, second_speaker) and
+		db.actor:money() < FUEL_ORDER_PRICE
+end
+
+function buy_fuel_canister(first_speaker, second_speaker)
+	if not can_buy_fuel_canister(first_speaker, second_speaker) then return false end
+	local now = current_game_seconds()
+	local simulator = alife()
+	if now == nil or simulator == nil or dialogs == nil or
+			type(dialogs.relocate_money_from_actor) ~= "function" then
+		return false
+	end
+
+	local item = simulator:create(
+		FUEL_CANISTER_SECTION,
+		db.actor:position(),
+		db.actor:level_vertex_id(),
+		db.actor:game_vertex_id(),
+		db.actor:id()
+	)
+	if item == nil then
+		printf("! [PF YANOV NIMBLE] failed to create directly sold fuel canister")
+		return false
+	end
+
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, FUEL_ORDER_PRICE)
+	if news_manager ~= nil and type(news_manager.relocate_item) == "function" then
+		news_manager.relocate_item(db.actor, "in", FUEL_CANISTER_SECTION)
+	end
+	local cooldown_days = math.random(FUEL_SALE_MIN_DAYS, FUEL_SALE_MAX_DAYS)
+	local due = now + cooldown_days * HOURS_PER_DAY * SECONDS_PER_HOUR
+	save(FUEL_SALE_COOLDOWN_DUE_KEY, due)
+	printf(
+		"[PF YANOV NIMBLE] fuel canister sold price=%d cooldown_days=%d due=%d item_id=%s",
+		FUEL_ORDER_PRICE,
+		cooldown_days,
+		due,
+		tostring(item.id)
+	)
+	return true
+end
+
+function fuel_order_available(first_speaker, second_speaker)
+	return intro_done(first_speaker, second_speaker) and
+		fuel_order_state() == ORDER_IDLE
+end
+
+function can_start_fuel_order(first_speaker, second_speaker)
+	return fuel_order_available(first_speaker, second_speaker) and
+		db.actor:money() >= FUEL_ORDER_PRICE
+end
+
+function cannot_afford_fuel_order(first_speaker, second_speaker)
+	return fuel_order_available(first_speaker, second_speaker) and
+		db.actor:money() < FUEL_ORDER_PRICE
+end
+
+function start_fuel_order(first_speaker, second_speaker)
+	if not can_start_fuel_order(first_speaker, second_speaker) then return false end
+	local now = current_game_seconds()
+	if now == nil or dialogs == nil or
+			type(dialogs.relocate_money_from_actor) ~= "function" then
+		return false
+	end
+
+	local delivery_hours = math.random(FUEL_ORDER_MIN_HOURS, FUEL_ORDER_MAX_HOURS)
+	local due = now + delivery_hours * SECONDS_PER_HOUR
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, FUEL_ORDER_PRICE)
+	save(FUEL_ORDER_STATE_KEY, ORDER_WAITING)
+	save(FUEL_ORDER_DUE_KEY, due)
+	save(FUEL_ORDER_NOTICE_KEY, 0)
+	printf(
+		"[PF YANOV NIMBLE] fuel order started price=%d hours=%d due=%d",
+		FUEL_ORDER_PRICE,
+		delivery_hours,
+		due
+	)
+	return true
+end
+
+function fuel_order_ready(first_speaker, second_speaker)
+	return fuel_order_state() == ORDER_READY
+end
+
+function fuel_order_idle(first_speaker, second_speaker)
+	return fuel_order_state() == ORDER_IDLE
+end
+
+function nimble_should_be_present()
+	return true
+end
+
+function collect_fuel_order(first_speaker, second_speaker)
+	if not fuel_order_ready(first_speaker, second_speaker) or alife() == nil then
+		return false
+	end
+	local item = alife():create(
+		FUEL_CANISTER_SECTION,
+		db.actor:position(),
+		db.actor:level_vertex_id(),
+		db.actor:game_vertex_id(),
+		db.actor:id()
+	)
+	if item == nil then
+		printf("! [PF YANOV NIMBLE] failed to create fuel canister")
+		return false
+	end
+
+	if news_manager ~= nil and type(news_manager.relocate_item) == "function" then
+		news_manager.relocate_item(db.actor, "in", FUEL_CANISTER_SECTION)
+	end
+	save(FUEL_ORDER_STATE_KEY, ORDER_IDLE)
+	save(FUEL_ORDER_DUE_KEY, 0)
+	save(FUEL_ORDER_NOTICE_KEY, 0)
+	printf("[PF YANOV NIMBLE] fuel order collected item_id=%s", tostring(item.id))
+	return true
+end
+
+local function vehicle_sale_available(sale, first_speaker, second_speaker)
+	return sale ~= nil and intro_done(first_speaker, second_speaker) and
+		stored(sale.purchased_key, false) ~= true
+end
+
+local function select_vehicle_sale(id)
+	if VEHICLE_SALES_BY_ID[id] == nil then return false end
+	runtime.selected_vehicle_sale_id = id
+	return true
+end
+
+local function selected_vehicle_sale()
+	return VEHICLE_SALES_BY_ID[runtime.selected_vehicle_sale_id]
+end
+
+function can_buy_selected_vehicle(first_speaker, second_speaker)
+	local sale = selected_vehicle_sale()
+	return vehicle_sale_available(sale, first_speaker, second_speaker) and
+		db.actor:money() >= sale.price
+end
+
+function cannot_afford_selected_vehicle(first_speaker, second_speaker)
+	local sale = selected_vehicle_sale()
+	return vehicle_sale_available(sale, first_speaker, second_speaker) and
+		db.actor:money() < sale.price
+end
+
+local function existing_vehicle_at_sale_point(sale)
+	local simulator = alife()
+	if simulator == nil then return nil end
+	for _, object in simulator:objects() do
+		if object:section_name() == sale.section then
+			local current = object.position
+			local dx = current.x - sale.position.x
+			local dy = current.y - sale.position.y
+			local dz = current.z - sale.position.z
+			if dx * dx + dy * dy + dz * dz <= sale.match_distance_sqr then
+				return object
+			end
+		end
+	end
+	return nil
+end
+
+local function buy_vehicle_sale(sale, first_speaker, second_speaker)
+	if not vehicle_sale_available(sale, first_speaker, second_speaker) or
+		db.actor:money() < sale.price or alife() == nil or dialogs == nil or
+		type(dialogs.relocate_money_from_actor) ~= "function" then
+		return false
+	end
+
+	local object = existing_vehicle_at_sale_point(sale)
+	if object == nil then
+		local position = vector():set(
+			sale.position.x,
+			sale.position.y,
+			sale.position.z
+		)
+		object = alife():create(
+			sale.section,
+			position,
+			sale.level_vertex_id,
+			sale.game_vertex_id
+		)
+		if object == nil then
+			printf("! [PF YANOV NIMBLE] failed to create %s", sale.section)
+			return false
+		end
+
+		object.angle = vector():set(
+			sale.angle.x,
+			sale.angle.y,
+			sale.angle.z
+		)
+	else
+		printf(
+			"[PF YANOV NIMBLE] reusing sale vehicle section=%s object_id=%s",
+			sale.section,
+			tostring(object.id)
+		)
+	end
+
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, sale.price)
+	save(sale.purchased_key, true)
+	save(sale.object_id_key, object.id)
+	save(sale.marker_reached_key, false)
+	runtime.marker_cleanup_complete[sale.id] = nil
+	local initial_fuel = prepare_vehicle_sale_fuel(sale)
+
+	if map_spot_api_available() then
+		ensure_vehicle_marker(sale, object.id)
+	end
+
+	printf(
+		"[PF YANOV NIMBLE] vehicle purchased section=%s price=%d object_id=%s initial_fuel=%d",
+		sale.section,
+		sale.price,
+		tostring(object.id),
+		initial_fuel
+	)
+	return true
+end
+
+function buy_selected_vehicle(first_speaker, second_speaker)
+	return buy_vehicle_sale(selected_vehicle_sale(), first_speaker, second_speaker)
+end
+
+function vehicle_zaz968_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.zaz968, a, b) end
+function vehicle_lada_2101_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.lada_2101, a, b) end
+function vehicle_gaz24_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.gaz24, a, b) end
+function vehicle_moskvich_412_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.moskvich_412, a, b) end
+function vehicle_raf_2203_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.raf_2203, a, b) end
+function vehicle_moskvich_2715_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.moskvich_2715, a, b) end
+function vehicle_mercedes_w123_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.mercedes_w123, a, b) end
+function vehicle_lada_2107_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.lada_2107, a, b) end
+function vehicle_lada_2108_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.lada_2108, a, b) end
+function vehicle_uaz_van_available(a, b) return vehicle_sale_available(UAZ_VAN_SALE, a, b) end
+function vehicle_gaz69_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.gaz69, a, b) end
+function vehicle_niva_white_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.niva_white, a, b) end
+function vehicle_niva_green_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.niva_green, a, b) end
+function vehicle_uaz_hunter_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.uaz_hunter, a, b) end
+function vehicle_niva_2329_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.niva_2329, a, b) end
+function vehicle_zil130_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.zil130, a, b) end
+function vehicle_zil131_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.zil131, a, b) end
+function vehicle_kamaz_tent_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.kamaz_tent, a, b) end
+
+function select_vehicle_zaz968() return select_vehicle_sale("zaz968") end
+function select_vehicle_lada_2101() return select_vehicle_sale("lada_2101") end
+function select_vehicle_gaz24() return select_vehicle_sale("gaz24") end
+function select_vehicle_moskvich_412() return select_vehicle_sale("moskvich_412") end
+function select_vehicle_raf_2203() return select_vehicle_sale("raf_2203") end
+function select_vehicle_moskvich_2715() return select_vehicle_sale("moskvich_2715") end
+function select_vehicle_mercedes_w123() return select_vehicle_sale("mercedes_w123") end
+function select_vehicle_lada_2107() return select_vehicle_sale("lada_2107") end
+function select_vehicle_lada_2108() return select_vehicle_sale("lada_2108") end
+function select_vehicle_uaz_van() return select_vehicle_sale("uaz_van_broken") end
+function select_vehicle_gaz69() return select_vehicle_sale("gaz69") end
+function select_vehicle_niva_white() return select_vehicle_sale("niva_white") end
+function select_vehicle_niva_green() return select_vehicle_sale("niva_green") end
+function select_vehicle_uaz_hunter() return select_vehicle_sale("uaz_hunter") end
+function select_vehicle_niva_2329() return select_vehicle_sale("niva_2329") end
+function select_vehicle_zil130() return select_vehicle_sale("zil130") end
+function select_vehicle_zil131() return select_vehicle_sale("zil131") end
+function select_vehicle_kamaz_tent() return select_vehicle_sale("kamaz_tent") end
+
+-- Compatibility entry points retained for the already released UAZ sale.
+function uaz_van_sale_available(a, b) return vehicle_uaz_van_available(a, b) end
+function can_buy_uaz_van(a, b)
+	return vehicle_uaz_van_available(a, b) and db.actor:money() >= UAZ_VAN_SALE.price
+end
+function cannot_afford_uaz_van(a, b)
+	return vehicle_uaz_van_available(a, b) and db.actor:money() < UAZ_VAN_SALE.price
+end
+function buy_uaz_van(a, b) return buy_vehicle_sale(UAZ_VAN_SALE, a, b) end
+
+local function update_vehicle_sale_marker(sale)
+	if db.actor == nil or runtime.marker_cleanup_complete[sale.id] or
+		stored(sale.purchased_key, false) ~= true or
+		not map_spot_api_available() then
+		return
+	end
+
+	local object_id = tonumber(stored(sale.object_id_key, -1)) or -1
+	if object_id < 0 then return end
+
+	if stored(sale.marker_reached_key, false) == true then
+		remove_map_spots(object_id, sale.legacy_marker_type)
+		remove_map_spots(object_id, sale.marker_type)
+		runtime.marker_cleanup_complete[sale.id] = true
+		return
+	end
+
+	local simulator = alife()
+	local server_object = simulator ~= nil and simulator:object(object_id) or nil
+	if server_object == nil then return end
+
+	local client_object = type(level.object_by_id) == "function" and
+		level.object_by_id(object_id) or nil
+	local vehicle_position = client_object ~= nil and
+		client_object:position() or server_object.position
+	if vehicle_position == nil then return end
+
+	local actor_position = db.actor:position()
+	local dx = actor_position.x - vehicle_position.x
+	local dy = actor_position.y - vehicle_position.y
+	local dz = actor_position.z - vehicle_position.z
+	if dx * dx + dy * dy + dz * dz <= sale.marker_reveal_distance_sqr then
+		remove_map_spots(object_id, sale.legacy_marker_type)
+		remove_map_spots(object_id, sale.marker_type)
+		save(sale.marker_reached_key, true)
+		runtime.marker_cleanup_complete[sale.id] = true
+		printf(
+			"[PF YANOV NIMBLE] vehicle marker removed section=%s object_id=%s distance=5m",
+			sale.section,
+			tostring(object_id)
+		)
+		return
+	end
+
+	-- Existing saves may still contain the old amber primary-object marker.
+	ensure_vehicle_marker(sale, object_id)
+end
+
+function update_uaz_van_marker()
+	update_vehicle_sale_marker(UAZ_VAN_SALE)
+end
+
+function update_vehicle_sales()
+	for _, sale in ipairs(VEHICLE_SALES) do
+		update_vehicle_sale_marker(sale)
+		update_vehicle_sale_fuel(sale)
+	end
+end

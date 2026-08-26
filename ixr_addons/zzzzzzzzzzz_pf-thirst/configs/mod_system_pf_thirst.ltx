@@ -1,0 +1,102 @@
+; Chronicles of Pripyat 4.26 / IX-Ray - native hunger and thirst balance.
+; eat_satiety and positive eat_thirst restore their respective needs;
+; negative eat_thirst values increase thirst.
+
+![actor_condition]
+; Reduce only the actor's unconditional passive health regeneration tenfold.
+; The runtime scale also reduces only the positive health contribution from
+; satiety and thirst. Negative hunger/thirst penalties and healing from
+; consumables, artefacts and outfits retain their independent balance values.
+health_restore_v = 0.00001
+pf_passive_health_scale = 0.10
+
+; Match the base hunger drain: one full bar lasts about 17.1 in-game hours.
+; Health starts decreasing only below 5% hydration. Stamina regeneration
+; weakens progressively before that, giving the player time to find a drink.
+thirst_v = 0.0000162
+thirst_power_v = 0.003
+thirst_health_v = 0.00012
+thirst_critical = 0.05
+
+; Sleeping skips world time instead of simulating actor-condition updates.
+; Charge half of the normal hourly hunger and thirst drain on wake-up.
+pf_sleep_needs_factor = 0.50
+
+; Stock food and drinks. Bread plus sausage restores 90% satiety, while one
+; tin of conserva restores 70%. Food thirst penalties remain deliberately
+; modest: water stays useful without making every meal require an immediate
+; second consumable. Nominal provision costs are centered on antirad's
+; cost = 250 reference; Taskboard rewards are balanced separately.
+;
+; The native tooltip shows boost_time whenever it is not effectively zero.
+; Keep the visible item value below that threshold, then reapply the original
+; short booster from pf_food_tooltip.on_inventory_eat. This hides the pointless
+; duration row without changing the health/power effect after consumption.
+![bread]
+cost = 200
+eat_satiety = 0.40
+eat_thirst = -0.10
+boost_time = 0.00000001
+
+![kolbasa]
+cost = 250
+eat_satiety = 0.50
+eat_thirst = -0.07
+boost_time = 0.00000001
+
+![conserva]
+cost = 300
+eat_satiety = 0.70
+eat_thirst = -0.04
+boost_time = 0.00000001
+
+![mineral_water]
+; Single-use bottle: strong immediate hydration.
+cost = 250
+eat_thirst = 0.65
+boost_time = 0.00000001
+
+![flyaga]
+; Single-use flask. Disabling condition-based uses removes the portions marker
+; from the inventory and consumes the whole item after one drink.
+cost = 250
+eat_thirst = 0.50
+boost_time = 0.00000001
+use_condition = false
+max_uses = 1
+remove_after_use = true
+
+![energy_drink]
+cost = 300
+eat_thirst = 0.30
+
+![energy_drink1]
+; Load-only compatibility item inherited before the late energy-drink patch.
+eat_thirst = 0.30
+
+![drug_booster]
+eat_thirst = 0.15
+
+![vodka]
+cost = 250
+eat_thirst = -0.12
+
+; Rare animated consumables follow their visible contents.
+![lz_nm_strange_stew]
+eat_thirst = 0.05
+
+![lz_nm_strange_shot]
+eat_thirst = -0.12
+
+![lz_nm_strange_drink]
+eat_thirst = 0.40
+
+; Runtime-only booster profiles for ordinary food and water. They have no
+; $spawn and therefore cannot appear as inventory items.
+[pf_food_health_restore_5s]:booster
+boost_time = 5.0
+boost_health_restore = 0.002
+
+[pf_food_power_restore_1s]:booster
+boost_time = 1.0
+boost_power_restore = 0.001

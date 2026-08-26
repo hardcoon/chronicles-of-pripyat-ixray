@@ -1,0 +1,1659 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+	<dialog id="pf_guide_dialog">
+		<dont_has_info>pf_guide_dialog_done</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_guide_dialog_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_guide_dialog_2</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_guide_dialog_3</text>
+				<action>dialogs_pripyat_full.give_radio</action>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_guide_dialog_4</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_guide_dialog_5</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_guide_dialog_6</text>
+				<action>dialogs_pripyat_full.finish_guide_dialog</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_story_preacher_spare_dialog">
+		<has_info>pf_story_path_continues_achievement_gained</has_info>
+		<dont_has_info>pf_story_pendant_found</dont_has_info>
+		<dont_has_info>pf_story_preacher_spared</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_story_preacher_spare_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_story_preacher_spare_2</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_story_preacher_spare_3</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_story_preacher_spare_4</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_story_preacher_spare_5</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_story_preacher_spare_6</text>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_story_preacher_spare_7</text>
+				<next>7</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_story_preacher_spare_8</text>
+				<next>8</next>
+			</phrase>
+			<phrase id="8">
+				<text>pf_story_preacher_spare_9</text>
+				<next>9</next>
+			</phrase>
+			<phrase id="9">
+				<text>pf_story_preacher_spare_10</text>
+				<action>dialogs_pripyat_full.finish_preacher_reunion</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_monolith_guardian_dialog">
+		<has_info>pf_story_path_continues_achievement_gained</has_info>
+		<has_info>pf_story_preacher_reunion_finished</has_info>
+		<has_info>pf_monolith_story_npcs_enabled</has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_monolith_guardian_greeting</text>
+				<next>1</next>
+				<next>10</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_monolith_guardian_intro_2</text>
+				<dont_has_info>pf_monolith_guardian_intro_done</dont_has_info>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_monolith_guardian_intro_1</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_monolith_guardian_intro_4</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_monolith_guardian_intro_5</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_monolith_guardian_intro_6</text>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_monolith_guardian_intro_7</text>
+				<give_info>pf_monolith_guardian_intro_done</give_info>
+				<next>7</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_monolith_guardian_intro_close_actor</text>
+				<next>15</next>
+			</phrase>
+			<phrase id="10">
+				<text>pf_monolith_guardian_repeat_start_actor</text>
+				<has_info>pf_monolith_guardian_intro_done</has_info>
+				<dont_has_info>pf_monolith_guardian_reward_36_taken</dont_has_info>
+				<next>11</next>
+			</phrase>
+			<phrase id="11">
+				<text>pf_monolith_guardian_repeat_1</text>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>12</next>
+			</phrase>
+			<phrase id="12">
+				<text>pf_monolith_guardian_repeat_2</text>
+				<next>13</next>
+			</phrase>
+			<phrase id="13">
+				<text>pf_monolith_guardian_repeat_3</text>
+				<next>14</next>
+			</phrase>
+			<phrase id="14">
+				<text>pf_monolith_guardian_continue_actor</text>
+				<next>15</next>
+			</phrase>
+			<phrase id="15">
+				<text>pf_monolith_guardian_sections_keeper</text>
+				<next>10</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="20">
+				<text>pf_monolith_guardian_exchange_12_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_12</precondition>
+				<next>21</next>
+			</phrase>
+			<phrase id="21">
+				<text>pf_monolith_guardian_exchange_12_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_12</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="30">
+				<text>pf_monolith_guardian_exchange_18_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_18</precondition>
+				<next>31</next>
+			</phrase>
+			<phrase id="31">
+				<text>pf_monolith_guardian_exchange_18_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_18</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="40">
+				<text>pf_monolith_guardian_exchange_24_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_24</precondition>
+				<next>41</next>
+			</phrase>
+			<phrase id="41">
+				<text>pf_monolith_guardian_exchange_24_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_24</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="50">
+				<text>pf_monolith_guardian_exchange_36_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_36</precondition>
+				<next>51</next>
+			</phrase>
+			<phrase id="51">
+				<text>pf_monolith_guardian_exchange_36_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_36</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="60">
+				<text>pf_monolith_guardian_artifacts_start_actor</text>
+				<has_info>pf_monolith_guardian_intro_done</has_info>
+				<next>61</next>
+			</phrase>
+			<phrase id="61">
+				<text>st_lz_nlc_guardian_exchange_offer</text>
+				<next>66</next>
+				<next>67</next>
+				<next>68</next>
+				<next>70</next>
+				<next>71</next>
+				<next>72</next>
+				<next>73</next>
+				<next>74</next>
+				<next>75</next>
+				<next>76</next>
+				<next>64</next>
+			</phrase>
+			<phrase id="66">
+				<text>st_lz_nlc_guardian_modificat_bundle</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_modificat_bundle</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_modificat_bundle</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="67">
+				<text>st_lz_nlc_guardian_mesomodificat_bundle</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_mesomodificat_bundle</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_mesomodificat_bundle</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="68">
+				<text>st_lz_nlc_guardian_hypermodificat_bundle</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_hypermodificat_bundle</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_hypermodificat_bundle</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="70">
+				<text>st_lz_nlc_guardian_absolute_spirit</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_absolute_spirit</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_absolute_spirit</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="71">
+				<text>st_lz_nlc_guardian_absolute_cry</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_absolute_cry</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_absolute_cry</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="72">
+				<text>st_lz_nlc_guardian_absolute_dik</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_absolute_dik</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_absolute_dik</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="73">
+				<text>st_lz_nlc_guardian_absolute_kol</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_absolute_kol</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_absolute_kol</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="74">
+				<text>st_lz_nlc_guardian_absolute_babka</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_absolute_babka</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_absolute_babka</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="75">
+				<text>st_lz_nlc_guardian_absolute_pudd</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_absolute_pudd</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_absolute_pudd</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="76">
+				<text>st_lz_nlc_guardian_absolute_armor</text>
+				<precondition>lz_nlc_art_cooking.guardian_can_absolute_armor</precondition>
+				<action>lz_nlc_art_cooking.guardian_exchange_absolute_armor</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="63">
+				<text>pf_monolith_guardian_artifacts_accept_keeper</text>
+				<next>14</next>
+			</phrase>
+			<phrase id="64">
+				<text>pf_monolith_guardian_artifacts_decline_actor</text>
+				<next>65</next>
+			</phrase>
+			<phrase id="65">
+				<text>pf_monolith_guardian_artifacts_decline_keeper</text>
+				<next>14</next>
+			</phrase>
+			<phrase id="90">
+				<text>pf_monolith_guardian_leave_actor</text>
+				<has_info>pf_monolith_guardian_intro_done</has_info>
+				<next>91</next>
+			</phrase>
+			<phrase id="91">
+				<text>pf_monolith_guardian_leave_keeper</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<!-- Service-only bunker conversations. They deliberately contain no
+	     Jupiter info portions, quest actions or story preconditions. -->
+	<dialog id="pf_bunker_novikov_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_novikov_greeting</text>
+				<next>5</next>
+				<next>10</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_novikov_upgrade_intro_actor</text>
+				<dont_has_info>pf_novikov_upgrade_intro_done</dont_has_info>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_novikov_upgrade_intro_novikov</text>
+				<next>7</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_novikov_upgrade_intro_understood</text>
+				<action>pf_novikov_upgrade_access.finish_novikov_intro</action>
+				<next>91</next>
+			</phrase>
+			<phrase id="10">
+				<text>pf_novikov_anomaly_intro_actor</text>
+				<dont_has_info>pf_novikov_anomaly_intro_done</dont_has_info>
+				<precondition>pf_novikov_anomaly_dialog.service_available</precondition>
+				<next>11</next>
+			</phrase>
+			<phrase id="11">
+				<text>pf_novikov_anomaly_intro_novikov</text>
+				<next>12</next>
+			</phrase>
+			<phrase id="12">
+				<text>pf_novikov_anomaly_understood_actor</text>
+				<give_info>pf_novikov_anomaly_intro_done</give_info>
+				<next>91</next>
+			</phrase>
+			<phrase id="20">
+				<text>pf_novikov_anomaly_purchase_actor</text>
+				<has_info>pf_novikov_anomaly_intro_done</has_info>
+				<precondition>pf_novikov_anomaly_dialog.any_available</precondition>
+				<action>pf_novikov_anomaly_dialog.begin_purchase</action>
+				<next>21</next>
+			</phrase>
+			<phrase id="21">
+				<text>pf_novikov_anomaly_choose_family_novikov</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>400</next>
+				<next>500</next>
+				<next>29</next>
+			</phrase>
+			<phrase id="22">
+				<text>pf_novikov_anomaly_choose_family_again_novikov</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>400</next>
+				<next>500</next>
+				<next>29</next>
+			</phrase>
+			<phrase id="29">
+				<text>pf_novikov_anomaly_not_now_actor</text>
+				<action>pf_novikov_anomaly_dialog.clear_selection</action>
+				<next>91</next>
+			</phrase>
+			<phrase id="90">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="91">
+				<text>pf_bunker_dialog_anything_else</text>
+				<next>5</next>
+				<next>10</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_novikov_anomaly_family_thermal_actor</text>
+				<precondition>pf_novikov_anomaly_dialog.family_thermal_available</precondition>
+				<next>101</next>
+			</phrase>
+			<phrase id="101">
+				<text>pf_novikov_anomaly_known_list_novikov</text>
+				<next>1007</next>
+				<next>1008</next>
+				<next>1013</next>
+				<next>1014</next>
+				<next>1023</next>
+				<next>1031</next>
+				<next>1034</next>
+				<next>1038</next>
+				<next>109</next>
+			</phrase>
+			<phrase id="109">
+				<text>pf_novikov_anomaly_back_actor</text>
+				<next>22</next>
+			</phrase>
+			<phrase id="200">
+				<text>pf_novikov_anomaly_family_chemical_actor</text>
+				<precondition>pf_novikov_anomaly_dialog.family_chemical_available</precondition>
+				<next>201</next>
+			</phrase>
+			<phrase id="201">
+				<text>pf_novikov_anomaly_known_list_novikov</text>
+				<next>1002</next>
+				<next>1004</next>
+				<next>1012</next>
+				<next>1016</next>
+				<next>1025</next>
+				<next>1027</next>
+				<next>1037</next>
+				<next>1039</next>
+				<next>209</next>
+			</phrase>
+			<phrase id="209">
+				<text>pf_novikov_anomaly_back_actor</text>
+				<next>22</next>
+			</phrase>
+			<phrase id="300">
+				<text>pf_novikov_anomaly_family_electric_actor</text>
+				<precondition>pf_novikov_anomaly_dialog.family_electric_available</precondition>
+				<next>301</next>
+			</phrase>
+			<phrase id="301">
+				<text>pf_novikov_anomaly_known_list_novikov</text>
+				<next>1003</next>
+				<next>1010</next>
+				<next>1015</next>
+				<next>1020</next>
+				<next>1024</next>
+				<next>1030</next>
+				<next>1033</next>
+				<next>1040</next>
+				<next>309</next>
+			</phrase>
+			<phrase id="309">
+				<text>pf_novikov_anomaly_back_actor</text>
+				<next>22</next>
+			</phrase>
+			<phrase id="400">
+				<text>pf_novikov_anomaly_family_gravitational_actor</text>
+				<precondition>pf_novikov_anomaly_dialog.family_gravitational_available</precondition>
+				<next>401</next>
+			</phrase>
+			<phrase id="401">
+				<text>pf_novikov_anomaly_known_list_novikov</text>
+				<next>1001</next>
+				<next>1009</next>
+				<next>1011</next>
+				<next>1017</next>
+				<next>1022</next>
+				<next>1026</next>
+				<next>1028</next>
+				<next>1032</next>
+				<next>1036</next>
+				<next>409</next>
+			</phrase>
+			<phrase id="409">
+				<text>pf_novikov_anomaly_back_actor</text>
+				<next>22</next>
+			</phrase>
+			<phrase id="500">
+				<text>pf_novikov_anomaly_family_psi_actor</text>
+				<precondition>pf_novikov_anomaly_dialog.family_psi_available</precondition>
+				<next>501</next>
+			</phrase>
+			<phrase id="501">
+				<text>pf_novikov_anomaly_known_list_novikov</text>
+				<next>1005</next>
+				<next>1006</next>
+				<next>1018</next>
+				<next>1019</next>
+				<next>1021</next>
+				<next>1029</next>
+				<next>1035</next>
+				<next>1041</next>
+				<next>509</next>
+			</phrase>
+			<phrase id="509">
+				<text>pf_novikov_anomaly_back_actor</text>
+				<next>22</next>
+			</phrase>
+			<phrase id="1001">
+				<text>st_pf_proc_group_01</text>
+				<precondition>pf_novikov_anomaly_dialog.group_01_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_01</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1002">
+				<text>st_pf_proc_group_02</text>
+				<precondition>pf_novikov_anomaly_dialog.group_02_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_02</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1003">
+				<text>st_pf_proc_group_03</text>
+				<precondition>pf_novikov_anomaly_dialog.group_03_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_03</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1004">
+				<text>st_pf_proc_group_04</text>
+				<precondition>pf_novikov_anomaly_dialog.group_04_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_04</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1005">
+				<text>st_pf_proc_group_05</text>
+				<precondition>pf_novikov_anomaly_dialog.group_05_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_05</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1006">
+				<text>st_pf_proc_group_06</text>
+				<precondition>pf_novikov_anomaly_dialog.group_06_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_06</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1007">
+				<text>st_pf_proc_group_07</text>
+				<precondition>pf_novikov_anomaly_dialog.group_07_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_07</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1008">
+				<text>st_pf_proc_group_08</text>
+				<precondition>pf_novikov_anomaly_dialog.group_08_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_08</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1009">
+				<text>st_pf_proc_group_09</text>
+				<precondition>pf_novikov_anomaly_dialog.group_09_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_09</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1010">
+				<text>st_pf_proc_group_10</text>
+				<precondition>pf_novikov_anomaly_dialog.group_10_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_10</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1011">
+				<text>st_pf_proc_group_11</text>
+				<precondition>pf_novikov_anomaly_dialog.group_11_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_11</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1012">
+				<text>st_pf_proc_group_12</text>
+				<precondition>pf_novikov_anomaly_dialog.group_12_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_12</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1013">
+				<text>st_pf_proc_group_13</text>
+				<precondition>pf_novikov_anomaly_dialog.group_13_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_13</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1014">
+				<text>st_pf_proc_group_14</text>
+				<precondition>pf_novikov_anomaly_dialog.group_14_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_14</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1015">
+				<text>st_pf_proc_group_15</text>
+				<precondition>pf_novikov_anomaly_dialog.group_15_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_15</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1016">
+				<text>st_pf_proc_group_16</text>
+				<precondition>pf_novikov_anomaly_dialog.group_16_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_16</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1017">
+				<text>st_pf_proc_group_17</text>
+				<precondition>pf_novikov_anomaly_dialog.group_17_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_17</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1018">
+				<text>st_pf_proc_group_18</text>
+				<precondition>pf_novikov_anomaly_dialog.group_18_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_18</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1019">
+				<text>st_pf_proc_group_19</text>
+				<precondition>pf_novikov_anomaly_dialog.group_19_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_19</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1020">
+				<text>st_pf_proc_group_20</text>
+				<precondition>pf_novikov_anomaly_dialog.group_20_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_20</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1021">
+				<text>st_pf_proc_group_21</text>
+				<precondition>pf_novikov_anomaly_dialog.group_21_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_21</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1022">
+				<text>st_pf_proc_group_22</text>
+				<precondition>pf_novikov_anomaly_dialog.group_22_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_22</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1023">
+				<text>st_pf_proc_group_23</text>
+				<precondition>pf_novikov_anomaly_dialog.group_23_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_23</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1024">
+				<text>st_pf_proc_group_24</text>
+				<precondition>pf_novikov_anomaly_dialog.group_24_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_24</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1025">
+				<text>st_pf_proc_group_25</text>
+				<precondition>pf_novikov_anomaly_dialog.group_25_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_25</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1026">
+				<text>st_pf_proc_group_26</text>
+				<precondition>pf_novikov_anomaly_dialog.group_26_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_26</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1027">
+				<text>st_pf_proc_group_27</text>
+				<precondition>pf_novikov_anomaly_dialog.group_27_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_27</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1028">
+				<text>st_pf_proc_group_28</text>
+				<precondition>pf_novikov_anomaly_dialog.group_28_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_28</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1029">
+				<text>st_pf_proc_group_29</text>
+				<precondition>pf_novikov_anomaly_dialog.group_29_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_29</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1030">
+				<text>st_pf_proc_group_30</text>
+				<precondition>pf_novikov_anomaly_dialog.group_30_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_30</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1031">
+				<text>st_pf_proc_group_31</text>
+				<precondition>pf_novikov_anomaly_dialog.group_31_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_31</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1032">
+				<text>st_pf_proc_group_32</text>
+				<precondition>pf_novikov_anomaly_dialog.group_32_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_32</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1033">
+				<text>st_pf_proc_group_33</text>
+				<precondition>pf_novikov_anomaly_dialog.group_33_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_33</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1034">
+				<text>st_pf_proc_group_34</text>
+				<precondition>pf_novikov_anomaly_dialog.group_34_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_34</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1035">
+				<text>st_pf_proc_group_35</text>
+				<precondition>pf_novikov_anomaly_dialog.group_35_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_35</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1036">
+				<text>st_pf_proc_group_36</text>
+				<precondition>pf_novikov_anomaly_dialog.group_36_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_36</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1037">
+				<text>st_pf_proc_group_37</text>
+				<precondition>pf_novikov_anomaly_dialog.group_37_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_37</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1038">
+				<text>st_pf_proc_group_38</text>
+				<precondition>pf_novikov_anomaly_dialog.group_38_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_38</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1039">
+				<text>st_pf_proc_group_39</text>
+				<precondition>pf_novikov_anomaly_dialog.group_39_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_39</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1040">
+				<text>st_pf_proc_group_40</text>
+				<precondition>pf_novikov_anomaly_dialog.group_40_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_40</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="1041">
+				<text>st_pf_proc_group_41</text>
+				<precondition>pf_novikov_anomaly_dialog.group_41_available</precondition>
+				<action>pf_novikov_anomaly_dialog.select_group_41</action>
+				<next>7000</next>
+			</phrase>
+			<phrase id="7000">
+				<text>pf_novikov_anomaly_price_novikov</text>
+				<next>7010</next>
+				<next>7020</next>
+				<next>7030</next>
+			</phrase>
+			<phrase id="7010">
+				<text>pf_novikov_anomaly_pay_actor</text>
+				<precondition>pf_novikov_anomaly_dialog.can_pay_selected</precondition>
+				<action>pf_novikov_anomaly_dialog.pay_selected</action>
+				<next>7011</next>
+			</phrase>
+			<phrase id="7011">
+				<text>pf_novikov_anomaly_coordinates_added_novikov</text>
+				<next>5</next>
+				<next>10</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="7020">
+				<text>pf_novikov_anomaly_no_money_actor</text>
+				<precondition>pf_novikov_anomaly_dialog.cannot_pay_selected</precondition>
+				<action>pf_novikov_anomaly_dialog.clear_selection</action>
+				<next>91</next>
+			</phrase>
+			<phrase id="7030">
+				<text>pf_novikov_anomaly_not_now_actor</text>
+				<action>pf_novikov_anomaly_dialog.clear_selection</action>
+				<next>91</next>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_hermann_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_hermann_greeting</text>
+				<next>10</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>70</next>
+				<next>80</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+
+			<!-- Novikov armor-upgrade access: stage 1. -->
+			<phrase id="10">
+				<text>pf_novikov_access_1_take_actor</text>
+				<precondition>pf_novikov_upgrade_access.can_start_stage_1</precondition>
+				<next>11</next>
+			</phrase>
+			<phrase id="11"><text>pf_novikov_access_1_take_hermann_1</text><next>12</next></phrase>
+			<phrase id="12"><text>pf_novikov_access_1_take_actor_2</text><next>13</next></phrase>
+			<phrase id="13"><text>pf_novikov_access_1_take_hermann_2</text><next>14</next></phrase>
+			<phrase id="14">
+				<text>pf_novikov_access_1_take_actor_3</text>
+				<action>pf_novikov_upgrade_access.start_stage_1</action>
+				<next>91</next>
+			</phrase>
+
+			<phrase id="30">
+				<text>pf_novikov_access_1_turn_actor</text>
+				<precondition>pf_novikov_upgrade_access.can_turn_in_stage_1</precondition>
+				<action>pf_novikov_upgrade_access.turn_in_stage_1</action>
+				<next>31</next>
+			</phrase>
+			<phrase id="31"><text>pf_novikov_access_1_turn_hermann_1</text><next>32</next></phrase>
+			<phrase id="32"><text>pf_novikov_access_1_turn_actor_2</text><next>33</next></phrase>
+			<phrase id="33"><text>pf_novikov_access_1_turn_hermann_2</text><next>34</next></phrase>
+			<phrase id="34"><text>pf_novikov_access_silence_actor</text><next>35</next></phrase>
+			<phrase id="35">
+				<text>pf_novikov_access_1_turn_hermann_3</text>
+				<next>10</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>70</next>
+				<next>80</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+
+			<!-- Stage 2. -->
+			<phrase id="40">
+				<text>pf_novikov_access_2_take_actor</text>
+				<precondition>pf_novikov_upgrade_access.can_start_stage_2</precondition>
+				<next>41</next>
+			</phrase>
+			<phrase id="41"><text>pf_novikov_access_2_take_hermann</text><next>42</next></phrase>
+			<phrase id="42">
+				<text>pf_novikov_access_2_take_actor_2</text>
+				<action>pf_novikov_upgrade_access.start_stage_2</action>
+				<next>91</next>
+			</phrase>
+
+			<phrase id="50">
+				<text>pf_novikov_access_2_turn_actor</text>
+				<precondition>pf_novikov_upgrade_access.can_turn_in_stage_2</precondition>
+				<action>pf_novikov_upgrade_access.turn_in_stage_2</action>
+				<next>51</next>
+			</phrase>
+			<phrase id="51"><text>pf_novikov_access_2_turn_hermann_1</text><next>52</next></phrase>
+			<phrase id="52"><text>pf_novikov_access_silence_actor</text><next>53</next></phrase>
+			<phrase id="53"><text>pf_novikov_access_2_turn_hermann_2</text><next>54</next></phrase>
+			<phrase id="54"><text>pf_novikov_access_silence_actor</text><next>55</next></phrase>
+			<phrase id="55">
+				<text>pf_novikov_access_2_turn_hermann_3</text>
+				<next>10</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>70</next>
+				<next>80</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+
+			<!-- Stage 3. -->
+			<phrase id="60">
+				<text>pf_novikov_access_3_take_actor</text>
+				<precondition>pf_novikov_upgrade_access.can_start_stage_3</precondition>
+				<next>61</next>
+			</phrase>
+			<phrase id="61"><text>pf_novikov_access_3_take_hermann_1</text><next>62</next></phrase>
+			<phrase id="62"><text>pf_novikov_access_3_take_actor_2</text><next>63</next></phrase>
+			<phrase id="63"><text>pf_novikov_access_3_take_hermann_2</text><next>64</next></phrase>
+			<phrase id="64"><text>pf_novikov_access_3_take_actor_3</text><next>65</next></phrase>
+			<phrase id="65"><text>pf_novikov_access_3_take_hermann_3</text><next>66</next></phrase>
+			<phrase id="66">
+				<text>pf_novikov_access_3_take_actor_4</text>
+				<action>pf_novikov_upgrade_access.start_stage_3</action>
+				<next>91</next>
+			</phrase>
+
+			<phrase id="70">
+				<text>pf_novikov_access_3_turn_actor</text>
+				<precondition>pf_novikov_upgrade_access.can_turn_in_stage_3</precondition>
+				<next>71</next>
+			</phrase>
+			<phrase id="71"><text>pf_novikov_access_3_turn_hermann_1</text><next>72</next></phrase>
+			<phrase id="72">
+				<text>pf_novikov_access_3_turn_actor_2</text>
+				<action>pf_novikov_upgrade_access.turn_in_stage_3</action>
+				<next>73</next>
+			</phrase>
+			<phrase id="73"><text>pf_novikov_access_3_turn_hermann_2</text><next>74</next></phrase>
+			<phrase id="74"><text>pf_novikov_access_3_turn_actor_3</text><next>75</next></phrase>
+			<phrase id="75"><text>pf_novikov_access_3_turn_hermann_3</text><next>76</next></phrase>
+			<phrase id="76">
+				<text>pf_novikov_access_3_turn_actor_4</text>
+				<next>91</next>
+			</phrase>
+
+			<!-- One-time explanation unlocked by accepting the stage-2 research task. -->
+			<phrase id="80">
+				<text>pf_hermann_recipe_intro_actor</text>
+				<has_info>pf_novikov_upgrade_stage_2_active</has_info>
+				<dont_has_info>pf_hermann_recipe_intro_done</dont_has_info>
+				<next>81</next>
+			</phrase>
+			<phrase id="81">
+				<text>pf_hermann_recipe_intro_hermann</text>
+				<next>82</next>
+			</phrase>
+			<phrase id="82">
+				<text>pf_hermann_recipe_intro_understood_actor</text>
+				<give_info>pf_hermann_recipe_intro_done</give_info>
+				<next>91</next>
+			</phrase>
+
+			<phrase id="20">
+				<text>pf_hermann_recipe_purchase_actor</text>
+				<has_info>pf_novikov_upgrade_stage_2_active</has_info>
+				<has_info>pf_hermann_recipe_intro_done</has_info>
+				<precondition>pf_hermann_art_recipe_dialog.any_available</precondition>
+				<action>pf_hermann_art_recipe_dialog.begin_purchase</action>
+				<next>21</next>
+			</phrase>
+			<phrase id="21">
+				<text>pf_hermann_recipe_choose_family_hermann</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>400</next>
+				<next>500</next>
+				<next>600</next>
+				<next>700</next>
+				<next>29</next>
+			</phrase>
+			<phrase id="22">
+				<text>pf_hermann_recipe_choose_family_again_hermann</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>400</next>
+				<next>500</next>
+				<next>600</next>
+				<next>700</next>
+				<next>29</next>
+			</phrase>
+			<phrase id="29">
+				<text>pf_hermann_recipe_not_now_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>91</next>
+			</phrase>
+			<phrase id="90">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="91">
+				<text>pf_bunker_dialog_anything_else</text>
+				<next>10</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>70</next>
+				<next>80</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+
+			<phrase id="100">
+				<text>pf_hermann_recipe_family_spirit_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.family_spirit_available</precondition>
+				<next>101</next>
+			</phrase>
+			<phrase id="101">
+				<text>pf_hermann_recipe_known_list_hermann</text>
+				<next>1001</next>
+				<next>1002</next>
+				<next>1003</next>
+				<next>1004</next>
+				<next>109</next>
+			</phrase>
+			<phrase id="109">
+				<text>pf_hermann_recipe_back_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>22</next>
+			</phrase>
+
+			<phrase id="200">
+				<text>pf_hermann_recipe_family_cry_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.family_cry_available</precondition>
+				<next>201</next>
+			</phrase>
+			<phrase id="201">
+				<text>pf_hermann_recipe_known_list_hermann</text>
+				<next>2001</next>
+				<next>2002</next>
+				<next>2003</next>
+				<next>2004</next>
+				<next>209</next>
+			</phrase>
+			<phrase id="209">
+				<text>pf_hermann_recipe_back_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>22</next>
+			</phrase>
+
+			<phrase id="300">
+				<text>pf_hermann_recipe_family_dik_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.family_dik_available</precondition>
+				<next>301</next>
+			</phrase>
+			<phrase id="301">
+				<text>pf_hermann_recipe_known_list_hermann</text>
+				<next>3001</next>
+				<next>3002</next>
+				<next>3003</next>
+				<next>3004</next>
+				<next>309</next>
+			</phrase>
+			<phrase id="309">
+				<text>pf_hermann_recipe_back_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>22</next>
+			</phrase>
+
+			<phrase id="400">
+				<text>pf_hermann_recipe_family_kol_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.family_kol_available</precondition>
+				<next>401</next>
+			</phrase>
+			<phrase id="401">
+				<text>pf_hermann_recipe_known_list_hermann</text>
+				<next>4001</next>
+				<next>4002</next>
+				<next>4003</next>
+				<next>4004</next>
+				<next>409</next>
+			</phrase>
+			<phrase id="409">
+				<text>pf_hermann_recipe_back_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>22</next>
+			</phrase>
+
+			<phrase id="500">
+				<text>pf_hermann_recipe_family_babka_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.family_babka_available</precondition>
+				<next>501</next>
+			</phrase>
+			<phrase id="501">
+				<text>pf_hermann_recipe_known_list_hermann</text>
+				<next>5001</next>
+				<next>5002</next>
+				<next>5003</next>
+				<next>5004</next>
+				<next>509</next>
+			</phrase>
+			<phrase id="509">
+				<text>pf_hermann_recipe_back_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>22</next>
+			</phrase>
+
+			<phrase id="600">
+				<text>pf_hermann_recipe_family_pudd_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.family_pudd_available</precondition>
+				<next>601</next>
+			</phrase>
+			<phrase id="601">
+				<text>pf_hermann_recipe_known_list_hermann</text>
+				<next>6001</next>
+				<next>6002</next>
+				<next>6003</next>
+				<next>6004</next>
+				<next>609</next>
+			</phrase>
+			<phrase id="609">
+				<text>pf_hermann_recipe_back_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>22</next>
+			</phrase>
+
+			<phrase id="700">
+				<text>pf_hermann_recipe_family_armor_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.family_armor_available</precondition>
+				<next>701</next>
+			</phrase>
+			<phrase id="701">
+				<text>pf_hermann_recipe_known_list_hermann</text>
+				<next>7001</next>
+				<next>7002</next>
+				<next>7003</next>
+				<next>7004</next>
+				<next>709</next>
+			</phrase>
+			<phrase id="709">
+				<text>pf_hermann_recipe_back_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>22</next>
+			</phrase>
+
+			<phrase id="1001"><text>st_lz_nlc_enc_recipe_spirit_1_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_spirit_1_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_spirit_1</action><next>8001</next></phrase>
+			<phrase id="1002"><text>st_lz_nlc_enc_recipe_spirit_2_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_spirit_2_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_spirit_2</action><next>8002</next></phrase>
+			<phrase id="1003"><text>st_lz_nlc_enc_recipe_spirit_3_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_spirit_3_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_spirit_3</action><next>8003</next></phrase>
+			<phrase id="1004"><text>st_lz_nlc_enc_recipe_spirit_4_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_spirit_4_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_spirit_4</action><next>8004</next></phrase>
+			<phrase id="2001"><text>st_lz_nlc_enc_recipe_cry_1_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_cry_1_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_cry_1</action><next>8001</next></phrase>
+			<phrase id="2002"><text>st_lz_nlc_enc_recipe_cry_2_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_cry_2_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_cry_2</action><next>8002</next></phrase>
+			<phrase id="2003"><text>st_lz_nlc_enc_recipe_cry_3_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_cry_3_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_cry_3</action><next>8003</next></phrase>
+			<phrase id="2004"><text>st_lz_nlc_enc_recipe_cry_4_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_cry_4_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_cry_4</action><next>8004</next></phrase>
+			<phrase id="3001"><text>st_lz_nlc_enc_recipe_dik_1_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_dik_1_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_dik_1</action><next>8001</next></phrase>
+			<phrase id="3002"><text>st_lz_nlc_enc_recipe_dik_2_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_dik_2_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_dik_2</action><next>8002</next></phrase>
+			<phrase id="3003"><text>st_lz_nlc_enc_recipe_dik_3_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_dik_3_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_dik_3</action><next>8003</next></phrase>
+			<phrase id="3004"><text>st_lz_nlc_enc_recipe_dik_4_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_dik_4_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_dik_4</action><next>8004</next></phrase>
+			<phrase id="4001"><text>st_lz_nlc_enc_recipe_kol_1_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_kol_1_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_kol_1</action><next>8001</next></phrase>
+			<phrase id="4002"><text>st_lz_nlc_enc_recipe_kol_2_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_kol_2_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_kol_2</action><next>8002</next></phrase>
+			<phrase id="4003"><text>st_lz_nlc_enc_recipe_kol_3_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_kol_3_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_kol_3</action><next>8003</next></phrase>
+			<phrase id="4004"><text>st_lz_nlc_enc_recipe_kol_4_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_kol_4_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_kol_4</action><next>8004</next></phrase>
+			<phrase id="5001"><text>st_lz_nlc_enc_recipe_babka_1_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_babka_1_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_babka_1</action><next>8001</next></phrase>
+			<phrase id="5002"><text>st_lz_nlc_enc_recipe_babka_2_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_babka_2_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_babka_2</action><next>8002</next></phrase>
+			<phrase id="5003"><text>st_lz_nlc_enc_recipe_babka_3_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_babka_3_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_babka_3</action><next>8003</next></phrase>
+			<phrase id="5004"><text>st_lz_nlc_enc_recipe_babka_4_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_babka_4_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_babka_4</action><next>8004</next></phrase>
+			<phrase id="6001"><text>st_lz_nlc_enc_recipe_pudd_1_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_pudd_1_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_pudd_1</action><next>8001</next></phrase>
+			<phrase id="6002"><text>st_lz_nlc_enc_recipe_pudd_2_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_pudd_2_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_pudd_2</action><next>8002</next></phrase>
+			<phrase id="6003"><text>st_lz_nlc_enc_recipe_pudd_3_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_pudd_3_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_pudd_3</action><next>8003</next></phrase>
+			<phrase id="6004"><text>st_lz_nlc_enc_recipe_pudd_4_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_pudd_4_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_pudd_4</action><next>8004</next></phrase>
+			<phrase id="7001"><text>st_lz_nlc_enc_recipe_armor_1_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_armor_1_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_armor_1</action><next>8001</next></phrase>
+			<phrase id="7002"><text>st_lz_nlc_enc_recipe_armor_2_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_armor_2_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_armor_2</action><next>8002</next></phrase>
+			<phrase id="7003"><text>st_lz_nlc_enc_recipe_armor_3_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_armor_3_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_armor_3</action><next>8003</next></phrase>
+			<phrase id="7004"><text>st_lz_nlc_enc_recipe_armor_4_title</text><precondition>pf_hermann_art_recipe_dialog.recipe_armor_4_available</precondition><action>pf_hermann_art_recipe_dialog.select_recipe_armor_4</action><next>8004</next></phrase>
+
+			<phrase id="8001"><text>pf_hermann_recipe_price_1_hermann</text><next>8100</next><next>8200</next><next>8300</next></phrase>
+			<phrase id="8002"><text>pf_hermann_recipe_price_2_hermann</text><next>8100</next><next>8200</next><next>8300</next></phrase>
+			<phrase id="8003"><text>pf_hermann_recipe_price_3_hermann</text><next>8100</next><next>8200</next><next>8300</next></phrase>
+			<phrase id="8004"><text>pf_hermann_recipe_price_4_hermann</text><next>8100</next><next>8200</next><next>8300</next></phrase>
+			<phrase id="8100">
+				<text>pf_hermann_recipe_pay_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.can_pay_selected</precondition>
+				<action>pf_hermann_art_recipe_dialog.pay_selected</action>
+				<next>8110</next>
+			</phrase>
+			<phrase id="8110">
+				<text>pf_hermann_recipe_added_hermann</text>
+				<next>10</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>70</next>
+				<next>80</next>
+				<next>20</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="8200">
+				<text>pf_hermann_recipe_no_money_actor</text>
+				<precondition>pf_hermann_art_recipe_dialog.cannot_pay_selected</precondition>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>91</next>
+			</phrase>
+			<phrase id="8300">
+				<text>pf_hermann_recipe_not_now_actor</text>
+				<action>pf_hermann_art_recipe_dialog.clear_selection</action>
+				<next>91</next>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_commander_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>301</next>
+				<next>400</next>
+				<next>900</next>
+			</phrase>
+			<phrase id="91">
+				<text>pf_bunker_guard_commander_anything_else</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>301</next>
+				<next>400</next>
+				<next>900</next>
+			</phrase>
+
+			<!-- Access assignment. -->
+			<phrase id="100">
+				<text>pf_bunker_access_intro_actor_1</text>
+				<has_info>pf_bunker_access_started</has_info>
+				<dont_has_info>pf_bunker_access_case_assigned</dont_has_info>
+				<next>101</next>
+			</phrase>
+			<phrase id="101">
+				<text>pf_bunker_access_intro_commander_1</text>
+				<next>102</next>
+			</phrase>
+			<phrase id="102">
+				<text>pf_bunker_access_intro_actor_2</text>
+				<next>103</next>
+			</phrase>
+			<phrase id="103">
+				<text>pf_bunker_access_intro_commander_2</text>
+				<next>104</next>
+			</phrase>
+			<phrase id="104">
+				<text>pf_bunker_access_intro_actor_3</text>
+				<next>105</next>
+			</phrase>
+			<phrase id="105">
+				<text>pf_bunker_access_intro_commander_3</text>
+				<next>106</next>
+			</phrase>
+			<phrase id="106">
+				<text>pf_bunker_access_intro_actor_confirm</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_assign_case</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+
+			<!-- Case hand-in. The item and task stage change on the actor line. -->
+			<phrase id="200">
+				<text>pf_bunker_access_case_actor_1</text>
+				<has_info>pf_bunker_access_case_assigned</has_info>
+				<dont_has_info>pf_bunker_access_case_delivered</dont_has_info>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_has_case</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_case</action>
+				<next>201</next>
+			</phrase>
+			<phrase id="201">
+				<text>pf_bunker_access_case_commander_1</text>
+				<next>202</next>
+			</phrase>
+			<phrase id="202">
+				<text>pf_bunker_access_case_actor_2</text>
+				<next>203</next>
+			</phrase>
+			<phrase id="203">
+				<text>pf_bunker_access_case_commander_2</text>
+				<next>204</next>
+				<next>205</next>
+			</phrase>
+			<phrase id="204">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka</action>
+				<next>206</next>
+			</phrase>
+			<phrase id="205">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="206">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>207</next>
+			</phrase>
+			<phrase id="207">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<next>91</next>
+			</phrase>
+
+			<!-- Vodka hand-in on a later conversation. -->
+			<phrase id="300">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<has_info>pf_bunker_access_case_delivered</has_info>
+				<dont_has_info>pf_bunker_access_vodka_delivered</dont_has_info>
+				<dont_has_info>pf_bunker_access_granted</dont_has_info>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka</action>
+				<next>302</next>
+			</phrase>
+			<phrase id="301">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<has_info>pf_bunker_access_case_delivered</has_info>
+				<dont_has_info>pf_bunker_access_vodka_delivered</dont_has_info>
+				<dont_has_info>pf_bunker_access_granted</dont_has_info>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="302">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>303</next>
+			</phrase>
+			<phrase id="303">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<next>91</next>
+			</phrase>
+
+			<!-- Resume safely if the vodka was removed before the talk was interrupted. -->
+			<phrase id="400">
+				<text>pf_bunker_access_vodka_already_actor</text>
+				<has_info>pf_bunker_access_vodka_delivered</has_info>
+				<dont_has_info>pf_bunker_access_granted</dont_has_info>
+				<next>401</next>
+			</phrase>
+			<phrase id="401">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>402</next>
+			</phrase>
+			<phrase id="402">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<next>91</next>
+			</phrase>
+
+			<phrase id="900">
+				<text>pf_bunker_guard_commander_menu_actor</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_intro_dialog">
+		<has_info>pf_bunker_access_started</has_info>
+		<dont_has_info>pf_bunker_access_case_assigned</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_intro_actor_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_intro_commander_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_access_intro_actor_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_access_intro_commander_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_access_intro_actor_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_access_intro_commander_3</text>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_bunker_access_intro_actor_confirm</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_assign_case</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_case_dialog">
+		<precondition>dialogs_pripyat_full.pf_bunker_access_has_case</precondition>
+		<has_info>pf_bunker_access_case_assigned</has_info>
+		<dont_has_info>pf_bunker_access_case_delivered</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_case_actor_1</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_has_case</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_case</action>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_case_commander_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_access_case_actor_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_access_case_commander_2</text>
+				<next>4</next>
+				<next>5</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka_from_case_dialog</action>
+				<next>6</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="6">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>7</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_vodka_dialog">
+		<has_info>pf_bunker_access_case_delivered</has_info>
+		<dont_has_info>pf_bunker_access_granted</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+				<next>101</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka_from_vodka_dialog</action>
+				<next>1</next>
+			</phrase>
+			<phrase id="101">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_vodka_finish_dialog">
+		<has_info>pf_bunker_access_vodka_delivered</has_info>
+		<dont_has_info>pf_bunker_access_granted</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_vodka_already_actor</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_mark_finish_dialog_active</action>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_02_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_02_npc_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_guard_02_actor_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_guard_02_npc_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_guard_02_actor_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_guard_02_npc_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_guard_02_actor_3</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_03_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_03_npc_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_guard_03_actor_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_guard_03_npc_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_guard_03_actor_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_guard_03_npc_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_guard_03_actor_3</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_yanov_hawaiian_stash_sales_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_hawaiian_stash_sales_greeting</text>
+				<next>1</next>
+				<next>10</next>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_hawaiian_intro_empty_actor</text>
+				<dont_has_info>pf_yanov_hawaiian_intro_done</dont_has_info>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_hawaiian_intro_left_npc</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_hawaiian_intro_work_actor</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_hawaiian_intro_offer_npc</text>
+				<give_info>pf_yanov_hawaiian_intro_done</give_info>
+				<next>10</next>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="10">
+				<text>pf_hawaiian_stash_sales_green_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.can_buy_green</precondition>
+				<action>pf_hawaiian_stash_sales.buy_green</action>
+				<next>11</next>
+			</phrase>
+			<phrase id="20">
+				<text>pf_hawaiian_stash_sales_cyan_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.can_buy_cyan</precondition>
+				<action>pf_hawaiian_stash_sales.buy_cyan</action>
+				<next>11</next>
+			</phrase>
+			<phrase id="30">
+				<text>pf_hawaiian_stash_sales_purple_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.can_buy_purple</precondition>
+				<action>pf_hawaiian_stash_sales.buy_purple</action>
+				<next>11</next>
+			</phrase>
+			<phrase id="11">
+				<text>pf_hawaiian_stash_sales_done</text>
+				<next>10</next>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="40">
+				<text>pf_hawaiian_stash_sales_daily_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.daily_sold_out</precondition>
+				<next>41</next>
+			</phrase>
+			<phrase id="41">
+				<text>pf_hawaiian_stash_sales_daily_npc</text>
+				<next>90</next>
+			</phrase>
+			<phrase id="50">
+				<text>pf_hawaiian_stash_sales_empty_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.no_coordinates_available</precondition>
+				<next>51</next>
+			</phrase>
+			<phrase id="51">
+				<text>pf_hawaiian_stash_sales_empty_npc</text>
+				<next>90</next>
+			</phrase>
+			<phrase id="60">
+				<text>pf_hawaiian_stash_sales_broke_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.no_affordable_coordinates</precondition>
+				<next>61</next>
+			</phrase>
+			<phrase id="61">
+				<text>pf_hawaiian_stash_sales_broke_npc</text>
+				<next>90</next>
+			</phrase>
+			<phrase id="90">
+				<text>pf_hawaiian_stash_sales_leave</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_04_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_04_npc_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_guard_04_actor_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_guard_04_npc_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_guard_04_actor_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_guard_04_npc_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_guard_04_actor_3</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+</game_dialogs>

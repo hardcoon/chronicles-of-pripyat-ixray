@@ -1,0 +1,67 @@
+class "opt_sound" (CUIWindow)
+
+function opt_sound:__init() super()
+end
+
+function opt_sound:__finalize()
+
+end
+
+function opt_sound:InitControls(x, y, xml, handler)
+
+    self:SetWndPos(vector2():set(x,y))
+    self:SetWndSize(vector2():set(738,416))
+    self:SetAutoDelete(true)
+    self.scroll_v = xml:InitScrollView("main_dialog:scroll_v", self)
+
+    local _st
+    local addControl = function(crl)	
+        self.scroll_v:AddWindow(crl, true)
+        crl:SetAutoDelete(false)
+    end
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_sound:cap_mastervolume", _st)
+    xml:InitTrackBar("tab_sound:track_mastervolume", _st)
+    addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_sound:cap_musicvolume", _st)
+    xml:InitTrackBar("tab_sound:track_musicvolume", _st)
+    addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_sound:cap_snd_device", _st)
+    xml:InitComboBox("tab_sound:list_snd_device", _st)
+    addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitCheck("tab_sound:check_dynamic_music", _st)
+    xml:InitStatic("tab_sound:cap_check_dynamic_music", _st)
+    addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_sound:cap_music_pack", _st)
+    self.list_music_pack = xml:InitComboBox("tab_sound:list_music_pack", _st)
+    self.list_music_pack:AddItem(game.translate_string("ui_mm_music_pack_copyrighted"), 0)
+    self.list_music_pack:AddItem(game.translate_string("ui_mm_music_pack_mooze"), 1)
+    addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_sound:cap_check_eax", _st)
+    xml:InitCheck("tab_sound:check_eax", _st)
+    addControl(_st)
+
+
+end
+
+function opt_sound:SetMusicPackValue(value)
+    local index = value == "mooze" and 1 or 0
+    self.list_music_pack:SetCurrentIdx(index)
+    self.list_music_pack:SetText(game.translate_string(
+        index == 1 and "ui_mm_music_pack_mooze" or "ui_mm_music_pack_copyrighted"))
+end
+
+function opt_sound:GetMusicPackValue()
+    return self.list_music_pack:GetCurrentIdx() == 1 and "mooze" or "copyrighted"
+end

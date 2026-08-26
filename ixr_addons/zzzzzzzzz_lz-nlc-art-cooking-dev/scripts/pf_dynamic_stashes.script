@@ -1,0 +1,3831 @@
+-- Persistent rotating stash manager for Pripyat Full.
+-- A new world starts with 350 stashes selected from the 971 manually approved
+-- coordinates. Persistent hints may claim additional unused coordinates.
+-- Only nearby or explicitly hinted stashes are materialized as server objects.
+
+local LEVEL_NAME = "pripyat_full"
+local EXTERNAL_STATE_KEY = "pf_dynamic_stashes"
+local FIXED_PDA_STATE_KEY = "pf_fixed_pda_rewards_v1"
+local STATE_VERSION = 17
+local DETERMINISTIC_MODULUS = 2147483647
+local SYSTEM_ENABLED = true
+local LEGACY_SAVE_PREFIX = "pf_dynamic_stashes_v1_"
+local STARTING_STASH_COUNT = 350
+local CHECK_INTERVAL_MS = 2000
+local MAX_PHYSICAL_STASHES = 32
+local MAX_MATERIALIZATIONS_PER_UPDATE = 1
+local MAX_RETIREMENTS_PER_UPDATE = 12
+local MATERIALIZE_DISTANCE_SQR = 60 * 60
+local DEMATERIALIZE_DISTANCE_SQR = 90 * 90
+local RETIRE_DISTANCE_SQR = 120 * 120
+local MIN_NEW_POINT_DISTANCE_SQR = 250 * 250
+local TIER_MIN_SPACING_SQR = {
+	any = 10 * 10,
+	green = 10 * 10,
+	cyan = 50 * 50,
+	purple = 60 * 60,
+	orange = 100 * 100,
+	red = 100 * 100
+}
+local TIER_SELECTION_ORDER = { "red", "orange", "purple", "cyan", "green" }
+local EMPTY_CHECK_DELAY_MS = 5000
+local EMPTY_RETIRE_DELAY_MS = 100
+local METAL_DETECTOR_DISTANCE_SQR = 8 * 8
+local SPOT_HINT = "pf_dynamic_stash_name"
+local DISCOVERY_MESSAGE = "pf_dynamic_stash_discovered"
+local HINT_MESSAGE = "pf_dynamic_stash_hint_received"
+local FIND_DISTANCE_SQR = 1.0
+local HISTORY_SIZE = 4
+local QA_ALL_STASH_MARKER = "pf_qa_stash_all"
+local QA_PREVIEW_SECTION = "pf_stash_qa_preview"
+local FIXED_PDA_SECTIONS = {
+	pf_fixed_house_stash_backpack = true,
+	pf_fixed_house_stash_wood_box = true
+}
+local LEGACY_VEHICLE_MARKER_SECTION = "pf_stash_vehicle_marker"
+local STORY_DOCUMENT_ROLL_CHANCE = 20
+-- The collection contains 36 independent lore notes, three times more than
+-- the personal-story archive. Its search roll remains higher than the separate
+-- personal-story progression roll without making lore notes commonplace.
+local GHOST_CITY_NOTE_ROLL_CHANCE = 35
+local SLOT_GRID_CELL_SIZE = 32
+local MAPPING_CLEANUP_GRID_CELL_SIZE = 4
+local impl = {}
+local state = {
+	slot_grid = {},
+	slot_grid_point_ids = {},
+	loot_rng = nil
+}
+local story_document_tiers = {
+	cyan = true,
+	purple = true,
+	orange = true
+}
+
+-- Ambushers use the ordinary simulation squads. Their character profiles,
+-- equipment and corpse loot therefore continue to come from the project's
+-- existing faction/rank balance instead of a stash-specific loot table.
+local ambush_tiers = {
+	purple = { chance = 6, rank = "novice" },
+	orange = { chance = 9, rank = "advanced" },
+	red = { chance = 12, rank = "advanced" }
+}
+
+local ambush_factions = { "merc", "monolith" }
+
+local strange_consumable_ambushes = {
+	vodka_random = {
+		min_distance = 18,
+		max_distance = 24,
+		random_event = true
+	},
+	weak_mercs = {
+		min_distance = 14,
+		max_distance = 18
+	}
+}
+
+local strange_zombied_corpse_profiles = {
+	"sim_default_zombied_1",
+	"sim_default_zombied_2",
+	"sim_default_zombied_3",
+	"sim_default_zombied_4"
+}
+
+local marker_types = {
+	"pf_stash_cyan",
+	"pf_stash_purple",
+	"pf_stash_red",
+	"pf_stash_orange",
+	"pf_stash_green"
+}
+
+local stash_hint_messages = {
+	"pf_dynamic_stash_hint_from_stash_01",
+	"pf_dynamic_stash_hint_from_stash_02",
+	"pf_dynamic_stash_hint_from_stash_03",
+	"pf_dynamic_stash_hint_from_stash_04",
+	"pf_dynamic_stash_hint_from_stash_05",
+	"pf_dynamic_stash_hint_from_stash_06",
+	"pf_dynamic_stash_hint_from_stash_07",
+	"pf_dynamic_stash_hint_from_stash_08",
+	"pf_dynamic_stash_hint_from_stash_09",
+	"pf_dynamic_stash_hint_from_stash_10"
+}
+
+local tier_data = {
+	green = { marker = "pf_stash_green", discovery_distance_sqr = 8 * 8, hint_required = false, provision_chance = 20 },
+	cyan = { marker = "pf_stash_cyan", discovery_distance_sqr = 4 * 4, hint_required = false, provision_chance = 50 },
+	purple = { marker = "pf_stash_purple", discovery_distance_sqr = 1 * 1, hint_required = false, provision_chance = 70 },
+	orange = { marker = "pf_stash_orange", hint_required = true, provision_chance = 100 },
+	red = { marker = "pf_stash_red", hint_required = true, provision_chance = 100 }
+}
+
+local hacking_usb_tier_ceiling = {
+	purple = 1,
+	orange = 2,
+	red = 3
+}
+
+local RED_DETECTOR_ROLL_CHANCE = 50
+local red_detector_sequence = {
+	"pf_metal_detector_homemade",
+	"pf_metal_detector_wave",
+	"pf_metal_detector_magnet"
+}
+
+-- The manager owns the black-and-white detector lookup. This is deliberately
+-- the same spatial grid as logical stash streaming: detectors can react to a
+-- reserved coordinate before a physical container exists, without a second
+-- runtime index drifting out of sync with the selected slots.
+local active_metal_detectors = {
+	pf_metal_detector_homemade = {
+		max_range = 20,
+		ranges = { green = 20, cyan = 10 }
+	},
+	pf_metal_detector_wave = {
+		max_range = 15,
+		ranges = { cyan = 15, purple = 10 }
+	},
+	pf_metal_detector_magnet = {
+		max_range = 20,
+		ranges = { cyan = 20, purple = 15, orange = 5 },
+		reveal_tiers = { orange = true }
+	}
+}
+
+-- Exact starting quotas for a new world: 60%/20%/10%/about 5%/about 5%.
+-- These are not tier caps: hint rewards may append more logical slots.
+function impl.tier_for_index(index)
+	if index <= 210 then return "green" end
+	if index <= 280 then return "cyan" end
+	if index <= 315 then return "purple" end
+	if index <= 333 then return "orange" end
+	if index <= STARTING_STASH_COUNT then return "red" end
+	return nil
+end
+
+local legacy_marker_types = { "treasure" }
+
+local interior_models = {
+	"pf_stash_backpack",
+	"pf_stash_box_1a",
+	"pf_stash_box_1b",
+	"pf_stash_box_1c",
+	"pf_stash_backpack_khaki",
+	"pf_stash_backpack_sandstone"
+}
+
+local curated_backpack_sections = {}
+for _, section in ipairs(interior_models) do curated_backpack_sections[section] = true end
+
+local outdoor_models = {
+	"pf_stash_barrel_1",
+	"pf_stash_barrel_2",
+	"pf_stash_barrel_3",
+	"pf_stash_barrel_4",
+	"pf_stash_backpack",
+	"pf_stash_box_1a",
+	"pf_stash_box_1b",
+	"pf_stash_box_1c",
+	"pf_stash_backpack_khaki",
+	"pf_stash_backpack_sandstone"
+}
+
+local rare_models = {
+	"pf_stash_box_metal",
+	"pf_stash_safe_container"
+}
+
+local stash_sections = {}
+for _, section in ipairs(interior_models) do stash_sections[section] = true end
+for _, section in ipairs(outdoor_models) do stash_sections[section] = true end
+for _, section in ipairs(rare_models) do stash_sections[section] = true end
+
+-- Extra containers visible only to the QA marker overlay. Keep them out of
+-- stash_sections so the rotating manager can never adopt or retire them when
+-- it is enabled again.
+local qa_overlay_extra_stash_sections = {
+	pf_qa_crosshair_stash = true,
+	pf_fixed_house_stash_backpack = true,
+	pf_fixed_house_stash_wood_box = true
+}
+
+-- Only ordinary single-player inventory sections belong here. Story weapons,
+-- quest artefacts, multiplayer items and technical scene objects are excluded
+-- deliberately: a random stash must never advance or break a scripted task.
+local loot_pools = {
+	provisions = {
+		{ section = "conserva", chance = 20 },
+		{ section = "bread", chance = 30 },
+		{ section = "kolbasa", chance = 20 },
+		{ section = "energy_drink", chance = 20 },
+		{ section = "mineral_water", chance = 30 },
+		{ section = "flyaga", chance = 30 },
+		{ section = "vodka", chance = 40 }
+	},
+	food_all = {
+		"bread", "kolbasa", "conserva", "vodka", "energy_drink",
+		"mineral_water", "flyaga"
+	},
+	flavour = { "guitar_a", "harmonica_a", "wpn_binoc" },
+
+	-- Corpse loot keeps its legacy pools. Ordinary stashes use the matching
+	-- no-sleep pools below so their single dedicated medicine roll stays exact.
+	medicine_basic = { "bandage", "bandage", "antirad", "medkit", "drug_sleep" },
+	medicine_field = {
+		"bandage", "antirad", "medkit", "medkit_army", "drug_booster",
+		"drug_coagulant", "drug_sleep", "drug_antidot", "drug_radioprotector"
+	},
+	medicine_advanced = {
+		"bandage", "antirad", "medkit", "medkit_army", "medkit_scientic",
+		"drug_booster", "drug_coagulant", "drug_sleep", "drug_psy_blockade",
+		"drug_antidot", "drug_radioprotector", "drug_anabiotic"
+	},
+	stash_medicine_basic = { "bandage", "bandage", "antirad", "medkit" },
+	stash_medicine_field = {
+		"bandage", "antirad", "medkit", "medkit_army", "drug_booster",
+		"drug_coagulant", "drug_antidot", "drug_radioprotector"
+	},
+	stash_medicine_advanced = {
+		"bandage", "antirad", "medkit", "medkit_army", "medkit_scientic",
+		"drug_booster", "drug_coagulant", "drug_psy_blockade",
+		"drug_antidot", "drug_radioprotector", "drug_anabiotic"
+	},
+	repair_kits = { "itm_gunsmith_toolkit", "itm_outfit_toolkit" },
+	disassembly_kits = { "lz_nm_weapon_disassembly_kit" },
+	field_upgrades_purple = {
+		-- Basic tools have weight 5, strong tools weight 2, top tools weight 1.
+		"itm_repairkit_tier_1", "itm_repairkit_tier_1", "itm_repairkit_tier_1",
+		"itm_repairkit_tier_1", "itm_repairkit_tier_1",
+		"itm_repairkit_tier_2", "itm_repairkit_tier_2", "itm_repairkit_tier_2",
+		"itm_repairkit_tier_2", "itm_repairkit_tier_2",
+		"itm_repairkit_tier_soft", "itm_repairkit_tier_soft", "itm_repairkit_tier_soft",
+		"itm_repairkit_tier_soft", "itm_repairkit_tier_soft",
+		"itm_repairkit_tier_3", "itm_repairkit_tier_3", "itm_repairkit_tier_3",
+		"itm_repairkit_tier_3", "itm_repairkit_tier_3",
+		"itm_field_upgrade_kit_blue", "itm_field_upgrade_kit_blue",
+		"itm_field_upgrade_kit_green", "itm_field_upgrade_kit_green",
+		"itm_field_upgrade_kit_red", "itm_field_upgrade_kit_yellow"
+	},
+	field_upgrades_orange = {
+		-- Orange favours damage, recoil, magazine and weight upgrades, while
+		-- basic and top red tools remain rare one-weight results.
+		"itm_repairkit_tier_1",
+		"itm_repairkit_tier_2", "itm_repairkit_tier_2", "itm_repairkit_tier_2",
+		"itm_repairkit_tier_soft", "itm_repairkit_tier_soft", "itm_repairkit_tier_soft",
+		"itm_repairkit_tier_3",
+		"itm_field_upgrade_kit_blue", "itm_field_upgrade_kit_blue",
+		"itm_field_upgrade_kit_blue",
+		"itm_field_upgrade_kit_green", "itm_field_upgrade_kit_green",
+		"itm_field_upgrade_kit_green",
+		"itm_field_upgrade_kit_red", "itm_field_upgrade_kit_yellow"
+	},
+	field_upgrades_basic = {
+		"itm_repairkit_tier_1", "itm_repairkit_tier_2",
+		"itm_repairkit_tier_soft", "itm_repairkit_tier_3",
+		"itm_field_upgrade_kit_blue", "itm_field_upgrade_kit_green"
+	},
+	field_upgrades_red = {
+		"itm_field_upgrade_kit_red", "itm_field_upgrade_kit_yellow"
+	},
+	strange_consumables = {
+		"lz_nm_strange_stew", "lz_nm_strange_shot", "lz_nm_strange_drink"
+	},
+	-- These four global one-time bundles supplement the next four newly rolled
+	-- red manifests. Their order is shuffled once from the saved world seed.
+	red_one_time_bundles = {
+		{
+			items = {
+				"af_polarity",
+				"vodka", "vodka", "vodka", "vodka", "vodka",
+				"vodka", "vodka", "vodka", "vodka", "vodka"
+			}
+		},
+		{
+			items = {
+				"lz_nm_strange_stew", "lz_nm_strange_stew",
+				"lz_nm_strange_shot", "lz_nm_strange_shot",
+				"lz_nm_strange_drink",
+				"mutant_part_pseudogigant_hand", "mutant_part_burer_hand",
+				"mutant_part_chimera_claw", "mutant_part_krovosos_jaw"
+			}
+		},
+		{
+			items = {
+				"lz_ph_reflash_module", "lz_ph_reflash_module",
+				"lz_ph_reflash_module", "lz_ph_reflash_module",
+				"lz_ph_reflash_module", "lz_ph_reflash_module",
+				"pf_stash_pda_veteran", "pf_stash_pda_veteran",
+				"pf_stash_pda_stalker", "pf_stash_pda_stalker",
+				"pf_stash_pda_novice", "pf_stash_pda_novice",
+				"pf_stash_pda_novice"
+			}
+		},
+		{
+			items = { "lz_nlc_anomaly_analyzer" },
+			distinct_pool = {
+				"af_spirit_1", "af_cry_1", "af_dik_1", "af_kol_1",
+				"af_babka_1", "af_pudd_1", "af_armor_1"
+			},
+			distinct_count = 3
+		}
+	},
+
+	-- Dismantling remains the main source of these parts. Stashes provide only
+	-- an occasional single spare, never the complete armor-salvage bundle.
+	salvage_parts = {
+		"lz_nm_metal_part", "lz_nm_armor_pouch", "lz_nm_rubber_padding",
+		"lz_nm_combat_boots", "lz_nm_used_filter"
+	},
+
+	-- Supported mutant trophies are spread by danger level. Cooked meat and
+	-- retired cat/fracture/zombie/snork-leg sections are intentionally absent.
+	mutant_trophies_green = {
+		"mutant_part_dog_tail", "mutant_part_flesh_eye",
+		"mutant_part_tushkano_head"
+	},
+	mutant_trophies_cyan = {
+		"mutant_part_boar_leg", "mutant_part_psevdodog_tail",
+		"mutant_part_snork_hand", "mutant_part_boar_chop",
+		"mutant_part_psevdodog_meat"
+	},
+	mutant_trophies_purple = {
+		"mutant_part_krovosos_jaw", "mutant_part_krovosos_meat",
+		"mutant_part_burer_hand", "mutant_part_chimera_kogot",
+		"mutant_part_chimera_claw", "mutant_part_chimera_meat",
+		"mutant_part_controller_glass", "mutant_part_controller_hand"
+	},
+	mutant_trophies_orange = {
+		"mutant_part_chimera_claw", "mutant_part_pseudogigant_hand",
+		"mutant_part_pseudogigant_eye", "mutant_part_controller_glass",
+		"mutant_part_controller_hand", "mutant_part_burer_hand"
+	},
+
+	-- Electronic salvage doubles as a future exchange currency. Each stash
+	-- makes one event roll and yields only one boxed material, so the parts are
+	-- uncommon without being rarer than the detector which can be dismantled
+	-- into several of them.
+	electronics_green = {
+		"jup_b200_tech_materials_wire",
+		"jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor"
+	},
+	electronics_cyan = {
+		"jup_b200_tech_materials_wire",
+		"jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor",
+		"jup_b200_tech_materials_textolite"
+	},
+	electronics_high = {
+		"jup_b200_tech_materials_wire",
+		"jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor",
+		"jup_b200_tech_materials_textolite",
+		"jup_b200_tech_materials_acetone"
+	},
+
+	ammo_green = {
+		"ammo_9x18_fmj", "ammo_9x18_pmm", "ammo_9x19_fmj",
+		"ammo_11.43x23_fmj", "ammo_12x70_buck",
+		"ammo_7.62x25_p", "ammo_7.62x25_ps"
+	},
+	ammo_cyan = {
+		"ammo_9x18_fmj", "ammo_9x18_pmm", "ammo_9x19_fmj", "ammo_9x19_pbp",
+		"ammo_11.43x23_fmj", "ammo_11.43x23_hydro", "ammo_12x70_buck",
+		"ammo_12x76_zhekan", "ammo_5.45x39_fmj",
+		"ammo_5.56x45_ss190",
+		"ammo_7.62x39_fmj", "ammo_7.62x25_p", "ammo_7.62x25_ps",
+		"ammo_9x39_pab9"
+	},
+	ammo_purple = {
+		"ammo_9x18_pmm", "ammo_9x19_pbp", "ammo_11.43x23_hydro",
+		"ammo_12x70_buck", "ammo_12x76_zhekan", "ammo_5.45x39_fmj",
+		"ammo_5.45x39_ap", "ammo_5.56x45_ss190", "ammo_5.56x45_ap",
+		"ammo_9x39_pab9", "ammo_9x39_ap", "ammo_7.62x54_7h1",
+		"ammo_vog-25", "ammo_m209"
+	},
+	ammo_orange = {
+		"ammo_9x18_pmm", "ammo_9x19_pbp", "ammo_11.43x23_hydro",
+		"ammo_12x76_zhekan", "ammo_5.45x39_ap", "ammo_5.56x45_ap",
+		"ammo_9x39_ap", "ammo_7.62x54_7h1", "ammo_pkm_100", "ammo_gauss",
+		"ammo_vog-25", "ammo_m209", "ammo_og-7b"
+	},
+
+	weapons_green = {
+		"wpn_pm", "wpn_pmm", "wpn_pb", "wpn_fort", "wpn_hpsa",
+		"wpn_walther", "wpn_tt33", "wpn_tt33_sk1", "wpn_aps", "wpn_gsh18",
+		"wpn_oc33", "wpn_bm16", "wpn_bm16_full", "wpn_izh18",
+		"wpn_toz34_obrez", "wpn_kiparis", "wpn_ppsh41", "wpn_knife"
+	},
+	weapons_cyan = {
+		"wpn_pm", "wpn_pmm", "wpn_pb", "wpn_fort", "wpn_hpsa",
+		"wpn_walther", "wpn_tt33", "wpn_tt33_sk1", "wpn_aps", "wpn_gsh18",
+		"wpn_oc33", "wpn_beretta", "wpn_colt1911", "wpn_cz75", "wpn_glock",
+		"wpn_sig220", "wpn_usp", "wpn_desert_eagle", "wpn_desert_eagle_sk1",
+		"wpn_bm16", "wpn_bm16_full", "wpn_izh18", "wpn_toz34_obrez",
+		"wpn_toz34", "wpn_wincheaster1300", "wpn_mp5", "wpn_ppsh41",
+		"wpn_kiparis", "wpn_ump45", "wpn_bizon", "wpn_vityaz", "wpn_pp2000",
+		"wpn_ak74u", "wpn_ak105", "wpn_ak104", "wpn_akm", "wpn_akms",
+		"wpn_l85", "wpn_fnc", "wpn_g36c", "wpn_sks", "wpn_mosin"
+	},
+	weapons_purple = {
+		"wpn_aek971", "wpn_ak101", "wpn_ak103", "wpn_ak104", "wpn_ak105",
+		"wpn_ak12", "wpn_ak74", "wpn_akm", "wpn_akms", "wpn_abakan",
+		"wpn_fnc", "wpn_g36c", "wpn_hk416", "wpn_l85", "wpn_lr300",
+		"wpn_m16a2", "wpn_sig550", "wpn_sig552", "wpn_g36", "wpn_groza",
+		"wpn_val", "wpn_vihr", "wpn_vintorez", "wpn_toz34",
+		"wpn_wincheaster1300", "wpn_mr153", "wpn_vepr", "wpn_spas12",
+		"wpn_sks", "wpn_mosin", "wpn_svd", "wpn_svu", "wpn_sv98",
+		"wpn_rpd", "wpn_rpk", "wpn_rpk74", "wpn_m249"
+	},
+	weapons_orange_standard = {
+		"wpn_aek971", "wpn_ak101", "wpn_ak12", "wpn_abakan", "wpn_fn2000",
+		"wpn_fal", "wpn_fnc", "wpn_scar", "wpn_ace52", "wpn_g36",
+		"wpn_hk416", "wpn_lr300", "wpn_m16a2", "wpn_sig550", "wpn_sig552",
+		"wpn_groza", "wpn_val", "wpn_vihr", "wpn_vintorez", "wpn_spas12",
+		"wpn_mr153", "wpn_vepr", "wpn_m249", "wpn_rpd", "wpn_rpk",
+		"wpn_rpk74", "wpn_m98b", "wpn_l96", "wpn_remington700",
+		"wpn_dvl10", "wpn_vssk", "wpn_sv98", "wpn_svd", "wpn_svu"
+	},
+	weapons_orange_exotic = {
+		"wpn_pkm", "wpn_gauss", "wpn_rg-6", "wpn_rpg7"
+	},
+	-- Story, Nimble and named variants never enter ordinary tier pools. Red
+	-- caches draw from this closed list as an alternative to one ordinary
+	-- legendary-grade weapon; other world and quest sources remain untouched.
+	weapons_red_unique = {
+		"wpn_g36_nimble", "wpn_sig550_luckygun", "wpn_desert_eagle_nimble",
+		"wpn_mp5_nimble", "wpn_pkm_zulus", "wpn_sig220_nimble",
+		"wpn_spas12_nimble", "wpn_svd_nimble", "wpn_svu_nimble",
+		"wpn_usp_nimble", "wpn_vintorez_nimble", "wpn_groza_nimble",
+		"wpn_ak12_m1", "wpn_ak74u_snag", "wpn_pm_actor", "wpn_fort_snag"
+	},
+	outfits_green = {
+		"novice_outfit", "bandit_outfit", "bandit_brownrain_outfit",
+		"bandit_blackrain_outfit"
+	},
+	outfits_cyan = {
+		"bandit_light_outfit", "merc_outfit", "stalker_outfit",
+		"svoboda_light_outfit", "svoboda_outfit", "dolg_outfit"
+	},
+	outfits_purple = {
+		"specops_outfit", "svoboda_heavy_outfit", "monolith_outfit",
+		"cs_heavy_outfit", "dolg_scientific_outfit", "scientific_outfit"
+	},
+	outfits_orange = {
+		"dolg_heavy_outfit", "military_outfit", "svoboda_scientific_outfit",
+		"monolith_scientific_outfit", "ecolog_outfit"
+	},
+	-- All five ordinary exoskeleton variants share the former 1.5% total chance.
+	outfits_orange_exo = {
+		"exo_outfit", "svoboda_exo_outfit", "dolg_exo_outfit",
+		"merc_exo_outfit", "monolith_exo_outfit"
+	},
+	headgear_cyan = { "helm_respirator", "helm_hardhat" },
+	headgear_purple = { "helm_protective", "helm_tactic", "helm_battle" },
+	headgear_orange = { "helm_tactic", "helm_battle", "helm_battle", "helm_protective" },
+
+	-- Vanilla artefacts remain valid for old saves and consumers, but are no
+	-- longer rolled as cache rewards while NLC cooking progression is active.
+	artefacts_low_mid = {},
+	artefacts_high = {},
+	-- Red caches draw only from the 28 canonical natural artefacts. Separate
+	-- class groups keep the I-IV catalogue auditable while the runtime flattens
+	-- them into one equal-weight pool without cooked, quest or technical items.
+	natural_artefacts_by_class = {
+		{
+			"af_medusa", "af_vyvert", "af_blood", "af_electra_sparkler",
+			"af_rusty_thorn", "af_drops", "af_ameba_slime"
+		},
+		{
+			"af_cristall_flower", "af_gravi", "af_mincer_meat", "af_dummy_spring",
+			"af_rusty_kristall", "af_fireball", "af_ameba_slug"
+		},
+		{
+			"af_night_star", "af_dummy_simbion", "af_gold_fish",
+			"af_electra_moonlight", "lz_nlc_af_dummy_battery", "af_cristall",
+			"af_ameba_mica"
+		},
+		{
+			"af_soul", "af_electra_flash", "af_rusty_sea-urchin",
+			"af_dummy_kolobok", "lz_nlc_af_dummy_glassbeads",
+			"lz_nlc_af_dummy_dummy", "af_dummy_pellicle"
+		}
+	},
+
+	attachments = {
+		"wpn_addon_scope", "wpn_addon_scope_x2.7", "wpn_addon_scope_detector",
+		"wpn_addon_scope_night", "wpn_addon_scope_susat",
+		"wpn_addon_scope_susat_x1.6", "wpn_addon_scope_susat_custom",
+		"wpn_addon_scope_susat_dusk", "wpn_addon_scope_susat_night",
+		"wpn_addon_silencer", "wpn_addon_grenade_launcher",
+		"wpn_addon_grenade_launcher_m203"
+	},
+	grenades = { "grenade_rgd5", "grenade_f1", "grenade_gd-05" },
+
+	-- One inexpensive but visibly different field item is guaranteed in every
+	-- green stash. The pool avoids repair kits, artefacts and advanced gear so
+	-- the common tier becomes less empty without competing with cyan rewards.
+	green_bonus = {
+		"antirad", "medkit",
+		"grenade_rgd5", "grenade_gd-05",
+		"lz_nm_metal_part", "lz_nm_armor_pouch", "lz_nm_rubber_padding",
+		"lz_nm_combat_boots", "lz_nm_used_filter",
+		"mutant_part_dog_tail", "mutant_part_flesh_eye",
+		"mutant_part_tushkano_head",
+		"jup_b200_tech_materials_wire", "jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor",
+		"guitar_a", "harmonica_a", "wpn_binoc"
+	},
+
+	-- Every cyan stash draws two distinct support items from this broad pool.
+	-- It deliberately contains utility and curios rather than purple-tier main
+	-- rewards, so the extra inventory slots improve variety without flattening
+	-- the rarity ladder.
+	cyan_bonus = {
+		"grenade_rgd5", "grenade_f1", "grenade_gd-05",
+		"itm_gunsmith_toolkit", "itm_outfit_toolkit",
+		"lz_nm_metal_part", "lz_nm_armor_pouch", "lz_nm_rubber_padding",
+		"lz_nm_combat_boots", "lz_nm_used_filter",
+		"mutant_part_boar_leg", "mutant_part_psevdodog_tail",
+		"mutant_part_snork_hand", "mutant_part_boar_chop",
+		"mutant_part_psevdodog_meat",
+		"jup_b200_tech_materials_wire", "jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor", "jup_b200_tech_materials_textolite",
+		"guitar_a", "harmonica_a", "wpn_binoc",
+		"wpn_addon_scope", "wpn_addon_scope_susat", "wpn_addon_silencer"
+	}
+}
+
+-- Sleep medicine has one dedicated roll per stash. Keeping it out of every
+-- shared pool guarantees that a cache can never receive a duplicate dose.
+local sleep_medicine_chances = {
+	green = 5,
+	cyan = 7,
+	purple = 9,
+	orange = 12
+}
+
+local weapon_ammo = {
+	wpn_pm = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_pmm = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_pb = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_fort = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_aps = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_oc33 = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_kiparis = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_bizon = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_pm_actor = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_fort_snag = { "ammo_9x18_fmj", "ammo_9x18_pmm" },
+	wpn_hpsa = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_walther = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_beretta = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_cz75 = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_glock = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_gsh18 = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_mp5 = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_vityaz = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_pp2000 = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_mp5_nimble = { "ammo_9x19_fmj", "ammo_9x19_pbp" },
+	wpn_colt1911 = { "ammo_11.43x23_fmj", "ammo_11.43x23_hydro" },
+	wpn_sig220 = { "ammo_11.43x23_fmj", "ammo_11.43x23_hydro" },
+	wpn_usp = { "ammo_11.43x23_fmj", "ammo_11.43x23_hydro" },
+	wpn_ump45 = { "ammo_11.43x23_fmj", "ammo_11.43x23_hydro" },
+	wpn_sig220_nimble = { "ammo_11.43x23_fmj", "ammo_11.43x23_hydro" },
+	wpn_usp_nimble = { "ammo_11.43x23_fmj", "ammo_11.43x23_hydro" },
+	wpn_desert_eagle = { "ammo_50ae" },
+	wpn_desert_eagle_sk1 = { "ammo_50ae" },
+	wpn_desert_eagle_nimble = { "ammo_50ae" },
+	wpn_tt33 = { "ammo_7.62x25_p", "ammo_7.62x25_ps" },
+	wpn_tt33_sk1 = { "ammo_7.62x25_p", "ammo_7.62x25_ps" },
+	wpn_ppsh41 = { "ammo_7.62x25_p", "ammo_7.62x25_ps" },
+	wpn_bm16 = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_bm16_full = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_izh18 = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_toz34 = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_toz34_obrez = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_wincheaster1300 = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_spas12 = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_mr153 = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_vepr = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_spas12_nimble = { "ammo_12x70_buck", "ammo_12x76_zhekan" },
+	wpn_ak74u = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_ak105 = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_aek971 = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_ak12 = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_ak74 = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_abakan = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_rpk74 = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_groza_nimble = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_ak12_m1 = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_ak74u_snag = { "ammo_5.45x39_fmj", "ammo_5.45x39_ap" },
+	wpn_l85 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_lr300 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_sig550 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_sig552 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_g36 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_g36c = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_fn2000 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_fnc = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_hk416 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_m16a2 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_m249 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_ak101 = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_g36_nimble = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_sig550_luckygun = { "ammo_5.56x45_ss190", "ammo_5.56x45_ap" },
+	wpn_ak103 = { "ammo_7.62x39_fmj", "ammo_7.62x39_ap" },
+	wpn_ak104 = { "ammo_7.62x39_fmj", "ammo_7.62x39_ap" },
+	wpn_akm = { "ammo_7.62x39_fmj", "ammo_7.62x39_ap" },
+	wpn_akms = { "ammo_7.62x39_fmj", "ammo_7.62x39_ap" },
+	wpn_sks = { "ammo_7.62x39_fmj", "ammo_7.62x39_ap" },
+	wpn_rpd = { "ammo_7.62x39_fmj", "ammo_7.62x39_ap" },
+	wpn_rpk = { "ammo_7.62x39_fmj", "ammo_7.62x39_ap" },
+	wpn_fal = { "ammo_7.62x51_fmj", "ammo_7.62x51_ap" },
+	wpn_scar = { "ammo_7.62x51_fmj", "ammo_7.62x51_ap" },
+	wpn_ace52 = { "ammo_7.62x51_fmj", "ammo_7.62x51_ap" },
+	wpn_l96 = { "ammo_7.62x51_fmj", "ammo_7.62x51_ap" },
+	wpn_remington700 = { "ammo_7.62x51_fmj", "ammo_7.62x51_ap" },
+	wpn_dvl10 = { "ammo_7.62x51_fmj", "ammo_7.62x51_ap" },
+	wpn_mosin = { "ammo_7.62x54_7h1", "ammo_7.62x54_7h14", "ammo_7.62x54_ap" },
+	wpn_sv98 = { "ammo_7.62x54_7h1", "ammo_7.62x54_7h14", "ammo_7.62x54_ap" },
+	wpn_svd = { "ammo_7.62x54_7h1", "ammo_7.62x54_7h14", "ammo_7.62x54_ap" },
+	wpn_svu = { "ammo_7.62x54_7h1", "ammo_7.62x54_7h14", "ammo_7.62x54_ap" },
+	wpn_svd_nimble = { "ammo_7.62x54_7h1", "ammo_7.62x54_7h14", "ammo_7.62x54_ap" },
+	wpn_svu_nimble = { "ammo_7.62x54_7h1", "ammo_7.62x54_7h14", "ammo_7.62x54_ap" },
+	wpn_groza = { "ammo_9x39_pab9", "ammo_9x39_ap" },
+	wpn_val = { "ammo_9x39_sp5", "ammo_9x39_ap" },
+	wpn_vihr = { "ammo_9x39_sp5", "ammo_9x39_ap" },
+	wpn_vintorez = { "ammo_9x39_sp5", "ammo_9x39_ap" },
+	wpn_vintorez_nimble = { "ammo_9x39_sp5", "ammo_9x39_ap" },
+	wpn_vssk = { "ammo_12.7x55_fmj" },
+	wpn_m98b = { "ammo_338_lapua" },
+	wpn_pkm = { "ammo_pkm_100" },
+	wpn_pkm_zulus = { "ammo_pkm_100" },
+	wpn_gauss = { "ammo_gauss" },
+	["wpn_rg-6"] = { "ammo_vog-25" },
+	wpn_rpg7 = { "ammo_og-7b" }
+}
+
+-- Server-side inventory items do not expose their condition field to Lua in
+-- this IX-Ray build. Condition therefore has to be applied to the online game
+-- object. The section index also gives us a reliable fallback when a stash was
+-- saved and loaded before its contents ever came online.
+local conditioned_loot_sections = {}
+for _, pool_name in ipairs({
+	"weapons_green", "weapons_cyan", "weapons_purple",
+	"weapons_orange_standard", "weapons_orange_exotic", "weapons_red_unique"
+}) do
+	for _, section in ipairs(loot_pools[pool_name]) do conditioned_loot_sections[section] = "weapon" end
+end
+for _, pool_name in ipairs({
+	"outfits_green", "outfits_cyan", "outfits_purple", "outfits_orange",
+	"outfits_orange_exo",
+	"headgear_cyan", "headgear_purple", "headgear_orange"
+}) do
+	for _, section in ipairs(loot_pools[pool_name]) do conditioned_loot_sections[section] = "armor" end
+end
+
+local stash_condition_ranges = {
+	green = { weapon = { 10, 40 }, armor = { 10, 30 } },
+	cyan = { weapon = { 20, 50 }, armor = { 20, 50 } },
+	purple = { weapon = { 40, 80 }, armor = { 40, 60 } },
+	orange = { weapon = { 70, 90 }, armor = { 50, 80 } }
+}
+
+-- Ordinary artefact detectors use independent rolls. They are deliberately
+-- separate from the ordered black-and-white metal-detector reward in red
+-- stashes, so either system can succeed without suppressing the other.
+local ordinary_detector_drop_tables = {
+	cyan = {
+		{ section = "detector_simple", chance = 10 },
+		{ section = "detector_advanced", chance = 3 }
+	},
+	purple = {
+		{ section = "detector_simple", chance = 15 },
+		{ section = "detector_advanced", chance = 15 },
+		{ section = "detector_elite", chance = 3 }
+	},
+	orange = {
+		{ section = "detector_advanced", chance = 20 },
+		{ section = "detector_elite", chance = 10 },
+		{ section = "detector_scientific", chance = 3 }
+	},
+	red = {
+		{ section = "detector_advanced", chance = 30 },
+		{ section = "detector_elite", chance = 20 },
+		{ section = "detector_scientific", chance = 10 }
+	}
+}
+
+-- Once the ordered red sequence has awarded Magnet, black-and-white stash
+-- detectors join the normal cache rotation. Every listed entry is an
+-- independent roll; there is no Svarog-equivalent device in this family.
+local post_magnet_detector_drop_tables = {
+	cyan = {
+		{ section = "pf_metal_detector_homemade", chance = 10 },
+		{ section = "pf_metal_detector_wave", chance = 3 }
+	},
+	purple = {
+		{ section = "pf_metal_detector_homemade", chance = 15 },
+		{ section = "pf_metal_detector_wave", chance = 15 },
+		{ section = "pf_metal_detector_magnet", chance = 3 }
+	},
+	orange = {
+		{ section = "pf_metal_detector_wave", chance = 20 },
+		{ section = "pf_metal_detector_magnet", chance = 10 }
+	},
+	red = {
+		{ section = "pf_metal_detector_wave", chance = 30 },
+		{ section = "pf_metal_detector_magnet", chance = 20 }
+	}
+}
+
+local stash_pda_profiles = {
+	pf_stash_pda_novice = { base_tier = "green" },
+	pf_stash_pda_stalker = { base_tier = "cyan" },
+	pf_stash_pda_veteran = { base_tier = "purple" },
+	-- A master PDA uses a deterministic 50/50 roll between purple and the
+	-- existing legendary (orange) tier. The roll never touches math.random.
+	pf_stash_pda_master = { base_tier = "master" }
+}
+
+-- Each tier uses one shared roll for hackable and already locked PDAs, so a
+-- cache can never contain both outcomes. Locked counterparts are deliberately
+-- one percentage point more common than the matching hackable sections.
+local stash_pda_drop_tables = {
+	green = {
+		{ section = "pf_stash_pda_novice", chance = 2 },
+		{ section = "lz_ph_failed_pda_novice", chance = 3 }
+	},
+	cyan = {
+		{ section = "pf_stash_pda_novice", chance = 4 },
+		{ section = "lz_ph_failed_pda_novice", chance = 5 },
+		{ section = "pf_stash_pda_stalker", chance = 2 },
+		{ section = "lz_ph_failed_pda_stalker", chance = 3 }
+	},
+	purple = {
+		{ section = "pf_stash_pda_stalker", chance = 6 },
+		{ section = "lz_ph_failed_pda_stalker", chance = 7 },
+		{ section = "pf_stash_pda_veteran", chance = 4 },
+		{ section = "lz_ph_failed_pda_veteran", chance = 5 }
+	},
+	orange = {
+		{ section = "pf_stash_pda_veteran", chance = 12 },
+		{ section = "lz_ph_failed_pda_veteran", chance = 13 },
+		{ section = "pf_stash_pda_master", chance = 4 },
+		{ section = "lz_ph_failed_pda_master", chance = 5 }
+	}
+}
+
+local stash_pda_tier_text = {
+	green = "pf_stash_tier_green",
+	cyan = "pf_stash_tier_cyan",
+	purple = "pf_stash_tier_purple",
+	orange = "pf_stash_tier_orange",
+	red = "pf_stash_tier_red"
+}
+
+local legacy_stashes = {
+	{ section = "pf_stash_backpack", position = { 197.45, 19.10, -1196.15 } },
+	{ section = "pf_stash_box_1c", position = { 199.55, 19.10, -1194.75 } },
+	{ section = "pf_stash_backpack", position = { 185.75, 1.58, -1198.45 } },
+	{ section = "pf_stash_box_1c", position = { 200.45, 1.58, -1185.85 } },
+	-- Point 1865 used to sit in the checkpoint wall. Its random old model must
+	-- be removed from existing saves before the moved barrel is materialized.
+	{ any_stash_section = true, position = { 148.400, -0.019, -1248.800 }, find_distance_sqr = 25 },
+	-- Interior point 2161 intersects the checkpoint room geometry. Keep a
+	-- cleanup entry so an already materialized stash is removed from old saves.
+	{ any_stash_section = true, position = { 113.796, 0.333, -1238.062 } }
+}
+
+local candidates = nil
+local candidate_by_id = nil
+local persistent_state = nil
+local slots = {}
+local pending_empty_slots = {}
+local next_check = 0
+local next_fixed_pda_check = 0
+local next_detector_pulse = 0
+local detector_pulse_sound = nil
+local strange_ambush_targets = {}
+local searched_existing = false
+local legacy_cleanup_done = false
+local old_pstor_cleaned = false
+
+function impl.legacy_slot_key(index, suffix)
+	return LEGACY_SAVE_PREFIX .. string.format("slot_%02d_%s", index, suffix)
+end
+
+function impl.build_candidate_indexes()
+	if candidates then return end
+	-- The three reviewed catalogues are the only legal runtime coordinates.
+	-- No procedural or old generated point source is consulted here.
+	candidates = {}
+	local next_id = 10001
+	next_id = pf_fixed_house_stashes.append_dynamic_candidates(
+		candidates, next_id, "manual")
+	next_id = pf_static_property_stashes.append_dynamic_candidates(
+		candidates, next_id, "property")
+	pf_static_vehicle_stashes.append_dynamic_candidates(
+		candidates, next_id, "vehicle")
+	candidate_by_id = {}
+	for _, point in ipairs(candidates) do
+		candidate_by_id[point.id] = point
+	end
+end
+
+function impl.position_distance_sqr(position, point)
+	local dx = position.x - point.position[1]
+	local dy = position.y - point.position[2]
+	local dz = position.z - point.position[3]
+	return dx * dx + dy * dy + dz * dz
+end
+
+function impl.remove_slot_from_grid(slot_index)
+	local entry = state.slot_grid_point_ids[slot_index]
+	if not entry then return end
+	local column = state.slot_grid[entry.cell_x]
+	local bucket = column and column[entry.cell_z] or nil
+	if bucket then
+		for index = #bucket, 1, -1 do
+			if bucket[index] == slot_index then table.remove(bucket, index) end
+		end
+		if #bucket == 0 then column[entry.cell_z] = nil end
+		if next(column) == nil then state.slot_grid[entry.cell_x] = nil end
+	end
+	state.slot_grid_point_ids[slot_index] = nil
+end
+
+function impl.add_slot_to_grid(slot)
+	if not slot or not slot.point then return end
+	impl.remove_slot_from_grid(slot.index)
+	local cell_x = math.floor(slot.point.position[1] / SLOT_GRID_CELL_SIZE)
+	local cell_z = math.floor(slot.point.position[3] / SLOT_GRID_CELL_SIZE)
+	local column = state.slot_grid[cell_x]
+	if not column then
+		column = {}
+		state.slot_grid[cell_x] = column
+	end
+	local bucket = column[cell_z]
+	if not bucket then
+		bucket = {}
+		column[cell_z] = bucket
+	end
+	table.insert(bucket, slot.index)
+	state.slot_grid_point_ids[slot.index] = {
+		point_id = slot.point.id,
+		cell_x = cell_x,
+		cell_z = cell_z
+	}
+end
+
+function impl.rebuild_slot_grid()
+	state.slot_grid = {}
+	state.slot_grid_point_ids = {}
+	for _, slot in ipairs(slots) do impl.add_slot_to_grid(slot) end
+end
+
+function impl.nearest_detector_slot(actor_position, detector_data)
+	local span = math.ceil(detector_data.max_range / SLOT_GRID_CELL_SIZE)
+	local actor_cell_x = math.floor(actor_position.x / SLOT_GRID_CELL_SIZE)
+	local actor_cell_z = math.floor(actor_position.z / SLOT_GRID_CELL_SIZE)
+	local nearest_slot = nil
+	local nearest_distance_sqr = detector_data.max_range * detector_data.max_range + 1
+	local nearest_range = nil
+	local nearest_ratio_sqr = math.huge
+	local reveal_slot = nil
+	local reveal_distance_sqr = math.huge
+	for cell_x = actor_cell_x - span, actor_cell_x + span do
+		local column = state.slot_grid[cell_x]
+		if column then
+			for cell_z = actor_cell_z - span, actor_cell_z + span do
+				local bucket = column[cell_z]
+				if bucket then
+					for _, slot_index in ipairs(bucket) do
+						local slot = slots[slot_index]
+						local tier = slot and tier_data[slot.tier] or nil
+						local slot_range = slot and detector_data.ranges[slot.tier] or nil
+						local can_reveal = slot_range and detector_data.reveal_tiers and
+							detector_data.reveal_tiers[slot.tier]
+						local available = tier and
+							(not tier.hint_required or slot.state.hinted or can_reveal)
+						local eligible = slot and slot.point and not slot.state.depleted and
+							slot_range and available
+						if eligible then
+							local distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
+							local range_sqr = slot_range * slot_range
+							local ratio_sqr = distance_sqr / range_sqr
+							if distance_sqr <= range_sqr and
+								(ratio_sqr < nearest_ratio_sqr or
+								(ratio_sqr == nearest_ratio_sqr and nearest_slot and
+									slot.index < nearest_slot.index)) then
+								nearest_slot = slot
+								nearest_distance_sqr = distance_sqr
+								nearest_range = slot_range
+								nearest_ratio_sqr = ratio_sqr
+							end
+							if can_reveal and not slot.state.discovered and distance_sqr <= range_sqr and
+								(distance_sqr < reveal_distance_sqr or
+								(distance_sqr == reveal_distance_sqr and reveal_slot and
+									slot.index < reveal_slot.index)) then
+								reveal_slot = slot
+								reveal_distance_sqr = distance_sqr
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return nearest_slot, nearest_distance_sqr, nearest_range, reveal_slot
+end
+
+-- The reusable hand-radio action is a separate mechanic. Keep its lookup
+-- independent so it cannot accidentally pass a number where active detectors
+-- expect a tier/range table.
+function impl.nearest_retrievable_slot(actor_position)
+	local nearest_slot = nil
+	local nearest_distance_sqr = METAL_DETECTOR_DISTANCE_SQR + 1
+	for _, slot in pairs(slots) do
+		if slot and slot.point and slot.id and slot.state and slot.state.discovered and
+			not slot.state.depleted then
+			local distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
+			if distance_sqr <= METAL_DETECTOR_DISTANCE_SQR and
+				(distance_sqr < nearest_distance_sqr or
+				(distance_sqr == nearest_distance_sqr and nearest_slot and
+					slot.index < nearest_slot.index)) then
+				nearest_slot = slot
+				nearest_distance_sqr = distance_sqr
+			end
+		end
+	end
+	return nearest_slot
+end
+
+function impl.update_active_metal_detector(now)
+	local detector = db.actor:active_detector()
+	local detector_data = detector and active_metal_detectors[detector:section()] or nil
+	if not detector_data then
+		next_detector_pulse = 0
+		return
+	end
+	if #slots == 0 then
+		impl.build_candidate_indexes()
+		impl.initialize_slots()
+	end
+	if now < next_detector_pulse or #slots == 0 then return end
+
+	local actor_position = db.actor:position()
+	local _, nearest_distance_sqr, nearest_range, reveal_slot =
+		impl.nearest_detector_slot(actor_position, detector_data)
+	if reveal_slot then impl.reveal_detector_slot(reveal_slot) end
+
+	if not nearest_range then
+		next_detector_pulse = now + 250
+		return
+	end
+
+	local distance_ratio = math.min(1, math.sqrt(nearest_distance_sqr) / nearest_range)
+	local interval = 120 + math.floor(1380 * math.pow(distance_ratio, 1.35))
+	if not detector_pulse_sound then
+		detector_pulse_sound = sound_object("detectors\\art_beep1")
+	end
+	detector_pulse_sound:play_no_feedback(
+		db.actor, sound_object.s2d, 0, vector():set(0, 0, 0), 1.0)
+	next_detector_pulse = now + interval
+end
+
+function impl.stash_object_point(point)
+	-- Curated coordinates already include the exact furniture/vehicle offset.
+	return point
+end
+
+function impl.remove_all_markers(id)
+	for _, marker_type in ipairs(marker_types) do
+		if level.map_has_object_spot(id, marker_type) ~= 0 then
+			level.map_remove_object_spot(id, marker_type)
+		end
+	end
+	for _, marker_type in ipairs(legacy_marker_types) do
+		if level.map_has_object_spot(id, marker_type) ~= 0 then
+			level.map_remove_object_spot(id, marker_type)
+		end
+	end
+end
+
+function impl.release_object(id)
+	impl.remove_all_markers(id)
+	local object = alife():object(id, true)
+	if object then alife():release(object, true) end
+end
+
+function impl.build_mapping_cleanup_grid()
+	local grid = {}
+	for _, point in ipairs(pf_mapping_prop_candidates.get()) do
+		local cell_x = math.floor(point.position[1] / MAPPING_CLEANUP_GRID_CELL_SIZE)
+		local cell_z = math.floor(point.position[3] / MAPPING_CLEANUP_GRID_CELL_SIZE)
+		local column = grid[cell_x]
+		if not column then column = {} grid[cell_x] = column end
+		local bucket = column[cell_z]
+		if not bucket then bucket = {} column[cell_z] = bucket end
+		table.insert(bucket, point)
+	end
+	return grid
+end
+
+function impl.near_mapping_cleanup_point(position, grid)
+	local cell_x = math.floor(position.x / MAPPING_CLEANUP_GRID_CELL_SIZE)
+	local cell_z = math.floor(position.z / MAPPING_CLEANUP_GRID_CELL_SIZE)
+	for query_x = cell_x - 1, cell_x + 1 do
+		local column = grid[query_x]
+		if column then
+			for query_z = cell_z - 1, cell_z + 1 do
+				local bucket = column[query_z]
+				if bucket then
+					for _, point in ipairs(bucket) do
+						if impl.position_distance_sqr(position, point) <= FIND_DISTANCE_SQR then
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+function impl.cleanup_legacy_stashes()
+	if legacy_cleanup_done then return end
+	local remove_ids = {}
+	local remove_seen = {}
+	local mapping_grid = impl.build_mapping_cleanup_grid()
+	for _, object in alife():objects() do
+		local section = object:section_name()
+		local remove = section == LEGACY_VEHICLE_MARKER_SECTION
+		if not remove then
+			for _, legacy in ipairs(legacy_stashes) do
+				if (section == legacy.section or
+					(legacy.any_stash_section and stash_sections[section])) and
+					impl.position_distance_sqr(object.position, legacy) <=
+						(legacy.find_distance_sqr or FIND_DISTANCE_SQR) then
+					remove = true
+					break
+				end
+			end
+		end
+		if not remove and stash_sections[section] then
+			remove = impl.near_mapping_cleanup_point(object.position, mapping_grid)
+		end
+		if remove and not remove_seen[object.id] then
+			remove_seen[object.id] = true
+			table.insert(remove_ids, object.id)
+		end
+	end
+	for _, id in ipairs(remove_ids) do impl.release_object(id) end
+	-- Remove the temporary guaranteed-test-cache state from saves in which that
+	-- container had already materialized or fired.
+	local root = alife_storage_manager.get_state()
+	local saved_state = root and root[EXTERNAL_STATE_KEY] or nil
+	if type(saved_state) == "table" then
+		saved_state.debug_ambush_stash_id = nil
+		saved_state.debug_ambush_triggered = nil
+		saved_state.debug_ambush_pending = nil
+	end
+	legacy_cleanup_done = true
+end
+
+function impl.actor_pstor()
+	if not db.actor or not db.storage then return nil end
+	local actor_storage = db.storage[db.actor:id()]
+	return actor_storage and actor_storage.pstor or nil
+end
+
+function impl.legacy_value(pstor, key, default)
+	if pstor and pstor[key] ~= nil then return pstor[key] end
+	return default
+end
+
+-- Removes all v1 keys directly from the actor's pstor table. No replacement
+-- service flag is needed: the external state version is the migration marker.
+function impl.clear_legacy_pstor()
+	if old_pstor_cleaned then return end
+	local pstor = impl.actor_pstor()
+	if not pstor then return end
+	pstor[LEGACY_SAVE_PREFIX .. "initialized"] = nil
+	for index = 1, STARTING_STASH_COUNT do
+		pstor[impl.legacy_slot_key(index, "point")] = nil
+		pstor[impl.legacy_slot_key(index, "spawned")] = nil
+		pstor[impl.legacy_slot_key(index, "discovered")] = nil
+		pstor[impl.legacy_slot_key(index, "depleted")] = nil
+		for history_index = 1, HISTORY_SIZE do
+			pstor[impl.legacy_slot_key(index, "history_" .. history_index)] = nil
+		end
+	end
+	old_pstor_cleaned = true
+end
+
+function impl.migrate_legacy_pstor(state)
+	local pstor = impl.actor_pstor()
+	if not pstor then return false end
+	local found = false
+	for index = 1, STARTING_STASH_COUNT do
+		local point_id = tonumber(impl.legacy_value(pstor, impl.legacy_slot_key(index, "point"), 0)) or 0
+		if point_id > 0 then
+			found = true
+			local history = {}
+			for history_index = 1, HISTORY_SIZE do
+				local history_id = tonumber(impl.legacy_value(pstor,
+					impl.legacy_slot_key(index, "history_" .. history_index), 0)) or 0
+				if history_id > 0 then table.insert(history, history_id) end
+			end
+			state.slots[index] = {
+				point = point_id,
+				-- v1 revealed all 200 test markers, so that flag was not a real discovery.
+				discovered = false,
+				depleted = impl.legacy_value(pstor, impl.legacy_slot_key(index, "depleted"), false) == true,
+				history = history,
+				tier = impl.tier_for_index(index),
+				hinted = false
+			}
+		end
+	end
+	return found
+end
+
+function impl.get_persistent_state()
+	if persistent_state then return persistent_state end
+	local root = alife_storage_manager.get_state()
+	local state = root[EXTERNAL_STATE_KEY]
+	if type(state) ~= "table" then
+		state = {
+			version = STATE_VERSION,
+			slots = {},
+			checked_sources = {},
+			searched_counts = {},
+			loot_seed = math.random(1, DETERMINISTIC_MODULUS - 1)
+		}
+		root[EXTERNAL_STATE_KEY] = state
+		impl.migrate_legacy_pstor(state)
+	else
+		local previous_version = tonumber(state.version) or 0
+		state.slots = type(state.slots) == "table" and state.slots or {}
+		state.checked_sources = type(state.checked_sources) == "table" and state.checked_sources or {}
+		if previous_version < 4 then
+			-- v4 reserved slots 261..280 for vehicle areas and
+			-- swaps five hint-only tiers onto ordinary container slots.
+			for index = 1, STARTING_STASH_COUNT do
+				local saved = state.slots[index]
+				if type(saved) == "table" then
+					saved.tier = impl.tier_for_index(index)
+					if tier_data[saved.tier].hint_required then
+						saved.hinted = false
+						saved.discovered = false
+					end
+				end
+			end
+		end
+		if previous_version < 5 then
+			-- Replace every former vehicle assignment with an exact baked-map prop.
+			for index = 261, 280 do
+				local saved = state.slots[index]
+				if type(saved) == "table" then
+					saved.point = 0
+					saved.history = {}
+					saved.discovered = false
+					saved.depleted = false
+					saved.hinted = false
+				end
+			end
+		end
+		if previous_version < 6 then
+			-- Static mapping props are no longer stash candidates. Reassign their
+			-- former slots to generated outdoor points and restore the normal tier cycle.
+			for index = 1, STARTING_STASH_COUNT do
+				local saved = state.slots[index]
+				if type(saved) == "table" then saved.tier = impl.tier_for_index(index) end
+			end
+			for index = 261, 280 do
+				local saved = state.slots[index]
+				if type(saved) == "table" then
+					saved.point = 0
+					saved.history = {}
+					saved.discovered = false
+					saved.depleted = false
+					saved.hinted = false
+				end
+			end
+		end
+		if previous_version < 8 then
+			-- v7 preassigned the entire Ghost City collection at game load. Notes
+			-- now roll only when a stash is actually searched, so discard every
+			-- premature assignment while preserving the rest of each slot state.
+			for index = 1, STARTING_STASH_COUNT do
+				local saved = state.slots[index]
+				if type(saved) == "table" then
+					saved.ghost_city_note = nil
+					saved.ghost_city_roll_checked = nil
+				end
+			end
+		end
+		if previous_version < 9 then
+			-- PDA Hacking reserves its unique USB on a logical slot. Start the
+			-- new subsystem cleanly on old saves without touching coordinates,
+			-- discoveries, depletion or any other rotating-stash state.
+			for index = 1, STARTING_STASH_COUNT do
+				local saved = state.slots[index]
+				if type(saved) == "table" then
+					saved.usb_roll_checked = nil
+					saved.usb_reserved_level = nil
+				end
+			end
+		end
+		if previous_version < 11 then
+			-- Older saves did not keep lifetime totals. Recover the current search
+			-- flag plus every completed rotation retained in the four-point history.
+			local recovered = {}
+			for index = 1, STARTING_STASH_COUNT do
+				local saved = state.slots[index]
+				local tier = type(saved) == "table" and saved.tier or nil
+				if not tier_data[tier] then tier = impl.tier_for_index(index) end
+				if type(saved) == "table" and tier_data[tier] then
+					local rotations = type(saved.history) == "table" and #saved.history or 0
+					local current = saved.hint_checked and 1 or 0
+					recovered[tier] = (recovered[tier] or 0) + rotations + current
+				end
+			end
+			state.searched_counts = recovered
+		end
+		if previous_version < 12 then
+			-- v10/v11 counted Wave and Magnet as stages 1 and 2. In the new
+			-- sequence Homemade is stage 1, so preserve every detector already
+			-- recorded on old saves instead of offering a weaker duplicate.
+			local old_stage = math.max(0, tonumber(state.red_unique_detector_stage) or 0)
+			if previous_version < 10 then
+				state.red_unique_detector_stage = state.red_detector_awarded and 1 or 0
+			elseif old_stage >= 2 then
+				state.red_unique_detector_stage = 3
+			elseif old_stage >= 1 then
+				state.red_unique_detector_stage = 2
+			else
+				state.red_unique_detector_stage = 0
+			end
+			state.red_detector_awarded = nil
+		end
+		state.version = STATE_VERSION
+	end
+	state.searched_counts = type(state.searched_counts) == "table" and state.searched_counts or {}
+	for tier in pairs(tier_data) do
+		state.searched_counts[tier] = math.max(0, tonumber(state.searched_counts[tier]) or 0)
+	end
+	state.loot_seed = math.floor(math.abs(tonumber(state.loot_seed) or 0)) %
+		DETERMINISTIC_MODULUS
+	if state.loot_seed <= 0 then
+		local first = type(state.slots[1]) == "table" and state.slots[1].point or 0
+		local last = type(state.slots[STARTING_STASH_COUNT]) == "table" and
+			state.slots[STARTING_STASH_COUNT].point or 0
+		state.loot_seed = impl.deterministic_pda_roll(
+			first, last, state.red_unique_detector_stage or 0, "pf_stash_world_seed_v1")
+	end
+	persistent_state = state
+	impl.clear_legacy_pstor()
+	return state
+end
+
+function impl.persisted_slot_count(saved_state)
+	saved_state = saved_state or impl.get_persistent_state()
+	local count = STARTING_STASH_COUNT
+	for index, saved in pairs(saved_state.slots or {}) do
+		if type(index) == "number" and index == math.floor(index) and index > count and
+			type(saved) == "table" then
+			count = index
+		end
+	end
+	return count
+end
+
+function impl.collect_reserved_points()
+	local reserved = {}
+	local saved_state = impl.get_persistent_state()
+	for _, saved in pairs(saved_state.slots or {}) do
+		if type(saved) == "table" then
+			local point_id = tonumber(saved.point) or 0
+			if point_id > 0 then reserved[point_id] = true end
+		end
+	end
+	return reserved
+end
+
+function impl.point_respects_minimum_spacing(point, points, minimum_distance_sqr)
+	if minimum_distance_sqr <= 0 then return true end
+	for _, other in ipairs(points or {}) do
+		local dx = point.position[1] - other.position[1]
+		local dy = point.position[2] - other.position[2]
+		local dz = point.position[3] - other.position[3]
+		if dx * dx + dy * dy + dz * dz < minimum_distance_sqr then return false end
+	end
+	return true
+end
+
+function impl.point_respects_spacing(point, tier, tier_points, all_points)
+	return impl.point_respects_minimum_spacing(
+		point, all_points, TIER_MIN_SPACING_SQR.any or 0) and
+		impl.point_respects_minimum_spacing(
+			point, tier_points, TIER_MIN_SPACING_SQR[tier] or 0)
+end
+
+function impl.choose_point(reserved, require_far, excluded, tier, tier_points, all_points)
+	local pool = candidates
+	if #pool == 0 then return nil end
+	local actor_position = db.actor:position()
+	local start = math.random(1, #pool)
+	for offset = 0, #pool - 1 do
+		local point = pool[(start + offset - 1) % #pool + 1]
+		if not reserved[point.id] and (not excluded or not excluded[point.id]) and
+			impl.point_respects_spacing(point, tier, tier_points, all_points) and
+			(not require_far or impl.position_distance_sqr(actor_position, point) >= MIN_NEW_POINT_DISTANCE_SQR) then
+			reserved[point.id] = true
+			return point
+		end
+	end
+	return nil
+end
+
+function impl.release_stash_at_point(point)
+	if not point then return end
+	local object_point = impl.stash_object_point(point)
+	local remove_ids = {}
+	for _, object in alife():objects() do
+		if stash_sections[object:section_name()] and
+			impl.position_distance_sqr(object.position, object_point) <= FIND_DISTANCE_SQR then
+			table.insert(remove_ids, object.id)
+		end
+	end
+	for _, id in ipairs(remove_ids) do impl.release_object(id) end
+end
+
+function impl.ghost_city_note_count()
+	if not lz_new_mechanics or not lz_new_mechanics.ghost_city_note_count then return 0 end
+	return tonumber(lz_new_mechanics.ghost_city_note_count()) or 0
+end
+
+function impl.ghost_city_note_found(index)
+	return lz_new_mechanics and lz_new_mechanics.ghost_city_note_found and
+		lz_new_mechanics.ghost_city_note_found(index) == true
+end
+
+function impl.initialize_slots()
+	impl.build_candidate_indexes()
+	local state = impl.get_persistent_state()
+	local slot_count = impl.persisted_slot_count(state)
+	local reserved = {}
+	local tier_points = { green = {}, cyan = {}, purple = {}, orange = {}, red = {} }
+	local all_points = {}
+	-- Select the sparsest tiers first so their 100-metre exclusions cannot be
+	-- crowded out by the common green and cyan stashes. A valid saved tier is
+	-- authoritative, so changing new-world quotas never recolours an old save.
+	for _, tier in ipairs(TIER_SELECTION_ORDER) do
+		for index = 1, slot_count do
+			local saved = state.slots[index]
+			local assigned_tier = type(saved) == "table" and saved.tier or nil
+			if not tier_data[assigned_tier] then assigned_tier = impl.tier_for_index(index) end
+			if assigned_tier == tier then
+				if type(saved) ~= "table" then
+					saved = { discovered = false, depleted = false, history = {}, hinted = false }
+					state.slots[index] = saved
+				end
+				saved.history = type(saved.history) == "table" and saved.history or {}
+				saved.loot_generation = math.max(
+					0, math.floor(tonumber(saved.loot_generation) or 0))
+				saved.loot_manifest = type(saved.loot_manifest) == "table" and
+					saved.loot_manifest or nil
+				if saved.tier ~= tier then
+					saved.tier = tier
+					saved.hinted = false
+					saved.loot_manifest = nil
+					saved.defer_loot = nil
+					if tier_data[tier].hint_required then saved.discovered = false end
+				end
+				saved.hinted = saved.hinted == true
+				local point_id = tonumber(saved.point) or 0
+				local point = candidate_by_id[point_id]
+				if point and (reserved[point.id] or
+					not impl.point_respects_spacing(
+						point, tier, tier_points[tier], all_points)) then
+					if not reserved[point.id] then impl.release_stash_at_point(point) end
+					saved.loot_manifest = nil
+					saved.defer_loot = nil
+					point = nil
+				end
+				if not point then
+					saved.point = 0
+					point = impl.choose_point(
+						reserved, false, nil, tier, tier_points[tier], all_points)
+					if point then
+						saved.point = point.id
+						saved.loot_manifest = nil
+						saved.defer_loot = nil
+						saved.discovered = false
+						saved.depleted = false
+					end
+				else
+					reserved[point.id] = true
+				end
+				if point then
+					table.insert(tier_points[tier], point)
+					table.insert(all_points, point)
+				end
+				slots[index] = {
+					index = index,
+					kind = "curated",
+					point = point,
+					state = saved,
+					tier = tier,
+					id = nil,
+					spawned_at = 0,
+					conditions_applied = false,
+					loot_materialized = false
+				}
+			end
+		end
+	end
+	impl.rebuild_slot_grid()
+end
+
+-- Find a navigable arrival point roughly the requested distance from a stash.
+-- The actor must remain outside the purple tier's one-metre discovery radius,
+-- so snapping to a vertex is accepted only within a narrow 14-16 m band.
+function impl.arrival_position_near_stash(point, requested_distance)
+	if not point then return nil end
+	local object_point = impl.stash_object_point(point)
+	local center_x = object_point.position[1]
+	local center_y = object_point.position[2]
+	local center_z = object_point.position[3]
+	local center = vector():set(center_x, center_y, center_z)
+	local start_vertex_id = point.level_vertex_id or level.vertex_id(center)
+	if not start_vertex_id or start_vertex_id == 4294967295 then return nil end
+	local base_angle = math.random() * math.pi * 2
+	local radii = {
+		requested_distance,
+		requested_distance - 0.5,
+		requested_distance + 0.5,
+		requested_distance - 1,
+		requested_distance + 1
+	}
+
+	for angle_index = 0, 23 do
+		local angle = base_angle + math.rad(angle_index * 15)
+		for _, radius in ipairs(radii) do
+			local direction = vector():set(math.cos(angle), 0, math.sin(angle))
+			local vertex_id = level.vertex_in_direction(start_vertex_id, direction, radius)
+			if vertex_id and vertex_id ~= 4294967295 then
+				local position = level.vertex_position(vertex_id)
+				local dx = position.x - center_x
+				local dz = position.z - center_z
+				local distance_sqr = dx * dx + dz * dz
+				if distance_sqr >= 14 * 14 and distance_sqr <= 16 * 16 and
+					math.abs(position.y - center_y) <= 4 then
+					return vector():set(position.x, position.y + 0.10, position.z)
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- Public integration point for the strange-consumable blackout. It deliberately
+-- returns coordinates only: the stash is not hinted, discovered, materialized
+-- or marked. Normal proximity logic remains the sole source of discovery.
+function random_hidden_purple_arrival(requested_distance)
+	if not SYSTEM_ENABLED then return nil end
+	if not db.actor or level.name() ~= LEVEL_NAME then return nil end
+	requested_distance = tonumber(requested_distance) or 15
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+
+	local hidden = {}
+	local fallback = {}
+	for _, slot in ipairs(slots) do
+		if slot.tier == "purple" and slot.point and not slot.state.depleted then
+			table.insert(fallback, slot)
+			if not slot.state.discovered then table.insert(hidden, slot) end
+		end
+	end
+	local pools = {}
+	if #hidden > 0 then table.insert(pools, hidden) end
+	-- If every hidden point is too confined for a 15 m reachable offset, allow
+	-- an already discovered but still active purple stash as a safe fallback.
+	if #fallback > #hidden then table.insert(pools, fallback) end
+	for _, pool in ipairs(pools) do
+		local start = math.random(1, #pool)
+		for offset = 0, #pool - 1 do
+			local slot = pool[(start + offset - 1) % #pool + 1]
+			local position = impl.arrival_position_near_stash(slot.point, requested_distance)
+			if position then return position, slot.index end
+		end
+	end
+	return nil
+end
+
+function impl.find_existing_objects()
+	if searched_existing then return end
+	for _, object in alife():objects() do
+		if stash_sections[object:section_name()] then
+			for _, slot in ipairs(slots) do
+				local object_point = slot.point and impl.stash_object_point(slot.point) or nil
+				if not slot.id and slot.point and
+					impl.position_distance_sqr(object.position, object_point) <= FIND_DISTANCE_SQR then
+					-- Migrate containers already materialized in an existing save to
+					-- the corrected height as soon as the manager identifies them.
+					object.position = vector():set(
+						object_point.position[1], object_point.position[2], object_point.position[3])
+					slot.id = object.id
+					slot.spawned_at = 0
+					slot.conditions_applied = false
+					slot.loot_materialized = slot.state.defer_loot ~= true
+					if not slot.state.discovered then impl.remove_all_markers(slot.id) end
+					break
+				end
+			end
+		end
+	end
+	for _, slot in ipairs(slots) do
+		if slot.id and tier_data[slot.tier].hint_required and not slot.state.hinted then
+			impl.release_object(slot.id)
+			slot.id = nil
+			slot.spawned_at = 0
+			slot.conditions_applied = false
+			slot.loot_materialized = false
+			slot.state.defer_loot = nil
+		end
+	end
+	searched_existing = true
+end
+
+function impl.retire_far_undiscovered(actor_position)
+	local retired = 0
+	local physical = 0
+	for _, slot in ipairs(slots) do
+		if retired < MAX_RETIREMENTS_PER_UPDATE and slot.id and
+			not slot.state.discovered and
+			impl.position_distance_sqr(actor_position, slot.point) > DEMATERIALIZE_DISTANCE_SQR then
+			impl.release_object(slot.id)
+			slot.id = nil
+			slot.spawned_at = 0
+			slot.conditions_applied = false
+			slot.loot_materialized = false
+			slot.state.defer_loot = nil
+			retired = retired + 1
+		end
+		if slot.id then physical = physical + 1 end
+	end
+	return physical, retired
+end
+
+function impl.cleanup_checked_sources()
+	local state = impl.get_persistent_state()
+	for id in pairs(state.checked_sources) do
+		if not alife():object(id, true) then state.checked_sources[id] = nil end
+	end
+end
+
+function impl.roll(chance)
+	return impl.loot_random(100) <= chance
+end
+
+-- Ordinary stash loot is rolled through a private deterministic stream. All
+-- other users of the shared loot helpers (corpses and scripted events) keep
+-- the engine RNG because no slot stream is active for them.
+function impl.loot_random(low, high)
+	local rng = state.loot_rng
+	if not rng then
+		if low == nil then return math.random() end
+		if high == nil then return math.random(low) end
+		return math.random(low, high)
+	end
+	rng.value = (rng.value * 48271) % DETERMINISTIC_MODULUS
+	if low == nil then return (rng.value - 1) / (DETERMINISTIC_MODULUS - 1) end
+	if high == nil then
+		high = low
+		low = 1
+	end
+	if high <= low then return low end
+	return low + rng.value % (high - low + 1)
+end
+
+function impl.find_ambush_position()
+	local actor_position = db.actor:position()
+	local actor_direction = db.actor:direction()
+	local length = math.sqrt(actor_direction.x * actor_direction.x +
+		actor_direction.z * actor_direction.z)
+	if length < 0.001 then return nil end
+
+	local forward_x = actor_direction.x / length
+	local forward_z = actor_direction.z / length
+	local behind_x = -forward_x
+	local behind_z = -forward_z
+	local side_x = -forward_z
+	local side_z = forward_x
+	local candidates = {
+		{ distance = 14, angle = 0 },
+		{ distance = 16, angle = 28 },
+		{ distance = 16, angle = -28 },
+		{ distance = 12, angle = 48 },
+		{ distance = 12, angle = -48 },
+		{ distance = 19, angle = 18 },
+		{ distance = 19, angle = -18 }
+	}
+	local start = math.random(1, #candidates)
+	for offset = 0, #candidates - 1 do
+		local candidate = candidates[(start + offset - 1) % #candidates + 1]
+		local angle = math.rad(candidate.angle)
+		local offset_x = (behind_x * math.cos(angle) + side_x * math.sin(angle)) * candidate.distance
+		local offset_z = (behind_z * math.cos(angle) + side_z * math.sin(angle)) * candidate.distance
+		local desired = vector():set(actor_position.x + offset_x, actor_position.y,
+			actor_position.z + offset_z)
+		local vertex_id = level.vertex_id(desired)
+		if vertex_id and vertex_id ~= 4294967295 then
+			local position = level.vertex_position(vertex_id)
+			local dx = position.x - actor_position.x
+			local dz = position.z - actor_position.z
+			local distance_sqr = dx * dx + dz * dz
+			local facing_dot = dx * forward_x + dz * forward_z
+			if distance_sqr >= 10 * 10 and distance_sqr <= 24 * 24 and
+				math.abs(position.y - actor_position.y) <= 4 and facing_dot < -6 then
+				return position
+			end
+		end
+	end
+	return nil
+end
+
+function impl.nearest_pripyat_smart(position)
+	local board = sim_board.get_sim_board()
+	local nearest = nil
+	local nearest_distance_sqr = math.huge
+	for smart_name, smart in pairs(board.smarts_by_names) do
+		if type(smart_name) == "string" and string.sub(smart_name, 1, 5) == "prif_" and
+			smart and smart.position then
+			local distance_sqr = smart.position:distance_to_sqr(position)
+			if distance_sqr < nearest_distance_sqr then
+				nearest = smart
+				nearest_distance_sqr = distance_sqr
+			end
+		end
+	end
+	return board, nearest
+end
+
+-- Same placement strategy as the proven legendary-stash ambush: test a fixed
+-- set of navigation points in the actor's rear half instead of a random ring.
+function impl.find_rear_ambush_position(minimum_distance, maximum_distance)
+	local actor_position = db.actor:position()
+	local actor_direction = db.actor:direction()
+	local length = math.sqrt(actor_direction.x * actor_direction.x +
+		actor_direction.z * actor_direction.z)
+	if length < 0.001 then return nil end
+
+	local forward_x = actor_direction.x / length
+	local forward_z = actor_direction.z / length
+	local behind_x = -forward_x
+	local behind_z = -forward_z
+	local side_x = -forward_z
+	local side_z = forward_x
+	local distance_span = maximum_distance - minimum_distance
+	local distance_factors = { 0.5, 0.2, 0.8, 0.05, 0.95 }
+	local angles = { 0, 24, -24, 48, -48, 72, -72, 86, -86 }
+	local start = math.random(1, #angles)
+
+	for distance_index = 1, #distance_factors do
+		local requested_distance = minimum_distance +
+			distance_span * distance_factors[distance_index]
+		for angle_offset = 0, #angles - 1 do
+			local angle = math.rad(angles[(start + angle_offset - 1) % #angles + 1])
+			local offset_x = (behind_x * math.cos(angle) + side_x * math.sin(angle)) *
+				requested_distance
+			local offset_z = (behind_z * math.cos(angle) + side_z * math.sin(angle)) *
+				requested_distance
+			local desired = vector():set(
+				actor_position.x + offset_x,
+				actor_position.y,
+				actor_position.z + offset_z
+			)
+			local vertex_id = level.vertex_id(desired)
+			if vertex_id and vertex_id ~= 4294967295 then
+				local position = level.vertex_position(vertex_id)
+				local dx = position.x - actor_position.x
+				local dz = position.z - actor_position.z
+				local distance_sqr = dx * dx + dz * dz
+				if distance_sqr >= minimum_distance * minimum_distance and
+					distance_sqr <= maximum_distance * maximum_distance and
+					math.abs(position.y - actor_position.y) <= 6 then
+					return position, math.sqrt(distance_sqr)
+				end
+			end
+		end
+	end
+	return nil
+end
+
+function impl.update_strange_ambush_targets(now)
+	for id, expires_at in pairs(strange_ambush_targets) do
+		if now >= expires_at or not alife():object(id, true) then
+			strange_ambush_targets[id] = nil
+		else
+			local object = level.object_by_id(id)
+			if object then
+				-- Make the freshly materialized mercenaries notice the actor at once.
+				object:make_object_visible_somewhen(db.actor)
+				strange_ambush_targets[id] = nil
+			end
+		end
+	end
+end
+
+function impl.spawn_strange_zombied_corpses()
+	local actor_position = db.actor:position()
+	local game_vertex_id = db.actor:game_vertex_id()
+	local base_angle = math.rad(math.random(0, 359))
+	local position = nil
+	local level_vertex_id = nil
+
+	for attempt = 0, 23 do
+		local angle = base_angle + attempt * math.rad(137.5)
+		local distance = 3 + attempt % 5
+		local desired = vector():set(
+			actor_position.x + math.cos(angle) * distance,
+			actor_position.y,
+			actor_position.z + math.sin(angle) * distance
+		)
+		local candidate_vertex_id = level.vertex_id(desired)
+		if candidate_vertex_id and candidate_vertex_id ~= 4294967295 then
+			local candidate = level.vertex_position(candidate_vertex_id)
+			local dx = candidate.x - actor_position.x
+			local dz = candidate.z - actor_position.z
+			local distance_sqr = dx * dx + dz * dz
+			if distance_sqr >= 2.5 * 2.5 and distance_sqr <= 8 * 8 and
+				math.abs(candidate.y - actor_position.y) <= 3 then
+				position = candidate
+				level_vertex_id = candidate_vertex_id
+				break
+			end
+		end
+	end
+	if not position then
+		log("! [PF STASH] no nearby navigation point for zombied corpse event")
+		return false
+	end
+
+	local profile = strange_zombied_corpse_profiles[
+		math.random(1, #strange_zombied_corpse_profiles)
+	]
+	local corpse = alife():create(profile, position, level_vertex_id, game_vertex_id)
+	if not corpse then
+		log("! [PF STASH] failed to create strange-event zombied corpse")
+		return false
+	end
+	corpse.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
+	corpse:kill()
+	if spawn_strange_zombied_loot then
+		spawn_strange_zombied_loot(corpse.id)
+	end
+	log(string.format(
+		"[PF STASH] strange consumable spawned one rich zombied corpse [%s]",
+		profile
+	))
+	return true
+end
+
+-- Resolves an already selected branch. Vodka rolls between one rich zombied
+-- corpse and no event; the stew always keeps its mercenary ambush. The strange
+-- drink chooses one of these complete branches before this function is called.
+function spawn_strange_consumable_ambush(kind)
+	if not db.actor or level.name() ~= LEVEL_NAME then return false end
+	local settings = strange_consumable_ambushes[kind]
+	if not settings then return false end
+	if settings.random_event then
+		if math.random(1, 2) == 1 then
+			return impl.spawn_strange_zombied_corpses()
+		end
+		log(string.format(
+			"[PF STASH] strange consumable event [%s]: nothing appeared",
+			tostring(kind)
+		))
+		return true
+	end
+	local position, actual_distance = impl.find_rear_ambush_position(
+		settings.min_distance, settings.max_distance
+	)
+	if not position then
+		log(string.format(
+			"! [PF STASH] no rear navigation point for strange consumable ambush [%s]",
+			tostring(kind)
+		))
+		return false
+	end
+
+	local squad_section = "lz_nm_strange_mercs_weak"
+	if not sim_board.squad_ltx:section_exist(squad_section) then
+		log(string.format(
+			"! [PF STASH] strange consumable squad section is missing [%s]",
+			tostring(squad_section)
+		))
+		return false
+	end
+	local board, smart = impl.nearest_pripyat_smart(position)
+	if not smart then
+		log("! [PF STASH] no Pripyat smart for strange consumable rear ambush")
+		return false
+	end
+	local squad = board:create_squad(smart, squad_section)
+	if not squad then
+		log(string.format(
+			"! [PF STASH] failed to create strange consumable squad [%s]",
+			tostring(squad_section)
+		))
+		return false
+	end
+	board:enter_smart(squad, smart.id)
+	for member in squad:squad_members() do
+		board:setup_squad_and_group(member.object)
+	end
+	-- Use the same simple sequence as the working legendary-stash ambush.
+	squad:set_squad_position(position)
+	squad:set_squad_relation("enemy")
+	squad:update()
+	local aggression_expires_at = time_global() + 5000
+	for member in squad:squad_members() do
+		strange_ambush_targets[member.id] = aggression_expires_at
+	end
+	impl.update_strange_ambush_targets(time_global())
+	log(string.format(
+		"[PF STASH] strange consumable rear ambush spawned [%s] at [%.1f] m",
+		squad_section, actual_distance
+	))
+	return true
+end
+
+function impl.spawn_stash_ambush(tier)
+	local settings = ambush_tiers[tier]
+	if not settings then return false end
+	local position = impl.find_ambush_position()
+	if not position then return false end
+
+	local faction = ambush_factions[math.random(1, #ambush_factions)]
+	local squad_section = "pf_ambush_" .. faction .. "_" .. settings.rank
+	if not sim_board.squad_ltx:section_exist(squad_section) then
+		printf("[PF STASH] ambush squad section is missing: %s", squad_section)
+		return false
+	end
+
+	local board, smart = impl.nearest_pripyat_smart(position)
+	if not smart then return false end
+	local squad = board:create_squad(smart, squad_section)
+	if not squad then return false end
+	board:enter_smart(squad, smart.id)
+	for member in squad:squad_members() do
+		board:setup_squad_and_group(member.object)
+	end
+	-- The squad remains attached to a normal simulation smart, but materializes
+	-- on a valid navigation vertex behind the actor for the initial attack.
+	squad:set_squad_position(position)
+	squad:update()
+	printf("[PF STASH] spawned %s ambush behind actor for %s stash", faction, tier)
+	return true
+end
+
+function impl.process_stash_ambush(slot, force)
+	local settings = slot and ambush_tiers[slot.tier] or nil
+	if not settings or slot.state.ambush_checked then return false end
+	slot.state.ambush_checked = true
+	if not force and
+		impl.slot_deterministic_percent(slot, "pf_stash_ambush_v1") > settings.chance then
+		return false
+	end
+	return impl.spawn_stash_ambush(slot.tier)
+end
+
+function impl.random_from(pool)
+	return pool[impl.loot_random(1, #pool)]
+end
+
+function impl.add_loot(loot, section, condition_min, condition_max)
+	local entry = { section = section }
+	if condition_min and condition_max then
+		entry.condition = impl.loot_random(condition_min, condition_max) / 100
+	end
+	table.insert(loot, entry)
+	return section
+end
+
+function impl.add_independent_detector_rolls(loot, entries)
+	if not entries then return 0 end
+	local added = 0
+	for _, entry in ipairs(entries) do
+		if impl.roll(entry.chance) then
+			impl.add_loot(loot, entry.section)
+			added = added + 1
+		end
+	end
+	return added
+end
+
+function impl.add_ordinary_detector_rolls(loot, tier)
+	return impl.add_independent_detector_rolls(loot, ordinary_detector_drop_tables[tier])
+end
+
+function impl.add_post_magnet_detector_rolls(loot, tier, detector_stage)
+	if detector_stage == nil then
+		local saved = impl.get_persistent_state()
+		detector_stage = math.floor(tonumber(saved.red_unique_detector_stage) or 0)
+	end
+	if detector_stage < #red_detector_sequence then return 0 end
+	return impl.add_independent_detector_rolls(loot, post_magnet_detector_drop_tables[tier])
+end
+
+local reflash_module_default_chances = {
+	cyan = 5,
+	purple = 10,
+	orange = 20,
+	red = 30
+}
+
+function impl.add_reflash_module_roll(loot, tier)
+	local default = reflash_module_default_chances[tier]
+	if not default or not system_ini():section_exist("lz_ph_reflash_module") then return false end
+	local chance = default
+	local settings = "lz_pda_hacking_settings"
+	local key = "reflash_" .. tostring(tier) .. "_chance"
+	if system_ini():section_exist(settings) and system_ini():line_exist(settings, key) then
+		chance = tonumber(system_ini():r_string(settings, key)) or default
+	end
+	chance = math.max(0, math.min(100, chance))
+	if not impl.roll(chance) then return false end
+	impl.add_loot(loot, "lz_ph_reflash_module")
+	return true
+end
+
+function impl.add_stash_pda_roll(loot, tier)
+	local entries = stash_pda_drop_tables[tier]
+	if not entries then return false end
+	local roll = impl.loot_random(100)
+	local threshold = 0
+	for _, entry in ipairs(entries) do
+		threshold = threshold + entry.chance
+		if roll <= threshold then
+			impl.add_loot(loot, entry.section)
+			return true
+		end
+	end
+	return false
+end
+
+function impl.add_random_loot(loot, pool, minimum, maximum, condition_min, condition_max)
+	local count = impl.loot_random(minimum, maximum)
+	for _ = 1, count do
+		impl.add_loot(loot, impl.random_from(pool), condition_min, condition_max)
+	end
+end
+
+function impl.add_provision_roll(loot, tier)
+	local settings = tier_data[tier]
+	local tier_chance = settings and settings.provision_chance or 0
+	if tier_chance <= 0 then return false end
+	if tier_chance < 100 and not impl.roll(tier_chance) then return false end
+
+	-- The tier roll guarantees at least one provision. The first item is selected
+	-- proportionally to the requested marginal chances; adjusted follow-up rolls
+	-- keep every item's final chance at its configured value without duplicates.
+	local total_chance = 0
+	for _, entry in ipairs(loot_pools.provisions) do
+		total_chance = total_chance + entry.chance
+	end
+	if total_chance <= 0 then return false end
+
+	local selection = impl.loot_random(total_chance)
+	local selected_index = 1
+	local threshold = 0
+	for index, entry in ipairs(loot_pools.provisions) do
+		threshold = threshold + entry.chance
+		if selection <= threshold then
+			selected_index = index
+			break
+		end
+	end
+
+	for index, entry in ipairs(loot_pools.provisions) do
+		if index == selected_index then
+			impl.add_loot(loot, entry.section)
+		else
+			local target_chance = entry.chance / 100
+			local selected_chance = entry.chance / total_chance
+			local followup_chance = (target_chance - selected_chance) / (1 - selected_chance)
+			if impl.loot_random() < followup_chance then impl.add_loot(loot, entry.section) end
+		end
+	end
+	return true
+end
+
+function impl.add_distinct_random_loot(loot, pool, count)
+	local available = {}
+	local present = {}
+	for _, entry in ipairs(loot) do present[entry.section] = true end
+	for _, section in ipairs(pool) do
+		if not present[section] then table.insert(available, section) end
+	end
+	for _ = 1, math.min(count, #available) do
+		local index = impl.loot_random(1, #available)
+		local section = available[index]
+		impl.add_loot(loot, section)
+		present[section] = true
+		table.remove(available, index)
+	end
+end
+
+function impl.red_one_time_bundle_order(saved)
+	local order = saved.red_one_time_bundle_order_v2
+	local bundle_count = #loot_pools.red_one_time_bundles
+	local seen = {}
+	local valid = type(order) == "table" and #order == bundle_count
+	if valid then
+		for position = 1, bundle_count do
+			local bundle_index = order[position]
+			if type(bundle_index) ~= "number" or bundle_index ~= math.floor(bundle_index) or
+					bundle_index < 1 or bundle_index > bundle_count or seen[bundle_index] then
+				valid = false
+				break
+			end
+			seen[bundle_index] = true
+		end
+	end
+	if valid then return order end
+
+	order = {}
+	for bundle_index = 1, bundle_count do order[bundle_index] = bundle_index end
+	local shuffle_seed = impl.deterministic_pda_roll(
+		saved.loot_seed or 0, "pf_red_one_time_bundle_order_v2")
+	for index = #order, 2, -1 do
+		shuffle_seed = (shuffle_seed * 48271) % DETERMINISTIC_MODULUS
+		local swap_index = shuffle_seed % index + 1
+		order[index], order[swap_index] = order[swap_index], order[index]
+	end
+	saved.red_one_time_bundle_order_v2 = order
+	return order
+end
+
+function impl.prepare_next_red_one_time_bundle()
+	local saved = impl.get_persistent_state()
+	local bundle_count = #loot_pools.red_one_time_bundles
+	local stage = math.max(0, math.floor(tonumber(saved.red_one_time_bundle_stage_v2) or 0))
+	if stage >= bundle_count then return nil end
+
+	local order = impl.red_one_time_bundle_order(saved)
+	local bundle_index = order[stage + 1]
+	local bundle = loot_pools.red_one_time_bundles[bundle_index]
+	if not bundle then error("missing prepared red one-time bundle") end
+
+	local ini = system_ini()
+	for _, section in ipairs(bundle.items or {}) do
+		if not ini:section_exist(section) then
+			error("missing red one-time bundle section: " .. tostring(section))
+		end
+	end
+	for _, section in ipairs(bundle.distinct_pool or {}) do
+		if not ini:section_exist(section) then
+			error("missing red one-time bundle pool section: " .. tostring(section))
+		end
+	end
+	return { saved = saved, stage = stage, bundle_index = bundle_index, bundle = bundle }
+end
+
+function impl.add_prepared_red_one_time_bundle(loot, prepared)
+	if not prepared or not prepared.bundle then return false end
+	local bundle = prepared.bundle
+	for _, section in ipairs(bundle.items or {}) do impl.add_loot(loot, section) end
+	if bundle.distinct_pool and bundle.distinct_count then
+		impl.add_distinct_random_loot(loot, bundle.distinct_pool, bundle.distinct_count)
+	end
+	-- Commit only after the complete bundle has been added to the manifest.
+	prepared.saved.red_one_time_bundle_stage_v2 = prepared.stage + 1
+	return true
+end
+
+function impl.add_weapon(loot, pool, condition_min, condition_max, ammo_min, ammo_max)
+	local weapon = impl.add_loot(loot, impl.random_from(pool), condition_min, condition_max)
+	local ammo = weapon_ammo[weapon]
+	if ammo and ammo_min and ammo_max then impl.add_random_loot(loot, ammo, ammo_min, ammo_max) end
+	return weapon
+end
+
+function impl.sync_red_detector_stage(saved)
+	local stage = math.floor(tonumber(saved.red_unique_detector_stage) or 0)
+	stage = math.max(0, math.min(#red_detector_sequence, stage))
+	while stage < #red_detector_sequence and db.actor and
+			db.actor:object(red_detector_sequence[stage + 1]) do
+		stage = stage + 1
+	end
+	saved.red_unique_detector_stage = stage
+	return stage
+end
+
+function impl.build_green_loot()
+	local loot = {}
+	-- Entry-tier supply: reduced by 40% from the original 20% roll.
+	if impl.roll(12) then impl.add_loot(loot, "lz_nm_krona_battery") end
+	impl.add_provision_roll(loot, "green")
+	if impl.roll(70) then impl.add_random_loot(loot, loot_pools.stash_medicine_basic, 1, 1) end
+	if impl.roll(25) then impl.add_random_loot(loot, loot_pools.stash_medicine_basic, 1, 1) end
+	if impl.roll(72) then impl.add_random_loot(loot, loot_pools.ammo_green, 1, 2) end
+	if impl.roll(5) then impl.add_weapon(loot, loot_pools.weapons_green, 10, 40, 1, 1) end
+	if impl.roll(3) then impl.add_random_loot(loot, loot_pools.outfits_green, 1, 1, 10, 30) end
+	if impl.roll(3) then impl.add_random_loot(loot, loot_pools.grenades, 1, 1) end
+	if impl.roll(2) then impl.add_random_loot(loot, loot_pools.flavour, 1, 1) end
+	if impl.roll(5) then impl.add_random_loot(loot, loot_pools.salvage_parts, 1, 1) end
+	if impl.roll(6) then impl.add_random_loot(loot, loot_pools.mutant_trophies_green, 1, 1) end
+	if impl.roll(10) then impl.add_random_loot(loot, loot_pools.electronics_green, 1, 1) end
+	impl.add_stash_pda_roll(loot, "green")
+	-- Add the support item last so it cannot collapse into an earlier stack.
+	impl.add_distinct_random_loot(loot, loot_pools.green_bonus, 1)
+	return loot
+end
+
+function impl.build_cyan_loot()
+	local loot = {}
+	if impl.roll(21) then impl.add_loot(loot, "lz_nm_krona_battery") end
+	impl.add_provision_roll(loot, "cyan")
+	impl.add_random_loot(loot, loot_pools.stash_medicine_field, 2, 4)
+	impl.add_random_loot(loot, loot_pools.ammo_cyan, 2, 4)
+	if impl.roll(22) then impl.add_weapon(loot, loot_pools.weapons_cyan, 20, 50, 1, 2) end
+	if impl.roll(10) then
+		if impl.roll(65) then
+			impl.add_random_loot(loot, loot_pools.outfits_cyan, 1, 1, 20, 50)
+		else
+			impl.add_random_loot(loot, loot_pools.headgear_cyan, 1, 1, 20, 50)
+		end
+	end
+	if impl.roll(15) then impl.add_random_loot(loot, loot_pools.grenades, 1, 1) end
+	if impl.roll(15) then impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1) end
+	if impl.roll(2) then impl.add_random_loot(loot, loot_pools.disassembly_kits, 1, 1) end
+	-- These are independent rolls: a cyan cache can contain both field items.
+	if impl.roll(8) then impl.add_loot(loot, "itm_sleepbag") end
+	if impl.roll(5) then impl.add_loot(loot, "itm_backpack") end
+	if impl.roll(8) then impl.add_random_loot(loot, loot_pools.salvage_parts, 1, 1) end
+	if impl.roll(10) then impl.add_random_loot(loot, loot_pools.mutant_trophies_cyan, 1, 1) end
+	impl.add_ordinary_detector_rolls(loot, "cyan")
+	impl.add_post_magnet_detector_rolls(loot, "cyan")
+	if impl.roll(3) then impl.add_random_loot(loot, loot_pools.flavour, 1, 1) end
+	if impl.roll(12) then impl.add_random_loot(loot, loot_pools.electronics_cyan, 1, 1) end
+	if impl.roll(4) then impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1) end
+	if impl.roll(2) then impl.add_loot(loot, "lz_nm_stash_beacon") end
+	impl.add_stash_pda_roll(loot, "cyan")
+	-- Add these last so both guaranteed support slots remain new visible item
+	-- types even when an earlier optional roll used the same broad pool.
+	impl.add_distinct_random_loot(loot, loot_pools.cyan_bonus, 2)
+	impl.add_reflash_module_roll(loot, "cyan")
+	return loot
+end
+
+function impl.build_purple_loot()
+	local loot = {}
+	if impl.roll(36) then impl.add_loot(loot, "lz_nm_krona_battery") end
+	impl.add_provision_roll(loot, "purple")
+	impl.add_random_loot(loot, loot_pools.stash_medicine_advanced, 2, 5)
+	impl.add_random_loot(loot, loot_pools.ammo_purple, 3, 5)
+
+	-- Conventional equipment keeps one shared branch. Ordinary artefact
+	-- detectors are rolled independently below and can coexist with equipment.
+	local reward_roll = impl.loot_random(100)
+	if reward_roll <= 55 then
+		impl.add_weapon(loot, loot_pools.weapons_purple, 40, 80, 2, 3)
+	elseif reward_roll <= 72 then
+		if impl.roll(75) then
+			impl.add_random_loot(loot, loot_pools.outfits_purple, 1, 1, 40, 60)
+		else
+			impl.add_random_loot(loot, loot_pools.headgear_purple, 1, 1, 40, 60)
+		end
+	end
+	impl.add_ordinary_detector_rolls(loot, "purple")
+	impl.add_post_magnet_detector_rolls(loot, "purple")
+	if impl.roll(40) then impl.add_random_loot(loot, loot_pools.attachments, 1, impl.roll(25) and 2 or 1) end
+	if impl.roll(30) then impl.add_random_loot(loot, loot_pools.grenades, 1, 2) end
+	if impl.roll(35) then
+		impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1)
+		if impl.roll(25) then impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1) end
+	end
+	if impl.roll(5) then impl.add_random_loot(loot, loot_pools.disassembly_kits, 1, 1) end
+	if impl.roll(30) then
+		impl.add_random_loot(loot, loot_pools.field_upgrades_purple, 1, 1)
+		if impl.roll(30) then impl.add_random_loot(loot, loot_pools.field_upgrades_purple, 1, 1) end
+	end
+	if impl.roll(10) then impl.add_random_loot(loot, loot_pools.salvage_parts, 1, 1) end
+	if impl.roll(15) then impl.add_random_loot(loot, loot_pools.mutant_trophies_purple, 1, 1) end
+	if impl.roll(6) then impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1) end
+	if impl.roll(14) then impl.add_random_loot(loot, loot_pools.electronics_high, 1, 1) end
+	if impl.roll(4) then impl.add_loot(loot, "lz_nm_radio_beacon") end
+	if impl.roll(4) then impl.add_loot(loot, "lz_nm_stash_beacon") end
+	impl.add_stash_pda_roll(loot, "purple")
+	impl.add_reflash_module_roll(loot, "purple")
+	return loot
+end
+
+function impl.add_orange_artefact(loot)
+	-- Intentionally empty in the NLC cooking developer addon.
+end
+
+function impl.add_legendary_combat_core(loot, primary_pool, allow_secondary)
+	impl.add_random_loot(loot, loot_pools.stash_medicine_advanced, 4, 7)
+	impl.add_random_loot(loot, loot_pools.ammo_orange, 3, 6)
+	impl.add_weapon(loot, primary_pool or loot_pools.weapons_orange_standard, 70, 90, 3, 5)
+	if allow_secondary ~= false and impl.roll(20) then
+		local pool = impl.roll(25) and loot_pools.weapons_orange_exotic or
+			loot_pools.weapons_orange_standard
+		impl.add_weapon(loot, pool, 70, 90, 2, 3)
+	end
+end
+
+function impl.build_orange_loot()
+	local loot = {}
+	-- Legendary caches always carry at least one detector cell and can carry two.
+	impl.add_loot(loot, "lz_nm_krona_battery")
+	if impl.roll(30) then impl.add_loot(loot, "lz_nm_krona_battery") end
+	impl.add_provision_roll(loot, "orange")
+	impl.add_legendary_combat_core(loot)
+
+	if impl.roll(14) then
+		if impl.roll(75) then
+			-- The exoskeleton family keeps its former 1/7 share of the outfit
+			-- branch: 14% * 75% * 1/7 = exactly 1.5% absolute per cache.
+			local pool = impl.loot_random(7) == 1 and loot_pools.outfits_orange_exo or
+				loot_pools.outfits_orange
+			impl.add_random_loot(loot, pool, 1, 1, 50, 80)
+		else
+			impl.add_random_loot(loot, loot_pools.headgear_orange, 1, 1, 50, 80)
+		end
+	end
+	if impl.roll(55) then
+		impl.add_orange_artefact(loot)
+		if impl.roll(10) then impl.add_orange_artefact(loot) end
+	end
+	if impl.roll(85) then impl.add_random_loot(loot, loot_pools.attachments, 1, impl.roll(35) and 2 or 1) end
+	if impl.roll(65) then impl.add_random_loot(loot, loot_pools.grenades, 1, 3) end
+	if impl.roll(65) then
+		impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1)
+		if impl.roll(35) then impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1) end
+	end
+	if impl.roll(8) then impl.add_random_loot(loot, loot_pools.disassembly_kits, 1, 1) end
+	if impl.roll(55) then
+		impl.add_random_loot(loot, loot_pools.field_upgrades_orange, 1, 1)
+		if impl.roll(35) then impl.add_random_loot(loot, loot_pools.field_upgrades_orange, 1, 1) end
+	end
+	if impl.roll(12) then impl.add_random_loot(loot, loot_pools.salvage_parts, 1, 1) end
+	if impl.roll(20) then impl.add_random_loot(loot, loot_pools.mutant_trophies_orange, 1, 1) end
+	if impl.roll(10) then impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1) end
+	if impl.roll(18) then impl.add_random_loot(loot, loot_pools.electronics_high, 1, 1) end
+	if impl.roll(65) then impl.add_loot(loot, "lz_nm_radio_beacon") end
+	if impl.roll(7) then impl.add_loot(loot, "lz_nm_stash_beacon") end
+
+	impl.add_ordinary_detector_rolls(loot, "orange")
+	impl.add_post_magnet_detector_rolls(loot, "orange")
+	impl.add_stash_pda_roll(loot, "orange")
+	impl.add_reflash_module_roll(loot, "orange")
+	return loot
+end
+
+function impl.add_red_natural_artefacts(loot)
+	local pool = {}
+	for _, class_pool in ipairs(loot_pools.natural_artefacts_by_class) do
+		for _, section in ipairs(class_pool) do table.insert(pool, section) end
+	end
+	local count = 1
+	if impl.roll(35) then
+		count = 2
+		if impl.roll(20) then count = 3 end
+	end
+	impl.add_distinct_random_loot(loot, pool, count)
+	return count
+end
+
+function impl.build_red_loot()
+	local loot = {}
+	local state = impl.get_persistent_state()
+	-- The closed red reward table grants half an hour of portable detector power.
+	impl.add_loot(loot, "lz_nm_krona_battery")
+	impl.add_loot(loot, "lz_nm_krona_battery")
+	impl.add_provision_roll(loot, "red")
+	-- Red has exactly one primary weapon branch: a normal legendary-tier weapon
+	-- or a named/story variant from the red-only pool, with equal probability.
+	-- The orange secondary-weapon roll is disabled so the two branches cannot mix.
+	local red_weapon_pool = impl.roll(50) and loot_pools.weapons_orange_standard or
+		loot_pools.weapons_red_unique
+	impl.add_legendary_combat_core(loot, red_weapon_pool, false)
+	-- Two distinct attachments are independent of the weapon rolled here.
+	impl.add_distinct_random_loot(loot, loot_pools.attachments, 2)
+	-- One natural artefact is guaranteed. A second has 35%; only after that
+	-- success can a third pass its conditional 20% roll (7% absolute).
+	impl.add_red_natural_artefacts(loot)
+
+	-- Red caches alone advance the ordered black-and-white detector sequence.
+	-- A failed roll keeps the same target for the next red cache. Recording the
+	-- stage when loot is generated prevents a detector from repeating if it is
+	-- left behind, sold or lost; owning the current target also advances it.
+	local detector_stage = impl.sync_red_detector_stage(state)
+	if detector_stage < #red_detector_sequence and impl.roll(RED_DETECTOR_ROLL_CHANCE) then
+		impl.add_loot(loot, red_detector_sequence[detector_stage + 1])
+		state.red_unique_detector_stage = detector_stage + 1
+	end
+	impl.add_ordinary_detector_rolls(loot, "red")
+	-- Use the stage from before this cache was generated. The red cache that
+	-- first awards Magnet must not immediately roll a duplicate Magnet.
+	if detector_stage >= #red_detector_sequence then
+		impl.add_post_magnet_detector_rolls(loot, "red", detector_stage)
+	end
+	impl.add_loot(loot, "lz_nm_radio_beacon")
+
+	-- Unique mechanics are the core of the red tier. One strange consumable is
+	-- fixed; a second one and an extra beacon remain meaningful jackpots.
+	if impl.roll(35) then impl.add_loot(loot, "lz_nm_radio_beacon") end
+	if impl.roll(10) then impl.add_loot(loot, "lz_nm_stash_beacon") end
+	impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1)
+	if impl.roll(35) then impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1) end
+
+	-- Red keeps its concentrated mechanical layer above the legendary combat
+	-- floor: both repair types, dismantling, orange and red field upgrades.
+	for _, section in ipairs(loot_pools.repair_kits) do impl.add_loot(loot, section) end
+	if impl.roll(40) then impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1) end
+	impl.add_random_loot(loot, loot_pools.disassembly_kits, 1, 1)
+	impl.add_random_loot(loot, loot_pools.field_upgrades_orange, 1, 1)
+	for _, section in ipairs(loot_pools.field_upgrades_red) do impl.add_loot(loot, section) end
+	-- Two ordinary modules are distinct and equally weighted. They cover the
+	-- reliability/damage/handling/magazine/weight family without replacing tops.
+	impl.add_distinct_random_loot(loot, loot_pools.field_upgrades_basic, 2)
+	-- The one-use reflashing module remains an optional utility reward in the
+	-- deliberately concentrated red reward table.
+	impl.add_reflash_module_roll(loot, "red")
+	return loot
+end
+
+function impl.build_loot(tier)
+	local loot = {}
+	if tier == "green" then loot = impl.build_green_loot()
+	elseif tier == "cyan" then loot = impl.build_cyan_loot()
+	elseif tier == "purple" then loot = impl.build_purple_loot()
+	elseif tier == "orange" then loot = impl.build_orange_loot()
+	elseif tier == "red" then loot = impl.build_red_loot()
+	end
+
+	local medicine_chance = sleep_medicine_chances[tier]
+	if medicine_chance and impl.roll(medicine_chance) then
+		impl.add_loot(loot, "drug_sleep")
+	end
+	return loot
+end
+
+-- A slot rolls its ordinary contents once per rotation. The private seed is
+-- saved with the world and the resulting manifest is serialized with the slot,
+-- so approaching again or loading a save cannot reroll sections or condition.
+function impl.build_slot_loot(slot)
+	if not slot or not slot.state then return {} end
+	if type(slot.state.loot_manifest) == "table" then
+		return slot.state.loot_manifest
+	end
+	local red_bundle = nil
+	if slot.tier == "red" then red_bundle = impl.prepare_next_red_one_time_bundle() end
+	state.loot_rng = { value = impl.slot_loot_seed(slot, "pf_stash_loot_v1") }
+	local ok, loot = pcall(impl.build_loot, slot.tier)
+	if ok and red_bundle then
+		local bundle_ok, bundle_error = pcall(
+			impl.add_prepared_red_one_time_bundle, loot, red_bundle)
+		if not bundle_ok then
+			ok = false
+			loot = bundle_error
+		end
+	end
+	state.loot_rng = nil
+	if not ok then error(loot) end
+	slot.state.loot_manifest = loot
+	return loot
+end
+
+function impl.spawn_item(entry, parent_id)
+	if not system_ini():section_exist(entry.section) then
+		printf("[PF STASH] invalid loot section: %s", tostring(entry.section))
+		return false
+	end
+	local item = alife():create(entry.section, vector(), 0, 0, parent_id)
+	if not item then return false end
+	return true
+end
+
+function impl.stash_contains_section(box, section)
+	if not box or not section then return false end
+	for child_id in alife():get_children(box) do
+		local child = alife():object(child_id, true)
+		if child and child:section_name() == section then return true end
+	end
+	return false
+end
+
+function impl.release_stash_section(box, section)
+	if not box or not section then return false end
+	local released = false
+	local ids = {}
+	for child_id in alife():get_children(box) do
+		local child = alife():object(child_id, true)
+		if child and child:section_name() == section then table.insert(ids, child_id) end
+	end
+	for _, child_id in ipairs(ids) do
+		local child = alife():object(child_id, true)
+		if child then
+			alife():release(child, true)
+			released = true
+		end
+	end
+	return released
+end
+
+-- USB uniqueness and progression live in the optional PDA Hacking addon.
+-- This manager owns only the per-rotation roll and physical materialization.
+function impl.ensure_hacking_usb(slot, box)
+	local hacking = rawget(_G, "lz_pda_hacking")
+	if not slot or not slot.state or not box or not hacking then return false end
+	if not hacking.reserve_next_usb or
+		not hacking.usb_section_for_level then return false end
+
+	local reserved_level = tonumber(slot.state.usb_reserved_level)
+	if reserved_level then
+		if hacking.usb_level_is_acquired and
+			hacking.usb_level_is_acquired(reserved_level) then
+			-- A future quest/trader may grant this level while its reserved
+			-- physical copy is streamed in. Remove that copy before clearing
+			-- the slot so external sources cannot create a duplicate.
+			impl.release_stash_section(
+				box,
+				hacking.usb_section_for_level(reserved_level)
+			)
+			slot.state.usb_reserved_level = nil
+			return false
+		end
+		local section = hacking.usb_section_for_level(reserved_level)
+		if not section or impl.stash_contains_section(box, section) then return section ~= nil end
+		if impl.spawn_item({ section = section }, box.id) then
+			printf(
+				"[PF STASH] materialized reserved PDA Hacking USB-%d in slot %d",
+				reserved_level,
+				slot.index or 0
+			)
+			return true
+		end
+		return false
+	end
+
+	if slot.state.usb_roll_checked then return false end
+	local ceiling = hacking_usb_tier_ceiling[slot.tier]
+	if not ceiling then return false end
+	local fixed_roll = tonumber(slot.state.usb_roll)
+	if not fixed_roll then
+		fixed_roll = impl.slot_deterministic_percent(slot, "pf_stash_usb_v1")
+		slot.state.usb_roll = fixed_roll
+	end
+	local attempted, level, section =
+		hacking.reserve_next_usb(ceiling, slot.index, fixed_roll)
+	if not attempted then return false end
+	slot.state.usb_roll_checked = true
+	if not level or not section then
+		printf("[PF STASH] PDA Hacking USB roll failed for slot %d", slot.index or 0)
+		return false
+	end
+	slot.state.usb_reserved_level = level
+	if impl.spawn_item({ section = section }, box.id) then
+		printf(
+			"[PF STASH] reserved PDA Hacking USB-%d for %s slot %d",
+			level,
+			tostring(slot.tier),
+			slot.index or 0
+		)
+		return true
+	end
+	return false
+end
+
+function spawn_green_corpse_loot(parent_id)
+	local loot = {}
+	-- Food is deliberately scarce on exposed bodies; only sealed tins survive.
+	if impl.roll(15) then impl.add_loot(loot, "conserva") end
+	impl.add_random_loot(loot, loot_pools.medicine_basic, 1, 2)
+	if impl.roll(35) then impl.add_random_loot(loot, loot_pools.medicine_field, 1, 1) end
+	impl.add_random_loot(loot, loot_pools.ammo_green, 1, 3)
+	if impl.roll(10) then impl.add_loot(loot, impl.random_from(loot_pools.weapons_green), 1, 12) end
+	if impl.roll(8) then impl.add_loot(loot, impl.random_from(loot_pools.outfits_green), 1, 12) end
+	if impl.roll(22) then impl.add_random_loot(loot, loot_pools.electronics_green, 1, 1) end
+	if impl.roll(6) then impl.add_random_loot(loot, loot_pools.electronics_green, 1, 1) end
+	if impl.roll(16) then
+		impl.add_loot(loot, impl.roll(75) and "helm_respirator" or "helm_hardhat", 1, 8)
+	end
+	if impl.roll(3) then impl.add_random_loot(loot, loot_pools.flavour, 1, 1) end
+	if impl.roll(16) then impl.add_loot(loot, "pf_stash_pda_novice") end
+
+	local created = 0
+	for _, entry in ipairs(loot) do
+		if impl.spawn_item(entry, parent_id) then created = created + 1 end
+	end
+	return created
+end
+
+-- Event corpses are uncommon (50% only for vodka/drink), so their inventory is
+-- deliberately richer than the ordinary streamed green corpses.
+function spawn_strange_zombied_loot(parent_id)
+	if not parent_id then return 0 end
+	local loot = {}
+	impl.add_random_loot(loot, loot_pools.food_all, 1, 2)
+	impl.add_random_loot(loot, loot_pools.medicine_field, 2, 4)
+	impl.add_random_loot(loot, loot_pools.ammo_cyan, 2, 4)
+	if impl.roll(40) then impl.add_random_loot(loot, loot_pools.grenades, 1, 1) end
+	if impl.roll(30) then impl.add_random_loot(loot, loot_pools.electronics_cyan, 1, 1) end
+	if impl.roll(12) then impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1) end
+	if impl.roll(8) then impl.add_loot(loot, "detector_simple") end
+
+	local created = 0
+	for _, entry in ipairs(loot) do
+		if impl.spawn_item(entry, parent_id) then created = created + 1 end
+	end
+	log(string.format(
+		"[PF STASH] rich zombied corpse received [%d] bonus item stacks",
+		created
+	))
+	return created
+end
+
+function impl.apply_stash_item_condition(item, tier)
+	if not item then return end
+	local kind = conditioned_loot_sections[item:section()]
+	local tier_ranges = stash_condition_ranges[tier]
+	local range = kind and tier_ranges and tier_ranges[kind] or nil
+	if not range then return end
+
+	-- Never repair or reroll an item which has already received its stash wear.
+	if item:condition() > range[2] / 100 then
+		item:set_condition(math.random(range[1], range[2]) / 100)
+	end
+end
+
+function impl.apply_box_item_conditions(box, tier)
+	if not box then return end
+	for child_id in alife():get_children(box) do
+		impl.apply_stash_item_condition(level.object_by_id(child_id), tier)
+	end
+end
+
+function impl.apply_slot_item_conditions(box, slot)
+	if not box or not slot or slot.conditions_applied then return end
+	local targets = {}
+	for _, entry in ipairs(slot.state.loot_manifest or {}) do
+		if entry.condition then
+			local list = targets[entry.section]
+			if not list then list = {} targets[entry.section] = list end
+			table.insert(list, entry.condition)
+		end
+	end
+	local seen = {}
+	local pending = false
+	for child_id in alife():get_children(box) do
+		local item = level.object_by_id(child_id)
+		if item then
+			local section = item:section()
+			seen[section] = (seen[section] or 0) + 1
+			local target = targets[section] and targets[section][seen[section]] or nil
+			if target and item:condition() > target then item:set_condition(target) end
+		else
+			pending = true
+		end
+	end
+	if not pending then slot.conditions_applied = true end
+end
+
+function impl.spawn_loot_entries(parent_id, loot)
+	local created = {}
+	for _, entry in ipairs(loot or {}) do
+		if impl.spawn_item(entry, parent_id) then table.insert(created, entry.section) end
+	end
+	return created
+end
+
+function impl.spawn_loot(parent_id, tier)
+	return impl.spawn_loot_entries(parent_id, impl.build_loot(tier))
+end
+
+function impl.spawn_slot_loot(parent_id, slot)
+	return impl.spawn_loot_entries(parent_id, impl.build_slot_loot(slot))
+end
+
+-- Compatibility fallback for saves made during the short-lived deferred-loot
+-- implementation. New containers are filled eagerly in spawn_slot; only an
+-- already materialized legacy box can reach this function with defer_loot set.
+function impl.materialize_slot_loot(slot, box)
+	if not slot or not box then return false end
+	if slot.loot_materialized then return true end
+	impl.spawn_loot_entries(box.id, impl.build_slot_loot(slot))
+	slot.loot_materialized = true
+	slot.state.defer_loot = nil
+	slot.conditions_applied = false
+	return true
+end
+
+-- The personal-story cache is a fixed, one-off legendary reward rather than
+-- one of the rotating logical slots. Reuse the balanced orange loot generator
+-- and add its fixed prizes so following the coordinates always pays.
+function fill_story_legendary_stash(parent_id)
+	if not parent_id then return 0 end
+	local created = impl.spawn_loot(parent_id, "orange")
+	for _, section in ipairs({
+		"detector_advanced",
+		"pf_stash_pda_master"
+	}) do
+		if impl.spawn_item({ section = section }, parent_id) then table.insert(created, section) end
+	end
+	printf("[PF STORY] filled legendary cache with %d item stacks", #created)
+	return #created
+end
+
+function apply_story_legendary_item_condition(item)
+	impl.apply_stash_item_condition(item, "orange")
+end
+
+function impl.ghost_city_note_section(index)
+	if not lz_new_mechanics or not lz_new_mechanics.ghost_city_note_section then return nil end
+	return lz_new_mechanics.ghost_city_note_section(index)
+end
+
+function impl.ensure_ghost_city_note(slot, box)
+	local index = slot and tonumber(slot.state.ghost_city_note) or nil
+	if not index or not box then return false end
+	if impl.ghost_city_note_found(index) then
+		slot.state.ghost_city_note = nil
+		return false
+	end
+	local section = impl.ghost_city_note_section(index)
+	if not section then return false end
+	for child_id in alife():get_children(box) do
+		local child = alife():object(child_id, true)
+		if child and child:section_name() == section then return true end
+	end
+	return impl.spawn_item({ section = section }, box.id)
+end
+
+function impl.ghost_city_note_pending(index)
+	for _, candidate in ipairs(slots) do
+		if candidate.state and tonumber(candidate.state.ghost_city_note) == index then
+			return true
+		end
+	end
+	return false
+end
+
+-- Unlike ordinary loot, Ghost City notes are not assigned when the world is
+-- initialized or when a box materializes. The first real search of each stash
+-- makes one persistent roll and, on success, draws one still-unseen note.
+function impl.try_spawn_ghost_city_note(slot)
+	if not slot or slot.state.ghost_city_roll_checked then return false end
+	slot.state.ghost_city_roll_checked = true
+	if impl.slot_deterministic_percent(slot, "pf_stash_ghost_city_roll_v1") >
+		GHOST_CITY_NOTE_ROLL_CHANCE then return false end
+	local available = {}
+	for index = 1, impl.ghost_city_note_count() do
+		if not impl.ghost_city_note_found(index) and not impl.ghost_city_note_pending(index) then
+			table.insert(available, index)
+		end
+	end
+	if #available == 0 then return false end
+	local index = available[
+		impl.slot_loot_seed(slot, "pf_stash_ghost_city_note_v1") % #available + 1]
+	slot.state.ghost_city_note = index
+	local box = slot.id and alife():object(slot.id, true) or nil
+	if box and impl.ensure_ghost_city_note(slot, box) then
+		printf(
+			"[PF STASH] Ghost City note %02d added during search of slot %d",
+			index, slot.index or 0
+		)
+		return true
+	end
+	slot.state.ghost_city_note = nil
+	return false
+end
+
+function impl.spawn_story_document(slot)
+	if not slot or not slot.id or not slot.state.story_doc then return false end
+	local section = pf_story_documents.document_section(slot.state.story_doc)
+	if not section then return false end
+	return impl.spawn_item({ section = section }, slot.id)
+end
+
+function impl.story_document_pending()
+	for _, candidate in ipairs(slots) do
+		if candidate.state and candidate.state.story_doc then return true end
+	end
+	return false
+end
+
+function impl.try_assign_random_story_document(slot)
+	if not slot or slot.state.story_roll_checked then return false end
+	slot.state.story_roll_checked = true
+	-- Green caches are too common, while red caches have a deliberately closed
+	-- reward table. Family evidence can appear only in cyan through orange tiers.
+	if not story_document_tiers[slot.tier] then return false end
+	local next_index = pf_story_documents.next_document_index()
+	if next_index < 1 or next_index > 10 or impl.story_document_pending() then return false end
+	if impl.slot_deterministic_percent(slot, "pf_stash_story_document_v1") >
+		STORY_DOCUMENT_ROLL_CHANCE then return false end
+	slot.state.story_doc = next_index
+	if impl.spawn_story_document(slot) then
+		printf("[PF STORY] assigned document %02d to dynamic stash slot %d", next_index, slot.index or 0)
+		return true
+	end
+	slot.state.story_doc = nil
+	return false
+end
+
+function impl.spawn_slot(slot)
+	local point = slot.point
+	local section = point.model
+	if point.curated then
+		section = slot.state.container_model
+		if not curated_backpack_sections[section] then
+			section = interior_models[
+				impl.slot_loot_seed(slot, "pf_stash_container_v1") % #interior_models + 1]
+			slot.state.container_model = section
+		end
+	end
+	section = section or "pf_stash_backpack"
+	local object_point = impl.stash_object_point(point)
+	local position = vector():set(
+		object_point.position[1], object_point.position[2], object_point.position[3])
+	local level_vertex_id = point.level_vertex_id or level.vertex_id(position)
+	local game_vertex_id = point.game_vertex_id or db.actor:game_vertex_id()
+	local box = alife():create(section, position, level_vertex_id, game_vertex_id)
+	if not box then return false end
+	box.angle = vector():set(0, math.rad(tonumber(point.yaw) or 0), 0)
+	-- Restore the proven streaming lifecycle: selecting 350 logical coordinates
+	-- is cheap, while one nearby physical container and its deterministic child
+	-- objects are created together. Opening the box is never a correctness gate.
+	impl.spawn_slot_loot(box.id, slot)
+	slot.id = box.id
+	slot.spawned_at = time_global()
+	slot.conditions_applied = false
+	slot.loot_materialized = true
+	slot.state.defer_loot = nil
+	impl.ensure_hacking_usb(slot, box)
+	impl.ensure_ghost_city_note(slot, box)
+	if slot.state.story_doc then impl.spawn_story_document(slot) end
+	return true
+end
+
+function impl.has_items(box)
+	for _ in alife():get_children(box) do return true end
+	return false
+end
+
+function impl.retire_empty_slot(slot)
+	if not slot or not slot.id then return false end
+	local box_id = slot.id
+	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+	local opened_box = menu and menu:GetInvBox() or nil
+	if opened_box and opened_box:id() == box_id and get_hud() then
+		get_hud():HideActorMenu()
+	end
+	impl.release_object(box_id)
+	slot.id = nil
+	slot.spawned_at = 0
+	slot.state.depleted = true
+	slot.state.defer_loot = nil
+	slot.loot_materialized = false
+	pending_empty_slots[slot.index] = nil
+	return true
+end
+
+function impl.queue_empty_slot_check(slot)
+	if not slot or not slot.id then return false end
+	local now = time_global()
+	pending_empty_slots[slot.index] = {
+		object_id = slot.id,
+		due = now + EMPTY_RETIRE_DELAY_MS,
+		expires = now + 3000
+	}
+	return true
+end
+
+function impl.update_pending_empty_slots(now)
+	for slot_index, entry in pairs(pending_empty_slots) do
+		if now >= entry.due then
+			local slot = slots[slot_index]
+			local box = slot and slot.id == entry.object_id and
+				alife():object(entry.object_id, true) or nil
+			if not slot or not box then
+				pending_empty_slots[slot_index] = nil
+			else
+				local client_box = level.object_by_id(entry.object_id)
+				if (not client_box or client_box:is_inv_box_empty()) and not impl.has_items(box) then
+					impl.retire_empty_slot(slot)
+				elseif now >= entry.expires then
+					pending_empty_slots[slot_index] = nil
+				else
+					entry.due = now + EMPTY_RETIRE_DELAY_MS
+				end
+			end
+		end
+	end
+end
+
+function impl.item_display_name(section)
+	local ini = system_ini()
+	if ini:line_exist(section, "inv_name") then
+		return game.translate_string(ini:r_string(section, "inv_name"))
+	end
+	return section
+end
+
+function impl.send_detector_news(message)
+	xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+	db.actor:give_game_news(game.translate_string("st_tip"), message,
+		"pf_actor_thought_icon", 0, 7000, 0)
+end
+
+function impl.actor_owns_item(item)
+	if not item or not db.actor then return false end
+	local object = alife():object(item:id(), true)
+	return object ~= nil and tonumber(object.parent_id) == db.actor:id()
+end
+
+function impl.require_actor_item(item)
+	if impl.actor_owns_item(item) then return true end
+	impl.send_detector_news(game.translate_string("lz_nm_action_requires_inventory"))
+	return false
+end
+
+function impl.detector_no_result()
+	impl.send_detector_news(game.translate_string("pf_metal_detector_empty"))
+end
+
+function impl.slot_by_object_id(id)
+	if not id then return nil end
+	for _, slot in ipairs(slots) do
+		if slot.id == id then return slot end
+	end
+	return nil
+end
+
+function impl.add_tier_marker(slot)
+	if slot.id then
+		local marker = tier_data[slot.tier].marker
+		if level.map_has_object_spot(slot.id, marker) == 0 then
+			level.map_add_object_spot_ser(slot.id, marker, SPOT_HINT)
+		end
+	end
+end
+
+function impl.reserve_physical_slot_for_hint()
+	-- Hint grants are event-driven, outside the two-second manager update. Count
+	-- here only when a hint is actually requested; the hot update path reuses the
+	-- count returned by retire_far_undiscovered instead of making another pass.
+	local physical = 0
+	for _, slot in ipairs(slots) do
+		if slot.id then physical = physical + 1 end
+	end
+	if physical < MAX_PHYSICAL_STASHES then return true end
+	local actor_position = db.actor:position()
+	local farthest = nil
+	local farthest_distance = -1
+	for _, slot in ipairs(slots) do
+		if slot.id and not slot.state.discovered then
+			local distance = impl.position_distance_sqr(actor_position, slot.point)
+			if distance > farthest_distance then
+				farthest = slot
+				farthest_distance = distance
+			end
+		end
+	end
+	-- Keep the proven hard streaming cap. The logical hint is already persistent;
+	-- if every physical stash is discovered, its box can wait until one of those
+	-- containers is retired instead of growing the online-object set without limit.
+	if not farthest then return false end
+	impl.release_object(farthest.id)
+	farthest.id = nil
+	farthest.spawned_at = 0
+	farthest.conditions_applied = false
+	farthest.loot_materialized = false
+	farthest.state.defer_loot = nil
+	return true
+end
+
+function impl.reveal_detector_slot(slot)
+	if not slot or slot.state.discovered or slot.state.depleted then return false end
+	local tier = tier_data[slot.tier]
+	if not tier or not tier.hint_required then return false end
+
+	-- Treat Magnet's point-blank legendary discovery exactly like a persistent
+	-- hint. This makes the logical slot available, spawns its physical box and
+	-- keeps the marker across save/load instead of creating a detector-only prop.
+	slot.state.hinted = true
+	slot.state.discovered = true
+	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
+	impl.try_assign_random_story_document(slot)
+	impl.add_tier_marker(slot)
+	news_manager.send_tip(db.actor, HINT_MESSAGE, nil, "pf_stash", nil, nil)
+	return true
+end
+
+function impl.hint_point_context(tier)
+	local reserved = impl.collect_reserved_points()
+	local tier_points = {}
+	local all_points = {}
+	for _, slot in ipairs(slots) do
+		if slot.point then
+			table.insert(all_points, slot.point)
+			if slot.tier == tier then table.insert(tier_points, slot.point) end
+		end
+	end
+	return reserved, tier_points, all_points
+end
+
+function impl.has_free_hint_point(tier)
+	local reserved, tier_points, all_points = impl.hint_point_context(tier)
+	for _, point in ipairs(candidates) do
+		if not reserved[point.id] and
+			impl.point_respects_spacing(point, tier, tier_points, all_points) then
+			return true
+		end
+	end
+	return false
+end
+
+function impl.allocate_hint_slot(tier)
+	if not tier_data[tier] then return nil end
+	local reserved, tier_points, all_points = impl.hint_point_context(tier)
+	local point = impl.choose_point(
+		reserved, true, nil, tier, tier_points, all_points) or
+		impl.choose_point(reserved, false, nil, tier, tier_points, all_points)
+	if not point then return nil end
+
+	local saved_state = impl.get_persistent_state()
+	local index = impl.persisted_slot_count(saved_state) + 1
+	local saved = {
+		point = point.id,
+		tier = tier,
+		discovered = false,
+		depleted = false,
+		history = {},
+		hinted = false,
+		loot_generation = 0
+	}
+	local slot = {
+		index = index,
+		kind = "curated",
+		point = point,
+		state = saved,
+		tier = tier,
+		id = nil,
+		spawned_at = 0,
+		conditions_applied = false,
+		loot_materialized = false
+	}
+	saved_state.slots[index] = saved
+	slots[index] = slot
+	impl.add_slot_to_grid(slot)
+	printf("[PF STASH] reserved extra %s hint slot %d at point %d", tier, index, point.id)
+	return slot
+end
+
+function impl.collect_or_allocate_hint_slots(tier, reserved)
+	local eligible = impl.collect_eligible_hint_slots(tier, reserved)
+	if #eligible > 0 then return eligible end
+	local slot = impl.allocate_hint_slot(tier)
+	if slot and (not reserved or not reserved[slot]) then table.insert(eligible, slot) end
+	return eligible
+end
+
+-- Public entry point for quests, corpse searches and stash-search chains.
+-- A hint reveals one still-hidden slot of the requested tier. Starting quotas
+-- are not caps: a new persistent slot is claimed from the approved reserve once
+-- every hidden slot of that tier is already promised.
+function can_grant_hint(tier)
+	if not SYSTEM_ENABLED then return false end
+	if not db.actor or level.name() ~= LEVEL_NAME or not tier_data[tier] then return false end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	for _, slot in ipairs(slots) do
+		if slot.tier == tier and not slot.state.hinted and not slot.state.discovered and
+			not slot.state.depleted then return true end
+	end
+	return impl.has_free_hint_point(tier)
+end
+
+function impl.collect_eligible_hint_slots(tier, reserved)
+	local eligible = {}
+	for _, slot in ipairs(slots) do
+		if slot.tier == tier and not slot.state.hinted and not slot.state.discovered and
+			not slot.state.depleted and (not reserved or not reserved[slot]) then
+			table.insert(eligible, slot)
+		end
+	end
+	return eligible
+end
+
+function impl.reveal_hint_slot(slot, message, silent)
+	if not slot or slot.state.hinted or slot.state.discovered or slot.state.depleted then
+		return false
+	end
+	slot.state.hinted = true
+	slot.state.discovered = true
+	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
+	impl.try_assign_random_story_document(slot)
+	impl.add_tier_marker(slot)
+	if not silent then
+		news_manager.send_tip(db.actor, message or HINT_MESSAGE, nil, "pf_stash", nil, nil)
+	end
+	return true
+end
+
+function grant_hint(tier, message, silent)
+	if not SYSTEM_ENABLED then return false end
+	if not db.actor or level.name() ~= LEVEL_NAME or not tier_data[tier] then return false end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local eligible = impl.collect_or_allocate_hint_slots(tier)
+	if #eligible == 0 then return false end
+	local slot = eligible[math.random(1, #eligible)]
+	return impl.reveal_hint_slot(slot, message, silent)
+end
+
+-- Guaranteed post-#10 chain. These are ordinary cyan locations, but their
+-- document number is deterministic and persists with the logical stash slot.
+function grant_story_document_hint(index)
+	if not SYSTEM_ENABLED then return false end
+	index = tonumber(index)
+	if not db.actor or level.name() ~= LEVEL_NAME or (index ~= 11 and index ~= 12) then return false end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	for _, candidate in ipairs(slots) do
+		if candidate.state.story_doc == index then return true end
+	end
+	local eligible = impl.collect_or_allocate_hint_slots("cyan")
+	if #eligible == 0 then return false end
+	local slot = eligible[math.random(1, #eligible)]
+	slot.state.hinted = true
+	slot.state.discovered = true
+	slot.state.story_roll_checked = true
+	slot.state.story_doc = index
+	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
+	if not slot.id then
+		slot.state.story_doc = nil
+		slot.state.discovered = false
+		slot.state.hinted = false
+		return false
+	end
+	local server_box = alife():object(slot.id, true)
+	if not server_box then return false end
+	local expected_section = pf_story_documents.document_section(index)
+	local has_story_item = false
+	for child_id in alife():get_children(server_box) do
+		local child = alife():object(child_id, true)
+		if child and child:section_name() == expected_section then
+			has_story_item = true
+			break
+		end
+	end
+	-- Existing boxes did not pass through spawn_slot after story_doc was set.
+	if not has_story_item then impl.spawn_story_document(slot) end
+	impl.add_tier_marker(slot)
+	news_manager.send_tip(db.actor, "pf_story_archive_stash_revealed", nil, "pf_stash", nil, nil)
+	printf("[PF STORY] guaranteed document %02d assigned to cyan slot %d", index, slot.index or 0)
+	return true
+end
+
+-- Migration helper for saves made while document #11 was temporarily placed
+-- in a cyan cache immediately after #10. The cache and its ordinary loot stay;
+-- only the premature story document is removed from that logical slot.
+function cancel_story_document_hint(index)
+	if not SYSTEM_ENABLED then return false end
+	index = tonumber(index)
+	if not db.actor or level.name() ~= LEVEL_NAME or not index then return false end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local removed = false
+	local expected_section = pf_story_documents.document_section(index)
+	for _, slot in ipairs(slots) do
+		if slot.state and slot.state.story_doc == index then
+			local box = slot.id and alife():object(slot.id, true) or nil
+			if box then
+				local release_ids = {}
+				for child_id in alife():get_children(box) do
+					local child = alife():object(child_id, true)
+					if child and child:section_name() == expected_section then
+						table.insert(release_ids, child.id)
+					end
+				end
+				for _, child_id in ipairs(release_ids) do
+					local child = alife():object(child_id, true)
+					if child then alife():release(child, true) end
+				end
+			end
+			slot.state.story_doc = nil
+			slot.state.story_roll_checked = true
+			removed = true
+		end
+	end
+	if removed then printf("[PF STORY] removed temporary cyan document %02d assignment", index) end
+	return removed
+end
+
+function impl.roll_hint(tier, chance, message)
+	return chance and math.random(100) <= chance and grant_hint(tier, message)
+end
+
+function impl.deterministic_pda_roll(...)
+	local value = 104729
+	for argument = 1, select("#", ...) do
+		local source = tostring(select(argument, ...))
+		for index = 1, #source do
+			value = (value * 131 + string.byte(source, index) + index) % DETERMINISTIC_MODULUS
+		end
+		value = (value + argument * 7919) % DETERMINISTIC_MODULUS
+	end
+	value = math.floor(value)
+	return value > 0 and value or 1
+end
+
+function impl.slot_loot_seed(slot, purpose)
+	local saved = slot and slot.state or {}
+	local root = impl.get_persistent_state()
+	return impl.deterministic_pda_roll(
+		root.loot_seed,
+		slot and slot.index or 0,
+		slot and slot.point and slot.point.id or saved.point or 0,
+		slot and slot.tier or saved.tier or "",
+		saved.loot_generation or 0,
+		purpose or "pf_stash_loot_v1"
+	)
+end
+
+function impl.slot_deterministic_percent(slot, purpose)
+	return impl.slot_loot_seed(slot, purpose) % 100 + 1
+end
+
+function impl.pda_base_tier(section, pda_id)
+	local profile = stash_pda_profiles[section]
+	if not profile then return nil end
+	if profile.base_tier ~= "master" then return profile.base_tier end
+	local roll = impl.deterministic_pda_roll(pda_id, section, "lz_pda_base_tier_v1")
+	return roll % 10000 < 5000 and "purple" or "orange"
+end
+
+function impl.deterministic_slot(eligible, roll)
+	if #eligible == 0 then return nil end
+	roll = math.floor(math.abs(tonumber(roll) or 0))
+	return eligible[roll % #eligible + 1]
+end
+
+function impl.pda_reward_entries(section, pda_id, reward_spec)
+	local profile = stash_pda_profiles[section]
+	local base_tier = impl.pda_base_tier(section, pda_id)
+	if not base_tier then return nil end
+	local entries = {
+		{
+			tier = base_tier,
+			roll = impl.deterministic_pda_roll(pda_id, section, "lz_pda_base_slot_v1")
+		}
+	}
+	if type(reward_spec) ~= "table" then return entries end
+
+	-- The caller may persist the base choice and slot roll. Validate the tier so
+	-- a damaged or old state can never request an unknown cache class.
+	if profile.base_tier == "master" and
+		(reward_spec.base_tier == "purple" or reward_spec.base_tier == "orange") then
+		entries[1].tier = reward_spec.base_tier
+	end
+	if tonumber(reward_spec.base_roll) then entries[1].roll = tonumber(reward_spec.base_roll) end
+
+	local bonus = type(reward_spec.bonus_tiers) == "table" and reward_spec.bonus_tiers or {}
+	for _, tier in ipairs({ "purple", "orange", "red" }) do
+		local roll = bonus[tier]
+		if type(roll) == "table" then roll = roll.roll end
+		if tonumber(roll) then table.insert(entries, { tier = tier, roll = tonumber(roll) }) end
+	end
+	return entries
+end
+
+-- The rotating/generated coordinate catalogue is intentionally frozen while
+-- its placements are rebuilt. PDA rewards still need a safe destination, so
+-- they use already spawned containers from the manually verified fixed
+-- catalogue. This does not initialize or rotate any legacy logical slot.
+function impl.get_fixed_pda_state()
+	local root = alife_storage_manager.get_state()
+	local saved = root[FIXED_PDA_STATE_KEY]
+	if type(saved) ~= "table" then
+		saved = { claimed = {} }
+		root[FIXED_PDA_STATE_KEY] = saved
+	end
+	saved.claimed = type(saved.claimed) == "table" and saved.claimed or {}
+	return saved
+end
+
+function impl.collect_fixed_pda_boxes(reserved)
+	local claimed = impl.get_fixed_pda_state().claimed
+	local eligible = {}
+	for _, object in alife():objects() do
+		local key = tostring(object.id)
+		if FIXED_PDA_SECTIONS[object:section_name()] and not claimed[key] and
+			(not reserved or not reserved[key]) and impl.has_items(object) then
+			table.insert(eligible, object)
+		end
+	end
+	table.sort(eligible, function(a, b) return a.id < b.id end)
+	return eligible
+end
+
+function impl.add_fixed_pda_marker(box, tier)
+	local data = tier_data[tier]
+	if not box or not data then return false end
+	if level.map_has_object_spot(box.id, data.marker) == 0 then
+		level.map_add_object_spot_ser(box.id, data.marker, SPOT_HINT)
+	end
+	return true
+end
+
+function impl.complete_fixed_stash_pda_hack(server_pda, section, pda_id, reward_spec)
+	local entries = impl.pda_reward_entries(section, pda_id, reward_spec)
+	if not entries or #entries == 0 then return false end
+
+	-- Select and validate every destination and loot section before mutating the
+	-- save. Reflashed PDAs pass no bonus tiers, therefore they reserve exactly
+	-- one fixed container.
+	local selected = {}
+	local reserved = {}
+	for _, entry in ipairs(entries) do
+		local eligible = impl.collect_fixed_pda_boxes(reserved)
+		local box = impl.deterministic_slot(eligible, entry.roll)
+		if not box then return false end
+		local loot = impl.build_loot(entry.tier)
+		if type(loot) ~= "table" or #loot == 0 then return false end
+		for _, item in ipairs(loot) do
+			if not system_ini():section_exist(item.section) then
+				printf("[PF PDA] invalid fixed reward section: %s", tostring(item.section))
+				return false
+			end
+		end
+		reserved[tostring(box.id)] = true
+		table.insert(selected, { box = box, tier = entry.tier, loot = loot })
+	end
+
+	local created_ids = {}
+	for _, reward in ipairs(selected) do
+		for _, entry in ipairs(reward.loot) do
+			local item = alife():create(entry.section, vector(), 0, 0, reward.box.id)
+			if not item then
+				for _, id in ipairs(created_ids) do
+					local created = alife():object(id, true)
+					if created then alife():release(created, true) end
+				end
+				return false
+			end
+			table.insert(created_ids, item.id)
+		end
+	end
+
+	local fixed_state = impl.get_fixed_pda_state()
+	local names = {}
+	for _, reward in ipairs(selected) do
+		fixed_state.claimed[tostring(reward.box.id)] = { tier = reward.tier }
+		impl.add_fixed_pda_marker(reward.box, reward.tier)
+		impl.apply_box_item_conditions(reward.box, reward.tier)
+		table.insert(names, game.translate_string(stash_pda_tier_text[reward.tier]))
+	end
+
+	-- Consume the PDA only after every reward exists and every coordinate is
+	-- persisted. The reflash module is consumed by the caller after this returns.
+	alife():release(server_pda, true)
+	impl.send_detector_news(string.format(
+		game.translate_string("pf_stash_pda_decoded_tiers"),
+		table.concat(names, ", ")
+	))
+	printf("[PF PDA] revealed verified fixed stashes=%s", tostring(#selected))
+	return true
+end
+
+function impl.update_fixed_pda_rewards(now)
+	if now < next_fixed_pda_check then return end
+	next_fixed_pda_check = now + CHECK_INTERVAL_MS
+	local claimed = impl.get_fixed_pda_state().claimed
+	for key, record in pairs(claimed) do
+		local id = tonumber(key)
+		local box = id and alife():object(id, true) or nil
+		local tier = type(record) == "table" and record.tier or nil
+		if not box or not FIXED_PDA_SECTIONS[box:section_name()] or not tier_data[tier] then
+			claimed[key] = nil
+		else
+			impl.add_fixed_pda_marker(box, tier)
+			impl.apply_box_item_conditions(box, tier)
+		end
+	end
+end
+
+-- Public completion point used by the optional hacking addon. It deliberately
+-- owns the old reward/consumption path so direct use remains a complete
+-- fallback when the addon is removed.
+function complete_stash_pda_hack(pda, profile_section, reward_spec)
+	if not pda or not db.actor or level.name() ~= LEVEL_NAME then return false end
+	local pda_id = type(pda) == "number" and pda or pda:id()
+	local server_pda = pda_id and alife():object(pda_id, true) or nil
+	if not server_pda then return false end
+	if tonumber(server_pda.parent_id) ~= db.actor:id() then return false end
+	-- A reflash module may complete an emergency-locked PDA directly. Its
+	-- physical section is the locked variant, while profile_section preserves
+	-- the original rank. An optional reward_spec may apply the dedicated master
+	-- reflash table without restoring any failed minigame bonuses.
+	local section = profile_section or server_pda:section_name()
+	local profile = stash_pda_profiles[section]
+	if not profile then return false end
+	if not SYSTEM_ENABLED then
+		return impl.complete_fixed_stash_pda_hack(
+			server_pda, section, pda_id, reward_spec
+		)
+	end
+
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local entries = impl.pda_reward_entries(section, pda_id, reward_spec)
+	if not entries or #entries == 0 then return false end
+
+	-- Preflight every logical coordinate before changing a slot or consuming the
+	-- PDA. Multiple rewards of one tier reserve different slots during this pass.
+	local selected = {}
+	local reserved = {}
+	for _, entry in ipairs(entries) do
+		local eligible = impl.collect_or_allocate_hint_slots(entry.tier, reserved)
+		local slot = impl.deterministic_slot(eligible, entry.roll)
+		if not slot then return false end
+		reserved[slot] = true
+		table.insert(selected, { slot = slot, tier = entry.tier })
+	end
+
+	for _, reward in ipairs(selected) do
+		if not impl.reveal_hint_slot(reward.slot, nil, true) then return false end
+	end
+
+	-- All coordinates now exist in persistent logical slots, so consuming the
+	-- physical PDA cannot leave the reward transaction half-finished.
+	alife():release(server_pda, true)
+	local names = {}
+	for _, reward in ipairs(selected) do
+		table.insert(names, game.translate_string(stash_pda_tier_text[reward.tier]))
+	end
+	impl.send_detector_news(string.format(
+		game.translate_string("pf_stash_pda_decoded_tiers"),
+		table.concat(names, ", ")
+	))
+	return true
+end
+
+-- Original custom inventory action shared by all four consumable stash PDAs.
+function use_stash_pda(pda)
+	if not impl.require_actor_item(pda) then return false end
+	complete_stash_pda_hack(pda)
+	return false
+end
+
+function impl.record_stash_search(slot)
+	if not slot or not slot.state or slot.state.hint_checked then return false end
+	slot.state.hint_checked = true
+	local counts = impl.get_persistent_state().searched_counts
+	counts[slot.tier] = (tonumber(counts[slot.tier]) or 0) + 1
+	return true
+end
+
+function impl.process_stash_search(slot)
+	if not impl.record_stash_search(slot) then return end
+	impl.try_spawn_ghost_city_note(slot)
+	impl.process_stash_ambush(slot, false)
+	local message = stash_hint_messages[math.random(1, #stash_hint_messages)]
+	if slot.tier == "cyan" then
+		impl.roll_hint("purple", 9, message)
+		impl.roll_hint("red", 1, message)
+	elseif slot.tier == "purple" then
+		impl.roll_hint("orange", 8, message)
+		impl.roll_hint("red", 5, message)
+	elseif slot.tier == "orange" then
+		impl.roll_hint("red", 25, message)
+	end
+end
+
+-- Called from actor_binder with the item's previous owner ID. Dynamic stash
+-- contents can trigger stash-specific rolls; corpses only update their managed
+-- loot state and never reveal coordinates directly.
+function on_actor_item_take(item, previous_owner_id)
+	if not db.actor or level.name() ~= LEVEL_NAME then return end
+	if not SYSTEM_ENABLED then
+		-- Corpse ownership is a separate system. Preserve its take callback while
+		-- avoiding any initialization of the frozen stash-location catalogue.
+		if pf_dynamic_corpses and pf_dynamic_corpses.on_actor_item_take then
+			pf_dynamic_corpses.on_actor_item_take(item, previous_owner_id)
+		end
+		return
+	end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local slot = impl.slot_by_object_id(previous_owner_id)
+	local server_item = item and alife():object(item:id(), true) or nil
+	local section = server_item and server_item:section_name() or (item and item:section())
+	local hacking = rawget(_G, "lz_pda_hacking")
+	local usb_level = hacking and hacking.usb_level_from_section and
+		hacking.usb_level_from_section(section) or nil
+	if usb_level and hacking.register_usb_acquired then
+		hacking.register_usb_acquired(usb_level, item and item:id())
+		if slot and tonumber(slot.state.usb_reserved_level) == tonumber(usb_level) then
+			slot.state.usb_reserved_level = nil
+		end
+	end
+	if slot then
+		impl.apply_stash_item_condition(item, slot.tier)
+		local ghost_city_index = lz_new_mechanics and lz_new_mechanics.ghost_city_note_index and
+			lz_new_mechanics.ghost_city_note_index(section) or nil
+		if ghost_city_index and slot.state.ghost_city_note == ghost_city_index then
+			slot.state.ghost_city_note = nil
+		end
+		local story_index = pf_story_documents.document_index(section)
+		if story_index and slot.state.story_doc == story_index then
+			slot.state.story_doc = nil
+			pf_story_documents.on_document_taken(item)
+		end
+		impl.process_stash_search(slot)
+	else
+		-- Corpses can contain physical consumable PDAs rolled at death or as
+		-- managed loot, but taking an arbitrary item never reveals coordinates.
+		pf_dynamic_corpses.on_actor_item_take(item, previous_owner_id)
+	end
+end
+
+function on_take_item_from_box(box, item)
+	if not box then return end
+	local box_id = box:id()
+	on_actor_item_take(item, box_id)
+	impl.queue_empty_slot_check(impl.slot_by_object_id(box_id))
+end
+
+-- The actor-menu callback fires when an inventory box has actually been
+-- opened. Resolve search-only rolls here, before the player has to transfer an
+-- item. The take callback above remains as an idempotent fallback for engine
+-- or scripted transfers which bypass the ordinary actor menu.
+function on_inventory_box_open(box)
+	if not SYSTEM_ENABLED then return false end
+	if not box or not db.actor or level.name() ~= LEVEL_NAME then return false end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local slot = impl.slot_by_object_id(box:id())
+	if not slot then return false end
+	local server_box = alife():object(box:id(), true)
+	if server_box then
+		impl.materialize_slot_loot(slot, server_box)
+		impl.ensure_hacking_usb(slot, server_box)
+		impl.ensure_ghost_city_note(slot, server_box)
+		impl.apply_slot_item_conditions(server_box, slot)
+	end
+	impl.process_stash_search(slot)
+	return true
+end
+
+-- Reserved integration point for the future legendary tier.
+function on_legendary_stash_searched()
+	if not SYSTEM_ENABLED then return false end
+	return impl.roll_hint("red", 50)
+end
+
+-- Custom inventory action for the reusable hand-radio metal detector.
+function use_metal_detector(detector)
+	if not SYSTEM_ENABLED then return false end
+	if not db.actor or level.name() ~= LEVEL_NAME then return false end
+	if not impl.require_actor_item(detector) then return false end
+	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+	if menu and menu:GetInvBox() then
+		impl.send_detector_news(game.translate_string("lz_nm_close_stash_before_action"))
+		return false
+	end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	impl.find_existing_objects()
+
+	local actor_position = db.actor:position()
+	local nearest_slot = impl.nearest_retrievable_slot(actor_position)
+	if not nearest_slot then impl.detector_no_result() return false end
+
+	local server_box = nearest_slot.id and alife():object(nearest_slot.id, true) or nil
+	if server_box then
+		impl.materialize_slot_loot(nearest_slot, server_box)
+		impl.ensure_hacking_usb(nearest_slot, server_box)
+		impl.ensure_ghost_city_note(nearest_slot, server_box)
+		impl.apply_slot_item_conditions(server_box, nearest_slot)
+	end
+	local box = level.object_by_id(nearest_slot.id)
+	if not box then impl.detector_no_result() return false end
+	impl.try_spawn_ghost_city_note(nearest_slot)
+	local items = {}
+	local function collect_item(_, item) table.insert(items, item) end
+	box:iterate_inventory_box(collect_item, box)
+	if #items == 0 then
+		impl.process_stash_search(nearest_slot)
+		impl.retire_empty_slot(nearest_slot)
+		impl.detector_no_result()
+		return false
+	end
+	impl.record_stash_search(nearest_slot)
+
+	local counts = {}
+	local order = {}
+	for _, item in ipairs(items) do
+		local server_item = alife():object(item:id())
+		local section = server_item and server_item:section_name() or item:section()
+		local ghost_city_index = lz_new_mechanics and lz_new_mechanics.ghost_city_note_index and
+			lz_new_mechanics.ghost_city_note_index(section) or nil
+		if ghost_city_index and nearest_slot.state.ghost_city_note == ghost_city_index then
+			nearest_slot.state.ghost_city_note = nil
+		end
+		if not counts[section] then counts[section] = 0 table.insert(order, section) end
+		counts[section] = counts[section] + 1
+		box:transfer_item(item, db.actor)
+	end
+	local names = {}
+	for _, section in ipairs(order) do
+		local name = impl.item_display_name(section)
+		if counts[section] > 1 then name = name .. " x" .. tostring(counts[section]) end
+		table.insert(names, name)
+	end
+	impl.retire_empty_slot(nearest_slot)
+	impl.send_detector_news(game.translate_string("pf_metal_detector_found") .. " " .. table.concat(names, ", "))
+	return false
+end
+
+function impl.remember_history(slot, old_point_id)
+	local history = slot.state.history
+	table.insert(history, 1, old_point_id)
+	while #history > HISTORY_SIZE do table.remove(history) end
+end
+
+function impl.rotate_slot(slot)
+	local hacking = rawget(_G, "lz_pda_hacking")
+	if slot.state.usb_reserved_level and hacking and
+		hacking.release_usb_reservation then
+		hacking.release_usb_reservation(slot.index)
+	end
+	local reserved = impl.collect_reserved_points()
+	local old_point_id = slot.point.id
+	impl.remember_history(slot, old_point_id)
+	reserved[old_point_id] = true
+	local excluded = {}
+	for _, point_id in ipairs(slot.state.history) do excluded[point_id] = true end
+	local tier_points = {}
+	local all_points = {}
+	for _, other in ipairs(slots) do
+		if other ~= slot and other.point then
+			table.insert(all_points, other.point)
+			if other.tier == slot.tier then table.insert(tier_points, other.point) end
+		end
+	end
+	local point = impl.choose_point(
+		reserved, true, excluded, slot.tier, tier_points, all_points) or
+		impl.choose_point(
+			reserved, false, excluded, slot.tier, tier_points, all_points)
+	if not point then return false end
+	slot.point = point
+	slot.id = nil
+	slot.spawned_at = 0
+	slot.state.point = point.id
+	slot.state.defer_loot = nil
+	slot.state.discovered = false
+	slot.state.depleted = false
+	slot.state.hinted = false
+	slot.state.hint_checked = nil
+	slot.state.ambush_checked = nil
+	slot.state.story_roll_checked = nil
+	slot.state.story_doc = nil
+	slot.state.ghost_city_note = nil
+	slot.state.ghost_city_roll_checked = nil
+	slot.state.usb_roll_checked = nil
+	slot.state.usb_reserved_level = nil
+	slot.state.usb_roll = nil
+	slot.state.container_model = nil
+	slot.state.loot_generation = math.max(
+		0, math.floor(tonumber(slot.state.loot_generation) or 0)) + 1
+	slot.state.loot_manifest = nil
+	slot.conditions_applied = false
+	slot.loot_materialized = false
+	impl.add_slot_to_grid(slot)
+	return true
+end
+
+function impl.update_slot(slot, actor_position, allow_materialize)
+	if not slot.point then return false, false end
+	local point_distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
+	local materialized = false
+
+	local tier = tier_data[slot.tier]
+	local available = not tier.hint_required or slot.state.hinted
+	local should_materialize = point_distance_sqr <= MATERIALIZE_DISTANCE_SQR or
+		slot.state.hinted
+	if not slot.id and not slot.state.depleted and available and allow_materialize and
+		should_materialize then
+		materialized = impl.spawn_slot(slot)
+	end
+
+	local box = slot.id and alife():object(slot.id, true) or nil
+	if slot.id and not box then
+		slot.id = nil
+		slot.loot_materialized = false
+		slot.state.defer_loot = nil
+	end
+	if box and not slot.state.depleted then
+		impl.ensure_hacking_usb(slot, box)
+		impl.ensure_ghost_city_note(slot, box)
+		if slot.loot_materialized then impl.apply_slot_item_conditions(box, slot) end
+		local marker_type = tier.marker
+		if not slot.state.discovered and not tier.hint_required and
+			point_distance_sqr < tier.discovery_distance_sqr then
+			slot.state.discovered = true
+			impl.try_assign_random_story_document(slot)
+		end
+		if slot.state.discovered and level.map_has_object_spot(slot.id, marker_type) == 0 then
+			level.map_add_object_spot_ser(slot.id, marker_type, SPOT_HINT)
+		end
+		if slot.loot_materialized and
+			time_global() - slot.spawned_at >= EMPTY_CHECK_DELAY_MS and not impl.has_items(box) then
+			impl.retire_empty_slot(slot)
+			return false, materialized
+		end
+		if slot.state.discovered then return true, materialized end
+	end
+
+	if slot.state.depleted and point_distance_sqr >= RETIRE_DISTANCE_SQR then
+		if slot.id then impl.release_object(slot.id) slot.id = nil end
+		slot.loot_materialized = false
+		impl.rotate_slot(slot)
+	end
+	return false, materialized
+end
+
+function update()
+	if not db.actor or level.name() ~= LEVEL_NAME then return end
+	local now = time_global()
+	impl.update_fixed_pda_rewards(now)
+	if not SYSTEM_ENABLED then return end
+	impl.update_pending_empty_slots(now)
+	impl.update_strange_ambush_targets(now)
+	impl.update_active_metal_detector(now)
+	if now < next_check then return end
+	next_check = now + CHECK_INTERVAL_MS
+	local hacking = rawget(_G, "lz_pda_hacking")
+	if hacking and hacking.scan_actor_usb_inventory then
+		hacking.scan_actor_usb_inventory()
+	end
+
+	impl.build_candidate_indexes()
+	impl.cleanup_legacy_stashes()
+	if #slots == 0 then impl.initialize_slots() end
+	impl.find_existing_objects()
+	local actor_position = db.actor:position()
+	local current_physical = impl.retire_far_undiscovered(actor_position)
+	impl.cleanup_checked_sources()
+	local discovered_any = false
+	local materialization_budget = MAX_MATERIALIZATIONS_PER_UPDATE
+	for _, slot in ipairs(slots) do
+		local was_discovered = slot.state.discovered
+		local allow_materialize = materialization_budget > 0 and
+			current_physical < MAX_PHYSICAL_STASHES
+		local is_discovered, materialized = impl.update_slot(
+			slot, actor_position, allow_materialize
+		)
+		if materialized then
+			materialization_budget = materialization_budget - 1
+			current_physical = current_physical + 1
+		end
+		if is_discovered and not was_discovered then discovered_any = true end
+	end
+	if discovered_any then news_manager.send_tip(db.actor, DISCOVERY_MESSAGE, nil, "pf_stash", nil, nil) end
+end
+
+function impl.collect_qa_preview_objects()
+	local previews = {}
+	for _, object in alife():objects() do
+		if object:section_name() == QA_PREVIEW_SECTION then
+			table.insert(previews, object)
+		end
+	end
+	return previews
+end
+
+function impl.clear_legacy_qa_stash_markers()
+	for _, object in alife():objects() do
+		if stash_sections[object:section_name()] and
+			level.map_has_object_spot(object.id, QA_ALL_STASH_MARKER) ~= 0 then
+			level.map_remove_object_spot(object.id, QA_ALL_STASH_MARKER)
+		end
+	end
+end
+
+function impl.toggle_qa_extra_markers(show)
+	local count = 0
+	for _, object in alife():objects() do
+		if qa_overlay_extra_stash_sections[object:section_name()] then
+			count = count + 1
+			if show and level.map_has_object_spot(object.id, QA_ALL_STASH_MARKER) == 0 then
+				level.map_add_object_spot_ser(object.id, QA_ALL_STASH_MARKER, SPOT_HINT)
+			elseif not show and
+				level.map_has_object_spot(object.id, QA_ALL_STASH_MARKER) ~= 0 then
+				level.map_remove_object_spot(object.id, QA_ALL_STASH_MARKER)
+			end
+		end
+	end
+	return count
+end
+
+function impl.spawn_qa_preview(slot)
+	if not slot or not slot.point then return nil end
+	local point = impl.stash_object_point(slot.point)
+	local position = vector():set(point.position[1], point.position[2], point.position[3])
+	local level_vertex_id = point.level_vertex_id or level.vertex_id(position)
+	local game_vertex_id = point.game_vertex_id or db.actor:game_vertex_id()
+	local preview = alife():create(
+		QA_PREVIEW_SECTION, position, level_vertex_id, game_vertex_id)
+	if not preview then return nil end
+	preview.angle = vector():set(0, math.rad(tonumber(point.yaw) or 0), 0)
+	local tier = tier_data[slot.tier]
+	if tier then level.map_add_object_spot_ser(preview.id, tier.marker, SPOT_HINT) end
+	return preview
+end
+
+-- QA-only PDA overlay. It uses separate empty preview anchors rather than
+-- production stash objects, so showing all current tier-coloured markers cannot
+-- roll loot, change discovery state or interact with normal streaming limits.
+function debug_toggle_all_physical_stash_markers()
+	if not db.actor or level.name() ~= LEVEL_NAME then return false, 0 end
+	impl.clear_legacy_qa_stash_markers()
+	local previews = impl.collect_qa_preview_objects()
+	if #previews > 0 then
+		local count = #previews + impl.toggle_qa_extra_markers(false)
+		for _, preview in ipairs(previews) do impl.release_object(preview.id) end
+		return false, count
+	end
+
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local count = 0
+	for _, slot in ipairs(slots) do
+		if slot.point and not slot.state.depleted and impl.spawn_qa_preview(slot) then
+			count = count + 1
+		end
+	end
+	count = count + impl.toggle_qa_extra_markers(true)
+	return count > 0, count
+end
+
+-- Read-only QA snapshot used by the teleport tool. Coordinates come from the
+-- selected starting and extra hinted stashes and never create or rotate a point.
+function debug_active_stash_points()
+	if not db.actor or level.name() ~= LEVEL_NAME then return {} end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local result = {}
+	for _, slot in ipairs(slots) do
+		if slot.point then
+			table.insert(result, {
+				slot_index = slot.index,
+				x = slot.point.position[1],
+				y = slot.point.position[2],
+				z = slot.point.position[3]
+			})
+		end
+	end
+	return result
+end
+
+-- Lifetime search total for the PDA statistics screen. The one-off personal
+-- story cache is a real legendary stash, but it is not one of the rotating
+-- slots, so include its existing completion flag in the orange total.
+function get_searched_stash_count(tier)
+	if not tier_data[tier] then return 0 end
+	local count = tonumber(impl.get_persistent_state().searched_counts[tier]) or 0
+	if tier == "orange" and db.actor and
+		db.actor:has_info("pf_story_legendary_searched") then
+		count = count + 1
+	end
+	return count
+end
+
+function reset()
+	persistent_state = nil
+	slots = {}
+	pending_empty_slots = {}
+	next_check = 0
+	searched_existing = false
+	legacy_cleanup_done = false
+	old_pstor_cleaned = false
+	state.slot_grid = {}
+	state.slot_grid_point_ids = {}
+	next_detector_pulse = 0
+	detector_pulse_sound = nil
+	state.loot_rng = nil
+end

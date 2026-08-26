@@ -1,0 +1,1192 @@
+local chat_singleton = nil
+
+local STATUS_TEXT = {
+    stopped = "pf_irc_status_offline",
+    authorizing = "pf_irc_status_authorizing",
+    starting = "pf_irc_status_starting",
+    connecting = "pf_irc_status_connecting",
+    tls = "pf_irc_status_tls",
+    registered = "pf_irc_status_registered",
+    verifying_channel = "pf_irc_status_verifying",
+    joined = "pf_irc_status_joined",
+    ready = "pf_irc_status_online",
+    disconnected = "pf_irc_status_disconnected",
+    reconnecting = "pf_irc_status_reconnecting",
+    blocked = "pf_irc_status_blocked",
+    error = "pf_irc_status_error"
+}
+
+local ERROR_TEXT = {
+    nick_required = "pf_irc_error_nick_required",
+    nick_invalid = "pf_irc_error_nick_invalid",
+    profile_missing = "pf_irc_error_profile",
+    profile_name_invalid = "pf_irc_error_profile",
+    address_invalid = "pf_irc_error_address",
+    port_invalid = "pf_irc_error_port",
+    channel_invalid = "pf_irc_error_channel",
+    key_invalid = "pf_irc_error_key",
+    encoding_invalid = "pf_irc_error_encoding",
+    required_modes_invalid = "pf_irc_error_modes",
+    bad_channel_key = "pf_irc_error_bad_key",
+    channel_unregistered = "pf_irc_error_unregistered",
+    channel_unverified = "pf_irc_error_unverified",
+    required_modes_missing = "pf_irc_error_mode_guard",
+    command_unsupported = "pf_irc_error_command",
+    channel_not_ready = "pf_irc_error_not_ready",
+    message_too_long = "pf_irc_error_too_long",
+    helper_missing = "pf_irc_error_helper_missing",
+    chat_disabled = "pf_irc_error_disabled",
+    private_target_self = "pf_irc_error_private_self",
+    private_dialog_missing = "pf_irc_error_private_missing",
+    user_not_found = "pf_irc_error_user_not_found",
+    identity_missing = "pf_irc_error_identity_missing",
+    private_dialog_required = "pf_irc_error_private_required"
+}
+
+local function translated(id)
+    return game.translate_string(id)
+end
+
+local function error_text(code, detail)
+    local id = ERROR_TEXT[tostring(code or "")]
+    if id then return translated(id) end
+    detail = tostring(detail or "")
+    if detail ~= "" then return detail end
+    return translated("pf_irc_error_connection")
+end
+
+local NICK_COLORS = {
+    GetARGB(255, 105, 190, 210), GetARGB(255, 125, 200, 120),
+    GetARGB(255, 215, 165, 75), GetARGB(255, 190, 125, 195),
+    GetARGB(255, 115, 150, 220), GetARGB(255, 215, 120, 105),
+    GetARGB(255, 165, 190, 95), GetARGB(255, 205, 145, 85),
+    GetARGB(255, 105, 200, 170), GetARGB(255, 170, 145, 215)
+}
+local MENTION_COLOR = GetARGB(255, 235, 190, 85)
+
+local function truncate_utf8(value, max_characters)
+    value = tostring(value or "")
+    local byte_index = 1
+    local characters = {}
+    while byte_index <= #value and #characters < max_characters do
+        local byte = value:byte(byte_index)
+        local step = byte >= 240 and 4 or (byte >= 224 and 3 or (byte >= 192 and 2 or 1))
+        characters[#characters + 1] = value:sub(byte_index, math.min(#value, byte_index + step - 1))
+        byte_index = byte_index + step
+    end
+    if byte_index <= #value and #characters > 0 then
+        while #characters > math.max(1, max_characters - 3) do table.remove(characters) end
+        characters[#characters + 1] = "..."
+    end
+    return table.concat(characters)
+end
+
+local function nick_color(nick)
+    local hash = 5381
+    nick = tostring(nick or ""):lower()
+    for index = 1, #nick do hash = (hash * 33 + string.byte(nick, index)) % 2147483647 end
+    return NICK_COLORS[(hash % #NICK_COLORS) + 1]
+end
+
+local function signature_field(value)
+    value = tostring(value or "")
+    return tostring(#value) .. ":" .. value
+end
+
+local function message_list_signature(messages)
+    local parts = { tostring(#messages) }
+    for _, message in ipairs(messages) do
+        parts[#parts + 1] = table.concat({
+            signature_field(message.kind), signature_field(message.nick),
+            signature_field(message.identity), signature_field(message.text),
+            message.own == true and "1" or "0", message.mentioned == true and "1" or "0",
+            signature_field(message.time), signature_field(message.date)
+        }, "|")
+    end
+    return table.concat(parts, "\30")
+end
+
+local function conversation_list_signature(conversations)
+    local parts = { tostring(#conversations) }
+    for _, conversation in ipairs(conversations) do
+        parts[#parts + 1] = table.concat({
+            signature_field(conversation.key), signature_field(conversation.nick),
+            signature_field(conversation.identity), signature_field(conversation.last_message),
+            tostring(tonumber(conversation.unread) or 0),
+            conversation.active == true and "1" or "0",
+            conversation.public == true and "1" or "0"
+        }, "|")
+    end
+    return table.concat(parts, "\30")
+end
+
+class "pf_irc_message_row" (CUIScriptWnd)
+
+local function same_message_group(previous, current)
+    if not previous or previous.kind ~= "chat" or current.kind ~= "chat" then return false end
+    local previous_nick = tostring(previous.nick or ""):lower()
+    local current_nick = tostring(current.nick or ""):lower()
+    if previous_nick == "" or previous_nick ~= current_nick then return false end
+    local previous_identity = tostring(previous.identity or ""):lower()
+    local current_identity = tostring(current.identity or ""):lower()
+    return previous_identity == "" or current_identity == "" or previous_identity == current_identity
+end
+
+function pf_irc_message_row:__init(message, grouped) super()
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_irc_chat.xml")
+    xml:InitWindow("message_row", 0, self)
+    self.time = xml:InitTextWnd("message_row:time", self)
+    self.nick = xml:InitTextWnd("message_row:nick", self)
+    -- Services such as ChanServ may arrive through the bridge with kind
+    -- "system", but a non-empty sender still makes them ordinary chat rows.
+    local has_sender = tostring(message.nick or "") ~= ""
+    local is_system = message.kind == "system" and not has_sender
+    self.body = xml:InitTextWnd(is_system and "message_row:system_body" or "message_row:body", self)
+    local row_width = math.max(20, math.floor(self:GetWidth()))
+    local show_header = has_sender and not grouped
+    self.time:SetText(has_sender and (show_header and (message.time or "") or "") or (message.time or ""))
+    local nick_text = show_header and (message.nick .. ":") or ""
+    self.nick:SetText(nick_text)
+    local body_x = 44
+    local body_y = show_header and 18 or 0
+    local body_width = math.max(20, row_width - body_x - 4)
+    self.time:SetWndSize(vector2():set(42, 18))
+    self.nick:SetWndSize(vector2():set(body_width, 18))
+    self.body:SetWndPos(vector2():set(body_x, body_y))
+    self.body:SetWndSize(vector2():set(body_width, 20))
+    self.body:SetText(message.text or "")
+    self.body:AdjustHeightToText()
+    local body_height = math.max(20, math.ceil(self.body:GetHeight()))
+    local row_height = body_y + body_height
+    self.body:SetWndSize(vector2():set(body_width, body_height))
+    self:SetWndSize(vector2():set(row_width, row_height))
+    if message.nick and message.nick ~= "" then self.nick:SetTextColor(nick_color(message.nick)) end
+    if message.kind == "error" then self.body:SetTextColor(GetARGB(255, 235, 90, 70)) end
+    if message.kind == "warning" then self.body:SetTextColor(GetARGB(255, 235, 180, 70)) end
+    if is_system then self.body:SetTextColor(GetARGB(255, 190, 195, 192)) end
+    if message.mentioned == true then
+        self.nick:SetTextColor(MENTION_COLOR)
+        self.body:SetTextColor(MENTION_COLOR)
+    end
+    self:SetAutoDelete(false)
+    self:Show(true)
+    self:Enable(true)
+end
+
+function pf_irc_message_row:__finalize()
+end
+
+class "pf_irc_dialog_row" (CUIScriptWnd)
+
+function pf_irc_dialog_row:__init(owner, conversation) super()
+    self.owner = owner
+    self.key = conversation.key
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_irc_chat.xml")
+    xml:InitWindow("dialog_row", 0, self)
+    self.selection = xml:InitStatic("dialog_row:selection", self)
+    -- Use actual text windows. CUIStatic::SetTextColor did not reliably tint
+    -- these embedded labels and made them nearly black on the PDA background.
+    self.title = xml:InitTextWnd("dialog_row:title", self)
+    self.preview = xml:InitTextWnd("dialog_row:preview", self)
+    self.separator = xml:InitStatic("dialog_row:separator", self)
+    self.select_button = xml:Init3tButton("dialog_row:select", self)
+    local title = conversation.public and translated("pf_irc_public_channel") or tostring(conversation.nick or "")
+    local unread = tonumber(conversation.unread) or 0
+    title = truncate_utf8(title, unread > 0 and 15 or 19)
+    if unread > 0 then title = string.format("%s (%d)", title, unread) end
+    self.active = conversation.active == true
+    self.title:SetText(title)
+    if conversation.public then
+        self.title:SetTextColor(unread > 0 and GetARGB(255, 225, 165, 70) or
+            GetARGB(255, 190, 195, 192))
+    else
+        -- Match the participant list's stable colour for this nickname.
+        self.title:SetTextColor(nick_color(conversation.nick))
+    end
+    self.preview:SetText(truncate_utf8(conversation.last_message, 20))
+    self.preview:SetTextColor(unread > 0 and GetARGB(255, 215, 218, 212) or
+        GetARGB(255, 165, 172, 170))
+    self.selection:Show(self.active)
+    self:Register(self.select_button, "select_dialog")
+    self:AddCallback("select_dialog", ui_events.BUTTON_CLICKED, self.Select, self)
+    self:SetAutoDelete(false)
+    self:Show(true)
+    self:Enable(true)
+end
+
+function pf_irc_dialog_row:__finalize()
+end
+
+function pf_irc_dialog_row:Update()
+    CUIScriptWnd.Update(self)
+    self.selection:Show(self.active or self.select_button:IsCursorOverWindow())
+end
+
+function pf_irc_dialog_row:Select()
+    self.owner:SelectConversation(self.key)
+end
+
+class "pf_irc_user_row" (CUIScriptWnd)
+
+local function participant_row_key(user)
+    local identity = tostring(user and user.identity or ""):lower()
+    if identity ~= "" then return "identity:" .. identity end
+    return "nick:" .. tostring(user and user.nick or ""):lower()
+end
+
+function pf_irc_user_row:__init(owner, user) super()
+    self.owner = owner
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_irc_chat.xml")
+    xml:InitWindow("user_row", 0, self)
+    self.presence = xml:InitStatic("user_row:presence", self)
+    self.nick = xml:InitTextWnd("user_row:nick", self)
+    self.mute_button = xml:Init3tButton("user_row:mute", self)
+    self.unmute_button = xml:Init3tButton("user_row:unmute", self)
+    self.query_button = xml:Init3tButton("user_row:query", self)
+    self:Register(self.mute_button, "mute_user")
+    self:Register(self.unmute_button, "unmute_user")
+    self:Register(self.query_button, "query_user")
+    self:AddCallback("mute_user", ui_events.BUTTON_CLICKED, self.ToggleMute, self)
+    self:AddCallback("unmute_user", ui_events.BUTTON_CLICKED, self.ToggleMute, self)
+    self:AddCallback("query_user", ui_events.BUTTON_CLICKED, self.OpenQuery, self)
+    self:ApplyUser(user)
+    self:SetAutoDelete(false)
+    self:Show(true)
+    self:Enable(true)
+end
+
+function pf_irc_user_row:__finalize()
+end
+
+function pf_irc_user_row:Update()
+    CUIScriptWnd.Update(self)
+end
+
+function pf_irc_user_row:ApplyUser(user)
+    self.row_key = participant_row_key(user)
+    self.identity = tostring(user.identity or "")
+    self.user_nick = tostring(user.nick or "")
+    self.muted = user.muted == true
+
+    local prefix = tostring(user.prefix or "")
+    self.nick:SetText(prefix .. self.user_nick)
+    local presence_color = GetARGB(255, 74, 186, 94)
+    if user.presence == "away" then presence_color = GetARGB(255, 215, 155, 65)
+    elseif user.presence == "offline" then presence_color = GetARGB(255, 205, 65, 55) end
+    self.presence:SetTextureColor(presence_color)
+    self.nick:SetTextColor(nick_color(self.user_nick))
+    if self.muted then
+        self.presence:SetTextureColor(GetARGB(255, 90, 95, 96))
+        self.nick:SetTextColor(GetARGB(255, 105, 110, 112))
+    end
+    self.mute_button:Show(not self.muted)
+    self.mute_button:Enable(not self.muted)
+    self.unmute_button:Show(self.muted)
+    self.unmute_button:Enable(self.muted)
+end
+
+function pf_irc_user_row:ToggleMute()
+    if self.identity == "" then return end
+    self.owner:ReleaseInlineInput()
+    if self.muted then pf_irc_chat.unmute(self.identity) else pf_irc_chat.mute(self.identity, self.user_nick) end
+    self.owner:Refresh(true)
+end
+
+function pf_irc_user_row:OpenQuery()
+    self.owner:OpenQuery(self.user_nick, self.identity)
+end
+
+class "pf_irc_chat_tab" (CUIScriptWnd)
+
+function pf_irc_chat_tab:__init() super()
+    self.last_revision = -1
+    self.last_page = ""
+    self.last_layout = ""
+    self.login_initialized = false
+    self.message_rows = {}
+    self.user_rows = {}
+    self.dialog_rows = {}
+    self.last_message_signature = nil
+    self.last_dialog_signature = nil
+    self.pending_reset_profile = nil
+    self.last_input_scope = nil
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_irc_chat.xml")
+    -- Use the same stock PDA frame hierarchy as the Direction Finder tab.
+    -- Keeping the background as frames also preserves the native 4:3/16:9
+    -- border geometry instead of stretching one add-on-owned bitmap.
+    xml:InitFrame("frame1", self)
+    xml:InitFrame("frame2", self)
+    xml:InitFrame("border", self)
+
+    self.login = xml:InitStatic("login", self)
+    xml:InitTextWnd("login:hint", self.login)
+    xml:InitTextWnd("login:remember", self.login)
+    xml:InitTextWnd("login:auto_login_label", self.login)
+    -- Text fields are deliberately CUIStatic displays. A native CUIEditBox in
+    -- this nested PDA tab leaves a stale parent keyboard-capture pointer after
+    -- F9. The add-on-owned hitbox and pf_irc_input_field edit the same visible
+    -- field without entering the engine capture chain.
+    self.login_input = xml:InitStatic("login:nick", self.login)
+    self.login_input_hitbox = xml:Init3tButton("login:nick_hitbox", self.login)
+    self.authorize_button = xml:Init3tButton("login:authorize", self.login)
+    self.auto_login = xml:InitCheck("login:auto_login", self.login)
+    self.login_result = xml:InitTextWnd("login:result", self.login)
+    self:Register(self.login_input_hitbox, "login_input_hitbox")
+    self:Register(self.authorize_button, "authorize")
+    self:Register(self.auto_login, "auto_login")
+    self:AddCallback("login_input_hitbox", ui_events.BUTTON_CLICKED, self.BeginLoginInput, self)
+    self:AddCallback("authorize", ui_events.BUTTON_CLICKED, self.AuthorizeFromButton, self)
+    self:AddCallback("auto_login", ui_events.BUTTON_CLICKED, self.SaveAutoLoginPreference, self)
+
+    self.chat = xml:InitStatic("chat", self)
+    self.disconnect_button = xml:Init3tButton("chat:disconnect", self.chat)
+    xml:InitTextWnd("chat:status_label", self.chat)
+    self.status_value = xml:InitTextWnd("chat:status_value", self.chat)
+    self.actual_nick = xml:InitTextWnd("chat:actual_nick", self.chat)
+    self.topic = xml:InitTextWnd("chat:topic", self.chat)
+    xml:InitFrameLine("chat:private_divider", self.chat)
+    xml:InitFrameLine("chat:users_divider", self.chat)
+    xml:InitFrameLine("chat:input_divider", self.chat)
+    xml:InitStatic("chat:private_panel", self.chat)
+    xml:InitTextWnd("chat:private_caption", self.chat)
+    self.private_dialogs = xml:InitScrollView("chat:private_dialogs", self.chat)
+    xml:InitStatic("chat:message_panel", self.chat)
+    self.messages = xml:InitScrollView("chat:messages", self.chat)
+    xml:InitStatic("chat:user_panel", self.chat)
+    self.users_caption = xml:InitTextWnd("chat:users_caption", self.chat)
+    self.users = xml:InitScrollView("chat:users", self.chat)
+    self.input = xml:InitStatic("chat:input", self.chat)
+    self.chat_input_hitbox = xml:Init3tButton("chat:input_hitbox", self.chat)
+    xml:InitFrameLine("chat:input_layout_divider", self.chat)
+    self.layout = xml:InitTextWnd("chat:layout", self.chat)
+    xml:InitFrameLine("chat:layout_send_divider", self.chat)
+    self.send_button = xml:Init3tButton("chat:send", self.chat)
+    xml:InitFrameLine("chat:send_commands_divider", self.chat)
+    self.commands_button = xml:Init3tButton("chat:commands", self.chat)
+    self:Register(self.disconnect_button, "disconnect")
+    self:Register(self.chat_input_hitbox, "chat_input_hitbox")
+    self:Register(self.send_button, "chat_send")
+    self:Register(self.commands_button, "chat_commands")
+    self:AddCallback("disconnect", ui_events.BUTTON_CLICKED, self.DisconnectFromButton, self)
+    self:AddCallback("chat_input_hitbox", ui_events.BUTTON_CLICKED, self.BeginChatInput, self)
+    self:AddCallback("chat_send", ui_events.BUTTON_CLICKED, self.SendFromButton, self)
+    self:AddCallback("chat_commands", ui_events.BUTTON_CLICKED, self.ShowCommandsFromButton, self)
+
+    -- The gear is attached after both page containers so it remains clickable
+    -- on the login and chat pages alike.
+    self.settings_button = xml:Init3tButton("settings_button", self)
+    self:Register(self.settings_button, "chat_settings")
+    self:AddCallback("chat_settings", ui_events.BUTTON_CLICKED, self.ShowSettingsFromButton, self)
+
+    self.settings_shade = xml:InitStatic("settings_shade", self)
+    self.settings = xml:InitStatic("settings", self)
+    xml:InitTextWnd("settings:caption", self.settings)
+    xml:InitFrameLine("settings:caption_line", self.settings)
+    -- ui_noise is a regular single texture, not a nine-slice frame texture.
+    -- Initializing these decorative panels as CUIFrameWindow makes IX-Ray look
+    -- for nonexistent *_back / corner fragments and raises leftTop/rightTop
+    -- assertions when the settings page is opened.
+    xml:InitStatic("settings:connection_panel", self.settings)
+    xml:InitStatic("settings:public_panel", self.settings)
+    xml:InitStatic("settings:private_panel", self.settings)
+    local labels = { "profile_label", "address_label", "channel_label", "port_label", "tls_label",
+        "key_label", "encoding_label", "nick_label", "guard_label", "modes_label", "note" }
+    for _, name in ipairs(labels) do xml:InitTextWnd("settings:" .. name, self.settings) end
+    local notification_labels = {
+        "public_notifications_caption", "private_notifications_caption",
+        "public_notify_label", "public_sound_label", "private_notify_label", "private_sound_label",
+        "channel_show_label", "key_show_label"
+    }
+    for _, name in ipairs(notification_labels) do xml:InitTextWnd("settings:" .. name, self.settings) end
+    self.profile = xml:InitStatic("settings:profile", self.settings)
+    self.address = xml:InitStatic("settings:address", self.settings)
+    self.channel = xml:InitStatic("settings:channel", self.settings)
+    self.channel_mask = xml:InitStatic("settings:channel_mask", self.settings)
+    self.port = xml:InitStatic("settings:port", self.settings)
+    self.tls = xml:InitCheck("settings:tls", self.settings)
+    self.key = xml:InitStatic("settings:key", self.settings)
+    self.key_mask = xml:InitStatic("settings:key_mask", self.settings)
+    self.encoding = xml:InitStatic("settings:encoding", self.settings)
+    self.nick = xml:InitStatic("settings:nick", self.settings)
+    self.guard = xml:InitCheck("settings:guard", self.settings)
+    self.modes = xml:InitStatic("settings:modes", self.settings)
+    self.public_notify = xml:InitCheck("settings:public_notify", self.settings)
+    self.public_sound = xml:InitCheck("settings:public_sound", self.settings)
+    self.private_notify = xml:InitCheck("settings:private_notify", self.settings)
+    self.private_sound = xml:InitCheck("settings:private_sound", self.settings)
+    self.channel_show = xml:InitCheck("settings:channel_show", self.settings)
+    self.key_show = xml:InitCheck("settings:key_show", self.settings)
+    self.profile_hitbox = xml:Init3tButton("settings:profile_hitbox", self.settings)
+    self.address_hitbox = xml:Init3tButton("settings:address_hitbox", self.settings)
+    self.channel_hitbox = xml:Init3tButton("settings:channel_hitbox", self.settings)
+    self.port_hitbox = xml:Init3tButton("settings:port_hitbox", self.settings)
+    self.key_hitbox = xml:Init3tButton("settings:key_hitbox", self.settings)
+    self.encoding_hitbox = xml:Init3tButton("settings:encoding_hitbox", self.settings)
+    self.nick_hitbox = xml:Init3tButton("settings:nick_hitbox", self.settings)
+    self.modes_hitbox = xml:Init3tButton("settings:modes_hitbox", self.settings)
+    self.settings_result = xml:InitTextWnd("settings:result", self.settings)
+    self.settings_save = xml:Init3tButton("settings:save", self.settings)
+    self.settings_reset = xml:Init3tButton("settings:reset", self.settings)
+    self.settings_close = xml:Init3tButton("settings:close", self.settings)
+    local setting_fields = {
+        { "settings_profile", self.profile, self.profile_hitbox, 32, 46, self.FocusSettingsProfile },
+        { "settings_address", self.address, self.address_hitbox, 253, 46, self.FocusSettingsAddress },
+        { "settings_channel", self.channel, self.channel_hitbox, 64, 46, self.FocusSettingsChannel },
+        { "settings_port", self.port, self.port_hitbox, 5, 12, self.FocusSettingsPort },
+        { "settings_key", self.key, self.key_hitbox, 64, 46, self.FocusSettingsKey },
+        { "settings_encoding", self.encoding, self.encoding_hitbox, 20, 46, self.FocusSettingsEncoding },
+        { "settings_nick", self.nick, self.nick_hitbox, 30, 46, self.FocusSettingsNick },
+        { "settings_modes", self.modes, self.modes_hitbox, 20, 46, self.FocusSettingsModes }
+    }
+    for _, item in ipairs(setting_fields) do
+        self:Register(item[3], item[1] .. "_hitbox")
+        self:AddCallback(item[1] .. "_hitbox", ui_events.BUTTON_CLICKED, item[6], self)
+    end
+    self:Register(self.tls, "settings_tls")
+    self:Register(self.guard, "settings_guard")
+    self:Register(self.channel_show, "settings_channel_show")
+    self:Register(self.key_show, "settings_key_show")
+    local notification_checks = {
+        { self.public_notify, "settings_public_notify" },
+        { self.public_sound, "settings_public_sound" },
+        { self.private_notify, "settings_private_notify" },
+        { self.private_sound, "settings_private_sound" }
+    }
+    for _, item in ipairs(notification_checks) do
+        self:Register(item[1], item[2])
+        self:AddCallback(item[2], ui_events.CHECK_BUTTON_SET, self.ReleaseInlineInput, self)
+        self:AddCallback(item[2], ui_events.CHECK_BUTTON_RESET, self.ReleaseInlineInput, self)
+    end
+    self:Register(self.settings_save, "settings_save")
+    self:Register(self.settings_reset, "settings_reset")
+    self:Register(self.settings_close, "settings_close")
+    self:AddCallback("settings_tls", ui_events.CHECK_BUTTON_SET, self.ReleaseInlineInput, self)
+    self:AddCallback("settings_tls", ui_events.CHECK_BUTTON_RESET, self.ReleaseInlineInput, self)
+    self:AddCallback("settings_guard", ui_events.CHECK_BUTTON_SET, self.ReleaseInlineInput, self)
+    self:AddCallback("settings_guard", ui_events.CHECK_BUTTON_RESET, self.ReleaseInlineInput, self)
+    self:AddCallback("settings_channel_show", ui_events.BUTTON_CLICKED, self.ToggleSensitiveSettings, self)
+    self:AddCallback("settings_key_show", ui_events.BUTTON_CLICKED, self.ToggleSensitiveSettings, self)
+    self:AddCallback("settings_save", ui_events.BUTTON_CLICKED, self.SaveSettingsFromButton, self)
+    self:AddCallback("settings_reset", ui_events.BUTTON_CLICKED, self.AskResetSettingsFromButton, self)
+    self:AddCallback("settings_close", ui_events.BUTTON_CLICKED, self.HideSettingsFromButton, self)
+    self.reset_confirm = CUIMessageBoxEx()
+    self:Register(self.reset_confirm, "reset_confirm")
+    self:AddCallback("reset_confirm", ui_events.MESSAGE_BOX_YES_CLICKED, self.ConfirmResetSettings, self)
+
+    -- CUIPropertiesBox::Show is misbound in this IX-Ray build: its native
+    -- Frect/Fvector2 method is exported to Lua as (int, int), while forcing the
+    -- base CUIWindow::Show path ends in a pure-virtual call. The IRC command
+    -- list is intentionally a normal add-on-owned panel instead.
+    self.command_menu = xml:InitStatic("command_popup", self)
+    local command_menu_position = self.command_menu:GetWndPos()
+    self.command_menu_x = command_menu_position.x
+    self.command_menu_bottom_y = command_menu_position.y + self.command_menu:GetHeight()
+    self.command_clear = xml:Init3tButton("command_popup:clear", self.command_menu)
+    self.command_query = xml:Init3tButton("command_popup:query", self.command_menu)
+    self.command_mute = xml:Init3tButton("command_popup:mute", self.command_menu)
+    self.command_unmute = xml:Init3tButton("command_popup:unmute", self.command_menu)
+    self.command_close = xml:Init3tButton("command_popup:close", self.command_menu)
+    self.command_channel = xml:Init3tButton("command_popup:channel", self.command_menu)
+    self.command_buttons = {
+        clear = self.command_clear,
+        query = self.command_query,
+        mute = self.command_mute,
+        unmute = self.command_unmute,
+        close = self.command_close,
+        channel = self.command_channel
+    }
+    self.command_templates = {}
+    local command_buttons = {
+        { self.command_clear, "command_clear", self.InsertClearCommand },
+        { self.command_query, "command_query", self.InsertQueryCommand },
+        { self.command_mute, "command_mute", self.InsertMuteCommand },
+        { self.command_unmute, "command_unmute", self.InsertUnmuteCommand },
+        { self.command_close, "command_close", self.InsertCloseCommand },
+        { self.command_channel, "command_channel", self.InsertChannelCommand }
+    }
+    for _, item in ipairs(command_buttons) do
+        self:Register(item[1], item[2])
+        self:AddCallback(item[2], ui_events.BUTTON_CLICKED, item[3], self)
+    end
+    self.command_menu:Show(false)
+    self.command_menu:Enable(false)
+
+    self.input_fields = pf_irc_input_field.create()
+    self.input_fields:bind("login", "login", self.login_input, self.login_input_hitbox, 30, 30)
+    self.input_fields:bind("chat", "chat", self.input, self.chat_input_hitbox, 500, 68)
+    for _, item in ipairs(setting_fields) do
+        self.input_fields:bind(item[1], "settings", item[2], item[3], item[4], item[5])
+    end
+    self.settings:Show(false)
+    self.settings_shade:Show(false)
+    self:SyncLoginFromProfile()
+    self:Refresh(true)
+end
+
+function pf_irc_chat_tab:__finalize()
+    if self.input_fields then self.input_fields:shutdown() end
+end
+
+function pf_irc_chat_tab:Update()
+    CUIScriptWnd.Update(self)
+    self:Pulse()
+end
+
+function pf_irc_chat_tab:Pulse()
+    local state = pf_irc_chat.get_state()
+    if state.revision ~= self.last_revision then self:Refresh(false) end
+    local scope = self:InputScope()
+    if scope ~= self.last_input_scope then
+        self:ReleaseInlineInput()
+        self.last_input_scope = scope
+        if scope == "login" then self:BeginLoginInput()
+        elseif scope == "chat" then self:BeginChatInput() end
+    end
+    if self.input_fields then
+        local action, field_name = self.input_fields:update(scope)
+        if action then self:HandleInlineInputAction(action, field_name) end
+    end
+    local layout = pf_irc_input_field.keyboard_layout()
+    if layout ~= self.last_layout then
+        self.last_layout = layout
+        self.layout:SetText(layout)
+    end
+end
+
+function pf_irc_chat_tab:InputScope()
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if not pda_menu or pda_menu:GetActiveSection() ~= "eptChat" then return nil end
+    local shown_ok, shown = pcall(function() return pda_menu:IsShown() end)
+    if shown_ok and not shown then return nil end
+    if self.settings:IsShown() then return "settings" end
+    if self.login:IsShown() then return "login" end
+    if self.chat:IsShown() then return "chat" end
+    return nil
+end
+
+function pf_irc_chat_tab:BeginLoginInput()
+    if self.settings:IsShown() or self.login:IsShown() ~= true then return end
+    self.input_fields:focus("login")
+end
+
+function pf_irc_chat_tab:BeginChatInput()
+    if self.settings:IsShown() or self.chat:IsShown() ~= true then return end
+    self.input_fields:focus("chat")
+end
+
+function pf_irc_chat_tab:FocusSettingsProfile() self.input_fields:focus("settings_profile") end
+function pf_irc_chat_tab:FocusSettingsAddress() self.input_fields:focus("settings_address") end
+function pf_irc_chat_tab:FocusSettingsChannel()
+    self.channel_show:SetCheck(true)
+    self:RefreshSensitiveSettings()
+    self.input_fields:focus("settings_channel")
+end
+function pf_irc_chat_tab:FocusSettingsPort() self.input_fields:focus("settings_port") end
+function pf_irc_chat_tab:FocusSettingsKey()
+    self.key_show:SetCheck(true)
+    self:RefreshSensitiveSettings()
+    self.input_fields:focus("settings_key")
+end
+function pf_irc_chat_tab:FocusSettingsEncoding() self.input_fields:focus("settings_encoding") end
+function pf_irc_chat_tab:FocusSettingsNick() self.input_fields:focus("settings_nick") end
+function pf_irc_chat_tab:FocusSettingsModes() self.input_fields:focus("settings_modes") end
+
+function pf_irc_chat_tab:ReleaseInlineInput()
+    if self.input_fields then self.input_fields:blur() end
+end
+
+function pf_irc_chat_tab:RefreshSensitiveSettings()
+    local channel_value = tostring(self.channel:GetText() or "")
+    local key_value = tostring(self.key:GetText() or "")
+    local show_channel = self.channel_show:GetCheck() == true
+    local show_key = self.key_show:GetCheck() == true
+    self.channel_mask:SetText(channel_value == "" and "" or string.rep("*", #channel_value))
+    self.key_mask:SetText(key_value == "" and "" or string.rep("*", #key_value))
+    self.channel:Show(show_channel)
+    self.channel_mask:Show(not show_channel)
+    self.key:Show(show_key)
+    self.key_mask:Show(not show_key)
+end
+
+function pf_irc_chat_tab:ToggleSensitiveSettings()
+    self:ReleaseInlineInput()
+    self:RefreshSensitiveSettings()
+end
+
+function pf_irc_chat_tab:OnLoginEditCommit()
+    if self.input_fields:commit("login") then self:Authorize() end
+end
+
+function pf_irc_chat_tab:OnLoginEditCancel()
+    self.input_fields:cancel("login")
+end
+
+function pf_irc_chat_tab:OnChatEditCommit()
+    if self.input_fields:commit("chat") then self:Send() end
+end
+
+function pf_irc_chat_tab:OnChatEditCancel()
+    self.input_fields:cancel("chat")
+end
+
+function pf_irc_chat_tab:OnProfileEditCommit()
+    self.input_fields:commit("settings_profile")
+    self:LoadSelectedProfile()
+end
+
+function pf_irc_chat_tab:OnSettingsEditCommit()
+    self:ReleaseInlineInput()
+end
+
+function pf_irc_chat_tab:OnSettingsEditCancel()
+    self:ReleaseInlineInput()
+end
+
+function pf_irc_chat_tab:HandleInlineInputAction(action, field_name)
+    if action == "cancel" then
+        self.input_fields:cancel(field_name)
+        return
+    end
+    if action ~= "commit" then return end
+    if field_name == "login" then
+        self:OnLoginEditCommit()
+    elseif field_name == "chat" then
+        self:OnChatEditCommit()
+    elseif field_name == "settings_profile" then
+        self:OnProfileEditCommit()
+    else
+        self.input_fields:commit(field_name)
+    end
+end
+
+function pf_irc_chat_tab:Refresh(force)
+    local state = pf_irc_chat.get_state()
+    if not force and state.revision == self.last_revision then return end
+    self.last_revision = state.revision
+    local page = state.chat_open and "chat" or "login"
+    self.chat:Show(page == "chat")
+    self.login:Show(page == "login")
+    self.authorize_button:Enable(not state.authorized)
+
+    if page == "login" then
+        if state.authorized then
+            self.login_result:SetText(translated(STATUS_TEXT[state.status] or "pf_irc_status_authorizing"))
+            self.login_result:SetTextColor(GetARGB(255, 220, 175, 70))
+        elseif state.last_error_code or state.last_error then
+            self.login_result:SetText(error_text(state.last_error_code, state.last_error))
+            self.login_result:SetTextColor(GetARGB(255, 235, 95, 75))
+        else
+            self.login_result:SetText("")
+        end
+    else
+        self:RefreshChat(state)
+    end
+
+    if self.last_page ~= page then
+        self:ReleaseInlineInput()
+        self.last_page = page
+        if page == "chat" and state.ready then pcall(pf_irc_chat.request_user_sync) end
+    end
+end
+
+function pf_irc_chat_tab:RefreshChat(state)
+    local status_id = STATUS_TEXT[state.status] or "pf_irc_status_unknown"
+    self.status_value:SetText(translated(status_id))
+    if state.ready then self.status_value:SetTextColor(GetARGB(255, 80, 220, 105))
+    elseif state.status == "error" or state.status == "blocked" then self.status_value:SetTextColor(GetARGB(255, 235, 85, 70))
+    else self.status_value:SetTextColor(GetARGB(255, 225, 175, 65)) end
+    local shown_nick = state.effective_nick ~= "" and state.effective_nick or state.requested_nick
+    self.actual_nick:SetText(translated("pf_irc_actual_nick") .. ": " .. tostring(shown_nick or ""))
+    self.topic:SetText((state.topic and state.topic ~= "") and
+        (translated("pf_irc_topic") .. ": " .. state.topic) or "")
+    -- A state revision can rebuild the rows while the player is browsing the
+    -- lower part of either side list. Preserve both native scroll positions so
+    -- selecting a dialog or receiving an IRC update does not jump to the top.
+    local users_scroll = self.users:GetCurrentScrollPos()
+
+    self.private_dialogs:Show(true)
+    self.private_dialogs:Enable(true)
+    local conversations = pf_irc_chat.get_conversations()
+    local dialog_signature = conversation_list_signature(conversations)
+    if dialog_signature ~= self.last_dialog_signature then
+        local private_scroll = self.private_dialogs:GetCurrentScrollPos()
+        self.private_dialogs:Clear()
+        self.dialog_rows = {}
+        for _, conversation in ipairs(conversations) do
+            local row = pf_irc_dialog_row(self, conversation)
+            self.private_dialogs:AddWindow(row, true)
+            row:SetAutoDelete(false)
+            table.insert(self.dialog_rows, row)
+        end
+        self.private_dialogs:SetScrollPos(private_scroll)
+        self.last_dialog_signature = dialog_signature
+    end
+
+    self.messages:Show(true)
+    self.messages:Enable(true)
+    local messages = pf_irc_chat.get_messages()
+    local message_signature = message_list_signature(messages)
+    if message_signature ~= self.last_message_signature then
+        self.messages:Clear()
+        self.message_rows = {}
+        local previous_message = nil
+        for _, message in ipairs(messages) do
+            local grouped = same_message_group(previous_message, message)
+            local row = pf_irc_message_row(message, grouped)
+            self.messages:AddWindow(row, true)
+            row:SetAutoDelete(false)
+            table.insert(self.message_rows, row)
+            previous_message = message
+        end
+        self.messages:ScrollToEnd()
+        self.last_message_signature = message_signature
+    end
+
+    local visible_users = pf_irc_chat.get_visible_users()
+    self.users_caption:SetText(string.format(translated("pf_irc_participants_count"), #visible_users))
+    self:RefreshUsers(visible_users)
+    self.users:SetScrollPos(users_scroll)
+end
+
+function pf_irc_chat_tab:RefreshUsers(user_list)
+    self.users:Show(true)
+    self.users:Enable(true)
+
+    local rebuild = #user_list ~= #self.user_rows
+    if not rebuild then
+        for index, user in ipairs(user_list) do
+            local row = self.user_rows[index]
+            if not row or row.row_key ~= participant_row_key(user) then
+                rebuild = true
+                break
+            end
+        end
+    end
+
+    if rebuild then
+        self.users:Clear()
+        self.user_rows = {}
+        for _, user in ipairs(user_list) do
+            local row = pf_irc_user_row(self, user)
+            self.users:AddWindow(row, true)
+            row:SetAutoDelete(false)
+            table.insert(self.user_rows, row)
+        end
+        return
+    end
+
+    -- Keep the actual CUIButton instances alive while ordinary IRC revisions
+    -- update messages, topics, presence or mute state. IX-Ray completes a
+    -- click on mouse-up; replacing a row between mouse-down and mouse-up loses
+    -- that click even though the cursor never left the query button.
+    for index, user in ipairs(user_list) do
+        self.user_rows[index]:ApplyUser(user)
+    end
+end
+
+function pf_irc_chat_tab:SelectConversation(key)
+    self:ReleaseInlineInput()
+    self:HideCommandMenu()
+    local ok, error_code = pf_irc_chat.select_conversation(key)
+    if not ok then
+        self.status_value:SetText(error_text(error_code, ""))
+        self.status_value:SetTextColor(GetARGB(255, 235, 85, 70))
+        return
+    end
+    self:Refresh(true)
+    self:BeginChatInput()
+end
+
+function pf_irc_chat_tab:OpenQuery(nick, identity)
+    self:ReleaseInlineInput()
+    self:HideCommandMenu()
+    local ok, error_code = pf_irc_chat.open_query(nick, identity)
+    if not ok then
+        self.status_value:SetText(error_text(error_code, ""))
+        self.status_value:SetTextColor(GetARGB(255, 235, 85, 70))
+        return
+    end
+    self:Refresh(true)
+    self:BeginChatInput()
+end
+
+function pf_irc_chat_tab:SyncLoginFromProfile()
+    local profile = pf_irc_chat.get_active_profile()
+    self.login_input:SetText(profile and tostring(profile.nick or "") or "")
+    self.auto_login:SetCheck(pf_irc_chat.get_auto_login() == true)
+    self.login_initialized = true
+end
+
+function pf_irc_chat_tab:SaveAutoLoginPreference()
+    self:ReleaseInlineInput()
+    local ok, error_code = pf_irc_chat.set_auto_login(self.auto_login:GetCheck() == true)
+    if not ok then
+        self.login_result:SetText(error_text(error_code, ""))
+        self.login_result:SetTextColor(GetARGB(255, 235, 95, 75))
+    end
+end
+
+function pf_irc_chat_tab:Authorize()
+    local nick = self.login_input:GetText()
+    local ok, error_code = pf_irc_chat.authorize(nick)
+    if not ok then
+        self.login_result:SetText(error_text(error_code, ""))
+        self.login_result:SetTextColor(GetARGB(255, 235, 95, 75))
+        self:BeginLoginInput()
+    else
+        self.login_result:SetText(translated("pf_irc_status_authorizing"))
+        self.login_result:SetTextColor(GetARGB(255, 220, 175, 70))
+    end
+end
+
+function pf_irc_chat_tab:AuthorizeFromButton()
+    self:ReleaseInlineInput()
+    self:Authorize()
+end
+
+function pf_irc_chat_tab:Disconnect()
+    self:ReleaseInlineInput()
+    pf_irc_chat.disconnect()
+    self:HideCommandMenu()
+    self:SyncLoginFromProfile()
+    self:Refresh(true)
+end
+
+function pf_irc_chat_tab:DisconnectFromButton()
+    self:Disconnect()
+end
+
+function pf_irc_chat_tab:Send()
+    local text = self.input:GetText()
+    local ok, error_code = pf_irc_chat.send_message(text)
+    if ok then
+        self.input:SetText("")
+    else
+        self.status_value:SetText(error_text(error_code, ""))
+        self.status_value:SetTextColor(GetARGB(255, 235, 85, 70))
+    end
+    self:BeginChatInput()
+end
+
+function pf_irc_chat_tab:SendFromButton()
+    self:ReleaseInlineInput()
+    self:Send()
+end
+
+function pf_irc_chat_tab:ShowCommands()
+    local show = not self.command_menu:IsShown()
+    if show then
+        local state = pf_irc_chat.get_state()
+        local private_active = state.private_dialog_active == true
+        local shown = 0
+        self.command_templates = {}
+        for _, button in pairs(self.command_buttons) do
+            button:Show(false)
+            button:Enable(false)
+        end
+        -- Re-read the small addon-local command section whenever the menu is
+        -- opened, so ordering/scope/template edits never require a Lua reload.
+        for _, definition in ipairs(pf_irc_chat_config.get_command_settings(true)) do
+            local button = self.command_buttons[definition.id]
+            local scope_allowed = definition.scope ~= "private" or private_active
+            if button and definition.enabled == true and scope_allowed then
+                shown = shown + 1
+                button:SetWndPos(vector2():set(3, 3 + (shown - 1) * 32))
+                button:Show(true)
+                button:Enable(true)
+                self.command_templates[definition.id] = definition.insert
+            end
+        end
+        if shown == 0 then return end
+        local menu_height = 2 + shown * 32
+        self.command_menu:SetWndSize(vector2():set(185, menu_height))
+        self.command_menu:SetWndPos(vector2():set(
+            self.command_menu_x,
+            self.command_menu_bottom_y - menu_height
+        ))
+    end
+    self.command_menu:Show(show)
+    self.command_menu:Enable(show)
+end
+
+function pf_irc_chat_tab:HideCommandMenu()
+    self.command_menu:Show(false)
+    self.command_menu:Enable(false)
+end
+
+function pf_irc_chat_tab:ShowCommandsFromButton()
+    self:ReleaseInlineInput()
+    self:ShowCommands()
+end
+
+function pf_irc_chat_tab:InsertConfiguredCommand(command_id)
+    local value = self.command_templates and self.command_templates[command_id] or nil
+    if not value then return end
+    self.input:SetText(value)
+    self:HideCommandMenu()
+    self:BeginChatInput()
+end
+
+function pf_irc_chat_tab:InsertClearCommand()
+    self:InsertConfiguredCommand("clear")
+end
+
+function pf_irc_chat_tab:InsertQueryCommand()
+    self:InsertConfiguredCommand("query")
+end
+
+function pf_irc_chat_tab:InsertMuteCommand()
+    self:InsertConfiguredCommand("mute")
+end
+
+function pf_irc_chat_tab:InsertUnmuteCommand()
+    self:InsertConfiguredCommand("unmute")
+end
+
+function pf_irc_chat_tab:InsertCloseCommand()
+    self:InsertConfiguredCommand("close")
+end
+
+function pf_irc_chat_tab:InsertChannelCommand()
+    self:InsertConfiguredCommand("channel")
+end
+
+function pf_irc_chat_tab:FillProfile(profile_name, profile)
+    if not profile then return false end
+    self.profile:SetText(profile_name or "")
+    self.address:SetText(tostring(profile.address or ""))
+    self.channel:SetText(tostring(profile.channel or ""))
+    self.port:SetText(tostring(profile.port or ""))
+    self.tls:SetCheck(profile.tls == true)
+    self.key:SetText(tostring(profile.key or ""))
+    self.encoding:SetText(tostring(profile.encoding or "utf-8"))
+    self.nick:SetText(tostring(profile.nick or ""))
+    self.guard:SetCheck(profile.require_registered_channel == true)
+    self.modes:SetText(tostring(profile.required_modes or ""))
+    self.settings_result:SetText("")
+    self:RefreshSensitiveSettings()
+    return true
+end
+
+function pf_irc_chat_tab:FillNotificationSettings()
+    local settings = pf_irc_chat_config.get_notification_settings() or {
+        notify_public_messages = true,
+        sound_public_messages = false,
+        notify_private_messages = true,
+        sound_private_messages = true
+    }
+    self.public_notify:SetCheck(settings.notify_public_messages == true)
+    self.public_sound:SetCheck(settings.sound_public_messages == true)
+    self.private_notify:SetCheck(settings.notify_private_messages == true)
+    self.private_sound:SetCheck(settings.sound_private_messages == true)
+end
+
+function pf_irc_chat_tab:ShowSettings()
+    self:ReleaseInlineInput()
+    self.channel_show:SetCheck(false)
+    self.key_show:SetCheck(false)
+    local profile, profile_name = pf_irc_chat.get_active_profile()
+    self:FillProfile(profile_name, profile)
+    self:FillNotificationSettings()
+    local state = pf_irc_chat.get_state()
+    if state.authorized then self.nick:SetText(state.requested_nick or "") end
+    self.settings_save:TextControl():SetText(translated(state.authorized and "pf_irc_save_reconnect" or "pf_irc_save_only"))
+    self:HideCommandMenu()
+    self.settings_shade:Show(true)
+    self.settings:Show(true)
+    self.settings:Enable(true)
+end
+
+function pf_irc_chat_tab:ShowSettingsFromButton()
+    self:ShowSettings()
+end
+
+function pf_irc_chat_tab:HideSettings()
+    self.settings:Show(false)
+    self.settings_shade:Show(false)
+end
+
+function pf_irc_chat_tab:HideSettingsFromButton()
+    self:ReleaseInlineInput()
+    self:HideSettings()
+end
+
+function pf_irc_chat_tab:LoadSelectedProfile()
+    local profile_name = self.profile:GetText():lower()
+    local profile = pf_irc_chat_config.get_profile(profile_name)
+    if not self:FillProfile(profile_name, profile) then
+        self.settings_result:SetText(translated("pf_irc_profile_new"))
+    end
+end
+
+function pf_irc_chat_tab:ReadProfileForm()
+    return self.profile:GetText():lower(), {
+        address = self.address:GetText(), channel = self.channel:GetText(),
+        port = tonumber(self.port:GetText()), tls = self.tls:GetCheck() == true,
+        key = self.key:GetText(), encoding = self.encoding:GetText(), nick = self.nick:GetText(),
+        require_registered_channel = self.guard:GetCheck() == true,
+        required_modes = self.modes:GetText()
+    }
+end
+
+function pf_irc_chat_tab:ReadNotificationForm()
+    return {
+        notify_public_messages = self.public_notify:GetCheck() == true,
+        sound_public_messages = self.public_sound:GetCheck() == true,
+        notify_private_messages = self.private_notify:GetCheck() == true,
+        sound_private_messages = self.private_sound:GetCheck() == true
+    }
+end
+
+function pf_irc_chat_tab:SaveSettings()
+    local profile_name, profile = self:ReadProfileForm()
+    local notifications = self:ReadNotificationForm()
+    local state = pf_irc_chat.get_state()
+    local ok, error_code, reconnected = pf_irc_chat.save_profile(profile_name, profile, notifications)
+    if ok then
+        self.login_input:SetText(profile.nick or "")
+        local result_id = reconnected and "pf_irc_saved_reconnect" or
+            (state.authorized and "pf_irc_saved_settings" or "pf_irc_saved_only")
+        self.settings_result:SetText(translated(result_id))
+    else
+        self.settings_result:SetText(translated("pf_irc_save_failed") .. ": " .. error_text(error_code, ""))
+    end
+end
+
+function pf_irc_chat_tab:SaveSettingsFromButton()
+    self:ReleaseInlineInput()
+    self:SaveSettings()
+end
+
+function pf_irc_chat_tab:AskResetSettings()
+    self.pending_reset_profile = self.profile:GetText():lower()
+    self.reset_confirm:InitMessageBox("message_box_yes_no")
+    self.reset_confirm:SetText(translated("pf_irc_reset_confirm"))
+    self.reset_confirm:ShowDialog(true)
+end
+
+function pf_irc_chat_tab:AskResetSettingsFromButton()
+    self:ReleaseInlineInput()
+    self:AskResetSettings()
+end
+
+function pf_irc_chat_tab:ConfirmResetSettings()
+    local profile_name = self.pending_reset_profile
+    self.pending_reset_profile = nil
+    local ok, error_code = pf_irc_chat.reset_profile(profile_name)
+    if ok then
+        local profile = pf_irc_chat_config.get_profile(profile_name)
+        self:FillProfile(profile_name, profile)
+        local state = pf_irc_chat.get_state()
+        local preserved_nick = state.authorized and state.requested_nick or (profile and profile.nick or "")
+        self.nick:SetText(tostring(preserved_nick or ""))
+        self.login_input:SetText(tostring(preserved_nick or ""))
+        self.settings_result:SetText(translated("pf_irc_reset_done"))
+    else
+        self.settings_result:SetText(translated("pf_irc_reset_failed") .. ": " .. error_text(error_code, ""))
+    end
+end
+
+function pf_irc_chat_tab:OnKeyboard(dik, keyboard_action)
+    if self.input_fields and self.input_fields:is_active() then
+        -- The add-on editor polls the physical keyboard in Pulse. Never route
+        -- the event through CUIWindow: there is intentionally no native
+        -- keyboard capturer that could survive a save/load cycle.
+        return self.input_fields:on_keyboard(dik, keyboard_action)
+    end
+    if keyboard_action == ui_events.WINDOW_KEY_PRESSED and dik_to_bind(dik) == key_bindings.kQUIT then
+        if self.settings:IsShown() then self:HideSettings() return true end
+        if self.command_menu:IsShown() then self:HideCommandMenu() return true end
+    end
+    return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action) == true
+end
+
+function refresh_visibility()
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if not pda_menu then return false end
+    local tabs = pda_menu:GetTabControl()
+    local button = tabs and tabs:GetButtonById("eptChat") or nil
+    if not button then return false end
+    local enabled = pf_irc_chat.is_enabled()
+    button:Show(enabled)
+    button:Enable(enabled)
+    if not enabled and pda_menu:GetActiveSection() == "eptChat" then tabs:SetActiveTab("eptTasks") end
+    return true
+end
+
+function pulse()
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if pda_menu then
+        local shown_ok, shown = pcall(function() return pda_menu:IsShown() end)
+        if shown_ok and shown then pcall(pf_irc_chat.note_pda_opened) end
+    end
+    local online = false
+    if chat_singleton then
+        chat_singleton:Pulse()
+        local ok, scope = pcall(function() return chat_singleton:InputScope() end)
+        online = ok and scope == "chat"
+    end
+    pcall(pf_irc_chat.set_presence, online and "online" or "away")
+end
+
+function before_game_reload()
+    local window = chat_singleton
+    if not window then return true end
+
+    -- CUIPdaWnd::Show(false) hides a script tab but leaves it attached to the
+    -- native PDA frame. The Lua VM is then destroyed during load, so the
+    -- parallel UI update can walk a freed CUIScriptWnd. Make the old tab the
+    -- active dialog once more and switch to a native tab: SetActiveSubdialog
+    -- detaches the script window while both sides are still alive.
+    if window.input_fields then
+        pcall(function() window.input_fields:shutdown() end)
+    end
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if pda_menu then
+        local ok = pcall(function()
+            pda_menu:SetActiveDialog(window)
+            pda_menu:SetActiveSubdialog("eptTasks")
+        end)
+        if not ok then return false end
+    end
+    chat_singleton = nil
+    return true
+end
+
+function on_game_load()
+    -- CUIPdaWnd is rebuilt by F9 while Lua globals can survive. Forget the old
+    -- wrapper before get_ui() is asked for the tab again; shutdown touches no
+    -- C++ child window and therefore remains safe during UI teardown.
+    if chat_singleton and chat_singleton.input_fields then
+        pcall(function() chat_singleton.input_fields:shutdown() end)
+    end
+    chat_singleton = nil
+end
+
+function get_ui()
+    chat_singleton = chat_singleton or pf_irc_chat_tab()
+    chat_singleton:Refresh(true)
+    local state = pf_irc_chat.get_state()
+    if state.chat_open and state.ready then pcall(pf_irc_chat.request_user_sync) end
+    return chat_singleton
+end
+
+function set_active_subdialog(section)
+    refresh_visibility()
+    if section == "eptChat" then
+        if pf_irc_chat.is_enabled() then
+            return get_ui()
+        end
+        return nil
+    end
+    pcall(pf_irc_chat.set_presence, "away")
+    if lz_new_mechanics_pda and lz_new_mechanics_pda.set_active_subdialog then
+        return lz_new_mechanics_pda.set_active_subdialog(section)
+    end
+    return pda.set_active_subdialog(section)
+end

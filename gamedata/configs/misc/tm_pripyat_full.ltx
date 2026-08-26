@@ -1,0 +1,64 @@
+﻿;сюжетные задания
+
+; Narrative tasks for the Pripyat Full opening.
+
+[pf_reach_pripyat]
+icon = ui_inGame2_Put_v_pripyat
+prior = 120
+storyline = true
+title = pf_reach_pripyat_name
+descr = pf_reach_pripyat_text
+target = pf_guide
+condlist_0 = {+pf_guide_dialog_done} complete
+
+[pf_learn_past]
+icon = ui_inGame2_Put_v_pripyat
+prior = 119
+storyline = true
+title = pf_learn_past_name
+descr_functor = condlist
+; Physical encounter states deliberately do not update this task. The player
+; learns what happened through documents, with Sergey's identity revealed only
+; by document 12. If he is alive at that exact moment, the achievement flag
+; selects the surviving-brother finale below.
+descr = {+pf_story_doc_12_found +pf_story_path_continues_achievement_gained} pf_learn_past_text_12_alive, {+pf_story_doc_12_found} pf_learn_past_text_12_dead, {+pf_story_doc_11_found +pf_story_preacher_dead} pf_learn_past_text_11_dead, {+pf_story_doc_11_found} pf_learn_past_text_11_alive, {+pf_story_doc_10_found} pf_learn_past_text_10, {+pf_story_doc_09_found} pf_learn_past_text_09, {+pf_story_doc_08_found} pf_learn_past_text_08, {+pf_story_doc_07_found} pf_learn_past_text_07, {+pf_story_doc_06_found} pf_learn_past_text_06, {+pf_story_doc_05_found} pf_learn_past_text_05, {+pf_story_doc_04_found} pf_learn_past_text_04, {+pf_story_doc_03_found} pf_learn_past_text_03, {+pf_story_doc_02_found} pf_learn_past_text_02, {+pf_story_doc_01_found} pf_learn_past_text_01, pf_learn_past_text
+target = nil
+condlist_0 = {+pf_story_doc_12_found} complete
+
+[pf_bunker_access]
+icon = ui_inGame2_Put_v_pripyat
+prior = 121
+storyline = true
+title = pf_bunker_access_task_name
+descr_functor = condlist
+descr = {+pf_bunker_access_case_delivered} pf_bunker_access_task_vodka, {=actor_has_item(pf_bunker_access_case)} pf_bunker_access_task_return, {+pf_bunker_access_case_assigned} pf_bunker_access_task_case, pf_bunker_access_task_commander
+target_functor = target_condlist
+target = {+pf_bunker_access_case_delivered} pf_bunker_guard_01, {=actor_has_item(pf_bunker_access_case)} pf_bunker_guard_01, {+pf_bunker_access_case_assigned} pf_bunker_access_case, pf_bunker_guard_01
+condlist_0 = {+pf_bunker_access_granted} complete
+
+[pf_novikov_upgrade_stage_1]
+icon = ui_inGame2_Put_v_pripyat
+prior = 80
+storyline = false
+title = pf_novikov_upgrade_stage_1_name
+descr = pf_novikov_upgrade_stage_1_descr
+target = pf_bunker_hermann
+condlist_0 = {+pf_novikov_upgrade_rank_1_unlocked} complete
+
+[pf_novikov_upgrade_stage_2]
+icon = ui_inGame2_Put_v_pripyat
+prior = 79
+storyline = false
+title = pf_novikov_upgrade_stage_2_name
+descr = pf_novikov_upgrade_stage_2_descr
+target = pf_bunker_hermann
+condlist_0 = {+pf_novikov_upgrade_rank_2_unlocked} complete
+
+[pf_novikov_upgrade_stage_3]
+icon = ui_inGame2_Put_v_pripyat
+prior = 78
+storyline = false
+title = pf_novikov_upgrade_stage_3_name
+descr = pf_novikov_upgrade_stage_3_descr
+target = pf_bunker_hermann
+condlist_0 = {+pf_novikov_upgrade_rank_3_unlocked} complete

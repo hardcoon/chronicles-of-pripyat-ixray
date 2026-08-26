@@ -1,0 +1,452 @@
+-- Manually approved stash placements captured with the QA crosshair tools.
+-- They are coordinate data only: pf_dynamic_stashes selects active locations
+-- from this catalogue and owns every runtime container.
+
+-- The isolated earlier QA point at 108.998291, 1.797643, -1512.506104 is not
+-- part of either populated house and is intentionally absent from this list.
+local points = {
+	{ kind = "backpack", x = 14.598325, y = 12.466084, z = -1224.835571, yaw = 85.020 },
+	{ kind = "backpack", x = 16.959663, y = 11.811286, z = -1222.576416, yaw = 80.949 },
+	{ kind = "backpack", x = 16.960569, y = 12.303317, z = -1227.799683, yaw = 92.504 },
+	{ kind = "backpack", x = 11.316840, y = 11.833039, z = -1218.086304, yaw = -14.982 },
+	{ kind = "backpack", x = 20.425472, y = 17.313028, z = -1218.573364, yaw = -1.070 },
+	{ kind = "backpack", x = 24.132811, y = 15.164200, z = -1221.251099, yaw = 179.877 },
+	{ kind = "backpack", x = 23.493536, y = 15.587735, z = -1226.197021, yaw = -6.760 },
+	{ kind = "backpack", x = 19.519003, y = 15.407924, z = -1227.472168, yaw = 132.018 },
+	{ kind = "backpack", x = 22.809887, y = 19.281870, z = -1227.429077, yaw = 156.832 },
+	{ kind = "backpack", x = 25.469908, y = 19.220116, z = -1228.290039, yaw = 86.217 },
+	{ kind = "backpack", x = 19.102480, y = 18.748739, z = -1226.262573, yaw = -41.584 },
+	{ kind = "backpack", x = 25.585346, y = 19.414978, z = -1221.777100, yaw = 179.486 },
+
+	{ kind = "backpack", x = 11.947202, y = 4.851510, z = -1116.656494, yaw = 92.355 },
+	{ kind = "backpack", x = 12.588967, y = 4.811247, z = -1110.912964, yaw = 88.043 },
+	{ kind = "backpack", x = 15.041339, y = 5.100952, z = -1117.052124, yaw = 178.823 },
+	{ kind = "backpack", x = 16.499054, y = 8.834853, z = -1119.324219, yaw = -3.731 },
+	{ kind = "backpack", x = 20.056072, y = 9.748466, z = -1122.189819, yaw = 93.151 },
+	{ kind = "backpack", x = 12.624651, y = 8.253903, z = -1125.796753, yaw = 81.939 },
+	{ kind = "backpack", x = 9.238802, y = 8.926884, z = -1121.638672, yaw = -49.052 },
+	{ kind = "backpack", x = 10.159325, y = 9.964802, z = -1121.636963, yaw = -0.967 },
+
+	{ kind = "backpack", x = 10.301304, y = -1.422637, z = -1173.229492, yaw = 178.031 },
+	{ kind = "backpack", x = 15.403365, y = -1.422027, z = -1185.847778, yaw = -168.368 },
+	{ kind = "backpack", x = 10.809610, y = 5.140708, z = -1180.809814, yaw = 2.081 },
+	{ kind = "backpack", x = 19.541878, y = 4.877502, z = -1184.077393, yaw = 8.508 },
+	{ kind = "backpack", x = 17.666784, y = 11.725321, z = -1193.502197, yaw = 92.019 },
+
+	{ kind = "backpack", x = 192.714996, y = 19.630039, z = -1187.883301, yaw = -141.820 },
+
+	{ kind = "backpack", x = 192.023926, y = 17.718819, z = -1179.204102, yaw = 0.934 },
+	{ kind = "backpack", x = 199.512665, y = 19.072357, z = -1193.050415, yaw = -127.195 },
+	{ kind = "backpack", x = 191.784668, y = 19.404821, z = -1192.697876, yaw = -90.166 },
+	{ kind = "backpack", x = 186.287979, y = 26.140505, z = -1186.693481, yaw = -92.451 },
+	{ kind = "backpack", x = 190.910645, y = 26.909512, z = -1191.332397, yaw = 139.020 },
+	{ kind = "backpack", x = 187.393982, y = 26.402704, z = -1197.772949, yaw = 34.801 },
+	{ kind = "backpack", x = 185.178894, y = 26.992910, z = -1198.041870, yaw = -7.918 },
+	{ kind = "backpack", x = 183.406296, y = 26.233564, z = -1196.319458, yaw = -173.234 },
+	{ kind = "backpack", x = 193.716385, y = 29.953379, z = -1184.895874, yaw = 166.523 },
+	{ kind = "backpack", x = 180.659775, y = 30.256578, z = -1182.102661, yaw = -106.177 },
+	{ kind = "backpack", x = 178.115524, y = 29.988760, z = -1183.492310, yaw = -45.284 },
+
+	-- QA batch 2026-08-10: mostly vehicle-bound source placements.
+	{ kind = "backpack", x = 117.251205, y = 0.826049, z = -1229.156494, yaw = -87.175, level_vertex_id = 7607928, game_vertex_id = 355 },
+	{ kind = "backpack", x = 82.907921, y = 0.164016, z = -1239.776733, yaw = -91.631, level_vertex_id = 7422117, game_vertex_id = 355 },
+	{ kind = "backpack", x = 98.168541, y = 0.653260, z = -1232.664185, yaw = 2.095, level_vertex_id = 7506222, game_vertex_id = 355 },
+	{ kind = "backpack", x = 68.414436, y = 1.463468, z = -1215.384766, yaw = -179.888, level_vertex_id = 7355500, game_vertex_id = 735 },
+	{ kind = "backpack", x = 64.308060, y = 1.296404, z = -1213.488037, yaw = -35.410, level_vertex_id = 7334440, game_vertex_id = 735 },
+	{ kind = "backpack", x = 74.937111, y = -0.053561, z = -1209.095703, yaw = 177.410, level_vertex_id = 7394065, game_vertex_id = 735 },
+	{ kind = "backpack", x = 87.950180, y = 1.528738, z = -1108.747070, yaw = -65.920, level_vertex_id = 7452720, game_vertex_id = 736 },
+	{ kind = "backpack", x = -287.378052, y = 1.365096, z = -914.648682, yaw = 72.149, level_vertex_id = 5615879, game_vertex_id = 197 },
+	{ kind = "backpack", x = -910.754761, y = 0.997274, z = -526.733521, yaw = 164.637, level_vertex_id = 2663104, game_vertex_id = 416 },
+	{ kind = "backpack", x = -1108.664551, y = 0.908011, z = -273.422272, yaw = 21.706, level_vertex_id = 1748203, game_vertex_id = 421 },
+	{ kind = "backpack", x = -982.642395, y = 1.082875, z = 257.124786, yaw = -84.773, level_vertex_id = 2318329, game_vertex_id = 446 },
+	{ kind = "backpack", x = -578.174561, y = 0.328557, z = 264.917542, yaw = 163.968, level_vertex_id = 4236949, game_vertex_id = 351 },
+	{ kind = "backpack", x = -484.518555, y = 0.785272, z = 284.725067, yaw = 88.611, level_vertex_id = 4699935, game_vertex_id = 284 },
+	{ kind = "backpack", x = -460.303009, y = 0.753324, z = 342.453979, yaw = 76.897, level_vertex_id = 4814190, game_vertex_id = 282 },
+	{ kind = "backpack", x = -426.743744, y = 0.583132, z = 362.821503, yaw = 83.081, level_vertex_id = 4974575, game_vertex_id = 282 },
+	{ kind = "backpack", x = -409.619537, y = 1.213728, z = 365.266266, yaw = 168.249, level_vertex_id = 5056606, game_vertex_id = 282 },
+	{ kind = "backpack", x = 358.284698, y = 1.041345, z = 841.153198, yaw = 15.454, level_vertex_id = 8864130, game_vertex_id = 28 },
+
+	-- QA vehicle batch 2; two rejected bus-interior points are absent.
+	{ kind = "backpack", x = 91.128731, y = 1.412223, z = -731.676697, yaw = 157.335, level_vertex_id = 7479410, game_vertex_id = 10 },
+	{ kind = "backpack", x = -84.866440, y = 0.461434, z = -339.442505, yaw = -30.853, level_vertex_id = 6611518, game_vertex_id = 181 },
+	{ kind = "backpack", x = -98.305397, y = 0.825908, z = -333.749969, yaw = 50.731, level_vertex_id = 6538742, game_vertex_id = 181 },
+	{ kind = "backpack", x = -116.027435, y = 0.716990, z = -207.690369, yaw = -63.417, level_vertex_id = 6458698, game_vertex_id = 183 },
+	{ kind = "backpack", x = -116.628113, y = 1.365723, z = -106.027832, yaw = 129.711, level_vertex_id = 6458815, game_vertex_id = 340 },
+	{ kind = "backpack", x = -116.234047, y = 1.365489, z = -98.531898, yaw = -81.659, level_vertex_id = 6455163, game_vertex_id = 340 },
+	{ kind = "backpack", x = -114.561157, y = 1.124144, z = -74.944962, yaw = -157.405, level_vertex_id = 6458852, game_vertex_id = 340 },
+	{ kind = "backpack", x = -191.595078, y = 0.112483, z = 155.479431, yaw = 86.417, level_vertex_id = 6077826, game_vertex_id = 291 },
+	{ kind = "backpack", x = -206.355179, y = 0.228811, z = 197.568558, yaw = -52.303, level_vertex_id = 6006183, game_vertex_id = 160 },
+	{ kind = "backpack", x = -250.770264, y = 0.015626, z = 283.813721, yaw = 23.849, level_vertex_id = 5791644, game_vertex_id = 161 },
+	{ kind = "backpack", x = -463.975403, y = 1.373798, z = 260.185913, yaw = 7.074, level_vertex_id = 4798129, game_vertex_id = 284 },
+
+	-- QA furniture batch 2026-08-10. Every source coordinate is retained;
+	-- rows whose static surface was ambiguous are deliberately not propagated.
+	{ kind = "backpack", x = -158.822479, y = 5.618073, z = -1250.810059, yaw = -122.382, level_vertex_id = 6228785, game_vertex_id = 192 }, -- row 50
+	{ kind = "backpack", x = -156.972321, y = 5.123407, z = -1259.443604, yaw = 67.656, level_vertex_id = 6253808, game_vertex_id = 0 }, -- row 51
+	{ kind = "backpack", x = -157.024048, y = 5.123407, z = -1256.389160, yaw = 113.625, level_vertex_id = 6228765, game_vertex_id = 192 }, -- row 52
+	{ kind = "backpack", x = -153.278564, y = 4.931772, z = -1257.901855, yaw = 89.950, level_vertex_id = 6281961, game_vertex_id = 67 }, -- row 53
+	{ kind = "backpack", x = -164.832184, y = 12.013658, z = -1251.300781, yaw = 89.416, level_vertex_id = 6206569, game_vertex_id = 0 }, -- row 54
+	{ kind = "backpack", x = -161.039856, y = 11.832208, z = -1256.273193, yaw = 127.085, level_vertex_id = 6228767, game_vertex_id = 192 }, -- row 55
+	{ kind = "backpack", x = -165.112457, y = 11.894365, z = -1257.989258, yaw = -65.720, level_vertex_id = 6202848, game_vertex_id = 0 }, -- row 56
+	{ kind = "backpack", x = -189.781815, y = 2.212583, z = -1214.940063, yaw = -83.948, level_vertex_id = 6086445, game_vertex_id = 192 }, -- row 57
+	{ kind = "backpack", x = -195.445572, y = 3.535061, z = -1209.476685, yaw = 151.181, level_vertex_id = 6049813, game_vertex_id = 192 }, -- row 58
+	{ kind = "backpack", x = -204.685638, y = 2.389910, z = -1209.956543, yaw = 166.212, level_vertex_id = 6018194, game_vertex_id = 192 }, -- row 59
+	{ kind = "backpack", x = -209.019333, y = 1.917019, z = -1209.738159, yaw = -92.412, level_vertex_id = 5998127, game_vertex_id = 192 }, -- row 61
+	{ kind = "backpack", x = -209.019455, y = 3.515059, z = -1212.214355, yaw = -99.896, level_vertex_id = 5998125, game_vertex_id = 192 }, -- row 62
+	{ kind = "backpack", x = -198.677399, y = 5.409530, z = -1231.433472, yaw = -179.709, level_vertex_id = 6042788, game_vertex_id = 192 }, -- row 64
+	{ kind = "backpack", x = -200.744293, y = 7.264445, z = -1231.469971, yaw = 156.533, level_vertex_id = 6032089, game_vertex_id = 68 }, -- row 65
+	{ kind = "backpack", x = -203.342819, y = 8.645080, z = -1216.467407, yaw = 178.281, level_vertex_id = 6021640, game_vertex_id = 192 }, -- row 68
+	{ kind = "backpack", x = -195.311600, y = 8.667106, z = -1211.903931, yaw = 25.666, level_vertex_id = 6066528, game_vertex_id = 192 }, -- row 69
+	{ kind = "backpack", x = -195.675888, y = 9.477713, z = -1208.554688, yaw = 159.911, level_vertex_id = 6056615, game_vertex_id = 192 }, -- row 70
+	{ kind = "backpack", x = -208.903915, y = 23.948315, z = -1211.569824, yaw = -159.936, level_vertex_id = 6004768, game_vertex_id = 192 }, -- row 73
+	{ kind = "backpack", x = -200.473358, y = 29.867067, z = -1231.402100, yaw = -178.740, level_vertex_id = 6053239, game_vertex_id = 192 }, -- row 74
+	{ kind = "backpack", x = -201.653809, y = 30.030727, z = -1227.481689, yaw = 146.116, level_vertex_id = 5994848, game_vertex_id = 68 }, -- row 75
+	{ kind = "backpack", x = -304.603577, y = 2.001183, z = -1199.118408, yaw = -30.121, level_vertex_id = 5547160, game_vertex_id = 68 }, -- row 77
+	-- Rows 76 and 78..84 were rejected after geometry review. Row 77 is a
+	-- separately identified prop_umivalnik_01 and remains as an exact source.
+
+	-- QA interior batch 4. All author coordinates are retained; only separately
+	-- proven rigid property surfaces are eligible for offline copies.
+	{ kind = "backpack", x = 1156.966553, y = 0.422765, z = -1136.523682, yaw = -106.202, level_vertex_id = 13348061, game_vertex_id = 637 }, -- row 77
+	{ kind = "backpack", x = 1200.880371, y = 1.326451, z = -1164.731323, yaw = -115.541, level_vertex_id = 13590275, game_vertex_id = 635 }, -- row 78
+	{ kind = "backpack", x = 1229.459106, y = 0.860198, z = -1187.101563, yaw = -14.186, level_vertex_id = 13737103, game_vertex_id = 635 }, -- row 79
+	{ kind = "backpack", x = 1277.386108, y = 0.215555, z = -1201.851318, yaw = 111.029, level_vertex_id = 14028653, game_vertex_id = 634 }, -- row 80
+	{ kind = "backpack", x = 1274.124146, y = 0.262566, z = -1197.347778, yaw = 5.767, level_vertex_id = 13992661, game_vertex_id = 634 }, -- row 81
+	{ kind = "backpack", x = 1264.500610, y = 1.115269, z = -1216.142700, yaw = 107.611, level_vertex_id = 13935352, game_vertex_id = 635 }, -- row 82
+	{ kind = "backpack", x = 1260.707275, y = 0.106577, z = -1217.438110, yaw = -153.130, level_vertex_id = 13927139, game_vertex_id = 635 }, -- row 83
+	{ kind = "backpack", x = 1293.302856, y = 0.716898, z = -996.596130, yaw = 138.871, level_vertex_id = 14097450, game_vertex_id = 622 }, -- row 84
+	{ kind = "backpack", x = 1297.025757, y = 2.139302, z = -1008.800110, yaw = 106.490, level_vertex_id = 14125369, game_vertex_id = 623 }, -- row 86
+	{ kind = "backpack", x = 1289.786865, y = -9.695343, z = -1007.098083, yaw = -38.394, level_vertex_id = 14049139, game_vertex_id = 622 }, -- row 87
+	{ kind = "backpack", x = 1293.717651, y = -9.499071, z = -1005.853210, yaw = -21.065, level_vertex_id = 14117264, game_vertex_id = 623 }, -- row 88
+	{ kind = "backpack", x = 1197.952881, y = 1.395370, z = -865.898682, yaw = 64.873, level_vertex_id = 13563472, game_vertex_id = 619 }, -- row 89
+	{ kind = "backpack", x = 1254.721802, y = 0.531451, z = -674.672302, yaw = -179.104, level_vertex_id = 13871842, game_vertex_id = 617 }, -- row 90
+	{ kind = "backpack", x = 1259.375732, y = 0.084472, z = -670.337463, yaw = 19.819, level_vertex_id = 13911626, game_vertex_id = 617 }, -- row 91
+	{ kind = "backpack", x = 1244.763306, y = 0.578303, z = -672.731628, yaw = -100.187, level_vertex_id = 13820831, game_vertex_id = 617 }, -- row 92
+	{ kind = "backpack", x = 1232.522461, y = -7.313464, z = -580.208496, yaw = 71.164, level_vertex_id = 13749790, game_vertex_id = 598 }, -- row 93
+	{ kind = "backpack", x = 1224.182739, y = -7.098063, z = -588.125977, yaw = -153.714, level_vertex_id = 13698704, game_vertex_id = 598 }, -- row 94
+	{ kind = "backpack", x = 1242.103271, y = -6.960844, z = -581.981384, yaw = 81.681, level_vertex_id = 13816922, game_vertex_id = 598 }, -- row 95
+	{ kind = "backpack", x = 998.738647, y = 0.588028, z = -649.709351, yaw = -70.872, level_vertex_id = 12456845, game_vertex_id = 319 }, -- row 96
+	{ kind = "backpack", x = 994.881836, y = 1.241754, z = -646.619202, yaw = -66.155, level_vertex_id = 12427669, game_vertex_id = 319 }, -- row 97
+	{ kind = "backpack", x = 992.181091, y = 0.985662, z = -648.555359, yaw = -51.429, level_vertex_id = 12427669, game_vertex_id = 319 }, -- row 98
+	{ kind = "backpack", x = 981.123413, y = 0.672887, z = -645.058044, yaw = -117.409, level_vertex_id = 12323033, game_vertex_id = 319 }, -- row 99
+	{ kind = "backpack", x = 987.707458, y = 2.522665, z = -642.278625, yaw = 34.407, level_vertex_id = 12389753, game_vertex_id = 319 }, -- row 100
+	{ kind = "backpack", x = 980.464783, y = 0.590446, z = -654.259338, yaw = -72.078, level_vertex_id = 12331435, game_vertex_id = 319 }, -- row 101
+	{ kind = "backpack", x = 987.376953, y = 0.563215, z = -661.708008, yaw = 108.623, level_vertex_id = 12368556, game_vertex_id = 319 }, -- row 102
+	{ kind = "backpack", x = 996.700317, y = 0.588192, z = -664.723938, yaw = -3.410, level_vertex_id = 12440168, game_vertex_id = 319 }, -- row 103
+	{ kind = "backpack", x = 966.984009, y = 10.061772, z = -748.347839, yaw = 125.039, level_vertex_id = 12247213, game_vertex_id = 613 }, -- row 105
+	{ kind = "backpack", x = 965.332397, y = 9.221085, z = -750.708130, yaw = 128.867, level_vertex_id = 12243052, game_vertex_id = 613 }, -- row 106
+	{ kind = "backpack", x = 956.588013, y = 9.609200, z = -743.226807, yaw = -19.673, level_vertex_id = 12194177, game_vertex_id = 613 }, -- row 107
+	{ kind = "backpack", x = 929.391968, y = 9.208755, z = -736.810486, yaw = 148.561, level_vertex_id = 12034397, game_vertex_id = 613 }, -- row 109
+	{ kind = "backpack", x = 928.415833, y = 9.338351, z = -723.448914, yaw = 109.105, level_vertex_id = 12018157, game_vertex_id = 613 }, -- row 110
+	{ kind = "backpack", x = 902.534851, y = 9.191094, z = -705.327576, yaw = 46.149, level_vertex_id = 11886075, game_vertex_id = 613 }, -- row 111
+	{ kind = "backpack", x = 939.085632, y = 1.580473, z = -730.548767, yaw = 125.211, level_vertex_id = 12083238, game_vertex_id = 613 }, -- row 112
+
+	-- QA interior batch 5. Every author coordinate is retained; ambiguous
+	-- surfaces are excluded only from offline rigid-property copying.
+	{ kind = "backpack", x = 45.204330, y = 9.728768, z = -1052.232422, yaw = -141.875, level_vertex_id = 7240799, game_vertex_id = 59 }, -- row 112
+	{ kind = "backpack", x = 46.116856, y = 10.122343, z = -1054.233154, yaw = 101.440, level_vertex_id = 7244205, game_vertex_id = 59 }, -- row 113
+	{ kind = "backpack", x = 44.083969, y = 11.256901, z = -1057.900879, yaw = -94.782, level_vertex_id = 7226902, game_vertex_id = 59 }, -- row 114
+	{ kind = "backpack", x = 43.651978, y = 21.412571, z = -1057.393921, yaw = -154.827, level_vertex_id = 7226903, game_vertex_id = 59 }, -- row 115
+	{ kind = "backpack", x = 24.798542, y = 5.293568, z = -947.636047, yaw = -177.183, level_vertex_id = 7116194, game_vertex_id = 261 }, -- row 116
+	{ kind = "backpack", x = -106.670349, y = 16.327862, z = -838.584290, yaw = 45.932, level_vertex_id = 6483805, game_vertex_id = 329 }, -- row 119
+	{ kind = "backpack", x = -100.055511, y = 15.483782, z = -843.845215, yaw = 116.718, level_vertex_id = 6541456, game_vertex_id = 329 }, -- row 120
+	{ kind = "backpack", x = -109.475403, y = 17.287498, z = -844.177002, yaw = 126.729, level_vertex_id = 6469165, game_vertex_id = 329 }, -- row 121
+	{ kind = "backpack", x = -165.932220, y = 2.739257, z = -797.441406, yaw = 111.582, level_vertex_id = 6185404, game_vertex_id = 330 }, -- row 122
+	{ kind = "backpack", x = -159.128967, y = 1.256840, z = -787.576538, yaw = 58.619, level_vertex_id = 6250811, game_vertex_id = 330 }, -- row 123
+	{ kind = "backpack", x = -177.212448, y = 1.648345, z = -790.255188, yaw = -107.661, level_vertex_id = 6150200, game_vertex_id = 0 }, -- row 124
+	{ kind = "backpack", x = -193.152832, y = 2.088661, z = -785.375732, yaw = -155.413, level_vertex_id = 6073547, game_vertex_id = 198 }, -- row 126
+	{ kind = "backpack", x = -276.802002, y = 2.425271, z = -839.773804, yaw = -88.434, level_vertex_id = 5672861, game_vertex_id = 331 }, -- row 127
+	{ kind = "backpack", x = -276.355042, y = 3.709880, z = -842.442200, yaw = -108.692, level_vertex_id = 5676052, game_vertex_id = 331 }, -- row 128
+	{ kind = "backpack", x = -268.236847, y = 2.780602, z = -848.342529, yaw = 93.308, level_vertex_id = 5703261, game_vertex_id = 331 }, -- row 129
+	{ kind = "backpack", x = -271.417450, y = 1.577716, z = -846.673279, yaw = -35.872, level_vertex_id = 5689301, game_vertex_id = 331 }, -- row 130
+	{ kind = "backpack", x = -278.225220, y = -1.512896, z = -833.776367, yaw = 96.996, level_vertex_id = 5657048, game_vertex_id = 331 }, -- row 131
+	{ kind = "backpack", x = -283.784119, y = 16.751631, z = -740.494507, yaw = 40.976, level_vertex_id = 5635029, game_vertex_id = 353 }, -- row 133
+	{ kind = "backpack", x = -287.827362, y = 15.699033, z = -741.213318, yaw = 60.350, level_vertex_id = 5619180, game_vertex_id = 353 }, -- row 134
+	{ kind = "backpack", x = -289.743805, y = 10.034099, z = -556.290283, yaw = 35.700, level_vertex_id = 5600453, game_vertex_id = 326 }, -- row 135
+	{ kind = "backpack", x = -250.168884, y = 0.836437, z = -525.752441, yaw = 172.059, level_vertex_id = 5797522, game_vertex_id = 336 }, -- row 136
+	{ kind = "backpack", x = -411.603271, y = 16.039156, z = -514.090698, yaw = -154.842, level_vertex_id = 5052175, game_vertex_id = 201 }, -- row 140
+	{ kind = "backpack", x = -418.616791, y = 15.313272, z = -505.544281, yaw = -162.559, level_vertex_id = 4998225, game_vertex_id = 202 }, -- row 141
+	{ kind = "backpack", x = -384.891449, y = 8.534912, z = -422.620270, yaw = -105.769, level_vertex_id = 5153854, game_vertex_id = 0 }, -- row 142
+	{ kind = "backpack", x = -376.029358, y = 8.316801, z = -420.397186, yaw = -179.742, level_vertex_id = 5208234, game_vertex_id = 202 }, -- row 143
+	{ kind = "backpack", x = -176.402817, y = 1.294147, z = -327.585876, yaw = -31.911, level_vertex_id = 6157595, game_vertex_id = 178 }, -- row 144
+	{ kind = "backpack", x = -176.871582, y = 46.988117, z = -316.253052, yaw = 163.763, level_vertex_id = 6136323, game_vertex_id = 178 }, -- row 146
+
+	-- Exact player placements from manual QA batch 001. No pattern expansion.
+	{ kind = "backpack", x = 148.682449, y = 15.271044, z = -988.043457, yaw = 12.960 },
+	{ kind = "backpack", x = 154.239517, y = 3.669552, z = -925.791870, yaw = 4.896 },
+	{ kind = "backpack", x = 218.066910, y = 8.268848, z = -898.177185, yaw = 178.752 },
+	{ kind = "backpack", x = 224.709045, y = 15.320785, z = -702.359497, yaw = 42.055 },
+	{ kind = "backpack", x = 231.136658, y = 13.855101, z = -696.354248, yaw = 86.461 },
+	{ kind = "backpack", x = 257.079620, y = 3.635600, z = -694.395691, yaw = 168.225 },
+	{ kind = "backpack", x = 344.133911, y = 4.516079, z = -844.488770, yaw = 173.116 },
+	{ kind = "backpack", x = 390.262512, y = 2.244554, z = -909.120056, yaw = -70.203 },
+	{ kind = "backpack", x = 386.240784, y = 1.691173, z = -917.669067, yaw = -101.629 },
+	{ kind = "backpack", x = 386.609009, y = 3.120298, z = -907.612488, yaw = -114.564 },
+
+	-- Exact player placements from manual QA batch 002. No pattern expansion.
+	{ kind = "backpack", x = 414.945831, y = 30.275070, z = -441.593719, yaw = 173.866 },
+	{ kind = "backpack", x = 420.281158, y = 29.422865, z = -448.289246, yaw = -168.886 },
+	{ kind = "backpack", x = 405.502716, y = 29.618223, z = -450.248230, yaw = 51.095 },
+	{ kind = "backpack", x = 402.846771, y = 30.541508, z = -442.544708, yaw = -6.347 },
+
+	-- Exact player placements from manual QA batch 003. No pattern expansion.
+	{ kind = "backpack", x = 598.778015, y = 10.542537, z = -665.980530, yaw = -83.221 },
+	{ kind = "backpack", x = 699.781006, y = 1.563142, z = -640.955811, yaw = 35.502 },
+	{ kind = "backpack", x = 691.134155, y = 5.489324, z = -628.075134, yaw = 131.420 },
+	{ kind = "backpack", x = 714.503723, y = 5.966973, z = -617.209961, yaw = 30.046 },
+	{ kind = "backpack", x = 744.061340, y = 5.413129, z = -660.249695, yaw = 35.888 },
+	{ kind = "backpack", x = 748.707397, y = 5.240533, z = -639.906006, yaw = -8.945 },
+	{ kind = "backpack", x = 753.457458, y = 6.295643, z = -643.214172, yaw = -2.272 },
+	{ kind = "backpack", x = 674.964233, y = 36.069576, z = -537.522705, yaw = -88.668 },
+	{ kind = "backpack", x = 658.086975, y = 26.362076, z = -453.172302, yaw = -38.897 },
+	{ kind = "backpack", x = 533.154053, y = 19.382006, z = -371.742615, yaw = -63.798 },
+	{ kind = "backpack", x = 533.173767, y = 22.784695, z = -373.002808, yaw = -86.016 },
+	{ kind = "backpack", x = 540.245789, y = 22.539698, z = -369.818420, yaw = -176.336 },
+	{ kind = "backpack", x = 517.752014, y = 1.574601, z = 136.667969, yaw = 36.251 },
+	{ kind = "backpack", x = 591.097900, y = 12.922076, z = 397.699127, yaw = 28.305 },
+	{ kind = "backpack", x = 751.267273, y = 0.364036, z = 599.097351, yaw = 18.562 },
+	{ kind = "backpack", x = 757.880066, y = 0.446811, z = 594.236023, yaw = -13.480 },
+	{ kind = "backpack", x = 660.312073, y = 0.531667, z = 659.021851, yaw = -83.676 },
+	{ kind = "backpack", x = 521.084412, y = 31.292112, z = 784.532104, yaw = -33.407 },
+	{ kind = "backpack", x = 462.827545, y = 29.380543, z = 790.237671, yaw = 158.343 },
+	{ kind = "backpack", x = 297.322449, y = 26.095291, z = 786.599182, yaw = 98.239 },
+	{ kind = "backpack", x = 291.386078, y = 26.007963, z = 787.975342, yaw = -177.990 },
+	{ kind = "backpack", x = 292.327728, y = 26.239944, z = 787.851318, yaw = -76.626 },
+	{ kind = "backpack", x = 307.344940, y = 14.689924, z = 697.457825, yaw = -174.572 },
+	{ kind = "backpack", x = 297.234222, y = 14.671206, z = 707.732483, yaw = -2.434 },
+	{ kind = "backpack", x = 209.822922, y = 27.278450, z = 785.728027, yaw = -87.304 },
+	{ kind = "backpack", x = 210.662292, y = 28.087185, z = 789.445984, yaw = -45.474 },
+	{ kind = "backpack", x = 41.815258, y = 3.819918, z = 587.072632, yaw = -6.355 },
+	{ kind = "backpack", x = -69.541313, y = 24.128342, z = 498.062622, yaw = -55.592 },
+	{ kind = "backpack", x = -61.488468, y = 33.658428, z = 506.703369, yaw = -8.798 },
+	{ kind = "backpack", x = -162.244629, y = 33.751862, z = 377.541077, yaw = -4.163 },
+	{ kind = "backpack", x = -194.570847, y = 2.638011, z = 310.756287, yaw = 120.417 },
+	{ kind = "backpack", x = -594.571167, y = 5.977003, z = 51.707787, yaw = -171.597 },
+	{ kind = "backpack", x = -549.169312, y = 22.683432, z = 44.076290, yaw = 52.706 },
+	{ kind = "backpack", x = -452.604675, y = 29.568596, z = 37.905766, yaw = -12.854 },
+	{ kind = "backpack", x = -459.477325, y = 4.525712, z = -22.412935, yaw = 77.117 },
+	{ kind = "backpack", x = -457.164642, y = 5.414577, z = -23.484329, yaw = 92.573 },
+	{ kind = "backpack", x = -500.126221, y = 22.539934, z = -157.612518, yaw = -83.727 },
+	{ kind = "backpack", x = -737.157959, y = 5.689668, z = -150.504791, yaw = 58.351 },
+	{ kind = "backpack", x = -946.197754, y = 0.523405, z = -245.914139, yaw = 176.571 },
+	{ kind = "backpack", x = -936.559021, y = 0.771017, z = -248.886703, yaw = 28.902 },
+	{ kind = "backpack", x = -835.032593, y = 0.799034, z = -769.608643, yaw = 160.364 },
+	{ kind = "backpack", x = -740.954529, y = 0.623112, z = -656.779297, yaw = 62.827 },
+	{ kind = "backpack", x = -467.345062, y = 2.191908, z = -415.685516, yaw = 87.393 },
+	{ kind = "backpack", x = -393.550049, y = 22.882303, z = -294.594147, yaw = 78.681 },
+	{ kind = "backpack", x = -275.015259, y = 1.622193, z = -518.625366, yaw = -49.541 },
+	{ kind = "backpack", x = -269.179626, y = 1.271155, z = -517.528992, yaw = 63.304 },
+	{ kind = "backpack", x = -273.893677, y = 4.380479, z = -282.002991, yaw = 0.512 },
+	{ kind = "backpack", x = -85.901505, y = 5.120909, z = -50.815525, yaw = 54.643 },
+	{ kind = "backpack", x = -53.750595, y = 5.072699, z = -51.477398, yaw = -43.561 },
+	{ kind = "backpack", x = -40.971775, y = 1.863027, z = -67.238281, yaw = -0.852 },
+	{ kind = "backpack", x = -14.658823, y = 14.452130, z = -77.743202, yaw = -43.891 },
+	{ kind = "backpack", x = -11.745824, y = 13.453397, z = -77.701881, yaw = -5.407 },
+	{ kind = "backpack", x = -3.060382, y = 9.796167, z = -49.732311, yaw = -108.968 },
+	{ kind = "backpack", x = -8.981241, y = 8.916196, z = -58.067513, yaw = 90.524 },
+	{ kind = "backpack", x = -172.813324, y = 24.439089, z = 91.612999, yaw = 119.496 },
+	{ kind = "backpack", x = -173.318405, y = 34.082897, z = 84.788208, yaw = -137.827 },
+	{ kind = "backpack", x = -219.188889, y = 4.883473, z = 174.698563, yaw = -176.232 },
+	{ kind = "backpack", x = -224.744720, y = 5.384429, z = 205.766327, yaw = -93.570 },
+	{ kind = "backpack", x = -224.657059, y = 1.361704, z = 201.325119, yaw = -175.988 },
+	{ kind = "backpack", x = -215.285995, y = 1.305161, z = 201.409546, yaw = 177.416 },
+	{ kind = "backpack", x = -248.467377, y = 1.119650, z = 199.264709, yaw = -88.515 },
+	{ kind = "backpack", x = -145.467209, y = 11.204566, z = 226.759567, yaw = -109.356 },
+	{ kind = "backpack", x = -31.033556, y = 8.216306, z = -221.192657, yaw = 170.008 },
+	{ kind = "backpack", x = -0.526520, y = -2.410766, z = -292.407379, yaw = -3.264 },
+	{ kind = "backpack", x = -12.796360, y = -0.800607, z = -280.772064, yaw = 90.934 },
+	{ kind = "backpack", x = -23.580215, y = -1.672008, z = -269.140503, yaw = -45.175 },
+	{ kind = "backpack", x = -21.679611, y = 3.154599, z = -259.979126, yaw = 165.295 },
+	{ kind = "backpack", x = -13.108888, y = 8.867063, z = -256.493774, yaw = 7.783 },
+	{ kind = "backpack", x = -36.025002, y = 8.545307, z = -276.590790, yaw = -126.703 },
+	{ kind = "backpack", x = -5.376779, y = 3.605304, z = -257.304718, yaw = -77.012 },
+	{ kind = "backpack", x = 139.344589, y = 1.209681, z = -400.648834, yaw = -106.698 },
+	{ kind = "backpack", x = 291.554840, y = 8.785130, z = -606.918457, yaw = -11.100 },
+	{ kind = "backpack", x = 283.798859, y = 9.434255, z = -605.093079, yaw = 40.393 },
+	{ kind = "backpack", x = 339.946045, y = 1.387668, z = -637.731262, yaw = 10.360 },
+	{ kind = "backpack", x = 386.622437, y = 6.407431, z = -707.154785, yaw = -117.541 },
+	{ kind = "backpack", x = 392.386871, y = -1.219080, z = -715.721863, yaw = 117.903 },
+	{ kind = "backpack", x = 378.888885, y = 9.851862, z = -706.987244, yaw = -102.341 },
+	{ kind = "backpack", x = 527.898010, y = 6.535079, z = -572.877319, yaw = 150.589 },
+	{ kind = "backpack", x = 519.719482, y = 6.999666, z = -569.145020, yaw = 24.009 },
+	{ kind = "backpack", x = 246.224365, y = 10.291347, z = -219.264282, yaw = -92.272 },
+	{ kind = "backpack", x = -150.709900, y = 34.082886, z = -210.742004, yaw = 91.672 },
+	{ kind = "backpack", x = -173.747299, y = 34.082886, z = -169.214706, yaw = -88.890 },
+	{ kind = "backpack", x = -58.261833, y = 1.729569, z = -489.498627, yaw = 40.000 },
+	{ kind = "backpack", x = -67.491692, y = 1.194174, z = -483.698914, yaw = 16.970 },
+	{ kind = "backpack", x = -59.341740, y = 1.956434, z = -518.025146, yaw = -84.114 },
+	{ kind = "backpack", x = -67.925163, y = 0.944684, z = -523.809998, yaw = 123.825 },
+	{ kind = "backpack", x = -143.872818, y = 12.461856, z = -687.106079, yaw = 129.266 },
+	{ kind = "backpack", x = -142.013092, y = 12.464664, z = -692.330444, yaw = 22.563 },
+	{ kind = "backpack", x = -151.550537, y = 1.517882, z = -698.594788, yaw = 116.437 },
+	{ kind = "backpack", x = -257.837311, y = 22.635836, z = -694.422668, yaw = -178.626 },
+	{ kind = "backpack", x = -304.030670, y = 10.378544, z = -680.743591, yaw = 22.634 },
+	{ kind = "backpack", x = -286.626495, y = 2.679614, z = -848.800171, yaw = -119.219 },
+	{ kind = "backpack", x = -288.717010, y = 1.919110, z = -826.629150, yaw = -20.453 },
+	{ kind = "backpack", x = -320.724274, y = 1.575504, z = -939.637817, yaw = 171.882 },
+	{ kind = "backpack", x = -291.637390, y = 8.268611, z = -987.729492, yaw = -113.686 },
+	{ kind = "backpack", x = -213.383026, y = 1.597632, z = -982.604248, yaw = -175.702 },
+	{ kind = "backpack", x = -239.932968, y = 19.617392, z = -1106.090820, yaw = -22.336 },
+	{ kind = "backpack", x = -238.088211, y = 19.138826, z = -1110.128540, yaw = 126.142 },
+	{ kind = "backpack", x = -323.007019, y = 2.038397, z = -1183.696655, yaw = -112.155 },
+	{ kind = "backpack", x = -326.842102, y = 2.204650, z = -1186.968750, yaw = 156.962 },
+	{ kind = "backpack", x = -191.735718, y = 0.438222, z = -788.824158, yaw = 155.587 },
+	{ kind = "backpack", x = -376.563263, y = 16.143572, z = -664.532104, yaw = 31.620 },
+	{ kind = "backpack", x = -394.787872, y = 11.708438, z = -682.984497, yaw = -52.605 },
+	{ kind = "backpack", x = -430.507599, y = 0.994160, z = -861.238281, yaw = -103.114 },
+	{ kind = "backpack", x = -396.230194, y = 0.997941, z = -1443.940552, yaw = -157.436 },
+	{ kind = "backpack", x = -409.035828, y = 0.613394, z = -1433.399780, yaw = 97.113 },
+	{ kind = "backpack", x = -403.590515, y = 0.855818, z = -1432.272827, yaw = -49.879 },
+	{ kind = "backpack", x = -387.683807, y = -3.280486, z = -1430.922852, yaw = -118.738 },
+	{ kind = "backpack", x = -408.764374, y = -3.523188, z = -1441.089478, yaw = 123.176 },
+	{ kind = "backpack", x = -824.112732, y = 0.011383, z = 75.933548, yaw = -99.861 },
+	{ kind = "backpack", x = -822.824463, y = 0.222149, z = 81.590256, yaw = 23.156 },
+	{ kind = "backpack", x = -812.513855, y = 0.005595, z = 76.524162, yaw = -35.336 },
+	{ kind = "backpack", x = -816.353027, y = 0.507851, z = 81.087433, yaw = 157.723 },
+	{ kind = "backpack", x = -821.792542, y = -0.078164, z = 70.134590, yaw = -173.076 },
+	{ kind = "backpack", x = -799.721313, y = 3.350301, z = 46.460285, yaw = 157.293 },
+	{ kind = "backpack", x = -812.553284, y = 3.151829, z = 46.828854, yaw = -23.476 },
+	{ kind = "backpack", x = -814.744873, y = 3.151829, z = 63.032799, yaw = 71.298 },
+	{ kind = "backpack", x = -818.944397, y = 3.995058, z = 71.380859, yaw = -173.350 },
+	{ kind = "backpack", x = -823.084473, y = 3.656055, z = 70.836723, yaw = -88.246 },
+	{ kind = "backpack", x = -822.250122, y = 3.302968, z = 80.060982, yaw = 104.009 },
+	{ kind = "backpack", x = -815.642700, y = 3.677008, z = 73.730461, yaw = -119.803 },
+	{ kind = "backpack", x = -796.937134, y = -0.063411, z = 14.608870, yaw = 62.657 },
+	{ kind = "backpack", x = -820.691528, y = -0.098552, z = 4.039658, yaw = 137.331 },
+	{ kind = "backpack", x = -812.586426, y = -0.098941, z = 37.620537, yaw = -119.991 },
+	{ kind = "backpack", x = -803.145386, y = 0.959430, z = 44.118591, yaw = -26.441 },
+	{ kind = "backpack", x = -819.447571, y = 1.203615, z = 63.438984, yaw = -35.132 },
+	{ kind = "backpack", x = -818.070129, y = -0.071054, z = 64.084000, yaw = -70.529 },
+	{ kind = "backpack", x = -349.323883, y = 2.778148, z = 529.275574, yaw = 30.536 },
+	{ kind = "backpack", x = -344.943390, y = 1.810115, z = 534.330872, yaw = 154.118 },
+	{ kind = "backpack", x = -335.812622, y = 2.577313, z = 534.772034, yaw = 24.346 },
+	{ kind = "backpack", x = -314.964294, y = 2.652013, z = 534.925049, yaw = -92.154 },
+	{ kind = "backpack", x = -199.674332, y = 1.161425, z = 638.478394, yaw = -132.760 },
+	{ kind = "backpack", x = -192.544647, y = 2.016227, z = 638.575867, yaw = 112.748 },
+	{ kind = "backpack", x = -174.930450, y = 6.851413, z = 599.620117, yaw = 154.586 },
+	{ kind = "backpack", x = -168.376205, y = 5.977730, z = 590.262817, yaw = -104.393 },
+	{ kind = "backpack", x = -159.589890, y = 1.414749, z = 610.099060, yaw = 164.437 },
+	{ kind = "backpack", x = -195.573853, y = 2.851943, z = 575.153259, yaw = -0.075 },
+	{ kind = "backpack", x = -152.745087, y = 3.231447, z = 603.692505, yaw = -23.242 },
+	{ kind = "backpack", x = -208.663498, y = 6.062944, z = 570.814758, yaw = 108.374 },
+	{ kind = "backpack", x = -207.848495, y = 6.290786, z = 578.352173, yaw = -102.102 },
+	{ kind = "backpack", x = -214.357956, y = 6.218591, z = 579.102295, yaw = -171.497 },
+	{ kind = "backpack", x = -200.141815, y = 5.978029, z = 588.468140, yaw = -33.372 },
+	{ kind = "backpack", x = -200.525818, y = 6.080031, z = 586.714966, yaw = -87.957 },
+	{ kind = "backpack", x = -190.565323, y = 5.482233, z = 576.466309, yaw = 176.944 },
+	{ kind = "backpack", x = -209.797073, y = 1.906835, z = 574.635681, yaw = -9.967 },
+	{ kind = "backpack", x = -220.140030, y = 1.685834, z = 641.581055, yaw = -177.748 },
+	{ kind = "backpack", x = -181.533112, y = 9.186149, z = 711.125000, yaw = -130.841 },
+	{ kind = "backpack", x = -184.682632, y = 10.423045, z = 703.312988, yaw = 159.913 },
+	{ kind = "backpack", x = -178.389175, y = 10.412645, z = 699.981323, yaw = 2.487 },
+	{ kind = "backpack", x = -179.844330, y = 8.869180, z = 694.651672, yaw = -125.881 },
+	{ kind = "backpack", x = -157.084457, y = 52.449467, z = 775.427490, yaw = -47.275 },
+	{ kind = "backpack", x = -156.477737, y = 50.774574, z = 765.550537, yaw = -127.555 },
+	{ kind = "backpack", x = -155.709610, y = 5.094335, z = 770.597656, yaw = 56.667 },
+	{ kind = "backpack", x = -155.051208, y = 5.471772, z = 771.882446, yaw = 148.919 },
+	{ kind = "backpack", x = -156.690613, y = 6.439798, z = 764.384583, yaw = 179.164 },
+	{ kind = "backpack", x = -78.962982, y = 27.043165, z = 634.435242, yaw = -131.123 },
+	{ kind = "backpack", x = -70.271347, y = 9.430238, z = 627.437195, yaw = -71.977 },
+	{ kind = "backpack", x = -256.072174, y = 1.047102, z = 427.176147, yaw = 97.028 },
+	{ kind = "backpack", x = -254.247223, y = 19.010139, z = 781.374573, yaw = 115.330 },
+	{ kind = "backpack", x = -247.969193, y = 21.078203, z = 782.118896, yaw = 137.932 },
+	{ kind = "backpack", x = -254.862350, y = 21.632599, z = 779.602478, yaw = -113.037 },
+	{ kind = "backpack", x = -250.354218, y = 19.064678, z = 776.818726, yaw = -92.615 },
+	{ kind = "backpack", x = -245.602417, y = 20.179373, z = 773.894653, yaw = 173.527 },
+	{ kind = "backpack", x = -385.983826, y = 23.279640, z = 791.596802, yaw = -15.215 },
+	{ kind = "backpack", x = -464.782837, y = 19.370543, z = 787.890991, yaw = 46.634 },
+	{ kind = "backpack", x = -470.002258, y = 19.620953, z = 782.553101, yaw = -169.542 },
+	{ kind = "backpack", x = -523.485046, y = 9.135989, z = 899.980408, yaw = 37.530 },
+	{ kind = "backpack", x = -521.807495, y = 8.966760, z = 901.164734, yaw = -138.771 },
+	{ kind = "backpack", x = -516.598572, y = 10.760911, z = 895.404724, yaw = -55.703 },
+	{ kind = "backpack", x = -532.604004, y = 0.964375, z = 995.488770, yaw = 146.056 },
+	{ kind = "backpack", x = -522.107300, y = 4.454513, z = 1002.990234, yaw = -11.195 },
+	{ kind = "backpack", x = -518.182617, y = 4.209500, z = 995.396057, yaw = -163.158 },
+	{ kind = "backpack", x = -507.762054, y = 4.423616, z = 997.255493, yaw = 106.613 },
+	{ kind = "backpack", x = -465.469299, y = 4.456975, z = 1005.379211, yaw = -78.884 },
+	{ kind = "backpack", x = -457.173828, y = 5.160110, z = 1003.652649, yaw = 2.966 },
+	{ kind = "backpack", x = -477.093567, y = 6.020242, z = 997.087219, yaw = -81.735 },
+	{ kind = "backpack", x = -450.615601, y = 4.456975, z = 1003.417053, yaw = -138.768 },
+	{ kind = "backpack", x = -420.291748, y = 4.418997, z = 1038.036743, yaw = 116.109 },
+	{ kind = "backpack", x = -245.642334, y = 1.582164, z = 1030.105225, yaw = -2.845 },
+	{ kind = "backpack", x = -223.262024, y = 14.264569, z = 1039.991211, yaw = -99.071 },
+	{ kind = "backpack", x = -200.161423, y = 19.203562, z = 1074.897339, yaw = -28.835 },
+	{ kind = "backpack", x = -603.102478, y = 26.011925, z = 791.117981, yaw = -77.087 },
+	{ kind = "backpack", x = -587.820129, y = 23.551336, z = 797.168945, yaw = 75.076 },
+	{ kind = "backpack", x = -1141.566528, y = 20.060572, z = 1064.607178, yaw = -114.469 },
+	{ kind = "backpack", x = -1140.638672, y = 19.900669, z = 1070.109375, yaw = -26.372 },
+	{ kind = "backpack", x = -1128.179932, y = 19.213385, z = 1036.702148, yaw = 107.636 },
+	{ kind = "backpack", x = -1129.142944, y = 19.696798, z = 1034.523804, yaw = -136.428 },
+	{ kind = "backpack", x = -1140.010986, y = 20.264578, z = 1036.778564, yaw = 11.646 },
+	{ kind = "backpack", x = -1131.938721, y = 19.461876, z = 1031.243408, yaw = 176.564 },
+	{ kind = "backpack", x = -1002.976196, y = 9.487151, z = 1118.925171, yaw = -61.141 },
+	{ kind = "backpack", x = -999.450928, y = 7.986173, z = 1118.313110, yaw = -122.572 },
+	{ kind = "backpack", x = -1002.325134, y = 9.063921, z = 1128.942261, yaw = -111.084 },
+	{ kind = "backpack", x = -1324.973022, y = 8.779563, z = 1149.782104, yaw = -105.533 },
+	{ kind = "backpack", x = -1355.311890, y = 0.007646, z = 1141.686768, yaw = -44.753 },
+	{ kind = "backpack", x = -1432.979004, y = 0.067674, z = 1392.949097, yaw = 14.892 },
+	{ kind = "backpack", x = -1426.139526, y = 6.545905, z = 1711.166260, yaw = 52.002 },
+	{ kind = "backpack", x = -1432.991943, y = 6.005062, z = 1714.317017, yaw = -122.988 },
+	{ kind = "backpack", x = -1432.903931, y = 6.030952, z = 1708.015137, yaw = -87.538 },
+	{ kind = "backpack", x = -1345.737061, y = 6.977887, z = 1638.288330, yaw = 43.160 },
+	{ kind = "backpack", x = -1356.174438, y = 8.065831, z = 1635.066650, yaw = -162.041 },
+	{ kind = "backpack", x = -1355.742432, y = -0.408251, z = 1401.138306, yaw = -69.910 },
+	{ kind = "backpack", x = -1353.195068, y = 2.597540, z = 1396.165405, yaw = -60.741 },
+	{ kind = "backpack", x = -1341.420654, y = 0.531379, z = 1406.605591, yaw = 175.018 },
+	{ kind = "backpack", x = -587.079956, y = 0.977940, z = 1279.242065, yaw = 96.842 },
+	{ kind = "backpack", x = -592.367859, y = 0.141385, z = 1261.979248, yaw = 128.346 },
+	{ kind = "backpack", x = 830.081360, y = 0.984603, z = -406.286682, yaw = -22.163 },
+	{ kind = "backpack", x = 817.600830, y = 0.112953, z = -396.887054, yaw = 63.934 },
+	{ kind = "backpack", x = 805.503174, y = 0.107912, z = -393.730316, yaw = 147.244 },
+	{ kind = "backpack", x = 808.784790, y = 0.960959, z = -404.239594, yaw = 46.365 },
+	{ kind = "backpack", x = 813.561218, y = 2.918441, z = -401.953979, yaw = -106.419 },
+	{ kind = "backpack", x = 818.025391, y = 1.988676, z = -408.075531, yaw = 46.945 },
+	{ kind = "backpack", x = 1404.132813, y = 4.603378, z = -798.213867, yaw = 38.345 },
+	{ kind = "backpack", x = 1410.863159, y = 5.124164, z = -788.472595, yaw = 34.534 },
+	{ kind = "backpack", x = 1405.824951, y = 5.296242, z = -786.460449, yaw = 16.163 },
+	{ kind = "backpack", x = 1392.328247, y = 1.384574, z = -797.902344, yaw = 118.930 },
+	{ kind = "backpack", x = 1247.572754, y = 1.363066, z = -907.553223, yaw = -87.768 },
+	{ kind = "backpack", x = 1250.027954, y = -2.049039, z = -896.244141, yaw = 1.538 },
+	{ kind = "backpack", x = 1268.114014, y = 1.634985, z = -889.157654, yaw = 133.515 },
+	{ kind = "backpack", x = 1252.683350, y = 17.525974, z = -860.499146, yaw = 39.778 },
+	{ kind = "backpack", x = 1249.471069, y = 18.605747, z = -894.397278, yaw = -87.357 },
+	{ kind = "backpack", x = 1491.516724, y = 1.626833, z = -880.803589, yaw = -80.621 },
+	{ kind = "backpack", x = 1493.304688, y = 1.401684, z = -874.981079, yaw = 9.051 },
+	{ kind = "backpack", x = 1495.974731, y = 1.773082, z = -875.439026, yaw = -70.952 },
+	{ kind = "backpack", x = 1501.367188, y = 0.998677, z = -876.121948, yaw = 46.201 },
+	{ kind = "backpack", x = 1498.834106, y = 2.094142, z = -879.494507, yaw = -83.391 },
+	{ kind = "backpack", x = 1330.041870, y = 1.135552, z = -1346.467407, yaw = 59.455 },
+	{ kind = "backpack", x = 1162.816528, y = 2.208951, z = -1449.762451, yaw = 27.460 }
+}
+
+-- Compatibility entry point retained for lz_new_mechanics. Permanent spawning
+-- is intentionally disabled; the dynamic manager owns the 350 active stashes.
+function new_game_start()
+	return true
+end
+
+function point_count()
+	return #points
+end
+
+function append_dynamic_candidates(target, next_id, source_name)
+	next_id = tonumber(next_id) or 10001
+	for _, point in ipairs(points) do
+		table.insert(target, {
+			id = next_id,
+			kind = "curated",
+			position = { point.x, point.y, point.z },
+			level_vertex_id = point.level_vertex_id,
+			game_vertex_id = point.game_vertex_id,
+			yaw = point.yaw,
+			curated = true,
+			source_catalogue = source_name or "manual"
+		})
+		next_id = next_id + 1
+	end
+	return next_id
+end
+
+function reset_spawn_flag()
+	return true
+end

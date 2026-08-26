@@ -1,0 +1,172 @@
+-- Parser for the addon-owned artifact population balance table.
+-- Gameplay reads this file at runtime, so spawn balance has one source of truth.
+
+local CONFIG_PATH = "misc\\lz_nlc_art_spawn.ltx"
+local config = nil
+local cached_zones = nil
+local cached_phases = nil
+local cached_class_chances = nil
+local cached_pools = {}
+local cached_artifact_classes = nil
+
+local function ini()
+	if not config then config = ini_file(CONFIG_PATH) end
+	return config
+end
+
+local function trim(value)
+	if value == nil then return "" end
+	value = string.gsub(tostring(value), "[;].*$", "")
+	return string.gsub(string.gsub(value, "^%s+", ""), "%s+$", "")
+end
+
+local function split(value)
+	local result = {}
+	for token in string.gmatch(tostring(value or ""), "([^,]+)") do
+		token = trim(token)
+		if token ~= "" then table.insert(result, token) end
+	end
+	return result
+end
+
+local function number(section, key, default)
+	local source = ini()
+	if source:line_exist(section, key) then
+		return tonumber(source:r_string(section, key)) or default
+	end
+	return default
+end
+
+local function text(section, key, default)
+	local source = ini()
+	if source:line_exist(section, key) then
+		local value = trim(source:r_string(section, key))
+		if value ~= "" then return value end
+	end
+	return default
+end
+
+local function pool(family, artifact_class)
+	local cache_key = tostring(family) .. ":" .. tostring(artifact_class)
+	if cached_pools[cache_key] then return cached_pools[cache_key] end
+	local section = "spawn_family_" .. tostring(family)
+	local key = "class_" .. tostring(artifact_class)
+	local sections = split(text(section, key, ""))
+	local raw_weights = split(text(section, key .. "_weights", ""))
+	local weights = {}
+	for index = 1, #sections do
+		weights[index] = math.max(0, tonumber(raw_weights[index]) or 1)
+	end
+	local result = { sections = sections, weights = weights }
+	cached_pools[cache_key] = result
+	return result
+end
+
+function settings()
+	return {
+		level = text("spawn_settings", "level", "pripyat_full"),
+		storage_key = text("spawn_settings", "storage_key", "lz_nlc_art_spawn"),
+		initial_artifacts = math.max(0, math.floor(number("spawn_settings", "initial_artifacts", 10))),
+		initial_minimum_per_class = math.max(0, math.floor(number(
+			"spawn_settings", "initial_minimum_per_class", 1
+		))),
+		artifacts_per_emission = math.max(0, math.floor(number(
+			"spawn_settings", "artifacts_per_emission", 3
+		))),
+		empty_zone_cooldown_emissions = math.max(0, math.floor(number(
+			"spawn_settings", "empty_zone_cooldown_emissions", 1
+		))),
+		actor_exclusion_radius = math.max(0, number("spawn_settings", "actor_exclusion_radius", 120)),
+		spawn_height = number("spawn_settings", "spawn_height", 0.25),
+		update_interval_ms = math.max(100, math.floor(number("spawn_settings", "update_interval_ms", 1000))),
+		scan_retry_ms = math.max(1000, math.floor(number("spawn_settings", "scan_retry_ms", 5000))),
+		seed = math.max(1, math.floor(number("spawn_settings", "seed", 24681357)))
+	}
+end
+
+function class_chances()
+	if cached_class_chances then return cached_class_chances end
+	cached_class_chances = {}
+	for artifact_class = 1, 4 do
+		cached_class_chances[artifact_class] = math.max(0, number(
+			"spawn_class_chances", "class_" .. tostring(artifact_class), 0
+		))
+	end
+	return cached_class_chances
+end
+
+function cooking_minutes(stage)
+	return math.max(1, math.floor(number(
+		"cooking_times", "stage_" .. tostring(stage) .. "_minutes", 30
+	)))
+end
+
+function zones()
+	if cached_zones then return cached_zones end
+	cached_zones = {}
+	local source = ini()
+	for index = 0, source:line_count("spawn_zones") - 1 do
+		local ok, raw_id, raw_family = source:r_line("spawn_zones", index, "", "")
+		if ok then
+			local id = tonumber(raw_id)
+			local family = trim(raw_family)
+			if id and family ~= "" then
+				cached_zones[id] = {
+					id = id,
+					family = family,
+					anchor_name = string.format("pf_proc_fixed_g%02d_a_base", id),
+					point_prefix = string.format("pf_proc_fixed_g%02d_p", id),
+					hint = string.format("st_pf_proc_group_%02d", id)
+				}
+			end
+		end
+	end
+	return cached_zones
+end
+
+function phases()
+	if cached_phases then return cached_phases end
+	cached_phases = {}
+	for _, section in ipairs({
+		"spawn_phase_0_4", "spawn_phase_5_9", "spawn_phase_10_plus"
+	}) do
+		table.insert(cached_phases, {
+			section = section,
+			day_from = math.floor(number(section, "day_from", 0)),
+			day_to = math.floor(number(section, "day_to", -1)),
+			total_cap = math.max(0, math.floor(number(section, "total_cap", 0)))
+		})
+	end
+	return cached_phases
+end
+
+function phase_for_day(day)
+	day = math.max(0, math.floor(tonumber(day) or 0))
+	for _, phase in ipairs(phases()) do
+		if day >= phase.day_from and (phase.day_to < 0 or day <= phase.day_to) then
+			return phase
+		end
+	end
+	return phases()[#phases()]
+end
+
+function family_pool(family, artifact_class)
+	return pool(family, tonumber(artifact_class) or 1)
+end
+
+function artifact_class(section_name)
+	if not cached_artifact_classes then
+		cached_artifact_classes = {}
+		for family in pairs({
+			psi = true, electric = true, chemical = true,
+			gravitational = true, thermal = true
+		}) do
+			for value = 1, 4 do
+				for _, section in ipairs(pool(family, value).sections) do
+					cached_artifact_classes[section] = value
+				end
+			end
+		end
+	end
+	return cached_artifact_classes[section_name]
+end

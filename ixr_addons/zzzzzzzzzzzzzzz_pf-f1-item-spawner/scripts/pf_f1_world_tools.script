@@ -1,0 +1,181 @@
+local WEATHER_LABELS = {
+	default_clear = "pf_f1_weather_clear",
+	default_cloudy = "pf_f1_weather_cloudy",
+	default_dark = "pf_f1_weather_dark",
+	default_drops = "pf_f1_weather_drops",
+	default_fog = "pf_f1_weather_fog",
+	default_pure = "pf_f1_weather_pure",
+	default_rain = "pf_f1_weather_rain",
+	default_storm = "pf_f1_weather_storm",
+	default_thunder = "pf_f1_weather_thunder",
+	default_way_to_pripyat = "pf_f1_weather_way_to_pripyat",
+	default_white = "pf_f1_weather_white",
+	indoor_ambient = "pf_f1_weather_indoor",
+}
+
+local TIME_FACTORS = { 1, 10, 50, 100, 1000 }
+local MONEY_STEP = 10000
+
+local function actor_ready()
+	return db.actor ~= nil and db.actor:alive()
+end
+
+local function trim(value)
+	return string.match(tostring(value or ""), "^%s*(.-)%s*$")
+end
+
+local function weather_name(section)
+	local string_id = WEATHER_LABELS[section]
+	return string_id and game.translate_string(string_id) or section
+end
+
+local function weather_section(file_name)
+	local name = tostring(file_name or "")
+	name = string.match(name, "([^\\/]+)$") or name
+	if string.lower(string.sub(name, -4)) ~= ".ltx" then return nil end
+	return string.sub(name, 1, -5)
+end
+
+function weather_cycles()
+	local result = {}
+	local seen = {}
+	local file_list
+	local opened = pcall(function()
+		file_list = getFS():file_list_open("$game_weathers$", FS.FS_ListFiles)
+	end)
+	if not opened or not file_list then
+		printf("pf_f1_world_tools: unable to enumerate $game_weathers$")
+		return result
+	end
+
+	local listed = pcall(function()
+		for index = 0, file_list:Size() - 1 do
+			local section = weather_section(file_list:GetAt(index))
+			if section and section ~= "" and not seen[section] then
+				seen[section] = true
+				table.insert(result, {
+					section = section,
+					name = weather_name(section),
+				})
+			end
+		end
+	end)
+	pcall(function() file_list:Free() end)
+	if not listed then
+		printf("pf_f1_world_tools: failed while reading $game_weathers$")
+		return {}
+	end
+	table.sort(result, function(left, right)
+		return string.lower(left.name) < string.lower(right.name)
+	end)
+	return result
+end
+
+function time_factors()
+	return TIME_FACTORS
+end
+
+function current_time_text()
+	if not level.present() then return "--:--" end
+	return string.format("%02d:%02d", level.get_time_hours(), level.get_time_minutes())
+end
+
+function current_time_factor()
+	if not level.present() then return 1 end
+	return tonumber(level.get_time_factor()) or 1
+end
+
+function set_time_factor(value)
+	if not level.present() then return false, "pf_f1_status_level_missing" end
+	value = tonumber(value)
+	if not value then return false, "pf_f1_status_invalid_value" end
+	for _, allowed in ipairs(TIME_FACTORS) do
+		if value == allowed then
+			level.set_time_factor(value)
+			return true
+		end
+	end
+	return false, "pf_f1_status_invalid_value"
+end
+
+function forward_time(hours)
+	if not actor_ready() then return false, "pf_f1_status_actor_missing" end
+	hours = tonumber(hours)
+	if not hours or hours <= 0 or hours > 24 then
+		return false, "pf_f1_status_invalid_value"
+	end
+	level.change_game_time(0, hours, 0)
+	local ok_weather, manager = pcall(function()
+		return level_weathers.get_weather_manager()
+	end)
+	if ok_weather and manager then pcall(function() manager:forced_weather_change() end) end
+	local ok_surge, surge = pcall(function()
+		return surge_manager.get_surge_manager()
+	end)
+	if ok_surge and surge then surge.time_forwarded = true end
+	return true
+end
+
+function start_surge()
+	if not actor_ready() then return false, "pf_f1_status_actor_missing" end
+	if not surge_manager or not surge_manager.start_surge then
+		return false, "pf_f1_status_surge_unavailable"
+	end
+	local ok = pcall(surge_manager.start_surge)
+	if not ok then return false, "pf_f1_status_surge_unavailable" end
+	local manager_ok, manager = pcall(surge_manager.get_surge_manager)
+	if manager_ok and manager and manager.started ~= true then
+		return false, "pf_f1_status_surge_blocked"
+	end
+	return true
+end
+
+function current_coordinates()
+	if not actor_ready() then return nil, "pf_f1_status_actor_missing" end
+	local actor = db.actor
+	local position = actor:position()
+	return string.format(
+		"%s | x=%.3f y=%.3f z=%.3f | lv=%s gv=%s",
+		tostring(level.name()), position.x, position.y, position.z,
+		tostring(actor:level_vertex_id()), tostring(actor:game_vertex_id()))
+end
+
+function teleport_to(raw_x, raw_y, raw_z)
+	if not actor_ready() then return false, "pf_f1_status_actor_missing" end
+	local x, y, z = tonumber(trim(raw_x)), tonumber(trim(raw_y)), tonumber(trim(raw_z))
+	if not x or not y or not z then return false, "pf_f1_status_invalid_coordinates" end
+	if math.abs(x) > 100000 or math.abs(y) > 100000 or math.abs(z) > 100000 then
+		return false, "pf_f1_status_invalid_coordinates"
+	end
+	local position = vector():set(x, y, z)
+	local level_vertex_id = level.vertex_id(position)
+	if level_vertex_id == nil or level_vertex_id == 4294967295 or
+		not level.valid_vertex_id(level_vertex_id) then
+		return false, "pf_f1_status_invalid_coordinates"
+	end
+	db.actor:set_actor_position(position)
+	return true
+end
+
+function change_money(delta)
+	if not actor_ready() then return false, "pf_f1_status_actor_missing" end
+	delta = tonumber(delta)
+	if not delta or math.abs(delta) > MONEY_STEP * 10 then
+		return false, "pf_f1_status_invalid_value"
+	end
+	local actor = db.actor
+	local target = math.max(0, actor:money() + delta)
+	actor:give_money(target - actor:money())
+	return true, nil, target
+end
+
+function set_weather(section)
+	if not actor_ready() then return false, "pf_f1_status_actor_missing" end
+	for _, entry in ipairs(weather_cycles()) do
+		if entry.section == section then
+			local ok = pcall(function() level.set_weather(section, true) end)
+			return ok, ok and nil or "pf_f1_status_weather_failed"
+		end
+	end
+	return false, "pf_f1_status_weather_missing"
+end

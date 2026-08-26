@@ -1,0 +1,1205 @@
+-- World objects, starter content, lore, sleep, backpacks, and strange consumables.
+-- Engine callbacks are owned by the lz_new_mechanics facade.
+local state = {
+	start_stash_due = nil,
+	start_stash_force_new = false,
+	start_stash_revision_checked = false,
+	pending_backpack_boxes = {},
+	pending_backpack_deploy = nil,
+	sleep_was_active = false,
+	strange_stew_faint_due = nil,
+	strange_stew_phase = nil,
+	strange_stew_phase_due = nil,
+	strange_stew_destination = nil,
+	strange_stew_target_slot = nil,
+	strange_consumable_encounter = nil,
+	strange_consumable_fallback = nil,
+	removed_items_cleaned = false,
+	missing_start_stash_sections_logged = {},
+	mechanics_encyclopedia_ini = nil
+}
+local impl = {}
+local core = lz_nm_core
+
+local MECHANICS_ENCYCLOPEDIA_PATH = "plugins\\lz_new_mechanics_encyclopedia.ltx"
+local MECHANICS_ITEM_UNLOCK_SECTION = "encyclopedia_item_unlocks"
+local MECHANICS_UNREAD_KEY = "lz_nm_encyclopedia_unread"
+
+local function developer_mode_enabled()
+	return pf_stash_qa and pf_stash_qa.is_developer_mode and
+		pf_stash_qa.is_developer_mode() == true
+end
+
+local removed_item_sections = {
+	snickers = true,
+	energy_drink1 = true,
+	bandage_army = true,
+	mutant_part_snork_leg = true
+}
+
+-- Detector salvage is deliberately tiered. Low-end detectors yield only
+-- common electronic parts, while Svarog guarantees one of every material.
+
+local start_stash_items = {
+	"mineral_water",
+	"drug_sleep",
+	"itm_gunsmith_toolkit",
+	"itm_outfit_toolkit",
+	"itm_repairkit_tier_1",
+	"itm_repairkit_tier_2",
+	"itm_repairkit_tier_soft",
+	"itm_repairkit_tier_3",
+	"itm_backpack",
+	"itm_sleepbag",
+	"lz_nm_radio_beacon",
+	"mutant_part_krovosos_jaw",
+	"mutant_part_boar_leg",
+	"mutant_part_chimera_kogot",
+	"mutant_part_chimera_claw",
+	"mutant_part_dog_tail",
+	"mutant_part_flesh_eye",
+	"mutant_part_psevdodog_tail",
+	"mutant_part_snork_hand",
+	"mutant_part_tushkano_head",
+	"mutant_part_pseudogigant_hand",
+	"mutant_part_pseudogigant_eye",
+	"mutant_part_controller_glass",
+	"mutant_part_controller_hand",
+	"mutant_part_burer_hand",
+	"mutant_part_krovosos_meat",
+	"mutant_part_boar_chop",
+	"mutant_part_chimera_meat",
+	"mutant_part_dog_meat",
+	"mutant_part_flesh_meat",
+	"mutant_part_psevdodog_meat",
+	"mutant_part_tushkano_meat"
+}
+
+-- Stable collection order defines the matching "Ghost City" encyclopedia
+-- article numbers. Production spawning is owned by pf_dynamic_stashes; the
+-- dedicated all-items container below remains a manual QA shortcut only.
+local lore_test_stash_items = {
+	"letter_memoirs_1_of_2",
+	"letter_memoirs_2_of_2",
+	"letter_freedom_manual_1_of_2",
+	"letter_freedom_manual_2_of_2",
+	"letter_stalker_letter_1_of_2",
+	"letter_stalker_letter_2_of_2",
+	"letter_ecologist_report_1_of_3",
+	"letter_ecologist_report_2_of_3",
+	"letter_ecologist_report_3_of_3",
+	"letter_monolith_prayer_1_of_3",
+	"letter_monolith_prayer_2_of_3",
+	"letter_monolith_prayer_3_of_3",
+	"letter_monolithian_thoughts",
+	"letter_letter_to_outside",
+	"letter_military_stalker",
+	"letter_mercenary",
+	"letter_military_log",
+	"letter_stalker_letter_3",
+	"lz_lore_three_days_for_pets",
+	"lz_lore_abandoned_animals_report",
+	"lz_lore_driver_kislytskyi",
+	"lz_lore_separated_family_letter",
+	"lz_lore_derkonis_house_card",
+	"lz_lore_kuznetsov_letter",
+	"lz_lore_kuzmina_mothers_letter",
+	"lz_lore_veteran_on_silence",
+	"lz_lore_kyiv_women_letter",
+	"lz_lore_pravik_hospital_letter",
+	"lz_lore_ignatenko_testimony",
+	"lz_lore_liquidators_collective_letter",
+	"lz_lore_lukatsky_testimony",
+	"lz_lore_petrus_family_register",
+	"lz_lore_memorial_visit_permit",
+	"lz_lore_belongings_disposal_act",
+	"lz_lore_shpakovych_family_card",
+	"lz_lore_unprocessed_pripyat_film"
+}
+
+local lore_encyclopedia_unlocks = {}
+local lore_note_indexes = {}
+for index, section in ipairs(lore_test_stash_items) do
+	lore_encyclopedia_unlocks[section] = string.format(
+		"lz_ghost_city_note_%02d_found", index
+	)
+	lore_note_indexes[section] = index
+end
+
+function ghost_city_note_count()
+	return #lore_test_stash_items
+end
+
+function ghost_city_note_section(index)
+	index = tonumber(index)
+	return index and lore_test_stash_items[index] or nil
+end
+
+function ghost_city_note_index(section)
+	return type(section) == "string" and lore_note_indexes[section] or nil
+end
+
+function ghost_city_note_found(index)
+	index = tonumber(index)
+	local section = index and lore_test_stash_items[index] or nil
+	local info = section and lore_encyclopedia_unlocks[section] or nil
+	return db.actor ~= nil and info ~= nil and db.actor:has_info(info)
+end
+
+function impl.has_any_lore_encyclopedia_article()
+	if not db.actor then return false end
+	for _, info in pairs(lore_encyclopedia_unlocks) do
+		if db.actor:has_info(info) then return true end
+	end
+	return false
+end
+
+function impl.get_mechanics_encyclopedia_ini()
+	if not state.mechanics_encyclopedia_ini then
+		state.mechanics_encyclopedia_ini = ini_file(MECHANICS_ENCYCLOPEDIA_PATH)
+	end
+	return state.mechanics_encyclopedia_ini
+end
+
+function impl.unlock_mechanics_info(info)
+	if not db.actor or not info or info == "" or db.actor:has_info(info) then return false end
+	db.actor:give_info_portion(info)
+	return true
+end
+
+function impl.unlock_mechanics_for_section(section, item)
+	if not db.actor or not section then return 0 end
+	section = core.canonical_item_section(section)
+	local unlocked = 0
+	local ini = impl.get_mechanics_encyclopedia_ini()
+	if ini and ini:section_exist(MECHANICS_ITEM_UNLOCK_SECTION) and
+		ini:line_exist(MECHANICS_ITEM_UNLOCK_SECTION, section) then
+		local infos = ini:r_string(MECHANICS_ITEM_UNLOCK_SECTION, section)
+		for info in string.gmatch(infos or "", "[^,]+") do
+			info = string.gsub(info, "^%s*(.-)%s*$", "%1")
+			if impl.unlock_mechanics_info(info) then unlocked = unlocked + 1 end
+		end
+	end
+
+	if unlocked > 0 then
+		xr_logic.pstor_store(db.actor, MECHANICS_UNREAD_KEY, true)
+		printf(
+			"lz_new_mechanics: unlocked [%s] mechanics encyclopedia article(s) for [%s]",
+			tostring(unlocked), tostring(section)
+		)
+	end
+	return unlocked
+end
+
+-- Called for ground/corpse/box transfers and, through the facade, purchases.
+-- Permanent info portions make duplicate engine callbacks harmless.
+function actor_on_mechanics_item_take(item)
+	if not item then return 0 end
+	local server_item = alife():object(item:id(), true)
+	local section = server_item and server_item:section_name() or item:section()
+	return impl.unlock_mechanics_for_section(section, item)
+end
+
+function scan_owned_mechanics_items()
+	if not db.actor then return 0 end
+	local unlocked = 0
+	db.actor:iterate_inventory(function(_, item)
+		unlocked = unlocked + actor_on_mechanics_item_take(item)
+	end, db.actor)
+	return unlocked
+end
+
+function mechanics_encyclopedia_has_unread()
+	return db.actor ~= nil and
+		xr_logic.pstor_retrieve(db.actor, MECHANICS_UNREAD_KEY, false) == true
+end
+
+function mark_mechanics_encyclopedia_read()
+	if not db.actor then return false end
+	xr_logic.pstor_store(db.actor, MECHANICS_UNREAD_KEY, false)
+	return true
+end
+
+-- Mechanical QA items are kept together so both new games and upgraded saves
+-- receive the same minimum of two copies without touching larger stacks.
+local start_stash_mechanic_items = {
+	"af_dummy_buliz",
+	"lz_nm_stash_beacon",
+	"lz_nm_radio_beacon",
+	"pf_metal_detector_homemade",
+	"pf_metal_detector_wave",
+	"pf_metal_detector_magnet",
+	"lz_nm_krona_battery",
+	"hand_radio",
+	"detector_simple",
+	"detector_advanced",
+	"detector_elite",
+	"detector_scientific",
+	"itm_backpack",
+	"itm_sleepbag",
+	"itm_gunsmith_toolkit",
+	"itm_outfit_toolkit",
+	"lz_nm_weapon_disassembly_kit",
+	"itm_repairkit_tier_1",
+	"itm_repairkit_tier_2",
+	"itm_repairkit_tier_soft",
+	"itm_repairkit_tier_3",
+	"itm_field_upgrade_kit_blue",
+	"itm_field_upgrade_kit_red",
+	"itm_field_upgrade_kit_yellow",
+	"itm_field_upgrade_kit_green",
+	"lz_nm_metal_part",
+	"lz_nm_armor_pouch",
+	"lz_nm_rubber_padding",
+	"lz_nm_combat_boots",
+	"lz_nm_used_filter",
+	"lz_nm_strange_stew",
+	"lz_nm_strange_shot",
+	"lz_nm_strange_drink",
+	"pda_hack_usb_1",
+	"pda_hack_usb_2",
+	"pda_hack_usb_3",
+	"pf_stash_pda_novice",
+	"pf_stash_pda_stalker",
+	"pf_stash_pda_veteran",
+	"pf_stash_pda_master"
+}
+
+-- Field kits use their own count because ordinary starter supplies are doubled.
+local start_stash_variant_kits = {
+	"itm_field_upgrade_kit_blue",
+	"itm_field_upgrade_kit_red",
+	"itm_field_upgrade_kit_yellow",
+	"itm_field_upgrade_kit_green"
+}
+local START_STASH_FIELD_KIT_COUNT = 6
+
+-- Single-copy QA items are also injected into already existing starter stashes.
+local start_stash_single_items = {
+	"lz_ph_reflash_module",
+	"lz_nlc_anomaly_analyzer",
+	"af_polarity",
+	"pf_key_liquidator",
+	"pf_key_hacker",
+	"pf_key_hunter",
+	"pf_key_strelok",
+	"pf_key_zulus",
+	"pf_key_charon",
+	"pf_key_home"
+}
+
+local START_STASH_FLAG = "lz_nm_start_stash_spawned"
+local START_STASH_ID_KEY = "lz_nm_start_stash_id"
+local START_STASH_REVISION_KEY = "lz_nm_start_stash_polarity_v22"
+local LORE_TEST_STASH_SECTION = "lz_nm_lore_test_stash"
+local LORE_TEST_STASH_FLAG = "lz_nm_lore_test_stash_spawned"
+local LORE_TEST_STASH_ID_KEY = "lz_nm_lore_test_stash_id"
+local LORE_TEST_STASH_REVISION_KEY = "lz_nm_lore_test_stash_documents_v1"
+
+local STASH_SPOT = "ui_pda2_actor_box_location"
+local STRANGE_STEW_ARRIVAL_DISTANCE = 15
+local STRANGE_STEW_START_DELAY_MS = 50
+local STRANGE_STEW_PHASE_FALLBACK_MS = 12000
+local STRANGE_CONSUMABLE_PSY_DAMAGE = 0.1
+local STRANGE_CONSUMABLE_USE_PROFILES = {
+	lz_nm_strange_stew = { encounter = "weak_mercs", fallback_delay_ms = 5000 },
+	lz_nm_strange_shot = { encounter = "vodka_random", fallback_delay_ms = 4200 },
+	lz_nm_strange_drink = { encounter = "random", fallback_delay_ms = 3600 }
+}
+
+local function cleanup_removed_items()
+	if state.removed_items_cleaned then return end
+	local obsolete = {}
+	for _, object in alife():objects() do
+		if removed_item_sections[object:section_name()] then
+			table.insert(obsolete, object)
+		end
+	end
+	for _, object in ipairs(obsolete) do alife():release(object, true) end
+	state.removed_items_cleaned = true
+	if #obsolete > 0 then
+		printf("lz_new_mechanics: removed [%s] obsolete items from the save", tostring(#obsolete))
+	end
+end
+
+
+function impl.find_start_stash()
+	local stored_id = xr_logic.pstor_retrieve(db.actor, START_STASH_ID_KEY, -1)
+	if stored_id and stored_id >= 0 then
+		local stored = alife():object(stored_id, true)
+		if stored and stored:section_name() == "lz_nm_start_stash" then
+			return stored
+		end
+	end
+
+	-- Saves made by the first addon version contain only the boolean flag.
+	-- Recover their container without creating a duplicate.
+	for _, object in alife():objects() do
+		if object:section_name() == "lz_nm_start_stash" then
+			return object
+		end
+	end
+	return nil
+end
+
+function impl.mark_start_stash(stash)
+	if level.map_has_object_spot(stash.id, STASH_SPOT) == 0 then
+		level.map_add_object_spot_ser(
+			stash.id,
+			STASH_SPOT,
+			game.translate_string("lz_nm_start_stash_marker")
+		)
+	end
+	xr_logic.pstor_store(db.actor, START_STASH_ID_KEY, stash.id)
+	xr_logic.pstor_store(db.actor, START_STASH_FLAG, true)
+end
+
+function impl.find_lore_test_stash()
+	local stored_id = xr_logic.pstor_retrieve(db.actor, LORE_TEST_STASH_ID_KEY, -1)
+	if stored_id and stored_id >= 0 then
+		local stored = alife():object(stored_id, true)
+		if stored and stored:section_name() == LORE_TEST_STASH_SECTION then
+			return stored
+		end
+	end
+
+	for _, object in alife():objects() do
+		if object:section_name() == LORE_TEST_STASH_SECTION then return object end
+	end
+	return nil
+end
+
+function impl.mark_lore_test_stash(stash)
+	if level.map_has_object_spot(stash.id, STASH_SPOT) == 0 then
+		level.map_add_object_spot_ser(
+			stash.id,
+			STASH_SPOT,
+			game.translate_string("lz_nm_lore_test_stash_marker")
+		)
+	end
+	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_ID_KEY, stash.id)
+	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_FLAG, true)
+end
+
+-- The all-documents box was a development aid and must not compete with the
+-- production dynamic-stash distribution. Strip only its lore notes; preserve
+-- the container when a player stored unrelated items inside it.
+function impl.retire_lore_test_stashes()
+	if not db.actor then return end
+	local test_stashes = {}
+	for _, object in alife():objects() do
+		if object:section_name() == LORE_TEST_STASH_SECTION then
+			table.insert(test_stashes, object)
+		end
+	end
+	local stripped = 0
+	local retired = 0
+	for _, stash in ipairs(test_stashes) do
+		local note_ids = {}
+		local has_other_items = false
+		for child_id in alife():get_children(stash) do
+			local child = alife():object(child_id, true)
+			if child and lore_note_indexes[child:section_name()] then
+				table.insert(note_ids, child_id)
+			elseif child then
+				has_other_items = true
+			end
+		end
+		for _, child_id in ipairs(note_ids) do
+			local child = alife():object(child_id, true)
+			if child then
+				alife():release(child, true)
+				stripped = stripped + 1
+			end
+		end
+		if level.map_has_object_spot(stash.id, STASH_SPOT) ~= 0 then
+			level.map_remove_object_spot(stash.id, STASH_SPOT)
+		end
+		if not has_other_items then
+			alife():release(stash, true)
+			retired = retired + 1
+		end
+	end
+	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_ID_KEY, -1)
+	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_FLAG, false)
+	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_REVISION_KEY, true)
+	if stripped > 0 or retired > 0 then
+		printf(
+			"lz_new_mechanics: retired lore test stash; stripped [%s] notes, removed [%s] empty boxes",
+			tostring(stripped), tostring(retired)
+		)
+	end
+end
+
+-- Adds only missing sections. This upgrades an existing starter stash in
+-- place, preserving everything the player has already stored inside it.
+function impl.ensure_start_stash_sections(stash, sections)
+	local present = {}
+	for child_id in alife():get_children(stash) do
+		local child = alife():object(child_id, true)
+		if child then present[child:section_name()] = true end
+	end
+
+	local created = 0
+	for _, section in ipairs(sections) do
+		if not core.get_sysini():section_exist(section) then
+			if not state.missing_start_stash_sections_logged[section] then
+				printf("lz_new_mechanics: optional starter-stash section [%s] is absent; skipped", section)
+				state.missing_start_stash_sections_logged[section] = true
+			end
+		elseif not present[section] and alife():create(section, vector(), 0, 0, stash.id) then
+			created = created + 1
+		end
+	end
+	return created
+end
+
+function impl.ensure_start_stash_section_copies(stash, sections, desired_count)
+	local counts = {}
+	for _, section in ipairs(sections) do counts[section] = 0 end
+	for child_id in alife():get_children(stash) do
+		local child = alife():object(child_id, true)
+		if child then
+			local section = child:section_name()
+			if counts[section] ~= nil then counts[section] = counts[section] + 1 end
+		end
+	end
+
+	local created = 0
+	for _, section in ipairs(sections) do
+		if not core.get_sysini():section_exist(section) then
+			if not state.missing_start_stash_sections_logged[section] then
+				printf("lz_new_mechanics: optional starter-stash section [%s] is absent; skipped", section)
+				state.missing_start_stash_sections_logged[section] = true
+			end
+		else
+			for _ = counts[section] + 1, desired_count do
+				if alife():create(section, vector(), 0, 0, stash.id) then
+					created = created + 1
+				end
+			end
+		end
+	end
+	return created
+end
+
+function impl.ensure_lore_test_stash()
+	local stash = impl.find_lore_test_stash()
+	if not stash then
+		local actor_position = db.actor:position()
+		local direction = db.actor:direction()
+		local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+		local forward_x = length > 0.001 and direction.x / length or 1
+		local forward_z = length > 0.001 and direction.z / length or 0
+		local right_x = -forward_z
+		local right_z = forward_x
+		local position = vector():set(
+			actor_position.x + forward_x * 2.25 - right_x * 0.9,
+			actor_position.y + 0.2,
+			actor_position.z + forward_z * 2.25 - right_z * 0.9
+		)
+
+		stash = alife():create(
+			LORE_TEST_STASH_SECTION,
+			position,
+			db.actor:level_vertex_id(),
+			db.actor:game_vertex_id()
+		)
+		if not stash then return false end
+		stash.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
+	end
+
+	local created = impl.ensure_start_stash_sections(stash, lore_test_stash_items)
+	impl.mark_lore_test_stash(stash)
+	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_REVISION_KEY, true)
+	printf(
+		"lz_new_mechanics: lore test stash ready; added [%s] missing documents",
+		tostring(created)
+	)
+	return true
+end
+
+-- Remove retired or unsupported test items only from the addon starter stash;
+-- do not touch matching objects already owned or stored elsewhere.
+local unsupported_start_stash_items = {
+	mutant_part_cat_tail = true,
+	mutant_part_fracture_hand = true,
+	mutant_part_zombi_hand = true,
+	-- The former armor-only kit is removed only from the tracked starter stash.
+	-- Instances already owned by the player remain save-compatible and behave
+	-- exactly like the unified kit through core.canonical_item_section().
+	lz_nm_armor_disassembly_kit = true
+}
+
+-- The Kolobok family predates the dedicated artifact QA chest. Remove its
+-- legacy copies only from the original starter chest; the cooking runtime
+-- keeps one complete branch in the neighboring artifact chest.
+local moved_to_artifact_qa_stash = {
+	af_dummy_kolobok = true,
+	af_kol_1 = true,
+	af_kol_2 = true,
+	af_kol_3 = true,
+	af_kol_4 = true
+}
+
+local RECOVERED_UPGRADE_KEY_PREFIX = "lz_nm_recovered_upgrade_"
+
+local function is_unsupported_start_stash_item(child)
+	local section = child:section_name()
+	if unsupported_start_stash_items[section] then return true end
+	if moved_to_artifact_qa_stash[section] then return true end
+	if section ~= "lz_nm_recovered_upgrade" then return false end
+
+	-- A recovered stock upgrade needs per-object metadata written by the
+	-- disassembly script. Remove only raw QA placeholders; preserve a legitimate
+	-- extracted upgrade even if the player later stores it in this container.
+	local upgrade_id = xr_logic.pstor_retrieve(
+		db.actor, RECOVERED_UPGRADE_KEY_PREFIX .. tostring(child.id), ""
+	)
+	return tostring(upgrade_id or "") == ""
+end
+
+function impl.remove_unsupported_start_stash_items(stash)
+	local remove_ids = {}
+	for child_id in alife():get_children(stash) do
+		local child = alife():object(child_id, true)
+		if child and is_unsupported_start_stash_item(child) then
+			table.insert(remove_ids, child_id)
+		end
+	end
+	for _, child_id in ipairs(remove_ids) do
+		local child = alife():object(child_id, true)
+		if child then alife():release(child, true) end
+	end
+	return #remove_ids
+end
+
+function impl.ensure_start_stash_revision_items(stash)
+	local removed = impl.remove_unsupported_start_stash_items(stash)
+	if removed > 0 then
+		printf("lz_new_mechanics: removed [%s] retired or relocated starter-stash items", tostring(removed))
+	end
+	return impl.ensure_start_stash_sections(stash, start_stash_single_items) +
+		impl.ensure_start_stash_section_copies(stash, start_stash_mechanic_items, 2) +
+		impl.ensure_start_stash_section_copies(
+			stash, start_stash_variant_kits, START_STASH_FIELD_KIT_COUNT
+		)
+end
+
+-- Older development builds could create several indistinguishable copies of
+-- the new-game stash through a console helper. Keep the tracked legitimate
+-- container and remove every extra copy, including its test contents.
+function impl.cleanup_duplicate_start_stashes()
+	if not db.actor then return end
+	local stored_id = tonumber(xr_logic.pstor_retrieve(db.actor, START_STASH_ID_KEY, -1)) or -1
+	local stashes = {}
+	local keep = nil
+	for _, object in alife():objects() do
+		if object:section_name() == "lz_nm_start_stash" then
+			table.insert(stashes, object)
+			if object.id == stored_id then keep = object end
+		end
+	end
+	if not keep then keep = stashes[1] end
+	local removed = 0
+	for _, stash in ipairs(stashes) do
+		if not keep or stash.id ~= keep.id then
+			if level.map_has_object_spot(stash.id, STASH_SPOT) ~= 0 then
+				level.map_remove_object_spot(stash.id, STASH_SPOT)
+			end
+			local children = {}
+			for child_id in alife():get_children(stash) do table.insert(children, child_id) end
+			for _, child_id in ipairs(children) do
+				local child = alife():object(child_id, true)
+				if child then alife():release(child, true) end
+			end
+			alife():release(stash, true)
+			removed = removed + 1
+		end
+	end
+	if keep then impl.mark_start_stash(keep) end
+	if removed > 0 then
+		printf("lz_new_mechanics: removed [%s] obsolete test stashes", tostring(removed))
+	end
+end
+
+function impl.spawn_start_stash(force_new)
+	if not db.actor or not developer_mode_enabled() then return false end
+
+	if not force_new then
+		local existing = impl.find_start_stash()
+		if existing then
+			impl.mark_start_stash(existing)
+			local created = impl.ensure_start_stash_revision_items(existing)
+			impl.retire_lore_test_stashes()
+			xr_logic.pstor_store(db.actor, START_STASH_REVISION_KEY, true)
+			printf("lz_new_mechanics: starter stash upgraded with [%s] revision items", tostring(created))
+			return true
+		end
+	end
+
+	-- The old object may have been lost while its flag remained in the save.
+	-- In that case, create a replacement instead of silently doing nothing.
+	xr_logic.pstor_store(db.actor, START_STASH_ID_KEY, -1)
+	xr_logic.pstor_store(db.actor, START_STASH_FLAG, false)
+
+	local actor_position = db.actor:position()
+	local direction = db.actor:direction()
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	local forward_x = length > 0.001 and direction.x / length or 1
+	local forward_z = length > 0.001 and direction.z / length or 0
+	local right_x = -forward_z
+	local right_z = forward_x
+	local position = vector():set(
+		actor_position.x + forward_x * 2.25 + right_x * 0.75,
+		actor_position.y + 0.2,
+		actor_position.z + forward_z * 2.25 + right_z * 0.75
+	)
+
+	local stash = alife():create(
+		"lz_nm_start_stash",
+		position,
+		db.actor:level_vertex_id(),
+		db.actor:game_vertex_id()
+	)
+	if not stash then return false end
+
+	stash.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
+	local created = 0
+	for _, section in ipairs(start_stash_items) do
+		for _ = 1, 2 do
+			if alife():create(section, vector(), 0, 0, stash.id) then
+				created = created + 1
+			end
+		end
+	end
+	created = created + impl.ensure_start_stash_revision_items(stash)
+
+	impl.mark_start_stash(stash)
+	impl.retire_lore_test_stashes()
+	xr_logic.pstor_store(db.actor, START_STASH_REVISION_KEY, true)
+	core.message("lz_nm_start_stash_ready")
+	printf("lz_new_mechanics: new-game stash created with [%s] items", tostring(created))
+	return true
+end
+
+-- Replaces only the invisible end callback of the project's new-game intro.
+-- The original setup remains intact and the addon stash is appended afterwards.
+function new_game_start()
+	xr_effects.pf_new_game_start()
+	-- Let the new-game inventory synchronizer finish before creating identical
+	-- pairs. The items then form normal stacks without AddSimilar races.
+	state.start_stash_due = developer_mode_enabled() and time_global() + 3000 or nil
+	state.start_stash_force_new = false
+	return scan_owned_mechanics_items()
+end
+
+-- QA shortcut: run_string lz_new_mechanics.debug_spawn_lore_test_stash()
+-- The historical name is retained for console compatibility, but the command
+-- now gives one copy of every missing note directly to the actor. It never
+-- creates the retired all-documents test stash.
+function debug_spawn_lore_test_stash()
+	if not db.actor then
+		printf("lz_new_mechanics: cannot issue lore test notes without actor")
+		return false
+	end
+
+	local present = {}
+	db.actor:iterate_inventory(function(_, item)
+		local section = item and item:section() or nil
+		if section and lore_note_indexes[section] then present[section] = true end
+	end, db.actor)
+
+	local created = 0
+	local unlocked = 0
+	local unavailable = 0
+	for _, section in ipairs(lore_test_stash_items) do
+		local available = present[section] == true
+		if not present[section] then
+			if not core.get_sysini():section_exist(section) then
+				unavailable = unavailable + 1
+			elseif alife():create(section, vector(), 0, 0, db.actor:id()) then
+				created = created + 1
+				available = true
+			end
+		end
+		local info = lore_encyclopedia_unlocks[section]
+		if available and info and not db.actor:has_info(info) then
+			db.actor:give_info_portion(info)
+			unlocked = unlocked + 1
+		end
+	end
+
+	if unlocked > 0 and not db.actor:has_info("lz_ghost_city_first_article_notified") then
+		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
+		news_manager.send_tip(
+			db.actor,
+			"lz_ghost_city_first_article_news",
+			nil, nil, nil, nil
+		)
+	end
+	printf(
+		"lz_new_mechanics: lore test notes issued to inventory; added [%s], unlocked [%s], unavailable [%s]",
+		tostring(created), tostring(unlocked), tostring(unavailable)
+	)
+	return false
+end
+
+-- Portable sleeping bag uses the native Call of Pripyat sleep dialog. One
+-- charge is spent only after the player confirms sleep, never on cancel.
+function impl.consume_sleepbag_use(item_id)
+	local item = item_id and level.object_by_id(item_id) or nil
+	if not item or not db.actor or not core.is_actor_owned_item(item) then return false end
+
+	-- itm_sleepbag is a generic action item, not CEatableItem. Its five visible
+	-- charges are therefore stored as 20% condition steps instead of portions.
+	local maximum = 5
+	local condition = math.max(0, math.min(1, item:condition()))
+	local remaining = math.floor(condition * maximum + 0.5)
+	if remaining < 1 then
+		core.release_item(item)
+		return false
+	end
+	if remaining == 1 then
+		core.release_item(item)
+	else
+		item:set_condition((remaining - 1) / maximum)
+	end
+	return true
+end
+
+function use_sleepbag(item)
+	if not item or not db.actor then return false end
+	if not core.require_actor_owned_item(item) then return false end
+	local item_id = item:id()
+	ui_sleep_dialog.sleep(function() return impl.consume_sleepbag_use(item_id) end)
+	return true
+end
+
+-- Native "Use" is kept as the only sleeping-pill action. This callback is
+-- invoked immediately before the engine consumes one dose.
+function on_inventory_eat(npc, item)
+	-- Bound game_object userdata has no Lua __eq operator in this IX-Ray build.
+	-- Compare stable engine IDs instead of comparing userdata directly.
+	if not item or not npc or not db.actor or npc:id() ~= db.actor:id() then return true end
+	local section = core.canonical_item_section(item:section())
+	if section == "drug_sleep" then
+		ui_sleep_dialog.sleep()
+	end
+
+	-- The normal path still comes from each animator's end_lua_callback. Keep a
+	-- delayed one-shot fallback because an interrupted HUD animator can consume
+	-- the item without ever delivering that callback.
+	local profile = STRANGE_CONSUMABLE_USE_PROFILES[section]
+	if profile and not state.strange_stew_phase and
+		not state.strange_stew_faint_due and not state.strange_consumable_fallback then
+		local encounter = profile.encounter
+		if encounter == "random" then
+			encounter = math.random(1, 2) == 1 and "weak_mercs" or "vodka_random"
+		end
+		state.strange_consumable_fallback = {
+			section = section,
+			encounter = encounter,
+			due = time_global() + profile.fallback_delay_ms
+		}
+	end
+	return true
+end
+
+-- The backpack is converted into a persistent inventory box at the actor's
+-- position. It intentionally has no use animation.
+function impl.complete_backpack_deploy(item)
+	if not item or not db.actor or not core.is_actor_owned_item(item) then return false end
+	local object = alife():create(
+		"lz_nm_backpack_box",
+		db.actor:position(),
+		db.actor:level_vertex_id(),
+		db.actor:game_vertex_id()
+	)
+	if not object then
+		core.message("lz_nm_backpack_failed")
+		return false
+	end
+
+	level.map_add_object_spot_ser(object.id, STASH_SPOT, game.translate_string("lz_nm_backpack_marker"))
+	if lz_nm_beacons and lz_nm_beacons.register_personal_stash then
+		lz_nm_beacons.register_personal_stash(object.id)
+	end
+	core.release_item(item)
+	core.message("lz_nm_backpack_deployed")
+	return true
+end
+
+function deploy_backpack(item)
+	if not item or not db.actor then return false end
+	if not core.require_actor_owned_item(item) then return false end
+	if state.pending_backpack_deploy then return false end
+	state.pending_backpack_deploy = {
+		item_id = item:id(),
+		due = time_global() + 150
+	}
+	return false
+end
+
+function impl.box_has_items(box)
+	for _ in alife():get_children(box) do return true end
+	return false
+end
+
+function impl.collapse_backpack_box(box, control)
+	if not box or impl.box_has_items(box) then return false end
+	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+	local opened_box = menu and menu:GetInvBox() or nil
+	if opened_box and opened_box:id() == box.id and get_hud() then
+		get_hud():HideActorMenu()
+	end
+	level.map_remove_object_spot(box.id, STASH_SPOT)
+	if lz_nm_beacons and lz_nm_beacons.unregister_personal_stash then
+		lz_nm_beacons.unregister_personal_stash(box.id)
+	end
+	core.create_for_actor("itm_backpack")
+	if control then core.release_item(control) end
+	alife():release(box, true)
+	core.message("lz_nm_backpack_packed")
+	return true
+end
+
+function impl.nearest_backpack_box(max_distance)
+	if not db.actor then return nil end
+	local actor_pos = db.actor:position()
+	local nearest, nearest_distance
+	for _, object in alife():objects() do
+		if object:section_name() == "lz_nm_backpack_box" then
+			local pos = object.position
+			local dx = pos.x - actor_pos.x
+			local dy = pos.y - actor_pos.y
+			local dz = pos.z - actor_pos.z
+			local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+			if distance <= max_distance and (not nearest_distance or distance < nearest_distance) then
+				nearest = object
+				nearest_distance = distance
+			end
+		end
+	end
+	return nearest
+end
+
+function pack_backpack(control)
+	local box = impl.nearest_backpack_box(4.0)
+	if not box then
+		core.message("lz_nm_backpack_not_near")
+		return false
+	end
+	if impl.box_has_items(box) then
+		core.message("lz_nm_backpack_not_empty")
+		return false
+	end
+	return impl.collapse_backpack_box(box, control)
+end
+
+-- Unlock one persistent encyclopedia article the first time a documentary
+-- note reaches the actor, regardless of whether it came from a box, corpse,
+-- trader, or the ground. Duplicate callbacks are harmless because info
+-- portions are permanent and checked before being granted.
+function actor_on_lore_item_take(item)
+	if not db.actor or not item then return end
+	local server_item = alife():object(item:id(), true)
+	local section = server_item and server_item:section_name() or item:section()
+	local info = lore_encyclopedia_unlocks[section]
+	if not info or db.actor:has_info(info) then return end
+	db.actor:give_info_portion(info)
+	if not db.actor:has_info("lz_ghost_city_first_article_notified") then
+		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
+		news_manager.send_tip(
+			db.actor,
+			"lz_ghost_city_first_article_news",
+			nil, nil, nil, nil
+		)
+	end
+	printf(
+		"lz_new_mechanics: Ghost City encyclopedia entry unlocked for [%s]",
+		tostring(section)
+	)
+end
+
+-- A deployed backpack has no artificial folding token. Taking the final real
+-- item removes the now-empty box and returns the backpack to the actor.
+function actor_on_item_take_from_box(box, item)
+	if not box or not item then return end
+	if box:section() ~= "lz_nm_backpack_box" then return end
+	-- This signal arrives before both the client and ALife server have committed
+	-- the transfer. Retry briefly instead of relying on a single frame; this is
+	-- also reliable when the actor-menu "take all" action moves several stacks.
+	local now = time_global()
+	state.pending_backpack_boxes[box:id()] = {
+		due = now + 100,
+		expires = now + 3000
+	}
+end
+
+function impl.spawn_strange_consumable_event(encounter)
+	if encounter and pf_dynamic_stashes and
+		pf_dynamic_stashes.spawn_strange_consumable_ambush then
+		pf_dynamic_stashes.spawn_strange_consumable_ambush(encounter)
+	end
+end
+
+function strange_stew_wakeup_finished()
+	if not state.strange_stew_phase then return end
+	local encounter = state.strange_consumable_encounter
+	state.strange_stew_phase = nil
+	state.strange_stew_phase_due = nil
+	state.strange_stew_destination = nil
+	state.strange_stew_target_slot = nil
+	state.strange_consumable_encounter = nil
+	if db.actor then
+		xr_effects.enable_ui(db.actor, nil)
+		-- In this IX-Ray build the psy_health property setter applies a delta.
+		db.actor.psy_health = -STRANGE_CONSUMABLE_PSY_DAMAGE
+	end
+	impl.spawn_strange_consumable_event(encounter)
+end
+
+function strange_stew_blackout_callback()
+	if state.strange_stew_phase ~= "falling" or not db.actor then return end
+	state.strange_stew_phase = "waking"
+	state.strange_stew_phase_due = time_global() + STRANGE_STEW_PHASE_FALLBACK_MS
+
+	level.change_game_time(0, 3, 0)
+	if surge_manager and surge_manager.get_surge_manager then
+		surge_manager.get_surge_manager().time_forwarded = true
+	end
+	if psi_storm_manager and psi_storm_manager.get_psi_storm_manager then
+		psi_storm_manager.get_psi_storm_manager().time_forwarded = true
+	end
+	if level_weathers and level_weathers.get_weather_manager then
+		level_weathers.get_weather_manager():forced_weather_change()
+	end
+	if state.strange_stew_destination then
+		db.actor:set_actor_position(state.strange_stew_destination)
+		printf(
+			"lz_new_mechanics: strange consumable moved actor near purple stash slot [%s]",
+			tostring(state.strange_stew_target_slot)
+		)
+	else
+		printf("! lz_new_mechanics: no purple stash arrival point; strange consumable fainted actor in place")
+	end
+	-- Resolve the vodka branch while the blackout still covers the event. The
+	-- stew branch keeps its mercenary ambush until the wake-up camera finishes.
+	if state.strange_consumable_encounter == "vodka_random" then
+		local encounter = state.strange_consumable_encounter
+		state.strange_consumable_encounter = nil
+		impl.spawn_strange_consumable_event(encounter)
+	end
+	state.strange_stew_destination = nil
+	state.strange_stew_target_slot = nil
+	level.add_cam_effector(
+		"camera_effects\\surge_01.anm", 105184, false,
+		"lz_new_mechanics.strange_stew_wakeup_finished"
+	)
+end
+
+function impl.start_strange_stew_faint()
+	if not db.actor or state.strange_stew_phase then return end
+	state.strange_stew_destination = nil
+	state.strange_stew_target_slot = nil
+	-- All three strange consumables share the original purple-stash relocation.
+	-- Their post-blackout encounter still differs: stew keeps the weak mercenary
+	-- ambush, vodka keeps its corpse/nothing roll, and water chooses either event.
+	if state.strange_consumable_encounter and pf_dynamic_stashes and
+		pf_dynamic_stashes.random_hidden_purple_arrival then
+		state.strange_stew_destination, state.strange_stew_target_slot =
+			pf_dynamic_stashes.random_hidden_purple_arrival(STRANGE_STEW_ARRIVAL_DISTANCE)
+	end
+
+	xr_effects.disable_ui_only(db.actor, nil)
+	state.strange_stew_phase = "falling"
+	state.strange_stew_phase_due = time_global() + STRANGE_STEW_PHASE_FALLBACK_MS
+	level.add_cam_effector(
+		"camera_effects\\surge_02.anm", 105184, false,
+		"lz_new_mechanics.strange_stew_blackout_callback"
+	)
+	level.add_pp_effector("surge_fade.ppe", 105185, false)
+end
+
+-- Dedicated animator callback. Delay one update so HudAnimatorManager can
+-- finish StopAnimator before the faint disables input and hides the weapon.
+function impl.schedule_strange_consumable_faint(encounter)
+	if state.strange_stew_phase or state.strange_stew_faint_due then return end
+	state.strange_consumable_fallback = nil
+	state.strange_consumable_encounter = encounter
+	state.strange_stew_faint_due = time_global() + STRANGE_STEW_START_DELAY_MS
+end
+
+function strange_stew_animation_finished()
+	impl.schedule_strange_consumable_faint("weak_mercs")
+end
+
+function strange_shot_animation_finished()
+	impl.schedule_strange_consumable_faint("vodka_random")
+end
+
+function strange_drink_animation_finished()
+	-- The strange drink always relocates to a purple stash, then borrows one of
+	-- the two established encounter outcomes with equal probability.
+	impl.schedule_strange_consumable_faint(
+		math.random(1, 2) == 1 and "weak_mercs" or "vodka_random")
+end
+
+-- Backward-compatible callback used by the first implementation of the stew.
+function strange_consumable_animation_finished()
+	strange_stew_animation_finished()
+end
+
+-- Lifecycle phases are intentionally separate so the facade can preserve the
+-- exact ordering of the former monolithic actor_on_update function.
+function reset_and_migrate_on_load()
+	if state.strange_stew_phase and db.actor then
+		xr_effects.enable_ui(db.actor, nil)
+	end
+	state.strange_stew_faint_due = nil
+	state.strange_stew_phase = nil
+	state.strange_stew_phase_due = nil
+	state.strange_stew_destination = nil
+	state.strange_stew_target_slot = nil
+	state.strange_consumable_encounter = nil
+	state.strange_consumable_fallback = nil
+	state.start_stash_due = nil
+	state.start_stash_force_new = false
+	state.start_stash_revision_checked = false
+	state.pending_backpack_deploy = nil
+	state.sleep_was_active = db.actor ~= nil and db.actor:has_info("actor_is_sleeping")
+	impl.cleanup_duplicate_start_stashes()
+	impl.retire_lore_test_stashes()
+	if db.actor and not db.actor:has_info("lz_ghost_city_first_article_notified") and
+		impl.has_any_lore_encyclopedia_article() then
+		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
+	end
+	-- One full pass per load migrates currently owned tools in old saves. Normal
+	-- gameplay remains event-driven; no inventory scan runs in the update loop.
+	return scan_owned_mechanics_items()
+end
+
+function schedule_start_stash_on_load()
+	state.start_stash_due = nil
+	if developer_mode_enabled() and level.name() == "pripyat_full" then
+		local stash_was_created = xr_logic.pstor_retrieve(db.actor, START_STASH_FLAG, false)
+		local stash_id = xr_logic.pstor_retrieve(db.actor, START_STASH_ID_KEY, -1)
+		if stash_was_created or (stash_id and stash_id >= 0) then
+			state.start_stash_due = time_global() + 3000
+		end
+	end
+end
+
+-- Developer is identified after the first actor update, while this module's
+-- regular update may already have completed its one-shot starter check.
+function schedule_developer_start_stash()
+	if not db.actor or not developer_mode_enabled() or level.name() ~= "pripyat_full" then
+		return false
+	end
+	state.start_stash_force_new = false
+	state.start_stash_due = time_global() + 500
+	return true
+end
+
+function on_game_load()
+	reset_and_migrate_on_load()
+	schedule_start_stash_on_load()
+end
+
+function update_sleep()
+	local sleep_is_active = db.actor:has_info("actor_is_sleeping")
+	if state.sleep_was_active and not sleep_is_active then
+		xr_effects.scenario_autosave(db.actor, nil, {"st_save_lz_after_sleep"})
+	end
+	state.sleep_was_active = sleep_is_active
+end
+
+function update_cleanup()
+	cleanup_removed_items()
+end
+
+function update_strange_consumables(now)
+	local fallback = state.strange_consumable_fallback
+	if fallback and now >= fallback.due then
+		state.strange_consumable_fallback = nil
+		printf(
+			"! lz_new_mechanics: animator callback fallback activated for [%s]",
+			tostring(fallback.section)
+		)
+		impl.schedule_strange_consumable_faint(fallback.encounter)
+	end
+	if state.strange_stew_faint_due and now >= state.strange_stew_faint_due then
+		state.strange_stew_faint_due = nil
+		impl.start_strange_stew_faint()
+	end
+	if state.strange_stew_phase_due and now >= state.strange_stew_phase_due then
+		if state.strange_stew_phase == "falling" then
+			strange_stew_blackout_callback()
+		elseif state.strange_stew_phase == "waking" then
+			strange_stew_wakeup_finished()
+		end
+	end
+end
+
+function update_starter_check(now)
+	if state.start_stash_revision_checked then return end
+	state.start_stash_revision_checked = true
+	printf(
+		"lz_new_mechanics: starter check, level=[%s], revision=[%s]",
+		tostring(level.name()),
+		tostring(xr_logic.pstor_retrieve(db.actor, START_STASH_REVISION_KEY, false))
+	)
+	if not developer_mode_enabled() then
+		state.start_stash_due = nil
+		state.start_stash_force_new = false
+		return
+	end
+	if level.name() == "pripyat_full" and
+		not xr_logic.pstor_retrieve(db.actor, START_STASH_REVISION_KEY, false) then
+		state.start_stash_force_new = false
+		state.start_stash_due = now + 500
+	end
+end
+
+function update_backpacks(now)
+	if state.pending_backpack_deploy and now >= state.pending_backpack_deploy.due then
+		local pending = state.pending_backpack_deploy
+		state.pending_backpack_deploy = nil
+		local item = level.object_by_id(pending.item_id)
+		if item and core.is_actor_owned_item(item) then
+			impl.complete_backpack_deploy(item)
+		end
+	end
+	for id, pending in pairs(state.pending_backpack_boxes) do
+		if now >= pending.due then
+			local client_box = level.object_by_id(id)
+			local server_box = alife():object(id, true)
+			if not server_box then
+				state.pending_backpack_boxes[id] = nil
+			elseif client_box and client_box:is_inv_box_empty() and not impl.box_has_items(server_box) then
+				state.pending_backpack_boxes[id] = nil
+				impl.collapse_backpack_box(server_box, nil)
+			elseif now >= pending.expires then
+				state.pending_backpack_boxes[id] = nil
+			else
+				pending.due = now + 100
+			end
+		end
+	end
+end
+
+function update_start_stash(now)
+	if not state.start_stash_due or now < state.start_stash_due then return end
+	if not developer_mode_enabled() then
+		state.start_stash_due = nil
+		state.start_stash_force_new = false
+		return
+	end
+	if impl.spawn_start_stash(state.start_stash_force_new) then
+		state.start_stash_due = nil
+		state.start_stash_force_new = false
+	else
+		state.start_stash_due = now + 1000
+	end
+end

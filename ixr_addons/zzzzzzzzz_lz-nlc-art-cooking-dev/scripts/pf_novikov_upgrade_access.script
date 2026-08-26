@@ -1,0 +1,219 @@
+-- Hermann's three research requests unlock Novikov's armor-upgrade columns.
+-- Every hand-in is atomic from the dialogue's point of view: a complete set
+-- is selected from the rucksack first, then all selected objects are consumed.
+
+local INTRO_DONE = "pf_novikov_upgrade_intro_done"
+local STAGES = {
+	[1] = {
+		active = "pf_novikov_upgrade_stage_1_active",
+		unlocked = "pf_novikov_upgrade_rank_1_unlocked",
+		task = "pf_novikov_upgrade_stage_1",
+		natural_classes = true,
+		count = 3
+	},
+	[2] = {
+		active = "pf_novikov_upgrade_stage_2_active",
+		unlocked = "pf_novikov_upgrade_rank_2_unlocked",
+		task = "pf_novikov_upgrade_stage_2",
+		single_tier = 3,
+		double_tier = 2
+	},
+	[3] = {
+		active = "pf_novikov_upgrade_stage_3_active",
+		unlocked = "pf_novikov_upgrade_rank_3_unlocked",
+		task = "pf_novikov_upgrade_stage_3",
+		single_tier = 5,
+		double_tier = 4
+	}
+}
+
+local function has_info(info)
+	return db.actor and db.actor:has_info(info) or false
+end
+
+local function give_info(info)
+	if db.actor and not db.actor:has_info(info) then
+		db.actor:give_info_portion(info)
+	end
+end
+
+local function equipped_ids()
+	local result = {}
+	if not db.actor then return result end
+	for slot = 1, 16 do
+		local item = db.actor:item_in_slot(slot)
+		if item then result[item:id()] = true end
+	end
+	return result
+end
+
+local function collect_by_tier(tier)
+	local by_family = {}
+	if not db.actor then return by_family end
+	local equipped = equipped_ids()
+	db.actor:iterate_inventory(function(_, item)
+		if not item or equipped[item:id()] or db.actor:is_on_belt(item) then return end
+		if not alife():object(item:id(), true) then return end
+		local section = item:section()
+		local family = lz_nlc_anomaly_registry.artifact_family(section)
+		if family and lz_nlc_anomaly_registry.artifact_tier(section) == tier then
+			by_family[family] = by_family[family] or {}
+			table.insert(by_family[family], item)
+		end
+	end, db.actor)
+	for _, items in pairs(by_family) do
+		table.sort(items, function(left, right) return left:id() < right:id() end)
+	end
+	return by_family
+end
+
+local function available_families(by_family, excluded)
+	local result = {}
+	for family, items in pairs(by_family) do
+		if #items > 0 and not (excluded and excluded[family]) then
+			table.insert(result, family)
+		end
+	end
+	table.sort(result)
+	return result
+end
+
+local function shuffle(values)
+	for index = #values, 2, -1 do
+		local other = math.random(index)
+		values[index], values[other] = values[other], values[index]
+	end
+end
+
+local function choose_natural(count, randomize)
+	local eligible = {}
+	if not db.actor then return nil end
+	local equipped = equipped_ids()
+	db.actor:iterate_inventory(function(_, item)
+		if not item or equipped[item:id()] or db.actor:is_on_belt(item) then return end
+		if not alife():object(item:id(), true) then return end
+		local artifact_class = lz_nlc_art_spawn_config.artifact_class(item:section())
+		if artifact_class and artifact_class >= 1 and artifact_class <= 4 then
+			table.insert(eligible, item)
+		end
+	end, db.actor)
+	if #eligible < count then return nil end
+	table.sort(eligible, function(left, right) return left:id() < right:id() end)
+	if randomize then shuffle(eligible) end
+	local result = {}
+	for index = 1, count do result[index] = eligible[index] end
+	return result
+end
+
+local function choose_distinct(by_family, count, excluded)
+	local families = available_families(by_family, excluded)
+	if #families < count then return nil end
+	shuffle(families)
+	local result = {}
+	for index = 1, count do
+		local items = by_family[families[index]]
+		table.insert(result, items[math.random(#items)])
+	end
+	return result
+end
+
+local function mixed_tier_selection(single_tier, double_tier, randomize)
+	local singles = collect_by_tier(single_tier)
+	local doubles = collect_by_tier(double_tier)
+	local single_families = available_families(singles)
+	if randomize then shuffle(single_families) end
+	for _, family in ipairs(single_families) do
+		local excluded = {[family] = true}
+		local double_families = available_families(doubles, excluded)
+		if #double_families >= 2 then
+			if randomize then shuffle(double_families) end
+			local single_items = singles[family]
+			local single = randomize and single_items[math.random(#single_items)] or single_items[1]
+			return {
+				single,
+				doubles[double_families[1]][randomize and math.random(#doubles[double_families[1]]) or 1],
+				doubles[double_families[2]][randomize and math.random(#doubles[double_families[2]]) or 1]
+			}
+		end
+	end
+	return nil
+end
+
+local function selection_for_stage(stage, randomize)
+	local data = STAGES[stage]
+	if not data then return nil end
+	if data.natural_classes then
+		return choose_natural(data.count, randomize)
+	end
+	if data.single_tier and data.double_tier then
+		return mixed_tier_selection(data.single_tier, data.double_tier, randomize)
+	end
+	return choose_distinct(collect_by_tier(data.tier), data.count)
+end
+
+local function previous_unlocked(stage)
+	if stage == 1 then return has_info(INTRO_DONE) end
+	return has_info(STAGES[stage - 1].unlocked)
+end
+
+local function can_start(stage)
+	local data = STAGES[stage]
+	return data and previous_unlocked(stage) and
+		not has_info(data.active) and not has_info(data.unlocked) or false
+end
+
+local function start(stage)
+	local data = STAGES[stage]
+	if not can_start(stage) then return false end
+	give_info(data.active)
+	task_manager.get_task_manager():give_task(data.task)
+	return true
+end
+
+local function can_turn_in(stage)
+	local data = STAGES[stage]
+	return data and has_info(data.active) and not has_info(data.unlocked) and
+		selection_for_stage(stage, false) ~= nil or false
+end
+
+local function turn_in(stage, first_speaker, second_speaker)
+	if not can_turn_in(stage) then return false end
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+	local selected = selection_for_stage(stage, true)
+	if not npc or not selected or #selected ~= 3 then return false end
+	local consumed = {}
+	for _, item in ipairs(selected) do
+		local server_item = item and alife():object(item:id(), true) or nil
+		if not server_item then return false end
+		table.insert(consumed, {
+			server = server_item,
+			section = item:section()
+		})
+	end
+	for _, entry in ipairs(consumed) do
+		-- Research samples are expended by the laboratory. Releasing them
+		-- directly avoids treating an NPC hand-off as a cooking drop.
+		alife():release(entry.server, true)
+		news_manager.relocate_item(db.actor, "out", entry.section)
+	end
+	give_info(STAGES[stage].unlocked)
+	printf("[PF NOVIKOV ACCESS] unlocked rank=%d artifacts=3", stage)
+	return true
+end
+
+function finish_novikov_intro(first_speaker, second_speaker)
+	give_info(INTRO_DONE)
+end
+
+function can_start_stage_1(first_speaker, second_speaker) return can_start(1) end
+function can_start_stage_2(first_speaker, second_speaker) return can_start(2) end
+function can_start_stage_3(first_speaker, second_speaker) return can_start(3) end
+function start_stage_1(first_speaker, second_speaker) return start(1) end
+function start_stage_2(first_speaker, second_speaker) return start(2) end
+function start_stage_3(first_speaker, second_speaker) return start(3) end
+function can_turn_in_stage_1(first_speaker, second_speaker) return can_turn_in(1) end
+function can_turn_in_stage_2(first_speaker, second_speaker) return can_turn_in(2) end
+function can_turn_in_stage_3(first_speaker, second_speaker) return can_turn_in(3) end
+function turn_in_stage_1(first_speaker, second_speaker) return turn_in(1, first_speaker, second_speaker) end
+function turn_in_stage_2(first_speaker, second_speaker) return turn_in(2, first_speaker, second_speaker) end
+function turn_in_stage_3(first_speaker, second_speaker) return turn_in(3, first_speaker, second_speaker) end

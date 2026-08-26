@@ -1,0 +1,40 @@
+[logic]
+active = ph_door@locked
+
+[ph_door@locked]
+locked = true
+closed = true
+snd_open_start = trader_door_locked
+snd_close_start = trader_door_close_start
+snd_close_stop = trader_door_close_stop
+tip_open = pf_bunker_access_door_locked
+on_use = {-pf_bunker_access_started} %=give_task(pf_bunker_access) +pf_bunker_access_started%
+on_info = {+pf_bunker_access_granted} ph_door@close
+on_info2 = {-pf_bunker_access_started -pf_bunker_access_granted =dist_to_actor_le(2)} %=give_task(pf_bunker_access) +pf_bunker_access_started%
+
+[ph_door@close]
+locked = false
+closed = true
+snd_open_start = trader_door_open_start
+snd_close_start = trader_door_close_start
+snd_close_stop = trader_door_close_stop
+on_use = ph_door@open
+on_info = {-pf_bunker_access_granted} ph_door@locked
+hit_on_bone = 1|ph_door@free|2|ph_door@free
+
+[ph_door@open]
+locked = false
+closed = false
+snd_open_start = trader_door_open_start
+snd_close_start = trader_door_close_start
+snd_close_stop = trader_door_close_stop
+on_use = ph_door@close
+on_info = {-pf_bunker_access_granted} ph_door@locked
+hit_on_bone = 1|ph_door@free|2|ph_door@free
+
+[ph_door@free]
+locked = false
+closed = true
+no_force = true
+on_use = ph_door@open
+on_info = {-pf_bunker_access_granted} ph_door@locked

@@ -1,0 +1,35 @@
+# Normalize source files in the repository while keeping Windows launchers and
+# PowerShell scripts immediately executable in the local checkout.
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.ltx text eol=lf
+*.script text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.pl text eol=lf
+
+# Game resources are binary. Git LFS can be introduced deliberately before a
+# future large-asset import; existing small tracked assets remain ordinary Git.
+*.dds binary
+*.ogf binary
+*.omf binary
+*.ogg binary
+*.spawn filter=lfs diff=lfs merge=lfs -text
+*.xr binary
+*.png binary
+*.exe binary
+
+# These late-layer files intentionally mirror vendor configs byte-for-byte
+# except for the retired weapon rows. Preserve their inherited whitespace so
+# future source-vs-overlay audits remain meaningful.
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/gameplay/character_desc_general.xml whitespace=-trailing-space,-space-before-tab
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/gameplay/character_desc_jupiter.xml whitespace=-trailing-space,-space-before-tab
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/misc/death_generic.ltx whitespace=-trailing-space,-space-before-tab
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/misc/death_items_by_communities.ltx whitespace=-trailing-space,-space-before-tab
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/misc/death_items_by_levels.ltx whitespace=-trailing-space,-space-before-tab
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/misc/death_items_count.ltx whitespace=-trailing-space,-space-before-tab
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/misc/trade/trade_jup_b202_stalker_barmen.ltx whitespace=-trailing-space,-space-before-tab
+ixr_addons/zzzzzzzzzzzzzzzzzzz_pf-retired-weapons/configs/misc/trade/trade_zat_b30_stalker_trader.ltx whitespace=-trailing-space,-space-before-tab

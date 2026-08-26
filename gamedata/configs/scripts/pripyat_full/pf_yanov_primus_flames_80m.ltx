@@ -1,0 +1,12 @@
+[logic]
+active = sr_idle@far
+
+[sr_idle@far]
+on_info = {=dist_to_actor_le(79.9)} sr_particle@near
+
+[sr_particle@near]
+name = explosions\gas_light
+path = pf_yanov_primus_flames_02
+mode = 2
+looped = true
+on_info = {=dist_to_actor_ge(80)} sr_idle@far

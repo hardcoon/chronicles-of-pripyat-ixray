@@ -1,0 +1,324 @@
+local ADDON_DIR = "zzzzzzzzzzzzzzzz_pf-irc-chat"
+local EXE_RELATIVE_PATH = "bin\\pf_irc_bridge.exe"
+local CONFIG_RELATIVE_PATH = "configs\\pf_irc_chat_runtime.ltx"
+local PIPE_PREFIX = "pf_irc_chat_"
+
+local ffi_ok, ffi = pcall(require, "ffi")
+local kernel32 = nil
+
+if ffi_ok then
+    ffi.cdef[[
+        typedef unsigned long DWORD;
+        typedef int BOOL;
+        typedef unsigned short WORD;
+        typedef unsigned char BYTE;
+        typedef void* HANDLE;
+        typedef const char* LPCSTR;
+        typedef char* LPSTR;
+        typedef struct {
+            DWORD cb; LPSTR lpReserved; LPSTR lpDesktop; LPSTR lpTitle;
+            DWORD dwX; DWORD dwY; DWORD dwXSize; DWORD dwYSize;
+            DWORD dwXCountChars; DWORD dwYCountChars; DWORD dwFillAttribute;
+            DWORD dwFlags; WORD wShowWindow; WORD cbReserved2;
+            BYTE* lpReserved2; HANDLE hStdInput; HANDLE hStdOutput; HANDLE hStdError;
+        } STARTUPINFOA;
+        typedef struct { HANDLE hProcess; HANDLE hThread; DWORD dwProcessId; DWORD dwThreadId; } PROCESS_INFORMATION;
+        BOOL __stdcall CreateProcessA(LPCSTR application_name, LPSTR command_line,
+            void* process_attributes, void* thread_attributes, BOOL inherit_handles,
+            DWORD creation_flags, void* environment, LPCSTR current_directory,
+            STARTUPINFOA* startup_info, PROCESS_INFORMATION* process_information);
+        BOOL __stdcall WaitNamedPipeA(LPCSTR pipe_name, DWORD timeout);
+        HANDLE __stdcall CreateFileA(LPCSTR file_name, DWORD desired_access, DWORD share_mode,
+            void* security_attributes, DWORD creation_disposition, DWORD flags, HANDLE template_file);
+        BOOL __stdcall PeekNamedPipe(HANDLE pipe, void* buffer, DWORD buffer_size,
+            DWORD* bytes_read, DWORD* total_available, DWORD* bytes_left);
+        BOOL __stdcall ReadFile(HANDLE file, void* buffer, DWORD bytes_to_read,
+            DWORD* bytes_read, void* overlapped);
+        BOOL __stdcall WriteFile(HANDLE file, const void* buffer, DWORD bytes_to_write,
+            DWORD* bytes_written, void* overlapped);
+        BOOL __stdcall CloseHandle(HANDLE object);
+        BOOL __stdcall TerminateProcess(HANDLE process, unsigned int exit_code);
+        DWORD __stdcall WaitForSingleObject(HANDLE object, DWORD milliseconds);
+        void __stdcall Sleep(DWORD milliseconds);
+        DWORD __stdcall GetLastError(void);
+        DWORD __stdcall GetCurrentProcessId(void);
+    ]]
+    local kernel_ok, kernel_value = pcall(ffi.load, "kernel32")
+    if kernel_ok then kernel32 = kernel_value end
+end
+
+-- Native IPC handles belong to the current Lua context and are never serialized
+-- into a save. The helper owns the IRC session and accepts a replacement pipe
+-- client after F9; ffi finalizers close stale handles when this context dies.
+local STATE_KEY = "__pf_irc_chat_transport_process_state_v2"
+local state = rawget(_G, STATE_KEY)
+if type(state) ~= "table" then
+    state = {
+        pipe = nil,
+        process = nil,
+        pipe_name = nil,
+        read_buffer = "",
+        started = false
+    }
+    rawset(_G, STATE_KEY, state)
+end
+
+local function handle_is_invalid(handle)
+    if handle == nil then return true end
+    return tonumber(ffi.cast("intptr_t", handle)) == -1
+end
+
+local function own_handle(handle)
+    if handle_is_invalid(handle) then return handle end
+    return ffi.gc(handle, function(value)
+        if kernel32 ~= nil then pcall(kernel32.CloseHandle, value) end
+    end)
+end
+
+local function percent_encode(value)
+    return (tostring(value or ""):gsub(".", function(character)
+        local byte = string.byte(character)
+        if (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or
+            (byte >= 97 and byte <= 122) or character == "-" or character == "_" or
+            character == "." or character == "#" or character == " " then
+            return character
+        end
+        return string.format("%%%02X", byte)
+    end))
+end
+
+local function percent_decode(value)
+    return (tostring(value or ""):gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+    end))
+end
+
+local function encode(fields)
+    local result = {}
+    for index, value in ipairs(fields) do result[index] = percent_encode(value) end
+    return table.concat(result, "\t") .. "\n"
+end
+
+local function decode(line)
+    local fields = {}
+    for value in (line .. "\t"):gmatch("(.-)\t") do
+        table.insert(fields, percent_decode(value))
+    end
+    return fields
+end
+
+local function executable_path()
+    if not getFS or not getFS() then return nil end
+    return getFS():update_path("$arch_dir_addons$", ADDON_DIR .. "\\" .. EXE_RELATIVE_PATH)
+end
+
+local function diagnostic_log_path()
+    if not getFS or not getFS() then return nil end
+    return getFS():update_path("$logs$", "pf_irc_chat_bridge.log")
+end
+
+local function runtime_config_path()
+    if not getFS or not getFS() then return nil end
+    return getFS():update_path("$arch_dir_addons$", ADDON_DIR .. "\\" .. CONFIG_RELATIVE_PATH)
+end
+
+local function close_handle(name)
+    if state[name] ~= nil and not handle_is_invalid(state[name]) then
+        local handle = state[name]
+        ffi.gc(handle, nil)
+        kernel32.CloseHandle(handle)
+    end
+    state[name] = nil
+end
+
+local function terminate_process()
+    if state.process ~= nil and not handle_is_invalid(state.process) then
+        kernel32.TerminateProcess(state.process, 1)
+        kernel32.WaitForSingleObject(state.process, 1000)
+    end
+end
+
+function available()
+    return ffi_ok and kernel32 ~= nil and executable_path() ~= nil
+end
+
+local function pipe_paths(install_id)
+    local token = tostring(install_id or ""):gsub("[^A-Za-z0-9]", "")
+    if token == "" then return nil, nil, "install_id_invalid" end
+    local pipe_name = PIPE_PREFIX .. token
+    return pipe_name, "\\\\.\\pipe\\" .. pipe_name
+end
+
+function attach(install_id)
+    if state.started then return true, "existing" end
+    if not ffi_ok or kernel32 == nil then return false, "ffi_unavailable" end
+
+    local pipe_name, full_pipe, pipe_error = pipe_paths(install_id)
+    if not pipe_name then return false, pipe_error end
+    -- A replacement Lua context can arrive while the helper is still switching
+    -- named-pipe clients after F5/F9. Give the existing server time to expose
+    -- its next pipe instead of treating that short busy window as no helper.
+    if kernel32.WaitNamedPipeA(full_pipe, 350) == 0 then
+        return false, "helper_not_running_" .. tostring(kernel32.GetLastError())
+    end
+
+    local GENERIC_READ_WRITE = 0xC0000000
+    local OPEN_EXISTING = 3
+    local pipe = kernel32.CreateFileA(full_pipe, GENERIC_READ_WRITE, 0, nil, OPEN_EXISTING, 0, nil)
+    if handle_is_invalid(pipe) then
+        return false, "helper_attach_failed_" .. tostring(kernel32.GetLastError())
+    end
+
+    state.pipe = own_handle(pipe)
+    state.process = nil
+    state.pipe_name = pipe_name
+    state.read_buffer = ""
+    state.started = true
+    return true, "attached"
+end
+
+function start(install_id)
+    if state.started then return true end
+    if not available() then return false, "ffi_unavailable" end
+
+    local attached, attach_state = attach(install_id)
+    if attached then return true, attach_state end
+
+    -- Only FILE_NOT_FOUND/PATH_NOT_FOUND prove that there is no helper. Busy,
+    -- timeout and access errors must fail closed; spawning in those cases used
+    -- to create parallel IRC sessions and a fresh fallback nick on every retry.
+    if attach_state ~= "helper_not_running_2" and attach_state ~= "helper_not_running_3" then
+        return false, attach_state
+    end
+
+    local exe = executable_path()
+    local probe = io.open(exe, "rb")
+    if not probe then return false, "helper_missing" end
+    probe:close()
+
+    local pipe_name, full_pipe, pipe_error = pipe_paths(install_id)
+    if not pipe_name then return false, pipe_error end
+    state.pipe_name = pipe_name
+    local parent_pid = tonumber(kernel32.GetCurrentProcessId()) or 0
+    local log_path = diagnostic_log_path()
+    local config_path = runtime_config_path()
+    local command = string.format('"%s" --pipe %s --parent-pid %d',
+        exe, state.pipe_name, parent_pid)
+    if log_path ~= nil and log_path ~= "" then
+        command = command .. string.format(' --log "%s"', log_path)
+    end
+    if config_path ~= nil and config_path ~= "" then
+        command = command .. string.format(' --config "%s"', config_path)
+    end
+    local command_buffer = ffi.new("char[?]", #command + 1)
+    ffi.copy(command_buffer, command)
+    local startup = ffi.new("STARTUPINFOA[1]")
+    startup[0].cb = ffi.sizeof("STARTUPINFOA")
+    local process_info = ffi.new("PROCESS_INFORMATION[1]")
+    local CREATE_NO_WINDOW = 0x08000000
+
+    if kernel32.CreateProcessA(exe, command_buffer, nil, nil, 0, CREATE_NO_WINDOW,
+        nil, nil, startup, process_info) == 0 then
+        return false, "helper_start_failed_" .. tostring(kernel32.GetLastError())
+    end
+    state.process = own_handle(process_info[0].hProcess)
+    kernel32.CloseHandle(process_info[0].hThread)
+
+    local pipe_ready = false
+    local pipe_error = 0
+    for _ = 1, 120 do
+        if kernel32.WaitNamedPipeA(full_pipe, 50) ~= 0 then
+            pipe_ready = true
+            break
+        end
+        pipe_error = tonumber(kernel32.GetLastError())
+        if kernel32.WaitForSingleObject(state.process, 0) == 0 then break end
+        kernel32.Sleep(50)
+    end
+    if not pipe_ready then
+        terminate_process()
+        close_handle("process")
+        return false, "helper_pipe_timeout_" .. tostring(pipe_error)
+    end
+
+    local GENERIC_READ_WRITE = 0xC0000000
+    local OPEN_EXISTING = 3
+    state.pipe = own_handle(kernel32.CreateFileA(
+        full_pipe, GENERIC_READ_WRITE, 0, nil, OPEN_EXISTING, 0, nil))
+    if handle_is_invalid(state.pipe) then
+        state.pipe = nil
+        terminate_process()
+        close_handle("process")
+        return false, "helper_pipe_open_failed_" .. tostring(kernel32.GetLastError())
+    end
+    state.read_buffer = ""
+    state.started = true
+    return true
+end
+
+function send(fields)
+    if not state.started or handle_is_invalid(state.pipe) then return false, "helper_not_started" end
+    local data = encode(fields)
+    local written = ffi.new("DWORD[1]")
+    if kernel32.WriteFile(state.pipe, data, #data, written, nil) == 0 or
+        tonumber(written[0]) ~= #data then
+        return false, "helper_write_failed_" .. tostring(kernel32.GetLastError())
+    end
+    return true
+end
+
+function poll(max_events)
+    local events = {}
+    if not state.started or handle_is_invalid(state.pipe) then return events end
+    max_events = math.max(1, math.min(tonumber(max_events) or 32, 128))
+
+    while #events < max_events do
+        local available_bytes = ffi.new("DWORD[1]")
+        if kernel32.PeekNamedPipe(state.pipe, nil, 0, nil, available_bytes, nil) == 0 then
+            stop(false)
+            break
+        end
+        local count = tonumber(available_bytes[0])
+        if count <= 0 then break end
+        count = math.min(count, 8192)
+        local buffer = ffi.new("char[?]", count)
+        local bytes_read = ffi.new("DWORD[1]")
+        if kernel32.ReadFile(state.pipe, buffer, count, bytes_read, nil) == 0 then
+            stop(false)
+            break
+        end
+        state.read_buffer = state.read_buffer .. ffi.string(buffer, tonumber(bytes_read[0]))
+        if #state.read_buffer > 65536 then
+            state.read_buffer = ""
+            table.insert(events, { "ERROR", "ipc_overflow", "IPC receive buffer was reset." })
+            break
+        end
+        while #events < max_events do
+            local delimiter = state.read_buffer:find("\n", 1, true)
+            if not delimiter then break end
+            local line = state.read_buffer:sub(1, delimiter - 1):gsub("\r$", "")
+            state.read_buffer = state.read_buffer:sub(delimiter + 1)
+            if line ~= "" then table.insert(events, decode(line)) end
+        end
+    end
+    return events
+end
+
+function stop(send_quit)
+    if state.started and send_quit ~= false then pcall(send, { "QUIT" }) end
+    close_handle("pipe")
+    if state.process ~= nil and not handle_is_invalid(state.process) then
+        local WAIT_TIMEOUT = 0x102
+        if kernel32.WaitForSingleObject(state.process, 2500) == WAIT_TIMEOUT then
+            terminate_process()
+        end
+    end
+    close_handle("process")
+    state.pipe_name = nil
+    state.read_buffer = ""
+    state.started = false
+end
+
+function is_started()
+    return state.started == true
+end

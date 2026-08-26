@@ -1,0 +1,45 @@
+-- Direction-neutral, base-idle-only seated pose for Sergey Sverchkov.
+-- The stock `sit` state starts a separate animstate graph with transitions and
+-- random branches. That graph can keep the visible body at its former facing
+-- even after server yaw, desired direction and look_position have changed.
+
+STATE_NAME = "pf_story_sergey_sit_fixed"
+local animation_name = "pf_story_sergey_sit_fixed_pose"
+local registered = false
+
+function ensure_registered()
+	if registered then return true end
+
+	local states = state_lib.states
+	local animations = state_mgr_animation_list.animations
+	if type(states) ~= "table" or type(animations) ~= "table" then
+		return false
+	end
+
+	states[STATE_NAME] = {
+		weapon = "strapped",
+		movement = move.stand,
+		mental = anim.free,
+		bodystate = move.standing,
+		animstate = nil,
+		animation = animation_name,
+	}
+
+	animations[animation_name] = {
+		prop = {
+			maxidle = 5,
+			sumidle = 3,
+			rnd = 80,
+			moving = false,
+		},
+		into = nil,
+		out = nil,
+		idle = { [0] = "sit_0_idle_0" },
+		rnd = nil,
+	}
+
+	registered = true
+	printf("~ [pf_story_preacher_pose] registered [%s] with [%s]",
+		STATE_NAME, animation_name)
+	return true
+end

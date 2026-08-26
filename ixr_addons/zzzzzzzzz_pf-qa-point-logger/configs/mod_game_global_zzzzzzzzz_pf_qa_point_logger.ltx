@@ -1,0 +1,5 @@
+; OnInventoryEat is a single global callback. This filename sorts after the
+; installed NPC-editor callback owner. The Lua handler records its own item and
+; forwards everything else to that owner (or directly to pf_stash_qa).
+![callbacks]
+OnInventoryEat = pf_qa_point_logger.on_inventory_eat

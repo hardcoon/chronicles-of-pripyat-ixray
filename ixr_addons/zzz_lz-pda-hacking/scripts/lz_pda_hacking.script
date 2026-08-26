@@ -1,0 +1,1908 @@
+-- PDA Hacking v1.23 gameplay port for Chronicles of Pripyat 4.26 / IX-Ray.
+-- The Anomaly PDA tab, MCM, DXML and NPC callbacks are intentionally absent.
+
+local STATE_KEY = "lz_pda_hacking"
+local STATE_VERSION = 3
+local SETTINGS_SECTION = "lz_pda_hacking_settings"
+local REFLASH_SECTION = "lz_ph_reflash_module"
+local MAX_TERMINAL_ROWS = 72
+local LIST_ROW_HEIGHT = 24
+local SCRIPT_ROW_WIDTH = 270
+local SCRIPT_TEXT_WIDTH = 260
+local COMMAND_ROW_WIDTH = 566
+local COMMAND_TEXT_WIDTH = 552
+
+local TERM_TEXT = "%c[255, 175, 185, 178]"
+local TERM_COLORS = {
+	system = "%c[255, 105, 185, 225]",
+	script = "%c[255, 105, 220, 120]",
+	hack = "%c[255, 230, 190, 80]",
+	success = "%c[255, 105, 220, 120]",
+	warning = "%c[255, 225, 120, 80]",
+	error = "%c[255, 225, 75, 65]"
+}
+
+local TERM_ROW_COLORS = {
+	system = GetARGB(255, 105, 185, 225),
+	script = GetARGB(255, 105, 220, 120),
+	hack = GetARGB(255, 230, 190, 80),
+	success = GetARGB(255, 105, 220, 120),
+	warning = GetARGB(255, 225, 120, 80),
+	error = GetARGB(255, 225, 75, 65)
+}
+
+local TERM_LABELS = {
+	system = "lz_ph_term_system",
+	script = "lz_ph_term_script",
+	hack = "lz_ph_term_hack",
+	success = "lz_ph_term_success",
+	warning = "lz_ph_term_warning",
+	error = "lz_ph_term_error"
+}
+
+local TERM_COMMAND_COLORS = {
+	Decrypt = "%c[255, 105, 220, 120]",
+	Nuke = "%c[255, 230, 190, 80]",
+	["Re-Scan"] = "%c[255, 105, 185, 225]",
+	CommandUp = "%c[255, 105, 185, 225]",
+	BruteForce = "%c[255, 225, 120, 80]",
+	Extract = "%c[255, 230, 190, 80]",
+	SkeletonKey = "%c[255, 105, 220, 120]",
+	PurpleTrace = "%c[255, 190, 140, 230]",
+	LegendaryTrace = "%c[255, 255, 170, 80]",
+	RedTrace = "%c[255, 235, 85, 75]"
+}
+
+local TRACE_ORDER = { "purple", "orange", "red" }
+
+local TRACE_COMMANDS = {
+	purple = "PurpleTrace",
+	orange = "LegendaryTrace",
+	red = "RedTrace"
+}
+
+local TRACE_TIERS = {
+	PurpleTrace = "purple",
+	LegendaryTrace = "orange",
+	RedTrace = "red"
+}
+
+local TRACE_LABELS = {
+	purple = "lz_ph_bonus_purple",
+	orange = "lz_ph_bonus_legendary",
+	red = "lz_ph_bonus_red"
+}
+
+local TRACE_TIER_COLORS = {
+	purple = "%c[255, 190, 140, 230]",
+	orange = "%c[255, 255, 170, 80]",
+	red = "%c[255, 235, 85, 75]"
+}
+
+local TRACE_STATUS_COLORS = {
+	not_found = "%c[255, 145, 155, 150]",
+	available = "%c[255, 105, 185, 225]",
+	unlocked = "%c[255, 105, 220, 120]",
+	failed = "%c[255, 225, 75, 65]"
+}
+
+local TRACE_CHANCE_DEFAULTS = {
+	purple = {
+		novice = { 4, 8 }, stalker = { 7, 14 },
+		veteran = { 14, 24 }, master = { 20, 30 }
+	},
+	orange = {
+		novice = { 1, 1.5 }, stalker = { 2, 5 },
+		veteran = { 10, 17 }, master = { 17, 24 }
+	},
+	red = {
+		novice = { 0.5, 0.8 }, stalker = { 0.7, 2 },
+		veteran = { 3, 8 }, master = { 10, 17 }
+	}
+}
+
+local USB_SECTIONS = {
+	[1] = "pda_hack_usb_1",
+	[2] = "pda_hack_usb_2",
+	[3] = "pda_hack_usb_3"
+}
+
+local USB_LEVELS = {
+	pda_hack_usb_1 = 1,
+	pda_hack_usb_2 = 2,
+	pda_hack_usb_3 = 3
+}
+
+local USB_INSTALL_MESSAGES = {
+	[1] = "lz_ph_usb1_installed",
+	[2] = "lz_ph_usb2_installed",
+	[3] = "lz_ph_usb3_installed"
+}
+
+local PDA_PROFILES = {
+	pf_stash_pda_novice = {
+		setting = "encryption_novice",
+		encryption = 20,
+		rank = "novice",
+		base_tier = "green",
+		required_usb_level = 1,
+		title = "lz_ph_rank_novice",
+		failed = "lz_ph_failed_pda_novice"
+	},
+	pf_stash_pda_stalker = {
+		setting = "encryption_stalker",
+		encryption = 35,
+		rank = "stalker",
+		base_tier = "cyan",
+		required_usb_level = 1,
+		title = "lz_ph_rank_stalker",
+		failed = "lz_ph_failed_pda_stalker"
+	},
+	pf_stash_pda_veteran = {
+		setting = "encryption_veteran",
+		encryption = 55,
+		rank = "veteran",
+		base_tier = "purple",
+		required_usb_level = 2,
+		title = "lz_ph_rank_veteran",
+		failed = "lz_ph_failed_pda_veteran"
+	},
+	pf_stash_pda_master = {
+		setting = "encryption_master",
+		encryption = 75,
+		rank = "master",
+		base_tier = "master",
+		required_usb_level = 3,
+		title = "lz_ph_rank_master",
+		failed = "lz_ph_failed_pda_master"
+	}
+}
+
+local FAILED_TO_NORMAL = {
+	lz_ph_failed_pda_novice = "pf_stash_pda_novice",
+	lz_ph_failed_pda_stalker = "pf_stash_pda_stalker",
+	lz_ph_failed_pda_veteran = "pf_stash_pda_veteran",
+	lz_ph_failed_pda_master = "pf_stash_pda_master"
+}
+
+local FAILED_ORDER = {
+	"lz_ph_failed_pda_novice",
+	"lz_ph_failed_pda_stalker",
+	"lz_ph_failed_pda_veteran",
+	"lz_ph_failed_pda_master"
+}
+
+local REFLASH_ACTIONS = {
+	{
+		failed = "lz_ph_failed_pda_novice",
+		text = "lz_ph_action_reflash_novice",
+		functor = "lz_pda_hacking.use_reflash_novice"
+	},
+	{
+		failed = "lz_ph_failed_pda_stalker",
+		text = "lz_ph_action_reflash_stalker",
+		functor = "lz_pda_hacking.use_reflash_stalker"
+	},
+	{
+		failed = "lz_ph_failed_pda_veteran",
+		text = "lz_ph_action_reflash_veteran",
+		functor = "lz_pda_hacking.use_reflash_veteran"
+	},
+	{
+		failed = "lz_ph_failed_pda_master",
+		text = "lz_ph_action_reflash_master",
+		functor = "lz_pda_hacking.use_reflash_master"
+	}
+}
+
+-- The base module and legacy rank-specific sections share one dynamic action
+-- surface. Keep the variants recognized so old saves remain usable.
+local REFLASH_MODULE_SECTIONS = {
+	[REFLASH_SECTION] = true,
+	lz_ph_reflash_module_novice = true,
+	lz_ph_reflash_module_stalker = true,
+	lz_ph_reflash_module_veteran = true,
+	lz_ph_reflash_module_master = true
+}
+
+local SCRIPT_NAMES = {
+	"access_control", "actor_binder", "alife_storage", "anomaly_scan",
+	"artifact_decoder", "bind_stalker", "cipher_core", "console_router",
+	"data_recovery", "device_manager", "dynamic_news", "encryption_probe",
+	"frequency_map", "inventory_core", "level_tasks", "memory_reader",
+	"network_bridge", "offline_cache", "packet_filter", "pda_kernel",
+	"protocol_scan", "radio_stack", "signal_trace", "stash_registry",
+	"system_patch", "terminal_proxy", "ui_console", "xr_logic"
+}
+
+local COMMAND_TEXT = {
+	Decrypt = "pf_ph_boot_cmd_decrypt",
+	Nuke = "pf_ph_boot_cmd_nuke",
+	["Re-Scan"] = "pf_ph_boot_cmd_rescan",
+	CommandUp = "pf_ph_boot_cmd_cmdup",
+	BruteForce = "pf_ph_boot_cmd_bruteforce",
+	Extract = "pf_ph_boot_cmd_extract",
+	SkeletonKey = "pf_ph_boot_cmd_skeleton",
+	PurpleTrace = "pf_ph_boot_cmd_trace_purple",
+	LegendaryTrace = "pf_ph_boot_cmd_trace_legendary",
+	RedTrace = "pf_ph_boot_cmd_trace_red"
+}
+
+local active_sound = nil
+local usb_install_pending = false
+local dialog_singleton = nil
+local open_request = 0
+local debug_usb_level = 0
+local reflash_pending = false
+local load_callback_registered = false
+
+local function tr(id)
+	local value = game.translate_string(id) or id
+	return (string.gsub(value, "\\n", "\n"))
+end
+
+local function trf(id, ...)
+	local source = tr(id)
+	local ok, result = pcall(string.format, source, ...)
+	return ok and result or source
+end
+
+local function init_rule_fill(xml, path, parent)
+	local fill = xml:InitTextWnd(path, parent)
+	local target_width = fill:GetWidth()
+	fill:SetText("--")
+	fill:AdjustWidthToText()
+	local pair_width = fill:GetWidth()
+	fill:SetText("-")
+	fill:AdjustWidthToText()
+	local single_width = fill:GetWidth()
+	local dash_advance = math.max(0.1, pair_width - single_width)
+	local cells = math.max(0, math.floor((target_width - single_width - 2) / dash_advance) + 1)
+	fill:SetWidth(target_width)
+	fill:SetText(string.rep("-", cells))
+end
+
+local function clamp(value, low, high)
+	return math.max(low, math.min(high, value))
+end
+
+local function round(value)
+	return math.floor(value + 0.5)
+end
+
+local function round1(value)
+	return math.floor(value * 10 + 0.5) / 10
+end
+
+local function status_count_text(value)
+	value = math.max(0, math.floor(tonumber(value) or 0))
+	local color = value <= 3 and TERM_COLORS.error or
+		(value <= 5 and TERM_COLORS.hack or TERM_COLORS.success)
+	return color .. tostring(value) .. TERM_TEXT
+end
+
+local function fit_progress_cells(widget, maximum)
+	local target_width = widget:GetWidth()
+	widget:SetText("[] 100.0%")
+	widget:AdjustWidthToText()
+	local fixed_width = widget:GetWidth()
+	widget:SetText("░░")
+	widget:AdjustWidthToText()
+	local pair_width = widget:GetWidth()
+	widget:SetText("░")
+	widget:AdjustWidthToText()
+	local single_width = widget:GetWidth()
+	local cell_advance = math.max(0.1, pair_width - single_width)
+	local cells = math.max(1, math.floor((target_width - fixed_width - 2) / cell_advance))
+	widget:SetWidth(target_width)
+	return math.min(maximum, cells)
+end
+
+local function progress_bar(value, cells)
+	local normalized = clamp(value, 0, 100)
+	local scaled = normalized / 100 * cells
+	local filled = math.floor(scaled)
+	local fraction = scaled - filled
+	local transition = ""
+	if filled < cells and fraction >= 0.2 then
+		transition = fraction >= 0.67 and "▓" or "▒"
+	end
+	local empty = cells - filled - (transition ~= "" and 1 or 0)
+	return string.format(
+		"[%s%s%s] %5.1f%%",
+		string.rep("▓", filled),
+		transition,
+		string.rep("░", empty),
+		round1(normalized)
+	)
+end
+
+local function setting_number(key, default)
+	local ini = system_ini()
+	if not ini:section_exist(SETTINGS_SECTION) or
+		not ini:line_exist(SETTINGS_SECTION, key) then
+		return default
+	end
+	return tonumber(ini:r_string(SETTINGS_SECTION, key)) or default
+end
+
+local function section_number(section, key, default)
+	local ini = system_ini()
+	if not ini:section_exist(section) or not ini:line_exist(section, key) then
+		return default
+	end
+	return tonumber(ini:r_string(section, key)) or default
+end
+
+local function get_state()
+	local root = alife_storage_manager.get_state()
+	local state = root[STATE_KEY]
+	if type(state) ~= "table" then
+		state = {
+			version = STATE_VERSION,
+			acquired = {},
+			reservation = nil,
+			installed_usb_level = nil,
+			pdas = {}
+		}
+		root[STATE_KEY] = state
+	end
+	state.acquired = type(state.acquired) == "table" and state.acquired or {}
+	state.pdas = type(state.pdas) == "table" and state.pdas or {}
+	if type(state.reservation) ~= "table" then state.reservation = nil end
+	local installed = tonumber(state.installed_usb_level)
+	state.installed_usb_level = installed and USB_SECTIONS[installed] and installed or nil
+	state.version = STATE_VERSION
+	return state
+end
+
+local function pda_key(id)
+	return tostring(tonumber(id) or 0)
+end
+
+local function normalize_seed(value)
+	value = math.floor(math.abs(tonumber(value) or 1)) % 2147483647
+	return value > 0 and value or 1
+end
+
+local function new_rng(seed)
+	return { value = normalize_seed(seed) }
+end
+
+local function rng_next(rng)
+	rng.value = (rng.value * 48271) % 2147483647
+	return rng.value
+end
+
+local function rng_int(rng, low, high)
+	if high <= low then return low end
+	return low + (rng_next(rng) % (high - low + 1))
+end
+
+local function rng_percent(rng)
+	return (rng_next(rng) % 10000) / 100
+end
+
+local function deterministic_seed(...)
+	local value = 104729
+	for argument = 1, select("#", ...) do
+		local source = tostring(select(argument, ...))
+		for index = 1, #source do
+			value = (value * 131 + string.byte(source, index) + index) % 2147483647
+		end
+		value = (value + argument * 7919) % 2147483647
+	end
+	return normalize_seed(value)
+end
+
+local function deterministic_percent(...)
+	return rng_percent(new_rng(deterministic_seed(...)))
+end
+
+local function message(id, ...)
+	if not db.actor then return end
+	local text = select("#", ...) > 0 and trf(id, ...) or tr(id)
+	xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+	db.actor:give_game_news(
+		tr("st_tip"),
+		text,
+		"pf_actor_thought_icon",
+		0,
+		6000,
+		0
+	)
+end
+
+local function actor_owns_item(item)
+	if not item or not db.actor then return false end
+	local object = alife():object(item:id(), true)
+	return object ~= nil and tonumber(object.parent_id) == db.actor:id()
+end
+
+local function actual_item_section(item)
+	if not item then return nil end
+	local object = alife():object(item:id(), true)
+	return object and object:section_name() or item:section()
+end
+
+local function require_actor_item(item)
+	if actor_owns_item(item) then return true end
+	message("lz_ph_requires_actor_inventory")
+	return false
+end
+
+local function play_sound(path, volume)
+	if not db.actor or setting_number("sound_volume", 1) <= 0 then return end
+	-- get_safe_sound_object is an Anomaly helper and does not exist in IX-Ray.
+	-- Use the engine's native sound_object API, which is already used by the
+	-- target project's detector and UI scripts. Keep failures non-fatal.
+	local created, sound = pcall(sound_object, path)
+	if not created or not sound then
+		printf("! lz_pda_hacking: cannot create sound [%s]: %s", tostring(path), tostring(sound))
+		return
+	end
+	active_sound = sound
+	local gain = clamp((tonumber(volume) or 1) * setting_number("sound_volume", 1), 0, 1)
+	local played, err = pcall(function()
+		active_sound:play_no_feedback(
+			db.actor,
+			sound_object.s2d,
+			0,
+			vector():set(0, 0, 0),
+			gain
+		)
+	end)
+	if not played then
+		printf("! lz_pda_hacking: cannot play sound [%s]: %s", tostring(path), tostring(err))
+	end
+end
+
+local function get_pda_state(id, section)
+	local state = get_state()
+	local key = pda_key(id)
+	local saved = state.pdas[key]
+	if type(saved) ~= "table" or saved.section ~= section then
+		saved = {
+			section = section,
+			seed = deterministic_seed(id, section, "lz_pda_trial_seed_v2"),
+			extracts_used = 0
+		}
+		state.pdas[key] = saved
+	end
+	-- Keep the old trial seed intact when migrating an existing PDA. Only newly
+	-- missing reward fields are derived from the physical ID, section and fixed
+	-- salts, so loading a save never rerolls a coordinate or trace result.
+	saved.seed = normalize_seed(saved.seed)
+	saved.extracts_used = math.max(0, math.floor(tonumber(saved.extracts_used) or 0))
+	local profile = PDA_PROFILES[section]
+	saved.base_tier_roll = tonumber(saved.base_tier_roll) or
+		deterministic_seed(id, section, "lz_pda_base_tier_v1")
+	if saved.base_tier ~= "green" and saved.base_tier ~= "cyan" and
+		saved.base_tier ~= "purple" and saved.base_tier ~= "orange" then
+		if profile and profile.base_tier == "master" then
+			saved.base_tier = saved.base_tier_roll % 10000 < 5000 and "purple" or "orange"
+		else
+			saved.base_tier = profile and profile.base_tier or "green"
+		end
+	end
+	saved.base_roll = tonumber(saved.base_roll) or
+		deterministic_seed(id, section, "lz_pda_base_slot_v1")
+	saved.bonuses = type(saved.bonuses) == "table" and saved.bonuses or {}
+	for _, tier in ipairs(TRACE_ORDER) do
+		local bonus = type(saved.bonuses[tier]) == "table" and saved.bonuses[tier] or {}
+		bonus.success_roll = tonumber(bonus.success_roll) or deterministic_percent(
+			id, section, "lz_pda_trace_success_" .. tier .. "_v1"
+		)
+		bonus.slot_roll = tonumber(bonus.slot_roll) or deterministic_seed(
+			id, section, "lz_pda_trace_slot_" .. tier .. "_v1"
+		)
+		bonus.attempted = bonus.attempted == true
+		bonus.unlocked = bonus.unlocked == true
+		if bonus.unlocked then bonus.attempted = true end
+		saved.bonuses[tier] = bonus
+	end
+	return saved
+end
+
+local function forget_pda(id)
+	get_state().pdas[pda_key(id)] = nil
+end
+
+local function replace_actor_item(id, section)
+	if not db.actor or not system_ini():section_exist(section) then return false end
+	local old = alife():object(tonumber(id), true)
+	if not old then return false end
+	local created = alife():create(section, vector(), 0, 0, db.actor:id())
+	if not created then return false end
+	alife():release(old, true)
+	return true
+end
+
+local function usb_profile(level)
+	level = tonumber(level)
+	local section = USB_SECTIONS[level]
+	if not section then return nil end
+	return {
+		level = level,
+		section = section,
+		commands = math.max(1, math.floor(section_number(section, "command_points", 20))),
+		scripts = math.max(1, math.floor(section_number(section, "initial_scripts", 5))),
+		extracts = math.max(0, math.floor(section_number(section, "currency_extracts", 0)))
+	}
+end
+
+local function installed_usb()
+	return usb_profile(get_state().installed_usb_level)
+end
+
+function usb_level_from_section(section)
+	return USB_LEVELS[section]
+end
+
+function usb_section_for_level(level)
+	return USB_SECTIONS[tonumber(level)]
+end
+
+function usb_level_is_acquired(level)
+	return get_state().acquired[tonumber(level)] == true
+end
+
+function can_grant_usb(max_level)
+	max_level = clamp(math.floor(tonumber(max_level) or 0), 0, 3)
+	local state = get_state()
+	if state.reservation then return false, nil end
+	for level = 1, max_level do
+		if not state.acquired[level] then return true, level end
+	end
+	return false, nil
+end
+
+-- Returns attempted, level, section. attempted=false means another reservation
+-- or no eligible missing level; the stash must not consume its one-time roll.
+function reserve_next_usb(max_level, slot_index, fixed_roll)
+	local state = get_state()
+	if state.reservation and state.acquired[state.reservation.level] then
+		state.reservation = nil
+	end
+	if state.reservation then return false, nil, nil end
+
+	local eligible, level = can_grant_usb(max_level)
+	if not eligible then return false, nil, nil end
+	local chance = clamp(setting_number("usb_roll_chance", 50), 0, 100)
+	local roll = tonumber(fixed_roll)
+	if roll then
+		roll = math.max(1, math.min(100, math.floor(roll)))
+	else
+		roll = math.random(100)
+	end
+	if roll > chance then return true, nil, nil end
+
+	state.reservation = {
+		level = level,
+		slot = tonumber(slot_index) or 0
+	}
+	return true, level, USB_SECTIONS[level]
+end
+
+function release_usb_reservation(slot_index)
+	local state = get_state()
+	local reservation = state.reservation
+	if reservation and tonumber(reservation.slot) == tonumber(slot_index) then
+		state.reservation = nil
+		return true
+	end
+	return false
+end
+
+function register_usb_acquired(level, item_id)
+	level = tonumber(level)
+	if not level or not USB_SECTIONS[level] then return false end
+	local state = get_state()
+	local first_time = state.acquired[level] ~= true
+	state.acquired[level] = true
+	if state.reservation and tonumber(state.reservation.level) == level then
+		state.reservation = nil
+	end
+	if first_time then
+		printf(
+			"lz_pda_hacking: USB-%d permanently registered, item=[%s]",
+			level,
+			tostring(item_id)
+		)
+	end
+	return first_time
+end
+
+-- Future traders and quests must call this before creating an external USB.
+-- It returns false after that level has already been acquired.
+function register_external_usb_grant(level, item_id)
+	level = tonumber(level)
+	if not level or usb_level_is_acquired(level) then return false end
+	register_usb_acquired(level, item_id)
+	return true
+end
+
+function scan_actor_usb_inventory()
+	if not db.actor then return 0 end
+	local found = 0
+	db.actor:iterate_inventory(function(_, item)
+		local level = USB_LEVELS[item:section()]
+		if level then
+			register_usb_acquired(level, item:id())
+			found = found + 1
+		end
+	end, db.actor)
+	return found
+end
+
+function install_usb_software(item)
+	if not item or not db.actor then return false end
+	if not require_actor_item(item) then return false end
+	if usb_install_pending then return false end
+	local usb_level = USB_LEVELS[item:section()]
+	if not usb_level then return false end
+	local state = get_state()
+	if tonumber(state.installed_usb_level) and state.installed_usb_level >= usb_level then
+		message("lz_ph_usb_already_installed")
+		return false
+	end
+
+	local item_id = item:id()
+	local server_item = alife():object(item_id, true)
+	if not server_item or server_item:section_name() ~= USB_SECTIONS[usb_level] then
+		message("lz_ph_usb_install_failed")
+		return false
+	end
+
+	usb_install_pending = true
+	local ready_at = time_global() + 150
+	level.add_call(
+		function()
+			return time_global() >= ready_at
+		end,
+		function()
+			usb_install_pending = false
+			if not db.actor then return end
+			local current = alife():object(item_id, true)
+			if not current or current:section_name() ~= USB_SECTIONS[usb_level] or
+				tonumber(current.parent_id) ~= db.actor:id() then
+				message("lz_ph_usb_install_failed")
+				return
+			end
+			local current_state = get_state()
+			if tonumber(current_state.installed_usb_level) and
+				current_state.installed_usb_level >= usb_level then
+				message("lz_ph_usb_already_installed")
+				return
+			end
+			register_usb_acquired(usb_level, item_id)
+			current_state.installed_usb_level = usb_level
+			-- The property-box callback has finished, so removing the exact
+			-- actor-owned instance can no longer invalidate its active UI cell.
+			alife():release(current, true)
+			message(USB_INSTALL_MESSAGES[usb_level])
+		end
+	)
+	return false
+end
+
+function reset_failed_pda(item)
+	if not item then return false end
+	local section = item:section()
+	local normal = FAILED_TO_NORMAL[section]
+	if not normal then return false end
+	local id = item:id()
+	if not replace_actor_item(id, normal) then return false end
+	forget_pda(id)
+	return true
+end
+
+function reset_all_failed_pdas()
+	if not db.actor then return 0 end
+	local pending = {}
+	db.actor:iterate_inventory(function(_, item)
+		if FAILED_TO_NORMAL[item:section()] then
+			table.insert(pending, {
+				id = item:id(),
+				section = FAILED_TO_NORMAL[item:section()]
+			})
+		end
+	end, db.actor)
+	local reset = 0
+	for _, entry in ipairs(pending) do
+		if replace_actor_item(entry.id, entry.section) then
+			forget_pda(entry.id)
+			reset = reset + 1
+		end
+	end
+	return reset
+end
+
+function use_failed_pda(item)
+	if not require_actor_item(item) then return false end
+	message("lz_ph_blocked_message")
+	return false
+end
+
+local function scan_reflash_inventory()
+	local found = {}
+	local function inspect(id, section)
+		if FAILED_TO_NORMAL[section] then
+			local current = found[section]
+			if not current or id < current.id then
+				found[section] = {
+					id = id,
+					failed = section,
+					normal = FAILED_TO_NORMAL[section]
+				}
+			end
+		end
+	end
+
+	-- Section replacement is authoritative on the server object before IX-Ray's
+	-- client inventory cell and grouped UI list necessarily catch up. Prefer the
+	-- actor's ALife children so a freshly locked PDA cannot disappear from the
+	-- reflash transaction merely because the inventory still displays an old cell.
+	local server_actor = db.actor and alife():object(db.actor:id(), true) or nil
+	local server_scan_ok = false
+	if server_actor then
+		server_scan_ok = pcall(function()
+			for child_id in alife():get_children(server_actor) do
+				local object = alife():object(child_id, true)
+				if object then inspect(object.id, object:section_name()) end
+			end
+		end)
+	end
+
+	-- Keep the client iterator only as a compatibility fallback for an engine
+	-- build that cannot enumerate the actor server object's children.
+	if db.actor and not server_scan_ok then
+		db.actor:iterate_inventory(function(_, item)
+			inspect(item:id(), actual_item_section(item))
+		end, db.actor)
+	end
+	return found
+end
+
+local function rewrite_reflash_context_actions(module_section, found)
+	local ini = system_ini()
+	if not ini or not ini:section_exist(module_section) then return false end
+
+	-- CInifile::w_string cannot overwrite an existing key in this IX-Ray build.
+	-- Clear all four native slots first, then pack only ranks for which an exact
+	-- lz_ph_failed_pda_* exists. Ordinary pf_stash_pda_* never enter `found`.
+	local ok, err = pcall(function()
+		ini:set_readonly(false)
+		for slot = 1, 4 do
+			local text_line = "use" .. tostring(slot) .. "_text"
+			local functor_line = "use" .. tostring(slot) .. "_functor"
+			if ini:line_exist(module_section, text_line) then
+				ini:remove_line(module_section, text_line)
+			end
+			if ini:line_exist(module_section, functor_line) then
+				ini:remove_line(module_section, functor_line)
+			end
+		end
+
+		local slot = 1
+		for _, action in ipairs(REFLASH_ACTIONS) do
+			if found[action.failed] then
+				ini:w_string(
+					module_section,
+					"use" .. tostring(slot) .. "_text",
+					action.text,
+					nil
+				)
+				ini:w_string(
+					module_section,
+					"use" .. tostring(slot) .. "_functor",
+					action.functor,
+					nil
+				)
+				slot = slot + 1
+			end
+		end
+	end)
+	local readonly_ok, readonly_err = pcall(function() ini:set_readonly(true) end)
+	if not ok then
+		printf(
+			"! lz_pda_hacking: cannot refresh reflash actions for %s: %s",
+			tostring(module_section), tostring(err)
+		)
+		return false
+	end
+	if not readonly_ok then
+		printf(
+			"! lz_pda_hacking: cannot restore system ini readonly state: %s",
+			tostring(readonly_err)
+		)
+		return false
+	end
+	return true
+end
+
+function refresh_reflash_context_actions(item)
+	if not item or not db.actor or not actor_owns_item(item) then return false end
+	local module_section = actual_item_section(item)
+	if not REFLASH_MODULE_SECTIONS[module_section] then return false end
+	return rewrite_reflash_context_actions(module_section, scan_reflash_inventory())
+end
+
+local function find_actor_item(id, section)
+	if not db.actor then return nil end
+	local object = alife():object(tonumber(id), true)
+	if object and tonumber(object.parent_id) == db.actor:id() and
+		object:section_name() == section then return object end
+	return nil
+end
+
+local function reflash_reward_spec(pda_id, normal_section)
+	if normal_section ~= "pf_stash_pda_master" then return nil end
+	local legendary_chance = clamp(
+		setting_number("reflash_master_legendary_reward_chance", 40),
+		0,
+		100
+	)
+	local roll = deterministic_percent(
+		pda_id,
+		normal_section,
+		"lz_pda_reflash_master_tier_v1"
+	)
+	return {
+		-- Purple is the epic tier; orange is the legendary tier. A dedicated
+		-- deterministic roll keeps the 60/40 reflash table save-scum-proof and
+		-- separate from the normal master-PDA 50/50 base reward.
+		base_tier = roll < legendary_chance and "orange" or "purple",
+		bonus_tiers = {}
+	}
+end
+
+local function use_reflash_section(module, failed_section)
+	if not module or not db.actor then return false end
+	local module_section = actual_item_section(module)
+	if not REFLASH_MODULE_SECTIONS[module_section] then return false end
+	if not require_actor_item(module) then return false end
+	if reflash_pending then return false end
+	-- Resolve the PDA at click time. Inventory sorting can rebuild a grouped cell
+	-- after the context menu was opened, so a cached client object or action index
+	-- is not a safe transaction target.
+	local found = scan_reflash_inventory()
+	local target = failed_section and found[failed_section] or nil
+	local server_module = alife():object(module:id(), true)
+	if not target or not server_module or not REFLASH_MODULE_SECTIONS[server_module:section_name()] then
+		printf(
+			"! lz_pda_hacking: reflash target missing, module=%s requested=%s",
+			tostring(module_section), tostring(failed_section)
+		)
+		message("lz_ph_reflash_no_target")
+		return false
+	end
+	if not find_actor_item(target.id, target.failed) then
+		message("lz_ph_reflash_no_target")
+		return false
+	end
+	local module_id = module:id()
+	local target_id = target.id
+	local failed_section = target.failed
+	local normal_section = target.normal
+	local reward_spec = reflash_reward_spec(target_id, normal_section)
+	reflash_pending = true
+
+	-- The native inventory still owns the context-menu callback. Complete the
+	-- locked PDA through the ordinary stash-reward API on the next frame, then
+	-- consume this exact module only after that transaction succeeds.
+	local ready_at = time_global() + 1
+	level.add_call(
+		function()
+			return time_global() >= ready_at
+		end,
+		function()
+			reflash_pending = false
+			local current_module = alife():object(module_id, true)
+			local current_pda = find_actor_item(target_id, failed_section)
+			if not current_module or not REFLASH_MODULE_SECTIONS[current_module:section_name()] or
+				tonumber(current_module.parent_id) ~= db.actor:id() or not current_pda then
+				message("lz_ph_reflash_no_target")
+				return
+			end
+
+			local manager = rawget(_G, "pf_dynamic_stashes")
+			if not manager or not manager.complete_stash_pda_hack then
+				printf("! lz_pda_hacking: pf_dynamic_stashes completion API is unavailable for reflash")
+				message("lz_ph_reflash_failed")
+				return
+			end
+
+			local ok, completed = pcall(
+				manager.complete_stash_pda_hack,
+				target_id,
+				normal_section,
+				reward_spec
+			)
+			if not ok then
+				printf(
+					"! lz_pda_hacking: PDA reflash error for %s: %s",
+					tostring(target_id), tostring(completed)
+				)
+				message("lz_ph_reflash_failed")
+				return
+			end
+			if not completed then
+				printf("! lz_pda_hacking: PDA reflash rejected for %s", tostring(target_id))
+				message("lz_ph_reflash_failed")
+				return
+			end
+
+			forget_pda(target_id)
+			alife():release(current_module, true)
+			play_sound("pda_hacking\\unlocked", 0.8)
+		end
+	)
+	return false
+end
+
+function use_reflash_novice(module)
+	return use_reflash_section(module, "lz_ph_failed_pda_novice")
+end
+
+function use_reflash_stalker(module)
+	return use_reflash_section(module, "lz_ph_failed_pda_stalker")
+end
+
+function use_reflash_veteran(module)
+	return use_reflash_section(module, "lz_ph_failed_pda_veteran")
+end
+
+function use_reflash_master(module)
+	return use_reflash_section(module, "lz_ph_failed_pda_master")
+end
+
+-- Compatibility for a context box already opened by an older cached script.
+function use_reflash_target_1(module) return use_reflash_section(module, FAILED_ORDER[1]) end
+function use_reflash_target_2(module) return use_reflash_section(module, FAILED_ORDER[2]) end
+function use_reflash_target_3(module) return use_reflash_section(module, FAILED_ORDER[3]) end
+function use_reflash_target_4(module) return use_reflash_section(module, FAILED_ORDER[4]) end
+
+-- lz_new_mechanics owns IX-Ray's single inventory-focus callback and forwards
+-- it here before RMB builds the properties box. Rebuild the module's native
+-- slots from authoritative ALife children; the click handler still rescans and
+-- validates its exact target so a stale open menu cannot consume the wrong PDA.
+function on_item_focus_receive(item)
+	refresh_reflash_context_actions(item)
+	return true
+end
+
+local function get_nuke_effect(power, encryption)
+	return encryption * (power * 0.2 / 100)
+end
+
+local function get_decrypt_effect(power, encryption)
+	local multiplier = clamp(setting_number("decrypt_power_mult", 0.40), 0, 1)
+	return power * multiplier * (1 - encryption / 100)
+end
+
+local function get_brute_chance(power)
+	return power / 8
+end
+
+local function get_command_up(power)
+	return math.floor(power / 12) + 1
+end
+
+local function get_rescan_count(power)
+	return math.floor(power / 20) + 1
+end
+
+local function get_extract_money(power, base_encryption)
+	local multiplier = math.max(0, setting_number("extract_reward_mult", 3))
+	return math.ceil(power * 0.2 * clamp(base_encryption, 20, 100) * multiplier)
+end
+
+local function trace_success_chance(tier, rank, power)
+	local defaults = TRACE_CHANCE_DEFAULTS[tier] and TRACE_CHANCE_DEFAULTS[tier][rank]
+	if not defaults then return 0 end
+	local minimum = setting_number("trace_" .. tier .. "_" .. rank .. "_min", defaults[1])
+	local maximum = setting_number("trace_" .. tier .. "_" .. rank .. "_max", defaults[2])
+	local factor = (clamp(tonumber(power) or 25, 25, 100) - 25) / 75
+	return clamp(minimum + (maximum - minimum) * factor, 0, 100)
+end
+
+local function trace_offer_chance(tier)
+	local defaults = { purple = 15, orange = 8, red = 3 }
+	return clamp(setting_number("trace_" .. tier .. "_offer_chance", defaults[tier] or 0), 0, 100)
+end
+
+local function command_action_cost(name)
+	if name == "CommandUp" then return 0 end
+	local tier = TRACE_TIERS[name]
+	if tier then
+		local defaults = { purple = 2, orange = 3, red = 4 }
+		return math.max(1, math.floor(setting_number("trace_" .. tier .. "_action_cost", defaults[tier] or 1)))
+	end
+	return 1
+end
+
+local function command_label(name)
+	return tr(COMMAND_TEXT[name] or name)
+end
+
+local function command_preview(name, power, encryption, base_encryption, trace_chance)
+	if name == "Decrypt" then
+		return string.format("%s  +%.1f%%", command_label(name), get_decrypt_effect(power, encryption))
+	elseif name == "Nuke" then
+		return string.format("%s  -%.1f%%", command_label(name), get_nuke_effect(power, encryption))
+	elseif name == "Re-Scan" then
+		return string.format("%s  +%d", command_label(name), get_rescan_count(power))
+	elseif name == "CommandUp" then
+		return string.format("%s  +%d", command_label(name), get_command_up(power))
+	elseif name == "BruteForce" then
+		return string.format("%s  %.1f%%", command_label(name), get_brute_chance(power))
+	elseif name == "Extract" then
+		return string.format("%s  +%d RU", command_label(name), get_extract_money(power, base_encryption))
+	elseif TRACE_TIERS[name] then
+		return string.format("%s  %.1f%%  [-%d]", command_label(name), tonumber(trace_chance) or 0, command_action_cost(name))
+	end
+	return command_label(name)
+end
+
+local function script_power_color(power)
+	if power >= 90 then return GetARGB(255, 105, 220, 120) end
+	if power >= 75 then return GetARGB(255, 230, 190, 80) end
+	if power >= 50 then return GetARGB(255, 210, 210, 205) end
+	return GetARGB(255, 145, 155, 150)
+end
+
+local function command_text_color(name)
+	if name == "Decrypt" or name == "SkeletonKey" then
+		return GetARGB(255, 105, 220, 120)
+	elseif name == "CommandUp" or name == "Re-Scan" then
+		return GetARGB(255, 105, 185, 225)
+	elseif name == "Nuke" or name == "Extract" then
+		return GetARGB(255, 230, 190, 80)
+	elseif name == "BruteForce" then
+		return GetARGB(255, 225, 120, 80)
+	elseif name == "PurpleTrace" then
+		return GetARGB(255, 190, 140, 230)
+	elseif name == "LegendaryTrace" then
+		return GetARGB(255, 255, 170, 80)
+	elseif name == "RedTrace" then
+		return GetARGB(255, 235, 85, 75)
+	end
+	return GetARGB(255, 210, 210, 205)
+end
+
+class "lz_ph_script_entry" (CUIListBoxItem)
+
+function lz_ph_script_entry:__init(name, power, seed) super(LIST_ROW_HEIGHT)
+	self.name = name
+	self.power = power
+	self.seed = seed
+	self:SetTextColor(script_power_color(power))
+	self.text = self:GetTextItem()
+	self.text:SetFont(GetFontLetterica16Russian())
+	self.text:SetEllipsis(true)
+	self.text:SetWndPos(vector2():set(0, 0))
+	self:SetWndSize(vector2():set(SCRIPT_ROW_WIDTH, LIST_ROW_HEIGHT))
+	self.text:SetWndSize(vector2():set(SCRIPT_TEXT_WIDTH, LIST_ROW_HEIGHT))
+	self.text:SetText(string.format("  [%03d] /boot/%s", power, name))
+end
+
+function lz_ph_script_entry:SetActive(active)
+	self.text:SetText(string.format("%s [%03d] /boot/%s", active and ">" or " ", self.power, self.name))
+end
+
+class "lz_ph_command_entry" (CUIListBoxItem)
+
+function lz_ph_command_entry:__init(name, power, encryption, base_encryption, trace_chance)
+	super(LIST_ROW_HEIGHT)
+	self.name = name
+	self.power = power
+	self.trace_chance = trace_chance
+	self:SetWndSize(vector2():set(COMMAND_ROW_WIDTH, LIST_ROW_HEIGHT))
+	self:SetTextColor(command_text_color(name))
+	self.text = self:GetTextItem()
+	self.text:SetFont(GetFontLetterica16Russian())
+	self.text:SetEllipsis(true)
+	self.text:SetWndPos(vector2():set(0, 0))
+	self.text:SetWndSize(vector2():set(COMMAND_TEXT_WIDTH, LIST_ROW_HEIGHT))
+	self.text:SetText("[RUN] " .. command_preview(name, power, encryption, base_encryption, trace_chance))
+end
+
+class "lz_ph_terminal_row" (CUIScriptWnd)
+
+function lz_ph_terminal_row:__init(text, style) super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_lz_pda_hacking.xml")
+	xml:InitWindow("terminal_row", 0, self)
+	self.label = xml:InitTextWnd("terminal_row:label", self)
+	self.body = xml:InitTextWnd("terminal_row:body", self)
+
+	local row_width = math.max(120, math.floor(self:GetWidth()))
+	local body_x = 80
+	local body_width = math.max(20, row_width - body_x)
+	self.label:SetText(tr(TERM_LABELS[style] or TERM_LABELS.system))
+	self.label:SetTextColor(TERM_ROW_COLORS[style] or TERM_ROW_COLORS.system)
+	self.body:SetWndPos(vector2():set(body_x, 0))
+	self.body:SetWndSize(vector2():set(body_width, 20))
+	self.body:SetText(text or "")
+	self.body:AdjustHeightToText()
+
+	local row_height = math.max(20, math.ceil(self.body:GetHeight()))
+	self.label:SetWndSize(vector2():set(78, row_height))
+	self.body:SetWndSize(vector2():set(body_width, row_height))
+	self:SetWndSize(vector2():set(row_width, row_height))
+	self:SetAutoDelete(false)
+	self:Show(true)
+end
+
+function lz_ph_terminal_row:__finalize()
+end
+
+class "lz_ph_boot_help_dialog" (CUIScriptWnd)
+
+function lz_ph_boot_help_dialog:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_lz_pda_hacking.xml")
+	xml:InitWindow("help", 0, self)
+	xml:InitStatic("help:shade", self)
+	self.form = xml:InitStatic("help:form", self)
+	xml:InitTextWnd("help:form:title", self.form)
+	init_rule_fill(xml, "help:form:title_fill", self.form)
+	xml:InitTextWnd("help:form:title_corner", self.form)
+	xml:InitTextWnd("help:form:left_edge", self.form):SetText("")
+	xml:InitTextWnd("help:form:right_edge", self.form):SetText("")
+	xml:InitTextWnd("help:form:subtitle", self.form)
+	xml:InitTextWnd("help:form:body", self.form)
+	xml:InitTextWnd("help:form:footer", self.form)
+	init_rule_fill(xml, "help:form:footer_fill", self.form)
+	xml:InitTextWnd("help:form:footer_corner", self.form)
+	self.close_button = xml:Init3tButton("help:form:close_button", self.form)
+	self:Register(self.close_button, "pf_ph_boot_help_close")
+	self:AddCallback("pf_ph_boot_help_close", ui_events.BUTTON_CLICKED, self.Close, self)
+	self:SetAutoDelete(false)
+end
+
+function lz_ph_boot_help_dialog:__finalize()
+end
+
+function lz_ph_boot_help_dialog:Close()
+	self:HideDialog()
+end
+
+function lz_ph_boot_help_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and
+		dik_to_bind(dik) == key_bindings.kQUIT then
+		self:Close()
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+class "lz_ph_hacking_dialog" (CUIScriptWnd)
+
+function lz_ph_hacking_dialog:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_lz_pda_hacking.xml")
+	xml:InitWindow("main", 0, self)
+	xml:InitStatic("main:shade", self)
+	self.form = xml:InitStatic("main:form", self)
+	xml:InitTextWnd("main:form:caption", self.form)
+	xml:InitTextWnd("main:form:header_rule", self.form)
+	init_rule_fill(xml, "main:form:header_rule_fill", self.form)
+	xml:InitTextWnd("main:form:header_rule_corner", self.form)
+	self.pda_title = xml:InitTextWnd("main:form:pda_title", self.form)
+	self.actions_status = xml:InitTextWnd("main:form:actions_status", self.form)
+	self.payloads_status = xml:InitTextWnd("main:form:payloads_status", self.form)
+	self.extracts_status = xml:InitTextWnd("main:form:extracts_status", self.form)
+	xml:InitTextWnd("main:form:instruction", self.form)
+
+	self.script_panel = xml:InitStatic("main:form:script_panel", self.form)
+	xml:InitTextWnd("main:form:script_panel:title", self.script_panel)
+	init_rule_fill(xml, "main:form:script_panel:title_fill", self.script_panel)
+	xml:InitTextWnd("main:form:script_panel:title_corner", self.script_panel)
+	xml:InitTextWnd("main:form:script_panel:left_edge", self.script_panel)
+	xml:InitTextWnd("main:form:script_panel:footer", self.script_panel)
+	init_rule_fill(xml, "main:form:script_panel:footer_fill", self.script_panel)
+	xml:InitTextWnd("main:form:script_panel:footer_corner", self.script_panel)
+	self.script_list = xml:InitListBox("main:form:script_panel:list", self.script_panel)
+	xml:InitStatic("main:form:script_panel:scroll_mask", self.script_panel)
+	xml:InitTextWnd("main:form:script_panel:right_edge", self.script_panel)
+	self.script_list:ShowSelectedItem(true)
+	self:Register(self.script_list, "lz_ph_script_list")
+	self:AddCallback("lz_ph_script_list", ui_events.LIST_ITEM_CLICKED, self.OnSelectScript, self)
+
+	self.command_panel = xml:InitStatic("main:form:command_panel", self.form)
+	xml:InitTextWnd("main:form:command_panel:title", self.command_panel)
+	init_rule_fill(xml, "main:form:command_panel:title_fill", self.command_panel)
+	xml:InitTextWnd("main:form:command_panel:title_corner", self.command_panel)
+	xml:InitTextWnd("main:form:command_panel:left_edge", self.command_panel)
+	xml:InitTextWnd("main:form:command_panel:footer", self.command_panel)
+	init_rule_fill(xml, "main:form:command_panel:footer_fill", self.command_panel)
+	xml:InitTextWnd("main:form:command_panel:footer_corner", self.command_panel)
+	self.selected_script = xml:InitTextWnd("main:form:command_panel:selected_script", self.command_panel)
+	self.command_list = xml:InitListBox("main:form:command_panel:list", self.command_panel)
+	xml:InitStatic("main:form:command_panel:scroll_mask", self.command_panel)
+	xml:InitTextWnd("main:form:command_panel:right_edge", self.command_panel)
+	self.command_list:ShowSelectedItem(true)
+	self:Register(self.command_list, "lz_ph_command_list")
+	self:AddCallback("lz_ph_command_list", ui_events.LIST_ITEM_CLICKED, self.OnSelectCommand, self)
+
+	self.terminal_panel = xml:InitStatic("main:form:terminal_panel", self.form)
+	xml:InitTextWnd("main:form:terminal_panel:title", self.terminal_panel)
+	init_rule_fill(xml, "main:form:terminal_panel:title_fill", self.terminal_panel)
+	xml:InitTextWnd("main:form:terminal_panel:title_corner", self.terminal_panel)
+	xml:InitTextWnd("main:form:terminal_panel:footer", self.terminal_panel)
+	init_rule_fill(xml, "main:form:terminal_panel:footer_fill", self.terminal_panel)
+	xml:InitTextWnd("main:form:terminal_panel:footer_corner", self.terminal_panel)
+	xml:InitTextWnd("main:form:terminal_panel:left_edge", self.terminal_panel)
+	self.terminal_scroll = xml:InitScrollView("main:form:terminal_panel:terminal_scroll", self.terminal_panel)
+	xml:InitStatic("main:form:terminal_panel:scroll_mask", self.terminal_panel)
+	xml:InitTextWnd("main:form:terminal_panel:right_edge", self.terminal_panel)
+	xml:InitTextWnd("main:form:terminal_panel:prompt", self.terminal_panel)
+	self.help_panel = xml:InitStatic("main:form:help_panel", self.form)
+	xml:InitTextWnd("main:form:help_panel:title", self.help_panel)
+	self.bonus_status = xml:InitTextWnd("main:form:help_panel:bonus_status", self.help_panel)
+
+	xml:InitTextWnd("main:form:encryption_label", self.form)
+	self.encryption_value = xml:InitTextWnd("main:form:encryption_value", self.form)
+	xml:InitTextWnd("main:form:progress_label", self.form)
+	self.progress_value = xml:InitTextWnd("main:form:progress_value", self.form)
+	self.encryption_cells = fit_progress_cells(self.encryption_value, 24)
+	self.progress_cells = fit_progress_cells(self.progress_value, 64)
+	xml:InitTextWnd("main:form:bottom_rule", self.form)
+	init_rule_fill(xml, "main:form:bottom_rule_fill", self.form)
+	xml:InitTextWnd("main:form:bottom_rule_corner", self.form)
+	xml:InitTextWnd("main:form:abort_hint", self.form)
+
+	self.close_button = xml:Init3tButton("main:form:close_button", self.form)
+	self:Register(self.close_button, "lz_ph_close")
+	self:AddCallback("lz_ph_close", ui_events.BUTTON_CLICKED, self.Abort, self)
+	self.help_button = xml:Init3tButton("main:form:help_button", self.form)
+	self:Register(self.help_button, "pf_ph_boot_help")
+	self:AddCallback("pf_ph_boot_help", ui_events.BUTTON_CLICKED, self.OnHelp, self)
+	self.help_dialog = lz_ph_boot_help_dialog()
+
+	self:SetAutoDelete(false)
+	self.pda_id = nil
+	self.pda_section = nil
+	self.loaded_script = nil
+	self.pending_command = nil
+	self.run_command_queued = false
+	self.terminal_entries = {}
+	self.terminal_rows = {}
+	self.sound = nil
+end
+
+function lz_ph_hacking_dialog:__finalize()
+end
+
+function lz_ph_hacking_dialog:OnHelp()
+	if not self.help_dialog or self.help_dialog:IsShown() then return end
+	self.help_dialog:ShowDialog(true)
+end
+
+function lz_ph_hacking_dialog:Update()
+	CUIScriptWnd.Update(self)
+	if not self.run_command_queued then return end
+	self.run_command_queued = false
+	self:OnRunCommand()
+end
+
+function lz_ph_hacking_dialog:RefreshTerminal()
+	self.terminal_scroll:Clear()
+	self.terminal_rows = {}
+	for _, entry in ipairs(self.terminal_entries) do
+		local row = lz_ph_terminal_row(entry.text, entry.style)
+		self.terminal_scroll:AddWindow(row, true)
+		row:SetAutoDelete(false)
+		table.insert(self.terminal_rows, row)
+	end
+	self.terminal_scroll:ScrollToEnd()
+end
+
+function lz_ph_hacking_dialog:AppendTerminal(text, style)
+	if not text or text == "" then return end
+	style = TERM_ROW_COLORS[style] and style or "system"
+	local normalized = string.gsub(tostring(text), "\r", "")
+	for line in string.gmatch(normalized .. "\n", "(.-)\n") do
+		if line ~= "" then
+			table.insert(self.terminal_entries, { text = line, style = style })
+		end
+	end
+	while #self.terminal_entries > MAX_TERMINAL_ROWS do
+		table.remove(self.terminal_entries, 1)
+	end
+	self:RefreshTerminal()
+end
+
+function lz_ph_hacking_dialog:UpdateLabels()
+	self.actions_status:SetText(trf("lz_ph_status_actions", status_count_text(self.commands)))
+	self.payloads_status:SetText(trf("lz_ph_status_payloads", status_count_text(self.script_list:GetSize())))
+	self.extracts_status:SetText(trf("lz_ph_status_extracts", status_count_text(self.extracts_remaining)))
+	self.encryption_value:SetText(progress_bar(self.encryption, self.encryption_cells))
+	self.progress_value:SetText(progress_bar(self.decrypted, self.progress_cells))
+	self:UpdateBonusStatus()
+end
+
+function lz_ph_hacking_dialog:ScriptOffersTrace(script, tier)
+	if not script or not TRACE_COMMANDS[tier] then return false end
+	local saved = get_pda_state(self.pda_id, self.pda_section)
+	local bonus = saved.bonuses[tier]
+	if bonus.attempted then return false end
+	if self.pda_section == "pf_stash_pda_master" and tier == "red" then
+		return script.force_red == true
+	end
+	local roll = deterministic_percent(
+		script.seed,
+		self.pda_id,
+		self.pda_section,
+		"lz_pda_trace_offer_" .. tier .. "_v1"
+	)
+	return roll < trace_offer_chance(tier)
+end
+
+function lz_ph_hacking_dialog:TraceStatus(tier)
+	local saved = get_pda_state(self.pda_id, self.pda_section)
+	local bonus = saved.bonuses[tier]
+	if bonus.unlocked then return "unlocked" end
+	if bonus.attempted then return "failed" end
+	for index = 0, self.script_list:GetSize() - 1 do
+		if self:ScriptOffersTrace(self.script_list:GetItemByIndex(index), tier) then
+			return "available"
+		end
+	end
+	return "not_found"
+end
+
+function lz_ph_hacking_dialog:UpdateBonusStatus()
+	if not self.bonus_status or not self.pda_id then return end
+	local parts = {}
+	for _, tier in ipairs(TRACE_ORDER) do
+		local status = self:TraceStatus(tier)
+		if status ~= "not_found" then
+			local status_id = status == "unlocked" and "lz_ph_bonus_obtained" or
+				(status == "available" and "lz_ph_bonus_available" or "lz_ph_bonus_failed")
+			table.insert(parts,
+				TRACE_TIER_COLORS[tier] .. tr(TRACE_LABELS[tier]) .. TERM_TEXT .. ": " ..
+				TRACE_STATUS_COLORS[status] .. tr(status_id) .. TERM_TEXT
+			)
+		end
+	end
+	self.bonus_status:SetText(#parts > 0 and
+		(tr("lz_ph_bonus_prefix") .. "  " .. table.concat(parts, "    ")) or "")
+end
+
+function lz_ph_hacking_dialog:GenerateScripts(count, initial)
+	count = math.max(0, math.floor(tonumber(count) or 0))
+	local minimum = clamp(setting_number("script_power_min", 25), 1, 100)
+	local maximum = clamp(setting_number("script_power_max", 100), minimum, 100)
+	local generated = {}
+	for _ = 1, count do
+		self.script_serial = self.script_serial + 1
+		local name_index = rng_int(self.rng, 1, #SCRIPT_NAMES)
+		local name = SCRIPT_NAMES[name_index] .. "_" .. tostring(self.script_serial)
+		local power = rng_int(self.rng, minimum, maximum)
+		local seed = normalize_seed(rng_next(self.rng) + self.seed + self.script_serial * 3571)
+		local script = lz_ph_script_entry(name, power, seed)
+		script.serial = self.script_serial
+		script.initial = initial == true
+		self.script_list:AddExistingItem(script)
+		script:SetColor(GetARGB(0, 255, 255, 255))
+		table.insert(generated, script)
+	end
+	if initial and self.pda_section == "pf_stash_pda_master" and #generated > 0 then
+		local strongest = generated[1]
+		for index = 2, #generated do
+			local candidate = generated[index]
+			if candidate.power > strongest.power or
+				(candidate.power == strongest.power and candidate.serial < strongest.serial) then
+				strongest = candidate
+			end
+		end
+		strongest.force_red = true
+	end
+end
+
+function lz_ph_hacking_dialog:HasCommand(name)
+	for index = 0, self.command_list:GetSize() - 1 do
+		local item = self.command_list:GetItemByIndex(index)
+		if item and item.name == name then return true end
+	end
+	return false
+end
+
+function lz_ph_hacking_dialog:AddCommand(name, power, trace_chance)
+	local command = lz_ph_command_entry(name, power, self.encryption, self.base_encryption, trace_chance)
+	self.command_list:AddExistingItem(command)
+	command:SetColor(GetARGB(0, 255, 255, 255))
+end
+
+function lz_ph_hacking_dialog:Open(pda_id, pda_section, usb)
+	local profile = PDA_PROFILES[pda_section]
+	if not profile or not usb then return false end
+	local saved = get_pda_state(pda_id, pda_section)
+
+	self.pda_id = tonumber(pda_id)
+	self.pda_section = pda_section
+	self.usb = usb
+	self.seed = saved.seed
+	self.rng = new_rng(self.seed)
+	self.base_encryption = clamp(
+		setting_number(profile.setting, profile.encryption),
+		0,
+		100
+	)
+	self.encryption = self.base_encryption
+	self.decrypted = 0
+	self.commands = usb.commands
+	self.extracts_remaining = math.max(0, usb.extracts - saved.extracts_used)
+	self.script_serial = 0
+	self.loaded_script = nil
+	self.pending_command = nil
+	self.run_command_queued = false
+	self.terminal_entries = {}
+	self.terminal_rows = {}
+	self.terminal_scroll:Clear()
+
+	self.script_list:RemoveAll()
+	self.command_list:RemoveAll()
+	self.selected_script:SetText(tr("lz_ph_selected_none"))
+	if self.help_dialog and self.help_dialog:IsShown() then self.help_dialog:HideDialog() end
+	self.pda_title:SetText("# " .. tr(profile.title))
+	self:AppendTerminal(tr("pf_ph_boot_intro"), "system")
+	self:AppendTerminal(trf("lz_ph_active_usb", usb.level), "system")
+	self:GenerateScripts(usb.scripts, true)
+	self:UpdateLabels()
+	self:ShowDialog(true)
+	return true
+end
+
+function lz_ph_hacking_dialog:BuildCommands(script)
+	self.command_list:RemoveAll()
+	local rng = new_rng(script.seed)
+	local chance = clamp(setting_number("command_chance", 40), 0, 100)
+	local rescan_chance = clamp(setting_number("rescan_chance", 35), 0, 100)
+	-- The primary action is always first and always available. Optional commands
+	-- offer resource recovery, protection reduction or a deliberate gamble.
+	self:AddCommand("Decrypt", script.power)
+	local profile = PDA_PROFILES[self.pda_section]
+	for _, tier in ipairs(TRACE_ORDER) do
+		if self:ScriptOffersTrace(script, tier) then
+			self:AddCommand(
+				TRACE_COMMANDS[tier],
+				script.power,
+				trace_success_chance(tier, profile.rank, script.power)
+			)
+		end
+	end
+	if rng_percent(rng) < chance then self:AddCommand("CommandUp", script.power) end
+	if rng_percent(rng) < rescan_chance then self:AddCommand("Re-Scan", script.power) end
+	if rng_percent(rng) < chance then self:AddCommand("BruteForce", script.power) end
+	if rng_percent(rng) < chance and self.encryption > 0 then self:AddCommand("Nuke", script.power) end
+	if rng_percent(rng) < clamp(setting_number("skeleton_key_chance", 0.25), 0, 100) then
+		self:AddCommand("SkeletonKey", script.power)
+	end
+	if self.extracts_remaining > 0 and
+		rng_percent(rng) < clamp(setting_number("extract_chance", 10), 0, 100) then
+		self:AddCommand("Extract", script.power)
+	end
+	if self.commands <= 0 and not self:HasCommand("CommandUp") then
+		self:AddCommand("CommandUp", script.power)
+	end
+end
+
+function lz_ph_hacking_dialog:LoadScript(script)
+	if not self.pda_id or self.decrypted >= 100 then return end
+	if not script then return end
+	-- IX-Ray userdata for CUIListBoxItem has no exported __eq operator.
+	-- Compare the stable per-trial script seed instead of the UI objects.
+	if self.loaded_script and script.seed == self.loaded_script.seed then return end
+	self.loaded_script = script
+	self.pending_command = nil
+	self.run_command_queued = false
+	for index = 0, self.script_list:GetSize() - 1 do
+		local item = self.script_list:GetItemByIndex(index)
+		if item then item:SetActive(item.seed == script.seed) end
+	end
+	self.selected_script:SetText(trf("lz_ph_selected", script.name, script.power))
+	self:BuildCommands(script)
+	self:UpdateLabels()
+end
+
+function lz_ph_hacking_dialog:OnSelectScript()
+	self:LoadScript(self.script_list:GetSelectedItem())
+end
+
+function lz_ph_hacking_dialog:SelectFirstScript()
+	if self.script_list:GetSize() <= 0 then return false end
+	self.script_list:SetSelectedIndex(0)
+	-- SetSelectedIndex changes the selection but IX-Ray keeps the previous
+	-- scroll offset. Keep the automatically loaded first script visible too.
+	self.script_list:ScrollToBegin()
+	local script = self.script_list:GetItemByIndex(0)
+	if not script then return false end
+	self:LoadScript(script)
+	return true
+end
+
+function lz_ph_hacking_dialog:ApplySkeletonKey()
+	play_sound("pda_hacking\\normal_hacking_sound", 1)
+	if not db.actor then return end
+	local attack = hit()
+	attack.type = hit.telepatic
+	attack.power = 0.2
+	attack.impulse = 1
+	attack.direction = vector():set(0, 0, 1)
+	attack.draftsman = db.actor
+	db.actor:hit(attack)
+end
+
+function lz_ph_hacking_dialog:OnSelectCommand()
+	if not self.pda_id or not self.loaded_script or self.decrypted >= 100 then return end
+	local command = self.command_list:GetSelectedItem()
+	if not command then return end
+	self.pending_command = command
+	-- Execute on the next UI frame so the list-item click can finish before the
+	-- command rebuild removes that row. The user still gets one-click [RUN].
+	self.run_command_queued = true
+end
+
+function lz_ph_hacking_dialog:OnRunCommand()
+	if not self.pda_id or not self.loaded_script or self.decrypted >= 100 then return end
+	local command = self.pending_command or self.command_list:GetSelectedItem()
+	if not command then
+		self:AppendTerminal(tr("lz_ph_select_hack_first"), "warning")
+		return
+	end
+	local name = command.name
+	local action_cost = command_action_cost(name)
+	if self.commands < action_cost then
+		local warning = trf("lz_ph_need_command_points_for_hack", action_cost, self.commands)
+		self:AppendTerminal(warning, "warning")
+		return
+	end
+
+	local power = command.power
+	local effect = ""
+	local success = false
+	local trace_outcome = nil
+
+	if name == "Nuke" then
+		local value = get_nuke_effect(power, self.encryption)
+		self.encryption = clamp(self.encryption - value, 0, 100)
+		effect = trf("lz_ph_effect_nuke", value)
+	elseif name == "Decrypt" then
+		local value = get_decrypt_effect(power, self.encryption)
+		self.decrypted = clamp(self.decrypted + value, 0, 100)
+		effect = trf("lz_ph_effect_decrypt", value)
+		success = self.decrypted >= 100
+	elseif name == "Re-Scan" then
+		local count = get_rescan_count(power)
+		self:GenerateScripts(count)
+		effect = trf("lz_ph_effect_rescan", count)
+	elseif name == "CommandUp" then
+		local count = get_command_up(power)
+		self.commands = self.commands + count
+		effect = trf("lz_ph_effect_cmdup", count)
+	elseif name == "BruteForce" then
+		local chance = get_brute_chance(power)
+		if rng_percent(self.rng) < chance then
+			self.decrypted = 100
+			success = true
+			effect = trf("lz_ph_effect_brute_success", chance)
+		else
+			effect = trf("lz_ph_effect_brute_fail", chance)
+		end
+	elseif name == "Extract" and self.extracts_remaining > 0 then
+		local money = get_extract_money(power, self.base_encryption)
+		db.actor:give_money(money)
+		self.extracts_remaining = self.extracts_remaining - 1
+		local saved = get_pda_state(self.pda_id, self.pda_section)
+		saved.extracts_used = saved.extracts_used + 1
+		db.actor:give_game_news(
+			tr("lz_ph_extract_title"),
+			trf("lz_ph_extract_message", money),
+			"ui_inGame2_PD_Sostoyatelniy_klient",
+			0,
+			5000,
+			0
+		)
+		effect = trf("lz_ph_effect_extract", money)
+	elseif name == "SkeletonKey" then
+		self.decrypted = 100
+		success = true
+		self:ApplySkeletonKey()
+		effect = tr("lz_ph_effect_skeleton")
+	elseif TRACE_TIERS[name] then
+		local tier = TRACE_TIERS[name]
+		local saved = get_pda_state(self.pda_id, self.pda_section)
+		local bonus = saved.bonuses[tier]
+		local chance = tonumber(command.trace_chance) or 0
+		bonus.attempted = true
+		if bonus.success_roll < chance then
+			bonus.unlocked = true
+			trace_outcome = "success"
+			effect = trf("lz_ph_effect_trace_success", command_label(name), chance)
+		else
+			bonus.unlocked = false
+			trace_outcome = "failed"
+			effect = trf("lz_ph_effect_trace_failed", command_label(name), chance)
+		end
+	end
+
+	local used_script = self.loaded_script
+	self.loaded_script = nil
+	self.pending_command = nil
+	self.script_list:RemoveItem(used_script)
+	self.command_list:RemoveAll()
+	self.selected_script:SetText(tr("lz_ph_selected_none"))
+	self.commands = self.commands - action_cost
+	local command_color = TERM_COMMAND_COLORS[name] or TERM_COLORS.hack
+	local terminal_style = success and "success" or
+		(trace_outcome == "success" and "success" or
+		(trace_outcome == "failed" and "warning" or
+		(name == "BruteForce" and "warning" or "hack")))
+	self:AppendTerminal(trf(
+		"lz_ph_running",
+		command_color .. command_label(name) .. TERM_TEXT,
+		command_color .. effect .. TERM_TEXT
+	), terminal_style)
+	self:UpdateLabels()
+
+	if success then
+		self:Success()
+	elseif self.script_list:GetSize() <= 0 then
+		self:Fail("lz_ph_failed_scripts")
+	else
+		self:SelectFirstScript()
+	end
+end
+
+function lz_ph_hacking_dialog:Success()
+	local id = self.pda_id
+	if not id then return end
+	local section = self.pda_section
+	local saved = get_pda_state(id, section)
+	local reward_spec = {
+		base_tier = saved.base_tier,
+		base_roll = saved.base_roll,
+		bonus_tiers = {}
+	}
+	for _, tier in ipairs(TRACE_ORDER) do
+		local bonus = saved.bonuses[tier]
+		if bonus.unlocked then reward_spec.bonus_tiers[tier] = bonus.slot_roll end
+	end
+	self:AppendTerminal(tr("lz_ph_success"), "success")
+	if self.help_dialog and self.help_dialog:IsShown() then self.help_dialog:HideDialog() end
+	self.pda_id = nil
+	self:HideDialog()
+
+	-- Never release the inventory PDA or create map stashes from inside the
+	-- button callback that completed the hack. IX-Ray still owns that callback's
+	-- UI stack until the frame ends; doing the reward work synchronously can
+	-- raise a native Lua fatal with an empty traceback.
+	local ready_at = time_global() + 1
+	level.add_call(
+		function()
+			return time_global() >= ready_at
+		end,
+		function()
+			local manager = rawget(_G, "pf_dynamic_stashes")
+			if not manager or not manager.complete_stash_pda_hack then
+				printf("! lz_pda_hacking: pf_dynamic_stashes completion API is unavailable")
+				message("lz_ph_open_failed")
+				return
+			end
+
+			local ok, completed = pcall(
+				manager.complete_stash_pda_hack,
+				id,
+				section,
+				reward_spec
+			)
+			if not ok then
+				printf("! lz_pda_hacking: stash reward failed for PDA %s: %s", tostring(id), tostring(completed))
+				message("lz_ph_open_failed")
+				return
+			end
+			if not completed then
+				printf("! lz_pda_hacking: stash reward rejected PDA %s", tostring(id))
+				message("lz_ph_open_failed")
+				return
+			end
+
+			forget_pda(id)
+			play_sound("pda_hacking\\unlocked", 1)
+		end
+	)
+end
+
+function lz_ph_hacking_dialog:Fail(reason)
+	local id = self.pda_id
+	local profile = PDA_PROFILES[self.pda_section]
+	if not id or not profile then return end
+	local failed_section = profile.failed
+	if self.help_dialog and self.help_dialog:IsShown() then self.help_dialog:HideDialog() end
+	self.pda_id = nil
+	self:AppendTerminal(tr(reason), "error")
+	self:HideDialog()
+
+	-- Replacing an inventory item and sending PDA news from the list/button
+	-- callback can leave IX-Ray's native UI stack in an invalid state. Finish
+	-- the failure transaction on the next frame, just like successful rewards.
+	local ready_at = time_global() + 1
+	level.add_call(
+		function()
+			return time_global() >= ready_at
+		end,
+		function()
+			local ok, replaced = pcall(replace_actor_item, id, failed_section)
+			if not ok then
+				printf("! lz_pda_hacking: failed PDA replacement error for %s: %s", tostring(id), tostring(replaced))
+				message("lz_ph_open_failed")
+				return
+			end
+			if not replaced then
+				printf("! lz_pda_hacking: failed PDA replacement rejected for %s", tostring(id))
+				message("lz_ph_open_failed")
+				return
+			end
+
+			forget_pda(id)
+			play_sound("pda_hacking\\failed", 0.8)
+			message("lz_ph_hack_failed_message")
+		end
+	)
+end
+
+function lz_ph_hacking_dialog:Abort()
+	if not self.pda_id then
+		self:HideDialog()
+		return
+	end
+	-- A manual exit is a real failed intrusion. Route it through the same
+	-- deferred replacement as every other loss so Extract cannot be cashed out
+	-- while keeping the original PDA for another attempt.
+	self:Fail("lz_ph_abort_log")
+end
+
+function lz_ph_hacking_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and
+		dik_to_bind(dik) == key_bindings.kQUIT then
+		self:Abort()
+		return true
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+local function open_hacking_dialog(request, pda_id, pda_section, usb)
+	if request ~= open_request then return end
+	local server_pda = alife():object(pda_id, true)
+	if not server_pda or server_pda:section_name() ~= pda_section then
+		message("lz_ph_open_failed")
+		return
+	end
+	local hud = get_hud()
+	if hud then hud:HideActorMenu() end
+
+	if not dialog_singleton then
+		local ok, created = pcall(function() return lz_ph_hacking_dialog() end)
+		if not ok then
+			printf("! lz_pda_hacking: UI creation failed: %s", tostring(created))
+			message("lz_ph_open_failed")
+			return
+		end
+		dialog_singleton = created
+	end
+	if not dialog_singleton:Open(pda_id, pda_section, usb) then
+		message("lz_ph_open_failed")
+	end
+end
+
+function use_stash_pda(pda)
+	if not pda or not db.actor or level.name() ~= "pripyat_full" then return false end
+	if not require_actor_item(pda) then return false end
+	local section = pda:section()
+	local profile = PDA_PROFILES[section]
+	if not profile then return false end
+	local usb = installed_usb()
+	if not usb then
+		message("lz_ph_no_usb")
+		return false
+	end
+	local required_level = math.max(1, math.floor(tonumber(profile.required_usb_level) or 1))
+	if usb.level < required_level then
+		message("lz_ph_usb_level_too_low", required_level, usb.level)
+		return false
+	end
+
+	get_pda_state(pda:id(), section)
+	open_request = open_request + 1
+	local request = open_request
+	local pda_id = pda:id()
+	local ready_at = time_global() + 1
+	level.add_call(
+		function()
+			return time_global() >= ready_at
+		end,
+		function()
+			open_hacking_dialog(request, pda_id, section, usb)
+		end
+	)
+	return false
+end
+
+-- Console helpers for an explicit test spawn. Items taken from these boxes go
+-- through the normal acquisition callback and therefore become permanently
+-- registered in the USB progression state of the current save.
+function debug_spawn_usb_stash(usb_level)
+	if not db.actor or not alife() then return false end
+	usb_level = math.floor(tonumber(usb_level) or 0)
+	local usb_section = USB_SECTIONS[usb_level]
+	if not usb_section then
+		printf("! lz_pda_hacking: debug USB level must be 1, 2 or 3")
+		return false
+	end
+
+	local actor = db.actor
+	local position = actor:position()
+	local direction = actor:direction()
+	local horizontal = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	if horizontal < 0.001 then
+		direction.x = 0
+		direction.z = 1
+		horizontal = 1
+	end
+	position.x = position.x + direction.x / horizontal * 2.0
+	position.z = position.z + direction.z / horizontal * 2.0
+	position.y = position.y + 0.05
+
+	local stash = alife():create(
+		"pf_stash_box_metal",
+		position,
+		level.vertex_id(position),
+		actor:game_vertex_id()
+	)
+	if not stash then
+		printf("! lz_pda_hacking: failed to create debug USB stash")
+		return false
+	end
+
+	if not alife():create(usb_section, vector(), 0, 0, stash.id) then
+		alife():release(stash, true)
+		printf("! lz_pda_hacking: failed to put %s into debug stash", usb_section)
+		return false
+	end
+
+	printf("lz_pda_hacking: spawned debug stash with USB-%d", usb_level)
+	return true
+end
+
+function debug_spawn_next_usb_stash()
+	local next_level = debug_usb_level % 3 + 1
+	if not debug_spawn_usb_stash(next_level) then return false end
+	debug_usb_level = next_level
+	return true
+end
+
+function on_game_load()
+	usb_install_pending = false
+	reflash_pending = false
+end
+
+function on_game_start()
+	if load_callback_registered then return true end
+	if type(RegisterScriptCallback) ~= "function" then
+		printf("! lz_pda_hacking: RegisterScriptCallback is unavailable")
+		return false
+	end
+	RegisterScriptCallback("load", on_game_load)
+	load_callback_registered = true
+	on_game_load()
+	printf("lz_pda_hacking: IX-Ray port initialized (locked-PDA-only reflash actions)")
+	return true
+end
+
+-- mod_script imports this namespace but does not invoke on_game_start.
+-- Register only after every public callback above has been defined.
+on_game_start()

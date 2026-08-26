@@ -1,0 +1,60 @@
+-- Shared runtime for the manually approved fixed stashes.
+-- Each container starts with one bandage and is retired after its last item is
+-- actually transferred to the actor.
+
+local tracked_sections = {
+	pf_fixed_house_stash_backpack = true,
+	pf_fixed_house_stash_wood_box = true
+}
+
+local pending = {}
+
+local function has_items(box)
+	for _ in alife():get_children(box) do return true end
+	return false
+end
+
+function ensure_bandage(box)
+	if not box or not tracked_sections[box:section_name()] then return false end
+	if has_items(box) then return true end
+	return alife():create("bandage", vector(), 0, 0, box.id) ~= nil
+end
+
+function actor_on_item_take_from_box(box, item)
+	if not box or not item or not tracked_sections[box:section()] then return end
+	local now = time_global()
+	pending[box:id()] = {
+		due = now + 100,
+		expires = now + 3000
+	}
+end
+
+local function retire_empty_box(server_box, client_box)
+	if client_box and not client_box:is_inv_box_empty() then return false end
+	if has_items(server_box) then return false end
+	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+	local opened_box = menu and menu:GetInvBox() or nil
+	if opened_box and opened_box:id() == server_box.id and get_hud() then
+		get_hud():HideActorMenu()
+	end
+	alife():release(server_box, true)
+	return true
+end
+
+function update(now)
+	for id, entry in pairs(pending) do
+		if now >= entry.due then
+			local server_box = alife():object(id, true)
+			local client_box = level.object_by_id(id)
+			if not server_box then
+				pending[id] = nil
+			elseif retire_empty_box(server_box, client_box) then
+				pending[id] = nil
+			elseif now >= entry.expires then
+				pending[id] = nil
+			else
+				entry.due = now + 100
+			end
+		end
+	end
+end

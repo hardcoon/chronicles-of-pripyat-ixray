@@ -1,0 +1,311 @@
+; Central inventory grouping registry.
+; Every active inventory section must occur exactly once across all registry patches.
+; Run tools\validate_inventory_groups.py after adding or porting an item.
+
+[inventory_sort_groups]
+weapons = 10
+ammo_explosives = 20
+armor = 30
+weapon_addons = 40
+electronics = 50
+artefacts = 60
+medicine = 70
+food = 80
+repair_tools = 90
+materials = 100
+mutant_parts = 110
+quest_items = 120
+containers = 130
+misc = 140
+qa = 900
+technical = 990
+
+[inventory_sort_registry]
+
+; weapons (rank 10) - weapons
+pri_a15_wpn_ak74 = weapons
+pri_a15_wpn_ak74u = weapons
+pri_a15_wpn_svu = weapons
+pri_a15_wpn_wincheaster1300 = technical
+pri_a17_gauss_rifle = technical
+wpn_abakan = weapons
+wpn_ak74 = weapons
+wpn_ak74u = weapons
+wpn_ak74u_snag = weapons
+wpn_beretta = weapons
+wpn_bm16 = weapons
+wpn_colt1911 = weapons
+wpn_desert_eagle = weapons
+wpn_desert_eagle_nimble = weapons
+wpn_fn2000 = weapons
+wpn_fn2000_nimble = weapons
+wpn_fort = weapons
+wpn_fort_snag = weapons
+wpn_g36 = weapons
+wpn_g36_nimble = weapons
+wpn_gauss = weapons
+wpn_groza = weapons
+wpn_groza_nimble = weapons
+wpn_hpsa = weapons
+wpn_l85 = weapons
+wpn_lr300 = weapons
+wpn_mp5 = weapons
+wpn_mp5_nimble = weapons
+wpn_pb = weapons
+wpn_pkm = weapons
+wpn_pkm_zulus = weapons
+wpn_pm = weapons
+wpn_pm_actor = weapons
+wpn_protecta = technical
+wpn_protecta_nimble = technical
+wpn_rg-6 = weapons
+wpn_rpg7 = weapons
+wpn_sig220 = weapons
+wpn_sig220_nimble = weapons
+wpn_sig550 = weapons
+wpn_sig550_luckygun = weapons
+wpn_spas12 = weapons
+wpn_spas12_nimble = weapons
+wpn_svd = weapons
+wpn_svd_nimble = weapons
+wpn_svu = weapons
+wpn_svu_nimble = weapons
+wpn_toz34 = weapons
+wpn_usp = weapons
+wpn_usp_nimble = weapons
+wpn_val = weapons
+wpn_vintorez = weapons
+wpn_vintorez_nimble = weapons
+wpn_walther = weapons
+wpn_wincheaster1300 = weapons
+wpn_wincheaster1300_trapper = technical
+
+; ammo_explosives (rank 20) - ammo_grenades_and_explosives
+grenade_f1 = ammo_explosives
+grenade_gd-05 = ammo_explosives
+grenade_rgd5 = ammo_explosives
+pri_a25_explosive_charge_item = ammo_explosives
+zat_b57_gas = ammo_explosives
+
+; armor (rank 30) - armor_and_helmets
+pf_guardian_seva_outfit = armor
+
+; electronics (rank 50) - electronics_pdas_detectors_and_devices
+anomaly_scaner = electronics
+detector_advanced = electronics
+detector_elite = electronics
+detector_scientific = electronics
+detector_simple = electronics
+dev_flash_1 = electronics
+dev_flash_2 = electronics
+device_flash_snag = electronics
+device_pda = electronics
+device_pda_port_bandit_leader = electronics
+device_pda_zat_b5_dealer = electronics
+device_torch = electronics
+hand_radio = electronics
+hand_radio_r = electronics
+jup_b10_ufo_memory = electronics
+jup_b10_ufo_memory_2 = electronics
+jup_b202_bandit_pda = electronics
+jup_b207_merc_pda_with_contract = electronics
+jup_b209_monster_scanner = electronics
+jup_b32_scanner_device = electronics
+jup_b47_merc_pda = electronics
+pf_metal_detector_homemade = electronics
+pf_metal_detector_magnet = electronics
+pf_metal_detector_wave = electronics
+pf_stash_pda_master = electronics
+pf_stash_pda_novice = electronics
+pf_stash_pda_stalker = electronics
+pf_stash_pda_veteran = electronics
+pri_b306_envoy_pda = electronics
+pri_b36_monolith_hiding_place_pda = electronics
+zat_b20_noah_pda = electronics
+zat_b22_medic_pda = electronics
+zat_b39_joker_pda = electronics
+zat_b40_pda_1 = electronics
+zat_b40_pda_2 = electronics
+zat_b44_barge_pda = electronics
+
+; artefacts (rank 60) - artefacts
+af_baloon = artefacts
+af_blood = artefacts
+af_compass = artefacts
+af_cristall = artefacts
+af_cristall_flower = artefacts
+af_dummy_battery = artefacts
+af_dummy_dummy = artefacts
+af_dummy_glassbeads = artefacts
+af_electra_flash = artefacts
+af_electra_moonlight = artefacts
+af_electra_sparkler = artefacts
+af_eye = artefacts
+af_fire = artefacts
+af_fireball = artefacts
+af_fuzz_kolobok = artefacts
+af_glass = artefacts
+af_gold_fish = artefacts
+af_gravi = artefacts
+af_ice = artefacts
+af_medusa = artefacts
+af_mincer_meat = artefacts
+af_night_star = artefacts
+af_oasis_heart = artefacts
+af_quest_b14_twisted = artefacts
+af_soul = artefacts
+af_vyvert = artefacts
+jup_b1_half_artifact = artefacts
+pf_guardian_compass = artefacts
+
+; medicine (rank 70) - medicine
+antirad = medicine
+bandage = medicine
+drug_anabiotic = medicine
+drug_antidot = medicine
+drug_booster = medicine
+drug_coagulant = medicine
+drug_psy_blockade = medicine
+drug_radioprotector = medicine
+medkit = medicine
+medkit_army = medicine
+medkit_scientic = medicine
+
+; food (rank 80) - food_drink_and_cooked_meat
+bread = food
+conserva = food
+energy_drink = food
+kolbasa = food
+vodka = food
+vodka_script = food
+
+; repair_tools (rank 90) - repair_kits_and_tools
+toolkit_1 = repair_tools
+toolkit_2 = repair_tools
+toolkit_3 = repair_tools
+
+; materials (rank 100) - materials_and_components
+jup_b200_tech_materials_acetone = materials
+jup_b200_tech_materials_capacitor = materials
+jup_b200_tech_materials_textolite = materials
+jup_b200_tech_materials_transistor = materials
+jup_b200_tech_materials_wire = materials
+pf_vehicle_fuel_canister = materials
+
+; quest_items (rank 120) - documents_keys_cases_and_untyped_quest_items
+document = quest_items
+jup_a9_conservation_info = quest_items
+jup_a9_delivery_info = quest_items
+jup_a9_evacuation_info = quest_items
+jup_a9_losses_info = quest_items
+jup_a9_meeting_info = quest_items
+jup_a9_power_info = quest_items
+jup_a9_way_info = quest_items
+jup_b10_notes_01 = quest_items
+jup_b10_notes_02 = quest_items
+jup_b10_notes_03 = quest_items
+jup_b205_sokolov_note = quest_items
+jup_b206_plant = quest_items
+jup_b47_jupiter_products_info = quest_items
+jup_b9_blackbox = quest_items
+letter_ecologist_report_1_of_3 = quest_items
+letter_ecologist_report_2_of_3 = quest_items
+letter_ecologist_report_3_of_3 = quest_items
+letter_freedom_manual_1_of_2 = quest_items
+letter_freedom_manual_2_of_2 = quest_items
+letter_letter_to_outside = quest_items
+letter_memoirs_1_of_2 = quest_items
+letter_memoirs_2_of_2 = quest_items
+letter_mercenary = quest_items
+letter_military_log = quest_items
+letter_military_stalker = quest_items
+letter_monolith_prayer_1_of_3 = quest_items
+letter_monolith_prayer_2_of_3 = quest_items
+letter_monolith_prayer_3_of_3 = quest_items
+letter_monolithian_thoughts = quest_items
+letter_stalker_letter_1_of_2 = quest_items
+letter_stalker_letter_2_of_2 = quest_items
+letter_stalker_letter_3 = quest_items
+lx8_service_instruction = quest_items
+lz_lore_abandoned_animals_report = quest_items
+lz_lore_belongings_disposal_act = quest_items
+lz_lore_derkonis_house_card = quest_items
+lz_lore_driver_kislytskyi = quest_items
+lz_lore_ignatenko_testimony = quest_items
+lz_lore_kuzmina_mothers_letter = quest_items
+lz_lore_kuznetsov_letter = quest_items
+lz_lore_kyiv_women_letter = quest_items
+lz_lore_liquidators_collective_letter = quest_items
+lz_lore_lukatsky_testimony = quest_items
+lz_lore_memorial_visit_permit = quest_items
+lz_lore_petrus_family_register = quest_items
+lz_lore_pravik_hospital_letter = quest_items
+lz_lore_separated_family_letter = quest_items
+lz_lore_shpakovych_family_card = quest_items
+lz_lore_three_days_for_pets = quest_items
+lz_lore_unprocessed_pripyat_film = quest_items
+lz_lore_veteran_on_silence = quest_items
+pf_bunker_access_case = quest_items
+pf_story_brother_pendant = quest_items
+pf_story_document_01 = quest_items
+pf_story_document_02 = quest_items
+pf_story_document_03 = quest_items
+pf_story_document_04 = quest_items
+pf_story_document_05 = quest_items
+pf_story_document_06 = quest_items
+pf_story_document_07 = quest_items
+pf_story_document_08 = quest_items
+pf_story_document_09 = quest_items
+pf_story_document_10 = quest_items
+pf_story_document_11 = quest_items
+pf_story_document_12 = quest_items
+pri_a15_documents = quest_items
+pri_a19_american_experiment_info = quest_items
+pri_a19_lab_x10_info = quest_items
+pri_a19_lab_x16_info = quest_items
+pri_a19_lab_x18_info = quest_items
+pri_a19_lab_x7_info = quest_items
+pri_b35_lab_x8_key = quest_items
+zat_a23_access_card = quest_items
+zat_a23_gauss_rifle_docs = quest_items
+zat_a23_labx8_key = quest_items
+zat_b12_documents_1 = quest_items
+zat_b12_documents_2 = quest_items
+zat_b12_key_1 = quest_items
+zat_b12_key_2 = quest_items
+zat_b33_safe_container = quest_items
+zat_b40_notebook = quest_items
+
+; misc (rank 140) - miscellaneous_gameplay_items
+guitar_a = misc
+harmonica_a = misc
+
+; qa (rank 900) - qa_and_developer_tools
+pf_bunker_light_point_tool = qa
+pf_bunker_reload_tool = qa
+pf_door_spawn_tool = qa
+pf_interior_teleport_tool = qa
+pf_lore_notes_tool = qa
+pf_npc_spawn_point_tool = qa
+pf_order_point_tool = qa
+pf_outdoor_teleport_tool = qa
+pf_scientist_teleport_tool = qa
+pf_stash_aim_remove_tool = qa
+pf_stash_catalog_markers_tool = qa
+pf_stash_crosshair_rejection_tool = qa
+pf_stash_delete_tool = qa
+pf_stash_markers_tool = qa
+pf_stash_rejection_tool = qa
+pf_stash_spawn_tool = qa
+pf_stash_teleport_tool = qa
+pf_stash_undo_tool = qa
+pf_story_debug_archive = qa
+pf_story_document_tool = qa
+
+; technical (rank 990) - internal_templates_and_technical_sections
+attachable_item = technical
+custom_script_object = technical
+da_lore_note_base = technical
+m_car = technical
+new_attachable_item = technical
+pf_story_document_base = technical

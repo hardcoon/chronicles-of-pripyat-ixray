@@ -1,0 +1,188 @@
+local sleep_control = nil
+local sleep_confirm_callback = nil
+local wide = false
+
+local function apply_sleep_needs(hours)
+	if not db.actor then
+		return
+	end
+
+	local ini = system_ini()
+	local sleep_factor = ini:r_float("actor_condition", "pf_sleep_needs_factor")
+	local slept_seconds = hours * 60 * 60
+	local satiety_loss = ini:r_float("actor_condition", "satiety_v") * slept_seconds * sleep_factor
+	local thirst_loss = ini:r_float("actor_condition", "thirst_v") * slept_seconds * sleep_factor
+
+	-- Both Lua setters apply a delta and clamp the resulting condition to 0..1.
+	db.actor.satiety = -satiety_loss
+	db.actor.thirst = -thirst_loss
+end
+
+class "sleep_dialog" (CUIScriptWnd)
+function sleep_dialog:__init() super()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	if(device().width/device().height>(1024/768+0.01)) then
+		wide = true
+	end
+
+	local xml = CScriptXmlInit()
+	if wide then
+		xml:ParseFile("ui_sleep_dialog_16.xml")
+	else
+		xml:ParseFile("ui_sleep_dialog.xml")
+	end
+
+	self.back = xml:InitStatic("background", self)
+	self.title = xml:InitStatic("title", self.back)
+	self.subtitle = xml:InitStatic("subtitle", self.back)
+
+	-- The panorama nodes remain transparent compatibility placeholders. The
+	-- redesigned compact window uses the inventory-style DDS as its only body.
+	self.sleep_static = xml:InitStatic("sleep_static", self.back)
+	self.sleep_static2 = xml:InitStatic("sleep_static", self.back)
+	self.static_cover = xml:InitStatic("static_cover", self.back)
+	self.st_marker = xml:InitStatic("st_marker", self.back)
+
+	sleep_st_tbl = {}
+		for i = 1, 24 do
+		sleep_st_tbl[i] = xml:InitStatic("sleep_st_"..i, self.back)
+		end
+
+	self.time_track = xml:InitTrackBar("time_track", self.back)
+	self:Register(self.time_track, "time_track")
+
+	self.btn_sleep = xml:Init3tButton("btn_sleep", self.back)
+	self:Register(self.btn_sleep, "btn_sleep")
+
+	self.btn_cancel = xml:Init3tButton("btn_cancel", self.back)
+	self:Register(self.btn_cancel, "btn_cancel")
+
+	self.sleep_mb = CUIMessageBoxEx()
+	self:Register(self.sleep_mb, "sleep_mb")
+--------------------------------------------------------------------------------
+	self:AddCallback("btn_sleep", ui_events.BUTTON_CLICKED, self.OnButtonSleep, self)
+	self:AddCallback("btn_cancel", ui_events.BUTTON_CLICKED, self.OnButtonCancel, self)
+	self:AddCallback("sleep_mb", ui_events.MESSAGE_BOX_OK_CLICKED, self.OnMessageBoxOk, self)
+end
+
+function sleep_dialog:Initialize()
+	local cur_hours = level.get_time_hours()
+	for i = 1, 24 do
+		local hours = cur_hours + i
+		if(hours>=24) then
+			hours = hours - 24
+		end
+
+		-- Keep the compact scale readable: show every second wake-up hour,
+		-- while the track bar itself still exposes all 24 one-hour values.
+		if(i % 2 == 1) then
+			sleep_st_tbl[i]:TextControl():SetText(string.format("%02d", hours))
+		else
+			sleep_st_tbl[i]:TextControl():SetText("")
+		end
+	end
+end
+
+function sleep_dialog:TestAndShow()
+	if(db.actor.bleeding>0 or db.actor.radiation>0) then
+		self.sleep_mb:InitMessageBox("message_box_ok")
+		if(db.actor.bleeding>0 and db.actor.radiation>0) then
+			self.sleep_mb:SetText("sleep_warning_all_pleasures")
+		elseif(db.actor.bleeding>0) then
+			self.sleep_mb:SetText("sleep_warning_bleeding")
+		else
+			self.sleep_mb:SetText("sleep_warning_radiation")
+		end
+		self.sleep_mb:ShowDialog(true)
+	else
+		self:Initialize()
+		self:ShowDialog(true)
+	end
+end
+
+function sleep_dialog:Update()
+	CUIScriptWnd.Update(self)
+end
+
+function sleep_dialog:OnTrackButton()
+end
+
+function sleep_dialog:OnButtonSleep()
+	local confirm = sleep_confirm_callback
+	sleep_confirm_callback = nil
+	if confirm then
+		local ok, result = pcall(confirm)
+		if not ok then
+			printf("ui_sleep_dialog: sleep confirmation callback failed: %s", tostring(result))
+		end
+		if not ok or result == false then
+			self:HideDialog()
+			db.actor:give_info_portion("tutorial_sleep")
+			disable_info("sleep_active")
+			return
+		end
+	end
+	self:HideDialog()
+	xr_effects.disable_ui(db.actor, nil)
+	level.add_cam_effector("camera_effects\\sleep.anm", 10, false, "ui_sleep_dialog.dream_callback")
+	level.add_pp_effector("sleep_fade.ppe", 11, false)
+	db.actor:give_info_portion("actor_is_sleeping")
+	_G.mus_vol = get_console():get_float("snd_volume_music")
+	_G.amb_vol = get_console():get_float("snd_volume_eff")
+	get_console():execute("snd_volume_music 0")
+	get_console():execute("snd_volume_eff 0")
+	surge_manager.resurrect_skip_message()
+end
+
+function sleep_dialog:OnButtonCancel()
+	sleep_confirm_callback = nil
+	self:HideDialog()
+	db.actor:give_info_portion("tutorial_sleep")
+	disable_info("sleep_active")
+end
+
+function sleep_dialog:OnMessageBoxOk()
+	sleep_confirm_callback = nil
+	db.actor:give_info_portion("tutorial_sleep")
+	disable_info("sleep_active")
+end
+--------------------------------------------------------------------------------
+function dream_callback()
+	level.add_cam_effector("camera_effects\\sleep.anm", 10, false, "ui_sleep_dialog.dream_callback2")
+	local hours = sleep_control.time_track:GetIValue()
+	level.change_game_time(0,hours,0)
+	apply_sleep_needs(hours)
+	level_weathers.get_weather_manager():forced_weather_change()
+	surge_manager.get_surge_manager().time_forwarded = true
+	if(surge_manager.is_started() and level_weathers.get_weather_manager().weather_fx) then
+		level.stop_weather_fx()
+--		level_weathers.get_weather_manager():select_weather(true)
+		level_weathers.get_weather_manager():forced_weather_change()
+	end
+	db.actor.power = 1
+	printf("dream_callback: time forwarded on [%d]", hours)
+end
+
+function dream_callback2()
+	xr_effects.enable_ui(db.actor, nil)
+	get_console():execute("snd_volume_music "..tostring(_G.mus_vol))
+	get_console():execute("snd_volume_eff "..tostring(_G.amb_vol))
+	_G.amb_vol = 0
+	_G.mus_vol = 0
+	db.actor:give_info_portion("tutorial_sleep")
+	disable_info("actor_is_sleeping")
+	disable_info("sleep_active")
+end
+
+function sleep(on_confirm)
+	if(sleep_control==nil) then
+		sleep_control = ui_sleep_dialog.sleep_dialog()
+	end
+	sleep_confirm_callback = type(on_confirm) == "function" and on_confirm or nil
+	sleep_control.time_track:SetCurrentValue()
+	sleep_control:TestAndShow()
+end
+
+function main()
+	sleep()
+end

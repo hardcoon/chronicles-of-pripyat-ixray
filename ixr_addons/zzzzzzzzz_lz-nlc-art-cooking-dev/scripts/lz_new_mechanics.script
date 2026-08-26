@@ -1,0 +1,420 @@
+-- Stable compatibility facade for Chronicles of Pripyat mechanics.
+-- LTX/XML/script callers keep using lz_new_mechanics.*; implementation and
+-- runtime state live in the four lz_nm_* subsystem modules.
+
+local state = {
+	callbacks_registered = false
+}
+local impl = {}
+
+-- Core/text API.
+function text_for_legacy(value) return lz_nm_core.text_for_legacy(value) end
+function text_for_utf8(value) return lz_nm_core.text_for_utf8(value) end
+
+-- Lore, starter content, backpacks, sleep, and strange consumables.
+function ghost_city_note_count() return lz_nm_world.ghost_city_note_count() end
+function ghost_city_note_section(index) return lz_nm_world.ghost_city_note_section(index) end
+function ghost_city_note_index(section) return lz_nm_world.ghost_city_note_index(section) end
+function ghost_city_note_found(index) return lz_nm_world.ghost_city_note_found(index) end
+function new_game_start()
+	local unlocked = lz_nm_world.new_game_start()
+	if lz_nlc_art_spawn and lz_nlc_art_spawn.new_game_start then
+		lz_nlc_art_spawn.new_game_start()
+	end
+	if pf_fixed_house_stashes and pf_fixed_house_stashes.new_game_start then
+		pf_fixed_house_stashes.new_game_start()
+	end
+	if pf_static_property_stashes and pf_static_property_stashes.new_game_start then
+		pf_static_property_stashes.new_game_start()
+	end
+	if pf_static_vehicle_stashes and pf_static_vehicle_stashes.new_game_start then
+		pf_static_vehicle_stashes.new_game_start()
+	end
+	impl.dispatch_encyclopedia_ui(unlocked and unlocked > 0)
+	return unlocked
+end
+function debug_spawn_lore_test_stash() return lz_nm_world.debug_spawn_lore_test_stash() end
+function use_sleepbag(item) return lz_nm_world.use_sleepbag(item) end
+function on_inventory_eat(npc, item)
+	if pf_food_tooltip and pf_food_tooltip.on_inventory_eat then
+		pf_food_tooltip.on_inventory_eat(npc, item)
+	end
+	return lz_nm_world.on_inventory_eat(npc, item)
+end
+-- game_global.ltx exposes this native callback unconditionally. Keep the
+-- facade-owned symbol available even when no gameplay mechanic modifies hits;
+-- IX-Ray treats a missing functor as a fatal error in CActor::Hit.
+function actor_before_hit(_actor, _script_hit, _bone_id)
+	return true
+end
+function deploy_backpack(item) return lz_nm_world.deploy_backpack(item) end
+function pack_backpack(control) return lz_nm_world.pack_backpack(control) end
+function actor_on_lore_item_take(item) return lz_nm_world.actor_on_lore_item_take(item) end
+function actor_on_item_take_from_box(box, item)
+	lz_nm_world.actor_on_item_take_from_box(box, item)
+	if pf_fixed_stash_runtime and pf_fixed_stash_runtime.actor_on_item_take_from_box then
+		pf_fixed_stash_runtime.actor_on_item_take_from_box(box, item)
+	end
+end
+function strange_stew_wakeup_finished()
+	return lz_nm_world.strange_stew_wakeup_finished()
+end
+function strange_stew_blackout_callback()
+	return lz_nm_world.strange_stew_blackout_callback()
+end
+function strange_stew_animation_finished()
+	return lz_nm_world.strange_stew_animation_finished()
+end
+function strange_shot_animation_finished()
+	return lz_nm_world.strange_shot_animation_finished()
+end
+function strange_drink_animation_finished()
+	return lz_nm_world.strange_drink_animation_finished()
+end
+function strange_consumable_animation_finished()
+	return lz_nm_world.strange_consumable_animation_finished()
+end
+
+-- Equipment API.
+-- These inventory events are internal integration points owned by the actor
+-- binder. Existing LTX/XML callers continue using the same public functors.
+function actor_on_inventory_item_take(item)
+	local result = lz_nm_equipment.actor_on_inventory_item_take(item)
+	if lz_nlc_art_spawn and lz_nlc_art_spawn.actor_on_inventory_item_take then
+		lz_nlc_art_spawn.actor_on_inventory_item_take(item)
+	end
+	if lz_nlc_art_cooking and lz_nlc_art_cooking.actor_on_inventory_item_take then
+		lz_nlc_art_cooking.actor_on_inventory_item_take(item)
+	end
+	local unlocked = lz_nm_world.actor_on_mechanics_item_take(item)
+	if unlocked > 0 then impl.dispatch_encyclopedia_ui(true) end
+	return result
+end
+function actor_on_inventory_item_drop(item)
+	local result = lz_nm_equipment.actor_on_inventory_item_drop(item)
+	if lz_nlc_art_cooking and lz_nlc_art_cooking.actor_on_inventory_item_drop then
+		lz_nlc_art_cooking.actor_on_inventory_item_drop(item)
+	end
+	return result
+end
+function actor_on_inventory_trade(item, sell_bye)
+	local result = lz_nm_equipment.actor_on_inventory_trade(item, sell_bye)
+	if lz_nlc_art_spawn and lz_nlc_art_spawn.actor_on_inventory_trade then
+		lz_nlc_art_spawn.actor_on_inventory_trade(item, sell_bye)
+	end
+	if lz_nlc_art_cooking and lz_nlc_art_cooking.actor_on_inventory_trade then
+		lz_nlc_art_cooking.actor_on_inventory_trade(item, sell_bye)
+	end
+	if not sell_bye then
+		local unlocked = lz_nm_world.actor_on_mechanics_item_take(item)
+		if unlocked > 0 then impl.dispatch_encyclopedia_ui(true) end
+	end
+	return result
+end
+
+function mechanics_encyclopedia_has_unread()
+	return lz_nm_world.mechanics_encyclopedia_has_unread()
+end
+
+function mark_mechanics_encyclopedia_read()
+	return lz_nm_world.mark_mechanics_encyclopedia_read()
+end
+function can_disassemble_item(section, condition, partner_profile_name)
+	return lz_nm_equipment.can_disassemble_item(section, condition, partner_profile_name)
+end
+function question_disassemble_item(section, condition, can_disassemble, partner_profile_name)
+	return lz_nm_equipment.question_disassemble_item(
+		section, condition, can_disassemble, partner_profile_name
+	)
+end
+function effect_disassemble_item(section, condition, partner_profile_name)
+	return lz_nm_equipment.effect_disassemble_item(section, condition, partner_profile_name)
+end
+function disassemble_detector(item) return lz_nm_equipment.disassemble_detector(item) end
+function on_item_focus_receive(item)
+	local result = lz_nm_equipment.on_item_focus_receive(item)
+	local hacking = rawget(_G, "lz_pda_hacking")
+	if hacking and hacking.on_item_focus_receive then
+		hacking.on_item_focus_receive(item)
+	end
+	return result
+end
+function refresh_field_upgrade_tooltip(target)
+	return lz_nm_equipment.refresh_field_upgrade_tooltip(target)
+end
+function use_repair_kit(tool) return lz_nm_equipment.use_repair_kit(tool) end
+function use_repair_target_1(tool) return lz_nm_equipment.use_repair_target_1(tool) end
+function use_repair_target_2(tool) return lz_nm_equipment.use_repair_target_2(tool) end
+function use_repair_target_3(tool) return lz_nm_equipment.use_repair_target_3(tool) end
+function use_repair_target_4(tool) return lz_nm_equipment.use_repair_target_4(tool) end
+function use_upgrade_target_1(tool) return lz_nm_equipment.use_upgrade_target_1(tool) end
+function use_upgrade_target_2(tool) return lz_nm_equipment.use_upgrade_target_2(tool) end
+function use_disassemble_target_1(tool)
+	return lz_nm_equipment.use_disassemble_target_1(tool)
+end
+function use_disassemble_target_2(tool)
+	return lz_nm_equipment.use_disassemble_target_2(tool)
+end
+function use_disassemble_target_3(tool)
+	return lz_nm_equipment.use_disassemble_target_3(tool)
+end
+function use_disassemble_target_4(tool)
+	return lz_nm_equipment.use_disassemble_target_4(tool)
+end
+function use_metal_part_target_1(part)
+	return lz_nm_equipment.use_metal_part_target_1(part)
+end
+function use_metal_part_target_2(part)
+	return lz_nm_equipment.use_metal_part_target_2(part)
+end
+function use_metal_part_target_3(part)
+	return lz_nm_equipment.use_metal_part_target_3(part)
+end
+function use_metal_part_target_4(part)
+	return lz_nm_equipment.use_metal_part_target_4(part)
+end
+function use_detector_battery_target_1(battery)
+	return lz_nm_equipment.use_detector_battery_target_1(battery)
+end
+function use_detector_battery_target_2(battery)
+	return lz_nm_equipment.use_detector_battery_target_2(battery)
+end
+function use_detector_battery_target_3(battery)
+	return lz_nm_equipment.use_detector_battery_target_3(battery)
+end
+function use_detector_battery_target_4(battery)
+	return lz_nm_equipment.use_detector_battery_target_4(battery)
+end
+function use_upgrade_tool(tool) return lz_nm_equipment.use_upgrade_tool(tool) end
+function on_item_dropped(tool, target, from_slot, to_slot)
+	return lz_nm_equipment.on_item_dropped(tool, target, from_slot, to_slot)
+end
+
+-- Beacon and PDA API.
+function get_beacon_name(id) return lz_nm_beacons.get_beacon_name(id) end
+function set_beacon_name(id, name) return lz_nm_beacons.set_beacon_name(id, name) end
+function beacon_name_for_utf8(name) return lz_nm_beacons.beacon_name_for_utf8(name) end
+function beacon_name_for_edit(id) return lz_nm_beacons.beacon_name_for_edit(id) end
+function beacon_on_key_press(dik)
+	if pf_stash_qa and pf_stash_qa.on_key_press then pf_stash_qa.on_key_press(dik) end
+	if lz_orders and lz_orders.on_key_press then lz_orders.on_key_press(dik) end
+	return lz_nm_beacons.beacon_on_key_press(dik)
+end
+function beacon_on_key_hold(dik)
+	if lz_orders and lz_orders.on_key_hold then lz_orders.on_key_hold(dik) end
+	return lz_nm_beacons.beacon_on_key_hold(dik)
+end
+function beacon_on_key_release(dik)
+	if lz_orders and lz_orders.on_key_release then lz_orders.on_key_release(dik) end
+	return lz_nm_beacons.beacon_on_key_release(dik)
+end
+function destroy_beacon_confirmed(id)
+	local result = lz_nm_beacons.destroy_beacon_confirmed(id)
+	impl.dispatch_beacon_ui()
+	return result
+end
+function format_beacon_travel_time(hours)
+	return lz_nm_beacons.format_beacon_travel_time(hours)
+end
+function get_beacons()
+	local result = lz_nm_beacons.get_beacons()
+	impl.dispatch_beacon_ui()
+	return result
+end
+function place_beacon(item) return lz_nm_beacons.place_beacon(item) end
+function confirm_beacon_install(id) return lz_nm_beacons.confirm_beacon_install(id) end
+function cancel_beacon_install(id)
+	local result = lz_nm_beacons.cancel_beacon_install(id)
+	impl.dispatch_beacon_ui()
+	return result
+end
+function travel_to_beacon(id)
+	local result = lz_nm_beacons.travel_to_beacon(id)
+	impl.dispatch_beacon_ui()
+	return result
+end
+function show_beacon_on_map(id)
+	local result = lz_nm_beacons.show_beacon_on_map(id)
+	impl.dispatch_beacon_ui()
+	return result
+end
+function map_spot_menu_add_property(property_ui, id, level_name, hint)
+	return lz_nm_beacons.map_spot_menu_add_property(property_ui, id, level_name, hint)
+end
+function map_spot_menu_property_clicked(property_ui, id, level_name, property)
+	return lz_nm_beacons.map_spot_menu_property_clicked(
+		property_ui, id, level_name, property
+	)
+end
+function pda_property_box_clicked(property_ui)
+	return lz_nm_beacons.pda_property_box_clicked(property_ui)
+end
+
+function impl.dispatch_beacon_ui()
+	local requests = lz_nm_beacons.take_ui_requests()
+	if not requests then return end
+	if requests.refresh and lz_new_mechanics_pda and
+		lz_new_mechanics_pda.refresh_beacon_ui then
+		lz_new_mechanics_pda.refresh_beacon_ui()
+	end
+	if requests.destroy_confirmation_id and lz_new_mechanics_pda and
+		lz_new_mechanics_pda.show_beacon_destroy_confirmation then
+		lz_new_mechanics_pda.show_beacon_destroy_confirmation(
+			requests.destroy_confirmation_id
+		)
+	end
+	if requests.name_dialog_id then
+		local opened = false
+		if lz_new_mechanics_pda and lz_new_mechanics_pda.show_beacon_name_dialog then
+			get_hud():HideActorMenu()
+			opened = lz_new_mechanics_pda.show_beacon_name_dialog(
+				requests.name_dialog_id, true
+			)
+		end
+		if not opened then
+			lz_nm_beacons.confirm_beacon_install(requests.name_dialog_id)
+		end
+	end
+end
+
+function impl.dispatch_encyclopedia_ui(refresh_articles)
+	if lz_new_mechanics_pda and lz_new_mechanics_pda.refresh_encyclopedia_marker then
+		lz_new_mechanics_pda.refresh_encyclopedia_marker(refresh_articles == true)
+	end
+end
+
+-- Preserve the former monolithic callback order, including load-time migrations.
+function impl.on_game_load_ordered()
+	lz_nm_surge_cover.reset()
+	lz_nm_beacons.reset_runtime_on_load()
+	lz_nm_equipment.on_game_load()
+	local unlocked = lz_nm_world.reset_and_migrate_on_load()
+	lz_nm_beacons.migrate_and_refresh_on_load()
+	lz_nm_world.schedule_start_stash_on_load()
+	if lz_orders and lz_orders.on_game_load then lz_orders.on_game_load() end
+	impl.dispatch_beacon_ui()
+	-- Also restores an unread marker already stored in an older save. The
+	-- inventory migration itself remains silent and creates no news entries.
+	impl.dispatch_encyclopedia_ui(unlocked and unlocked > 0)
+end
+
+function beacon_on_game_load()
+	local result = impl.on_game_load_ordered()
+	if lz_nlc_art_cooking_runtime and lz_nlc_art_cooking_runtime.on_game_load then
+		lz_nlc_art_cooking_runtime.on_game_load()
+	end
+	if lz_nlc_natural_artifacts_qa and lz_nlc_natural_artifacts_qa.on_game_load then
+		lz_nlc_natural_artifacts_qa.on_game_load()
+	end
+	if lz_nlc_art_spawn and lz_nlc_art_spawn.on_game_load then
+		lz_nlc_art_spawn.on_game_load()
+	end
+	return result
+end
+
+function impl.actor_on_update_ordered()
+	if not db.actor then return end
+	lz_nm_world.update_sleep()
+	if lz_orders and lz_orders.update then lz_orders.update() end
+	lz_nm_world.update_cleanup()
+	lz_nm_equipment.update_headgear_slot()
+	local now = time_global()
+	lz_nm_polarity.update(now)
+	lz_nm_equipment.update_detector_and_fade(now)
+	lz_nm_world.update_strange_consumables(now)
+	lz_nm_beacons.update_actions(now)
+	impl.dispatch_beacon_ui()
+	lz_nm_world.update_starter_check(now)
+	lz_nm_equipment.update_context_actions(now)
+	lz_nm_world.update_backpacks(now)
+	if pf_fixed_stash_runtime and pf_fixed_stash_runtime.update then
+		pf_fixed_stash_runtime.update(now)
+	end
+	lz_nm_world.update_start_stash(now)
+	-- The active IX-Ray mechanics facade is the proven owner of this update
+	-- chain. mod_script imports the standalone cooking facade, but its local
+	-- RegisterScriptCallback registration is not invoked by this build.
+	if lz_nlc_art_cooking_runtime and lz_nlc_art_cooking_runtime.update then
+		lz_nlc_art_cooking_runtime.update(now)
+	end
+	if lz_nlc_natural_artifacts_qa and lz_nlc_natural_artifacts_qa.update then
+		lz_nlc_natural_artifacts_qa.update(now)
+	end
+	if lz_nlc_art_spawn and lz_nlc_art_spawn.update then
+		lz_nlc_art_spawn.update(now)
+	end
+	lz_nm_beacons.update_marker(now)
+	impl.dispatch_beacon_ui()
+	lz_nm_surge_cover.update(now)
+end
+
+function actor_on_update()
+	return impl.actor_on_update_ordered()
+end
+
+function on_game_start()
+	if state.callbacks_registered then return end
+	lz_nm_polarity.register_debug_spawn()
+	if pda then
+		pda.property_box_add_properties = lz_nm_beacons.pda_property_box_add_properties
+		pda.property_box_clicked = pda_property_box_clicked
+	end
+	if type(RegisterScriptCallback) == "function" then
+		RegisterScriptCallback("update", actor_on_update)
+		RegisterScriptCallback("load", beacon_on_game_load)
+		state.callbacks_registered = true
+		printf("lz_new_mechanics: script callbacks registered")
+	else
+		printf("! lz_new_mechanics: RegisterScriptCallback is unavailable")
+	end
+end
+
+-- The serialized binder stays in this facade. Existing saves retain the same
+-- two-byte payload: packed hit counters followed by the randomized threshold.
+class "lz_nm_beacon_binder" (object_binder)
+
+function lz_nm_beacon_binder:__init(object) super(object)
+	self.hits = 0
+	self.threshold = math.random(5, 10)
+	self.object:set_tip_text(game.translate_string("lz_nm_beacon_world_use"))
+end
+
+function lz_nm_beacon_binder:net_spawn(data)
+	if not object_binder.net_spawn(self, data) then return false end
+	self.object:set_callback(callback.hit, self.hit_callback, self)
+	return true
+end
+
+function lz_nm_beacon_binder:net_destroy()
+	self.object:set_callback(callback.hit, nil)
+	object_binder.net_destroy(self)
+end
+
+function lz_nm_beacon_binder:hit_callback(object, amount, direction, who, bone_index)
+	local result = lz_nm_beacons.handle_binder_hit(self, object, amount, who)
+	impl.dispatch_beacon_ui()
+	return result
+end
+
+function lz_nm_beacon_binder:net_save_relevant()
+	return true
+end
+
+function lz_nm_beacon_binder:save(packet)
+	object_binder.save(self, packet)
+	packet:w_u8(self.hits)
+	packet:w_u8(self.threshold)
+end
+
+function lz_nm_beacon_binder:load(reader)
+	object_binder.load(self, reader)
+	self.hits = reader:r_u8()
+	self.threshold = reader:r_u8()
+end
+
+function bind_beacon(object)
+	object:bind_object(lz_nm_beacon_binder(object))
+end
+
+-- mod_script imports modules but does not invoke this callback automatically.
+on_game_start()

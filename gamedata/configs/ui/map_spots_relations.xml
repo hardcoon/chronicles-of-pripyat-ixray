@@ -1,0 +1,70 @@
+	<enemy_location hint="enemy" no_offline="1">
+		<mini_map  spot="enemy_mini_spot"/>
+	</enemy_location>
+
+	<neutral_location hint="neutral">
+		<mini_map  spot="neutral_mini_spot"/>
+	</neutral_location>
+
+	<friend_location hint="friend">
+		<mini_map  spot="friend_mini_spot"/>
+	</friend_location>
+
+	<deadbody_location hint="deadbody">
+		<mini_map  spot="deadbody_mini_spot"/>
+	</deadbody_location>
+
+	<enemy_mini_spot width="7" height="7" stretch="1" alignment="c" >
+		<texture r="255" g="0" b="0">ui_mmap_common_actor</texture>
+	</enemy_mini_spot>
+
+	<neutral_mini_spot width="7" height="7" stretch="1" alignment="c">
+		<texture r="255" g="200" b="0">ui_mmap_common_actor</texture>
+	</neutral_mini_spot>
+
+	<friend_mini_spot width="7" height="7" stretch="1" alignment="c">
+		<texture r="50" g="255" b="0">ui_mmap_common_actor</texture>
+	</friend_mini_spot>
+
+	<deadbody_mini_spot width="7" height="7" stretch="1" alignment="c">
+		<texture r="168" g="168" b="168">ui_mmap_common_actor</texture>
+	</deadbody_mini_spot>
+
+	<!-- Nimble's vehicle lead: exactly three times the stock primary-object
+	     icon and its selection border, tinted pure red. -->
+	<pf_yanov_nimble_uaz_location>
+		<level_map spot="pf_yanov_nimble_uaz_location_spot"
+			spot_a="pf_yanov_nimble_uaz_location_border"/>
+	</pf_yanov_nimble_uaz_location>
+	<pf_yanov_nimble_uaz_location_spot width="45" height="45" stretch="1"
+		alignment="c" location_level="-3" scale="1" scale_min="1" scale_max="6">
+		<texture r="255" g="0" b="0">ui_inGame2_PDA_icon_location</texture>
+	</pf_yanov_nimble_uaz_location_spot>
+	<pf_yanov_nimble_uaz_location_border width="111" height="111"
+		alignment="c" stretch="1" xform_anim="map_spot_border_xform"
+		xform_anim_cyclic="1">
+		<texture a="0">ui_pda2_hl_quest_base</texture>
+	</pf_yanov_nimble_uaz_location_border>
+
+	<!-- Developer-only canonical stash-catalogue point. It intentionally reuses
+	     the green stash marker visual for maximum readability on the PDA map. -->
+	<pf_qa_stash_catalog>
+		<level_map spot="pf_qa_stash_catalog_spot"/>
+	</pf_qa_stash_catalog>
+	<pf_qa_stash_catalog_spot x="0" y="0" width="20" height="20"
+		alignment="c" stretch="1">
+		<texture>pf_stash_marker_green</texture>
+	</pf_qa_stash_catalog_spot>
+
+
+<!-- map_spot_new_xform
+
+  <location_squad_attack_point>
+    <mini_map spot="location_squad_attack_point_spot_mini"/>
+  </location_squad_attack_point>
+  <location_squad_attack_point_spot_mini x="0" y="0" width="9" height="9" alignment="c" stretch="1" scale_min="3.0" scale_max="5.1" scale="0" location_level="10">
+    <texture r="11" g="178" b="248">ui_mmap_common_actor</texture>
+  </location_squad_attack_point_spot_mini>
+
+
+-->

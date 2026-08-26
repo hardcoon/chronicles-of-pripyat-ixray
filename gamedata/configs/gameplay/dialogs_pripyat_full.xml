@@ -1,0 +1,1091 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+	<dialog id="pf_guide_dialog">
+		<dont_has_info>pf_guide_dialog_done</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_guide_dialog_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_guide_dialog_2</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_guide_dialog_3</text>
+				<action>dialogs_pripyat_full.give_radio</action>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_guide_dialog_4</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_guide_dialog_5</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_guide_dialog_6</text>
+				<action>dialogs_pripyat_full.finish_guide_dialog</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_story_preacher_spare_dialog">
+		<has_info>pf_story_path_continues_achievement_gained</has_info>
+		<dont_has_info>pf_story_pendant_found</dont_has_info>
+		<dont_has_info>pf_story_preacher_spared</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_story_preacher_spare_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_story_preacher_spare_2</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_story_preacher_spare_3</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_story_preacher_spare_4</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_story_preacher_spare_5</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_story_preacher_spare_6</text>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_story_preacher_spare_7</text>
+				<next>7</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_story_preacher_spare_8</text>
+				<next>8</next>
+			</phrase>
+			<phrase id="8">
+				<text>pf_story_preacher_spare_9</text>
+				<next>9</next>
+			</phrase>
+			<phrase id="9">
+				<text>pf_story_preacher_spare_10</text>
+				<action>dialogs_pripyat_full.finish_preacher_reunion</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_monolith_guardian_dialog">
+		<has_info>pf_story_path_continues_achievement_gained</has_info>
+		<has_info>pf_story_preacher_reunion_finished</has_info>
+		<has_info>pf_monolith_story_npcs_enabled</has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_monolith_guardian_greeting</text>
+				<next>1</next>
+				<next>10</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_monolith_guardian_intro_2</text>
+				<dont_has_info>pf_monolith_guardian_intro_done</dont_has_info>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_monolith_guardian_intro_1</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_monolith_guardian_intro_4</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_monolith_guardian_intro_5</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_monolith_guardian_intro_6</text>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_monolith_guardian_intro_7</text>
+				<give_info>pf_monolith_guardian_intro_done</give_info>
+				<next>7</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_monolith_guardian_intro_close_actor</text>
+				<next>15</next>
+			</phrase>
+			<phrase id="10">
+				<text>pf_monolith_guardian_repeat_start_actor</text>
+				<has_info>pf_monolith_guardian_intro_done</has_info>
+				<dont_has_info>pf_monolith_guardian_reward_36_taken</dont_has_info>
+				<next>11</next>
+			</phrase>
+			<phrase id="11">
+				<text>pf_monolith_guardian_repeat_1</text>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>12</next>
+			</phrase>
+			<phrase id="12">
+				<text>pf_monolith_guardian_repeat_2</text>
+				<next>13</next>
+			</phrase>
+			<phrase id="13">
+				<text>pf_monolith_guardian_repeat_3</text>
+				<next>14</next>
+			</phrase>
+			<phrase id="14">
+				<text>pf_monolith_guardian_continue_actor</text>
+				<next>15</next>
+			</phrase>
+			<phrase id="15">
+				<text>pf_monolith_guardian_sections_keeper</text>
+				<next>10</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="20">
+				<text>pf_monolith_guardian_exchange_12_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_12</precondition>
+				<next>21</next>
+			</phrase>
+			<phrase id="21">
+				<text>pf_monolith_guardian_exchange_12_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_12</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="30">
+				<text>pf_monolith_guardian_exchange_18_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_18</precondition>
+				<next>31</next>
+			</phrase>
+			<phrase id="31">
+				<text>pf_monolith_guardian_exchange_18_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_18</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="40">
+				<text>pf_monolith_guardian_exchange_24_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_24</precondition>
+				<next>41</next>
+			</phrase>
+			<phrase id="41">
+				<text>pf_monolith_guardian_exchange_24_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_24</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="50">
+				<text>pf_monolith_guardian_exchange_36_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_exchange_36</precondition>
+				<next>51</next>
+			</phrase>
+			<phrase id="51">
+				<text>pf_monolith_guardian_exchange_36_keeper</text>
+				<action>dialogs_pripyat_full.guardian_exchange_36</action>
+				<next>14</next>
+			</phrase>
+			<phrase id="60">
+				<text>pf_monolith_guardian_artifacts_start_actor</text>
+				<has_info>pf_monolith_guardian_intro_done</has_info>
+				<next>61</next>
+			</phrase>
+			<phrase id="61">
+				<text>pf_monolith_guardian_artifacts_offer_keeper</text>
+				<next>70</next>
+				<next>71</next>
+				<next>72</next>
+				<next>73</next>
+				<next>74</next>
+				<next>75</next>
+				<next>76</next>
+				<next>77</next>
+				<next>64</next>
+			</phrase>
+			<phrase id="70">
+				<text>pf_monolith_guardian_group_gravi_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_gravi</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_gravi</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="80">
+				<text>pf_monolith_guardian_group_gravi_keeper</text>
+				<next>1000</next>
+				<next>1001</next>
+				<next>1002</next>
+				<next>1003</next>
+				<next>1004</next>
+				<next>1005</next>
+				<next>1006</next>
+				<next>1007</next>
+			</phrase>
+			<phrase id="71">
+				<text>pf_monolith_guardian_group_gold_fish_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_gold_fish</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_gold_fish</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="81">
+				<text>pf_monolith_guardian_group_gold_fish_keeper</text>
+				<next>1008</next>
+				<next>1009</next>
+				<next>1010</next>
+				<next>1011</next>
+				<next>1012</next>
+				<next>1013</next>
+				<next>1014</next>
+			</phrase>
+			<phrase id="72">
+				<text>pf_monolith_guardian_group_eye_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_eye</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_eye</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="82">
+				<text>pf_monolith_guardian_group_eye_keeper</text>
+				<next>1015</next>
+				<next>1016</next>
+				<next>1017</next>
+				<next>1018</next>
+				<next>1019</next>
+				<next>1020</next>
+			</phrase>
+			<phrase id="73">
+				<text>pf_monolith_guardian_group_fire_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_fire</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_fire</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="83">
+				<text>pf_monolith_guardian_group_fire_keeper</text>
+				<next>1021</next>
+				<next>1022</next>
+				<next>1023</next>
+				<next>1024</next>
+				<next>1025</next>
+			</phrase>
+			<phrase id="74">
+				<text>pf_monolith_guardian_group_baloon_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_baloon</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_baloon</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="84">
+				<text>pf_monolith_guardian_group_baloon_keeper</text>
+				<next>1026</next>
+				<next>1027</next>
+				<next>1028</next>
+				<next>1029</next>
+			</phrase>
+			<phrase id="75">
+				<text>pf_monolith_guardian_group_glass_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_glass</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_glass</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="85">
+				<text>pf_monolith_guardian_group_glass_keeper</text>
+				<next>1030</next>
+				<next>1031</next>
+				<next>1032</next>
+			</phrase>
+			<phrase id="76">
+				<text>pf_monolith_guardian_group_dummy_dummy_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="86">
+				<text>pf_monolith_guardian_group_dummy_dummy_keeper</text>
+				<next>1033</next>
+				<next>1034</next>
+			</phrase>
+			<phrase id="77">
+				<text>pf_monolith_guardian_group_ice_actor</text>
+				<precondition>dialogs_pripyat_full.guardian_can_single_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_single_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="87">
+				<text>pf_monolith_guardian_group_ice_keeper</text>
+				<next>1035</next>
+			</phrase>
+			<phrase id="1000">
+				<text>pf_monolith_guardian_pair_gravi_gravi</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_gravi</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_gravi</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1001">
+				<text>pf_monolith_guardian_pair_gravi_gold_fish</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_gold_fish</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_gold_fish</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1002">
+				<text>pf_monolith_guardian_pair_gravi_eye</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_eye</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_eye</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1003">
+				<text>pf_monolith_guardian_pair_gravi_fire</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_fire</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_fire</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1004">
+				<text>pf_monolith_guardian_pair_gravi_baloon</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_baloon</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_baloon</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1005">
+				<text>pf_monolith_guardian_pair_gravi_glass</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_glass</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_glass</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1006">
+				<text>pf_monolith_guardian_pair_gravi_dummy_dummy</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1007">
+				<text>pf_monolith_guardian_pair_gravi_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gravi_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gravi_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1008">
+				<text>pf_monolith_guardian_pair_gold_fish_gold_fish</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gold_fish_gold_fish</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gold_fish_gold_fish</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1009">
+				<text>pf_monolith_guardian_pair_gold_fish_eye</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gold_fish_eye</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gold_fish_eye</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1010">
+				<text>pf_monolith_guardian_pair_gold_fish_fire</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gold_fish_fire</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gold_fish_fire</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1011">
+				<text>pf_monolith_guardian_pair_gold_fish_baloon</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gold_fish_baloon</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gold_fish_baloon</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1012">
+				<text>pf_monolith_guardian_pair_gold_fish_glass</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gold_fish_glass</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gold_fish_glass</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1013">
+				<text>pf_monolith_guardian_pair_gold_fish_dummy_dummy</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gold_fish_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gold_fish_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1014">
+				<text>pf_monolith_guardian_pair_gold_fish_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_gold_fish_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_gold_fish_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1015">
+				<text>pf_monolith_guardian_pair_eye_eye</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_eye_eye</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_eye_eye</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1016">
+				<text>pf_monolith_guardian_pair_eye_fire</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_eye_fire</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_eye_fire</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1017">
+				<text>pf_monolith_guardian_pair_eye_baloon</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_eye_baloon</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_eye_baloon</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1018">
+				<text>pf_monolith_guardian_pair_eye_glass</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_eye_glass</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_eye_glass</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1019">
+				<text>pf_monolith_guardian_pair_eye_dummy_dummy</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_eye_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_eye_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1020">
+				<text>pf_monolith_guardian_pair_eye_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_eye_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_eye_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1021">
+				<text>pf_monolith_guardian_pair_fire_fire</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_fire_fire</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_fire_fire</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1022">
+				<text>pf_monolith_guardian_pair_fire_baloon</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_fire_baloon</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_fire_baloon</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1023">
+				<text>pf_monolith_guardian_pair_fire_glass</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_fire_glass</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_fire_glass</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1024">
+				<text>pf_monolith_guardian_pair_fire_dummy_dummy</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_fire_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_fire_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1025">
+				<text>pf_monolith_guardian_pair_fire_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_fire_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_fire_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1026">
+				<text>pf_monolith_guardian_pair_baloon_baloon</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_baloon_baloon</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_baloon_baloon</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1027">
+				<text>pf_monolith_guardian_pair_baloon_glass</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_baloon_glass</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_baloon_glass</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1028">
+				<text>pf_monolith_guardian_pair_baloon_dummy_dummy</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_baloon_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_baloon_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1029">
+				<text>pf_monolith_guardian_pair_baloon_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_baloon_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_baloon_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1030">
+				<text>pf_monolith_guardian_pair_glass_glass</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_glass_glass</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_glass_glass</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1031">
+				<text>pf_monolith_guardian_pair_glass_dummy_dummy</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_glass_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_glass_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1032">
+				<text>pf_monolith_guardian_pair_glass_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_glass_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_glass_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1033">
+				<text>pf_monolith_guardian_pair_dummy_dummy_dummy_dummy</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_dummy_dummy_dummy_dummy</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_dummy_dummy_dummy_dummy</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1034">
+				<text>pf_monolith_guardian_pair_dummy_dummy_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_dummy_dummy_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_dummy_dummy_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="1035">
+				<text>pf_monolith_guardian_pair_ice_ice</text>
+				<precondition>dialogs_pripyat_full.guardian_can_pair_ice_ice</precondition>
+				<action>dialogs_pripyat_full.guardian_exchange_pair_ice_ice</action>
+				<next>63</next>
+			</phrase>
+			<phrase id="63">
+				<text>pf_monolith_guardian_artifacts_accept_keeper</text>
+				<next>14</next>
+			</phrase>
+			<phrase id="64">
+				<text>pf_monolith_guardian_artifacts_decline_actor</text>
+				<next>65</next>
+			</phrase>
+			<phrase id="65">
+				<text>pf_monolith_guardian_artifacts_decline_keeper</text>
+				<next>14</next>
+			</phrase>
+			<phrase id="90">
+				<text>pf_monolith_guardian_leave_actor</text>
+				<has_info>pf_monolith_guardian_intro_done</has_info>
+				<next>91</next>
+			</phrase>
+			<phrase id="91">
+				<text>pf_monolith_guardian_leave_keeper</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<!-- Service-only bunker conversations. They deliberately contain no
+	     Jupiter info portions, quest actions or story preconditions. -->
+	<dialog id="pf_bunker_novikov_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_novikov_greeting</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_hermann_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_hermann_greeting</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_commander_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>301</next>
+				<next>400</next>
+				<next>900</next>
+			</phrase>
+			<phrase id="91">
+				<text>pf_bunker_guard_commander_anything_else</text>
+				<next>100</next>
+				<next>200</next>
+				<next>300</next>
+				<next>301</next>
+				<next>400</next>
+				<next>900</next>
+			</phrase>
+
+			<!-- Access assignment. -->
+			<phrase id="100">
+				<text>pf_bunker_access_intro_actor_1</text>
+				<has_info>pf_bunker_access_started</has_info>
+				<dont_has_info>pf_bunker_access_case_assigned</dont_has_info>
+				<next>101</next>
+			</phrase>
+			<phrase id="101">
+				<text>pf_bunker_access_intro_commander_1</text>
+				<next>102</next>
+			</phrase>
+			<phrase id="102">
+				<text>pf_bunker_access_intro_actor_2</text>
+				<next>103</next>
+			</phrase>
+			<phrase id="103">
+				<text>pf_bunker_access_intro_commander_2</text>
+				<next>104</next>
+			</phrase>
+			<phrase id="104">
+				<text>pf_bunker_access_intro_actor_3</text>
+				<next>105</next>
+			</phrase>
+			<phrase id="105">
+				<text>pf_bunker_access_intro_commander_3</text>
+				<next>106</next>
+			</phrase>
+			<phrase id="106">
+				<text>pf_bunker_access_intro_actor_confirm</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_assign_case</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+
+			<!-- Case hand-in. The item and task stage change on the actor line. -->
+			<phrase id="200">
+				<text>pf_bunker_access_case_actor_1</text>
+				<has_info>pf_bunker_access_case_assigned</has_info>
+				<dont_has_info>pf_bunker_access_case_delivered</dont_has_info>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_has_case</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_case</action>
+				<next>201</next>
+			</phrase>
+			<phrase id="201">
+				<text>pf_bunker_access_case_commander_1</text>
+				<next>202</next>
+			</phrase>
+			<phrase id="202">
+				<text>pf_bunker_access_case_actor_2</text>
+				<next>203</next>
+			</phrase>
+			<phrase id="203">
+				<text>pf_bunker_access_case_commander_2</text>
+				<next>204</next>
+				<next>205</next>
+			</phrase>
+			<phrase id="204">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka</action>
+				<next>206</next>
+			</phrase>
+			<phrase id="205">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="206">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>207</next>
+			</phrase>
+			<phrase id="207">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<next>91</next>
+			</phrase>
+
+			<!-- Vodka hand-in on a later conversation. -->
+			<phrase id="300">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<has_info>pf_bunker_access_case_delivered</has_info>
+				<dont_has_info>pf_bunker_access_vodka_delivered</dont_has_info>
+				<dont_has_info>pf_bunker_access_granted</dont_has_info>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka</action>
+				<next>302</next>
+			</phrase>
+			<phrase id="301">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<has_info>pf_bunker_access_case_delivered</has_info>
+				<dont_has_info>pf_bunker_access_vodka_delivered</dont_has_info>
+				<dont_has_info>pf_bunker_access_granted</dont_has_info>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="302">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>303</next>
+			</phrase>
+			<phrase id="303">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<next>91</next>
+			</phrase>
+
+			<!-- Resume safely if the vodka was removed before the talk was interrupted. -->
+			<phrase id="400">
+				<text>pf_bunker_access_vodka_already_actor</text>
+				<has_info>pf_bunker_access_vodka_delivered</has_info>
+				<dont_has_info>pf_bunker_access_granted</dont_has_info>
+				<next>401</next>
+			</phrase>
+			<phrase id="401">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>402</next>
+			</phrase>
+			<phrase id="402">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<next>91</next>
+			</phrase>
+
+			<phrase id="900">
+				<text>pf_bunker_guard_commander_menu_actor</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_intro_dialog">
+		<has_info>pf_bunker_access_started</has_info>
+		<dont_has_info>pf_bunker_access_case_assigned</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_intro_actor_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_intro_commander_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_access_intro_actor_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_access_intro_commander_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_access_intro_actor_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_access_intro_commander_3</text>
+				<next>6</next>
+			</phrase>
+			<phrase id="6">
+				<text>pf_bunker_access_intro_actor_confirm</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_assign_case</action>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_case_dialog">
+		<precondition>dialogs_pripyat_full.pf_bunker_access_has_case</precondition>
+		<has_info>pf_bunker_access_case_assigned</has_info>
+		<dont_has_info>pf_bunker_access_case_delivered</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_case_actor_1</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_has_case</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_case</action>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_case_commander_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_access_case_actor_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_access_case_commander_2</text>
+				<next>4</next>
+				<next>5</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka_from_case_dialog</action>
+				<next>6</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="6">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>7</next>
+			</phrase>
+			<phrase id="7">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_vodka_dialog">
+		<has_info>pf_bunker_access_case_delivered</has_info>
+		<dont_has_info>pf_bunker_access_granted</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+				<next>101</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_vodka_actor_give</text>
+				<precondition>dialogs_pripyat_full.pf_bunker_access_can_give_vodka</precondition>
+				<action>dialogs_pripyat_full.pf_bunker_access_deliver_vodka_from_vodka_dialog</action>
+				<next>1</next>
+			</phrase>
+			<phrase id="101">
+				<text>pf_bunker_access_vodka_actor_later</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_access_vodka_finish_dialog">
+		<has_info>pf_bunker_access_vodka_delivered</has_info>
+		<dont_has_info>pf_bunker_access_granted</dont_has_info>
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_commander_greeting</text>
+				<next>100</next>
+			</phrase>
+			<phrase id="100">
+				<text>pf_bunker_access_vodka_already_actor</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_access_vodka_commander_done</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_dialog_leave</text>
+				<action>dialogs_pripyat_full.pf_bunker_access_mark_finish_dialog_active</action>
+				<action>dialogs_pripyat_full.pf_bunker_access_complete</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_02_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_02_npc_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_guard_02_actor_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_guard_02_npc_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_guard_02_actor_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_guard_02_npc_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_guard_02_actor_3</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_03_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_03_npc_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_guard_03_actor_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_guard_03_npc_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_guard_03_actor_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_guard_03_npc_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_guard_03_actor_3</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_yanov_hawaiian_stash_sales_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_hawaiian_stash_sales_greeting</text>
+				<next>1</next>
+				<next>10</next>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_hawaiian_intro_empty_actor</text>
+				<dont_has_info>pf_yanov_hawaiian_intro_done</dont_has_info>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_hawaiian_intro_left_npc</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_hawaiian_intro_work_actor</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_hawaiian_intro_offer_npc</text>
+				<give_info>pf_yanov_hawaiian_intro_done</give_info>
+				<next>10</next>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="10">
+				<text>pf_hawaiian_stash_sales_green_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.can_buy_green</precondition>
+				<action>pf_hawaiian_stash_sales.buy_green</action>
+				<next>11</next>
+			</phrase>
+			<phrase id="20">
+				<text>pf_hawaiian_stash_sales_cyan_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.can_buy_cyan</precondition>
+				<action>pf_hawaiian_stash_sales.buy_cyan</action>
+				<next>11</next>
+			</phrase>
+			<phrase id="30">
+				<text>pf_hawaiian_stash_sales_purple_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.can_buy_purple</precondition>
+				<action>pf_hawaiian_stash_sales.buy_purple</action>
+				<next>11</next>
+			</phrase>
+			<phrase id="11">
+				<text>pf_hawaiian_stash_sales_done</text>
+				<next>10</next>
+				<next>20</next>
+				<next>30</next>
+				<next>40</next>
+				<next>50</next>
+				<next>60</next>
+				<next>90</next>
+			</phrase>
+			<phrase id="40">
+				<text>pf_hawaiian_stash_sales_daily_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.daily_sold_out</precondition>
+				<next>41</next>
+			</phrase>
+			<phrase id="41">
+				<text>pf_hawaiian_stash_sales_daily_npc</text>
+				<next>90</next>
+			</phrase>
+			<phrase id="50">
+				<text>pf_hawaiian_stash_sales_empty_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.no_coordinates_available</precondition>
+				<next>51</next>
+			</phrase>
+			<phrase id="51">
+				<text>pf_hawaiian_stash_sales_empty_npc</text>
+				<next>90</next>
+			</phrase>
+			<phrase id="60">
+				<text>pf_hawaiian_stash_sales_broke_actor</text>
+				<has_info>pf_yanov_hawaiian_intro_done</has_info>
+				<precondition>pf_hawaiian_stash_sales.no_affordable_coordinates</precondition>
+				<next>61</next>
+			</phrase>
+			<phrase id="61">
+				<text>pf_hawaiian_stash_sales_broke_npc</text>
+				<next>90</next>
+			</phrase>
+			<phrase id="90">
+				<text>pf_hawaiian_stash_sales_leave</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+
+	<dialog id="pf_bunker_guard_04_dialog">
+		<phrase_list>
+			<phrase id="0">
+				<text>pf_bunker_guard_04_npc_1</text>
+				<next>1</next>
+			</phrase>
+			<phrase id="1">
+				<text>pf_bunker_guard_04_actor_1</text>
+				<next>2</next>
+			</phrase>
+			<phrase id="2">
+				<text>pf_bunker_guard_04_npc_2</text>
+				<next>3</next>
+			</phrase>
+			<phrase id="3">
+				<text>pf_bunker_guard_04_actor_2</text>
+				<next>4</next>
+			</phrase>
+			<phrase id="4">
+				<text>pf_bunker_guard_04_npc_3</text>
+				<next>5</next>
+			</phrase>
+			<phrase id="5">
+				<text>pf_bunker_guard_04_actor_3</text>
+				<action>dialogs.break_dialog</action>
+				<is_final>1</is_final>
+			</phrase>
+		</phrase_list>
+	</dialog>
+</game_dialogs>

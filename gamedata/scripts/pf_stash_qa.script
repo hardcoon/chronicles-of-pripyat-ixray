@@ -1,0 +1,1349 @@
+-- Manual QA placement helpers for rebuilding the dynamic-stash catalogue.
+-- These objects never consult or modify pf_dynamic_stashes candidate points.
+
+local MAX_RAY_DISTANCE = 250
+local QA_LOG_FILENAME = "pf_stash_qa_placements.log"
+local QA_LOG_HEADER = "# object_id\tlevel\tsection\tmodel\tx\ty\tz\tyaw_deg\tcreated_game_time"
+local QA_PATTERN_LOG_FILENAME = "pf_stash_qa_patterns.log"
+local QA_PATTERN_LOG_HEADER = "# object_id\tlevel\tstash_section\tstash_model\tx\ty\tz\tyaw_deg\thit_kind\thit_element\thit_material\thit_object_id\thit_object_section\thit_object_model\thit_distance\tray_dx\tray_dy\tray_dz\tcreated_game_time"
+local QA_REJECTION_LOG_FILENAME = "pf_stash_qa_catalog_rejections.log"
+local QA_REJECTION_LOG_HEADER = "# object_id\tlevel\tsection\tmodel\tx\ty\tz\tyaw_deg\tcreated_game_time"
+local QA_STASH_SECTION = "pf_qa_crosshair_stash"
+local QA_RELOAD_TOOL_SECTION = "pf_bunker_reload_tool"
+local QA_LIGHT_POINT_TOOL_SECTION = "pf_bunker_light_point_tool"
+local QA_NPC_SPAWN_POINT_TOOL_SECTION = "pf_npc_spawn_point_tool"
+local QA_SCIENTIST_TELEPORT_TOOL_SECTION = "pf_scientist_teleport_tool"
+local LEGACY_QA_REJECTION_TOOL_SECTION = "pf_stash_rejection_tool"
+local LEGACY_QA_CROSSHAIR_REJECTION_TOOL_SECTION = "pf_stash_crosshair_rejection_tool"
+local QA_CROSSHAIR_REJECTION_TOOL_SECTION = "pf_stash_aim_remove_tool"
+local QA_TELEPORT_TOOL_SECTION = "pf_stash_teleport_tool"
+local QA_MARKERS_TOOL_SECTION = "pf_stash_markers_tool"
+local QA_CATALOG_MARKERS_TOOL_SECTION = "pf_stash_catalog_markers_tool"
+local QA_INTERIOR_TELEPORT_TOOL_SECTION = "pf_interior_teleport_tool"
+local QA_OUTDOOR_TELEPORT_TOOL_SECTION = "pf_outdoor_teleport_tool"
+local QA_SPAWN_TOOL_SECTION = "pf_stash_spawn_tool"
+local QA_DELETE_TOOL_SECTION = "pf_stash_delete_tool"
+local QA_UNDO_TOOL_SECTION = "pf_stash_undo_tool"
+local QA_STORY_DOCUMENT_TOOL_SECTION = "pf_story_document_tool"
+local QA_LORE_NOTES_TOOL_SECTION = "pf_lore_notes_tool"
+local QA_ORDER_POINT_TOOL_SECTION = "pf_order_point_tool"
+local QA_DOOR_SPAWN_TOOL_SECTION = "pf_door_spawn_tool"
+local DEVELOPER_MODE_PSTOR = "pf_developer_mode"
+local DEVELOPER_ENVIRONMENT_READY_PSTOR = "pf_developer_environment_ready"
+local DEVELOPER_CLEAR_WEATHER = "default_clear"
+local DEVELOPER_START_HOUR = 10
+local DEVELOPER_ACCESS_SETTING_FILE = "pf_developer_access.setting"
+local NEW_GAME_MODE_REQUEST_FILE = "pf_new_game_mode.request"
+local NEW_GAME_DIFFICULTIES = {
+	novice = "gd_novice",
+	stalker = "gd_stalker",
+	veteran = "gd_veteran",
+	master = "gd_master",
+	developer = "gd_novice"
+}
+local QA_TOOL_DEFINITIONS = {
+	{ QA_RELOAD_TOOL_SECTION, "NPC reload tool" },
+	{ QA_LIGHT_POINT_TOOL_SECTION, "future light point tool" },
+	{ QA_NPC_SPAWN_POINT_TOOL_SECTION, "future NPC spawn point tool" },
+	{ QA_SCIENTIST_TELEPORT_TOOL_SECTION, "scientist teleport tool" },
+	{ QA_TELEPORT_TOOL_SECTION, "stash teleport tool" },
+	{ QA_MARKERS_TOOL_SECTION, "stash map marker tool" },
+	{ QA_CATALOG_MARKERS_TOOL_SECTION, "stash catalogue map marker tool" },
+	{ QA_INTERIOR_TELEPORT_TOOL_SECTION, "random interior teleport tool" },
+	{ QA_OUTDOOR_TELEPORT_TOOL_SECTION, "random outdoor teleport tool" },
+	{ QA_SPAWN_TOOL_SECTION, "stash spawn tool" },
+	{ QA_DELETE_TOOL_SECTION, "stash delete tool" },
+	{ QA_CROSSHAIR_REJECTION_TOOL_SECTION, "crosshair stash rejection tool" },
+	{ QA_UNDO_TOOL_SECTION, "stash placement undo tool" },
+	{ QA_STORY_DOCUMENT_TOOL_SECTION, "next story document tool" },
+	{ QA_LORE_NOTES_TOOL_SECTION, "lore notes tool" },
+	{ QA_ORDER_POINT_TOOL_SECTION, "order delivery point tool" },
+	{ QA_DOOR_SPAWN_TOOL_SECTION, "door spawn tool" }
+}
+local QA_TOOL_SECTIONS = {}
+for _, definition in ipairs(QA_TOOL_DEFINITIONS) do
+	QA_TOOL_SECTIONS[definition[1]] = true
+end
+local DEVELOPER_ESSENTIAL_DEFINITIONS = {
+	{ "device_torch", "developer flashlight" },
+	{ "wpn_knife", "developer knife" }
+}
+local DEVELOPER_KEEP_SECTIONS = {
+	device_torch = true,
+	wpn_knife = true
+}
+for section in pairs(QA_TOOL_SECTIONS) do
+	DEVELOPER_KEEP_SECTIONS[section] = true
+end
+local QA_DELETABLE_SECTIONS = {
+	[QA_STASH_SECTION] = true
+}
+local QA_CATALOG_REMOVAL_SECTIONS = {
+	[QA_STASH_SECTION] = true,
+	pf_fixed_house_stash_backpack = true,
+	pf_fixed_house_stash_wood_box = true
+}
+local TELEPORT_QUEUE_POSITION_EPSILON_SQR = 0.05 * 0.05
+local TELEPORT_STASH_UNDERFOOT_HEIGHT = 1.10
+local stash_teleport_queue = nil
+local stash_teleport_index = 0
+local stash_teleport_skipped = 0
+local stash_teleport_complete = false
+local qa_callbacks_registered = false
+local qa_tools_checked = false
+local qa_tools_check_due = 0
+local qa_issue_actor_id = nil
+local qa_pending_sections = {}
+local new_game_mode_checked = false
+local RANDOM_TELEPORT_LEVEL = "pripyat_full"
+local random_teleport_pools = {}
+local random_teleport_last_id = {}
+
+
+local function crosshair_ray()
+	if not db.actor then return nil end
+
+	local camera_position = vector():set(device().cam_pos)
+	local camera_direction = vector():set(device().cam_dir):normalize()
+	local ray = ray_pick()
+	ray:set_flags(3)
+	ray:set_range(MAX_RAY_DISTANCE)
+	ray:set_ignore_object(db.actor)
+	ray:set_position(camera_position)
+	ray:set_direction(camera_direction)
+	if not ray:query() then return nil end
+	return ray, camera_position, camera_direction
+end
+
+local function crosshair_hit_position()
+	local ray, camera_position, camera_direction = crosshair_ray()
+	if not ray then return nil end
+	local position = vector():set(camera_position)
+	position:mad(camera_position, camera_direction, ray:get_distance())
+	return position, ray, camera_position, camera_direction
+end
+
+local function report(message, hud_silent)
+	printf("[PF STASH QA] %s", message)
+	if db.actor and hud_silent ~= true then
+		db.actor:give_game_news("QA", message, "pf_news_stash", 0, 2500)
+	end
+end
+
+local function new_game_mode_request_path()
+	return getFS():update_path("$app_data_root$", NEW_GAME_MODE_REQUEST_FILE)
+end
+
+local function developer_access_setting_path()
+	return getFS():update_path("$app_data_root$", DEVELOPER_ACCESS_SETTING_FILE)
+end
+
+function is_developer_access_enabled()
+	local file = io.open(developer_access_setting_path(), "r")
+	if not file then return false end
+	local value = string.lower(file:read("*l") or "")
+	file:close()
+	value = string.gsub(value, "^%s+", "")
+	value = string.gsub(value, "%s+$", "")
+	return value == "1" or value == "true"
+end
+
+function set_developer_access_enabled(enabled)
+	local file = io.open(developer_access_setting_path(), "w")
+	if not file then
+		printf("[PF STASH QA] Unable to save the Developer access setting")
+		return false
+	end
+	file:write(enabled == true and "1\n" or "0\n")
+	file:close()
+	return true
+end
+
+local function write_new_game_mode_request(mode)
+	local file = io.open(new_game_mode_request_path(), "w")
+	if not file then
+		report("Unable to write the pending new-game mode")
+		return false
+	end
+	file:write(tostring(mode), "\n")
+	file:close()
+	return true
+end
+
+-- The main-menu Lua state is rebuilt while a new game is loading. Keep this
+-- one-shot request in appdata so Developer remains distinguishable from the
+-- hidden novice enum after that rebuild.
+function request_new_game_mode(mode)
+	if not NEW_GAME_DIFFICULTIES[mode] then
+		report("Rejected unknown new-game mode: " .. tostring(mode))
+		return false
+	end
+	if mode == "developer" and not is_developer_access_enabled() then
+		report("Rejected Developer new-game mode while access is disabled")
+		return false
+	end
+	return write_new_game_mode_request(mode)
+end
+
+function clear_new_game_mode_request()
+	return write_new_game_mode_request("consumed")
+end
+
+function set_developer_mode(enabled)
+	if not db.actor then return false end
+	xr_logic.pstor_store(db.actor, DEVELOPER_MODE_PSTOR, enabled == true)
+	if enabled ~= true then
+		xr_logic.pstor_store(db.actor, DEVELOPER_ENVIRONMENT_READY_PSTOR, false)
+	end
+	return true
+end
+
+function is_developer_mode()
+	return db.actor ~= nil and
+		xr_logic.pstor_retrieve(db.actor, DEVELOPER_MODE_PSTOR, false) == true
+end
+
+local function enforce_developer_clear_weather()
+	if not is_developer_mode() then return false end
+	if level.is_wfx_playing and level.stop_weather_fx and level.is_wfx_playing() then
+		level.stop_weather_fx()
+	end
+	if level.get_weather() ~= DEVELOPER_CLEAR_WEATHER then
+		level.set_weather(DEVELOPER_CLEAR_WEATHER, true)
+	end
+	return true
+end
+
+local function prepare_developer_environment(hud_silent)
+	if not db.actor or not is_developer_mode() then return false end
+	local already_ready = xr_logic.pstor_retrieve(
+		db.actor, DEVELOPER_ENVIRONMENT_READY_PSTOR, false
+	) == true
+	if not already_ready then
+		local current_minutes = level.get_time_hours() * 60 + level.get_time_minutes()
+		local target_minutes = DEVELOPER_START_HOUR * 60
+		local minutes_to_change = (target_minutes - current_minutes) % (24 * 60)
+		if minutes_to_change > 0 then
+			level.change_game_time(
+				0, math.floor(minutes_to_change / 60), minutes_to_change % 60
+			)
+			local surge = surge_manager and surge_manager.get_surge_manager and
+				surge_manager.get_surge_manager() or nil
+			if surge then surge.time_forwarded = true end
+		end
+		xr_logic.pstor_store(db.actor, DEVELOPER_ENVIRONMENT_READY_PSTOR, true)
+		report("Developer environment prepared: 10:00, clear weather locked", hud_silent)
+	end
+	enforce_developer_clear_weather()
+	return true
+end
+
+function prepare_developer_new_game()
+	local actor = db.actor
+	local sim = alife()
+	if not actor or not sim then return false end
+
+	set_developer_mode(true)
+	prepare_developer_environment(true)
+	local remove_ids = {}
+	actor:iterate_inventory(function(_, item)
+		if item and not DEVELOPER_KEEP_SECTIONS[item:section()] then
+			table.insert(remove_ids, item:id())
+		end
+	end, actor)
+
+	local removed = 0
+	for _, id in ipairs(remove_ids) do
+		local server_item = sim:object(id, true)
+		if server_item then
+			sim:release(server_item, true)
+			removed = removed + 1
+		end
+	end
+
+	local ready = ensure_stash_qa_tools(true)
+	qa_tools_checked = ready
+	report(string.format(
+		"Developer inventory prepared: removed %d regular items, QA tools ready=%s",
+		removed, tostring(ready)
+	), true)
+	return ready
+end
+
+local function process_new_game_mode_request()
+	if new_game_mode_checked or not db.actor then return end
+
+	local file = io.open(new_game_mode_request_path(), "r")
+	if not file then
+		new_game_mode_checked = true
+		return
+	end
+	local mode = string.lower(file:read("*l") or "")
+	file:close()
+	if mode == "developer" and not is_developer_access_enabled() then
+		mode = "novice"
+	end
+
+	local difficulty = NEW_GAME_DIFFICULTIES[mode]
+	if not difficulty then
+		new_game_mode_checked = true
+		return
+	end
+
+	-- Apply the requested enum again after the gameplay Lua state exists. This
+	-- prevents a persisted user.ltx difficulty from replacing the menu choice.
+	get_console():execute("g_game_difficulty " .. difficulty)
+	write_new_game_mode_request("consumed")
+	new_game_mode_checked = true
+	xr_effects.pf_new_game_start(mode == "developer")
+
+	if mode == "developer" then
+		local world = rawget(_G, "lz_nm_world")
+		if world and world.schedule_developer_start_stash then
+			world.schedule_developer_start_stash()
+		end
+	end
+	report("New-game mode initialized: " .. mode .. " (" .. difficulty .. ")", true)
+end
+
+local function configured_model(section)
+	local ini = system_ini()
+	if ini:line_exist(section, "visual") then
+		return ini:r_string(section, "visual")
+	end
+	return "<unknown>"
+end
+
+local function game_timestamp()
+	local year, month, day, hour, minute, second, millisecond = 0, 0, 0, 0, 0, 0, 0
+	year, month, day, hour, minute, second, millisecond = game.get_game_time():get(
+		year, month, day, hour, minute, second, millisecond
+	)
+	return string.format(
+		"%04d-%02d-%02d %02d:%02d:%02d",
+		year, month, day, hour, minute, second
+	)
+end
+
+local function qa_log_path(filename)
+	return getFS():update_path("$logs$", filename)
+end
+
+local function append_placement_log(object, position)
+	local path = qa_log_path(QA_LOG_FILENAME)
+	local needs_header = true
+	local existing = io.open(path, "r")
+	if existing then
+		needs_header = existing:read("*l") == nil
+		existing:close()
+	end
+
+	local file = io.open(path, "a")
+	if not file then return false end
+	if needs_header then file:write(QA_LOG_HEADER .. "\n") end
+	local section = object:section_name()
+	local yaw = object.angle and object.angle.y or 0
+	file:write(string.format(
+		"%s\t%s\t%s\t%s\t%.6f\t%.6f\t%.6f\t%.3f\t%s\n",
+		tostring(object.id), level.name(), section, configured_model(section),
+		position.x, position.y, position.z, math.deg(yaw), game_timestamp()
+	))
+	file:close()
+	return true
+end
+
+local function append_pattern_log(object, position, ray, camera_direction)
+	local path = qa_log_path(QA_PATTERN_LOG_FILENAME)
+	local needs_header = true
+	local existing = io.open(path, "r")
+	if existing then
+		needs_header = existing:read("*l") == nil
+		existing:close()
+	end
+
+	local file = io.open(path, "a")
+	if not file then return false end
+	if needs_header then file:write(QA_PATTERN_LOG_HEADER .. "\n") end
+
+	local stash_section = object:section_name()
+	local yaw = object.angle and object.angle.y or 0
+	local hit_object = ray:get_object()
+	local hit_server = hit_object and alife():object(hit_object:id(), true) or nil
+	local hit_kind = hit_server and "object" or "static"
+	local hit_object_id = hit_server and tostring(hit_server.id) or "-1"
+	local hit_object_section = hit_server and hit_server:section_name() or "<static>"
+	local hit_object_model = hit_server and configured_model(hit_object_section) or "<compiled>"
+
+	file:write(string.format(
+		"%s\t%s\t%s\t%s\t%.6f\t%.6f\t%.6f\t%.3f\t%s\t%s\t%s\t%s\t%s\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%s\n",
+		tostring(object.id), level.name(), stash_section, configured_model(stash_section),
+		position.x, position.y, position.z, math.deg(yaw), hit_kind,
+		tostring(ray:get_element()), tostring(ray:get_material()), hit_object_id,
+		hit_object_section, hit_object_model, ray:get_distance(),
+		camera_direction.x, camera_direction.y, camera_direction.z, game_timestamp()
+	))
+	file:close()
+	return true
+end
+
+local function append_catalog_rejection_log(object, position)
+	local path = qa_log_path(QA_REJECTION_LOG_FILENAME)
+	local needs_header = true
+	local existing = io.open(path, "r")
+	if existing then
+		local expected_level = level.name()
+		local expected_section = object:section_name()
+		for line in existing:lines() do
+			needs_header = false
+			local _, recorded_level, recorded_section, _, x, y, z = string.match(
+				line,
+				"^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t"
+			)
+			local same_position = x and y and z and
+				math.abs((tonumber(x) or 1e30) - position.x) <= 0.001 and
+				math.abs((tonumber(y) or 1e30) - position.y) <= 0.001 and
+				math.abs((tonumber(z) or 1e30) - position.z) <= 0.001
+			if recorded_level == expected_level and
+				recorded_section == expected_section and same_position then
+				existing:close()
+				return true, false
+			end
+		end
+		existing:close()
+	end
+
+	local file = io.open(path, "a")
+	if not file then return false, false end
+	if needs_header then file:write(QA_REJECTION_LOG_HEADER .. "\n") end
+	local section = object:section_name()
+	local yaw = object.angle and object.angle.y or 0
+	file:write(string.format(
+		"%s\t%s\t%s\t%s\t%.6f\t%.6f\t%.6f\t%.3f\t%s\n",
+		tostring(object.id), level.name(), section, configured_model(section),
+		position.x, position.y, position.z, math.deg(yaw), game_timestamp()
+	))
+	file:close()
+	return true, true
+end
+
+local function reconcile_actor_developer_items(hud_silent)
+	local actor = db.actor
+	local sim = alife()
+	if not actor or not sim then return nil end
+
+	local actor_id = actor:id()
+	if qa_issue_actor_id ~= actor_id then
+		qa_issue_actor_id = actor_id
+		qa_pending_sections = {}
+	end
+
+	local ids_by_section = {}
+	actor:iterate_inventory(function(_, item)
+		local section = item and item:section() or nil
+		if section and DEVELOPER_KEEP_SECTIONS[section] then
+			ids_by_section[section] = ids_by_section[section] or {}
+			table.insert(ids_by_section[section], item:id())
+		end
+	end, actor)
+
+	local present = {}
+	local duplicate_ids = {}
+	for section, ids in pairs(ids_by_section) do
+		table.sort(ids)
+		local client_item = actor:object(section)
+		local keep_id = client_item and client_item:id() or ids[1]
+		present[section] = true
+		qa_pending_sections[section] = nil
+		for _, id in ipairs(ids) do
+			if id ~= keep_id then
+				table.insert(duplicate_ids, id)
+			end
+		end
+	end
+
+	local removed = 0
+	for _, id in ipairs(duplicate_ids) do
+		local duplicate = sim:object(id, true)
+		if duplicate then
+			sim:release(duplicate, true)
+			removed = removed + 1
+		end
+	end
+	if removed > 0 then
+		report(string.format("Removed %d duplicate Developer inventory items", removed), hud_silent)
+	end
+	return present
+end
+
+local function ensure_qa_tool(section, label, present, hud_silent)
+	if not db.actor then return false end
+	if (present and present[section]) or db.actor:object(section) then
+		if present then present[section] = true end
+		qa_pending_sections[section] = nil
+		return true
+	end
+	if qa_pending_sections[section] then
+		return true
+	end
+	local item = alife():create(
+		section, vector(), 0, 0, db.actor:id()
+	)
+	if not item then
+		report("Failed to issue the QA " .. label, hud_silent)
+		return false
+	end
+	qa_pending_sections[section] = true
+	if present then present[section] = true end
+	report("QA " .. label .. " added to inventory", hud_silent)
+	return true
+end
+
+local function retire_legacy_rejection_tool(hud_silent)
+	if not db.actor then return false end
+	local item = db.actor:object(LEGACY_QA_REJECTION_TOOL_SECTION)
+	if not item then return true end
+
+	local sim = alife()
+	local server_object = sim and sim:object(item:id(), true) or nil
+	if not server_object then return false end
+	sim:release(server_object, true)
+	report("Removed obsolete standalone nearest-stash QA tool from inventory", hud_silent)
+	return true
+end
+
+local function retire_legacy_crosshair_rejection_tool(hud_silent)
+	if not db.actor then return false end
+	local sim = alife()
+	if not sim then return false end
+
+	local legacy_ids = {}
+	db.actor:iterate_inventory(function(_, item)
+		if item and item:section() == LEGACY_QA_CROSSHAIR_REJECTION_TOOL_SECTION then
+			table.insert(legacy_ids, item:id())
+		end
+	end, db.actor)
+
+	for _, id in ipairs(legacy_ids) do
+		local server_object = sim:object(id, true)
+		if server_object then sim:release(server_object, true) end
+	end
+	if #legacy_ids > 0 then
+		report("Replaced obsolete overlong crosshair QA tool with quick-slot-safe version", hud_silent)
+	end
+	return true
+end
+
+function ensure_stash_qa_tools(hud_silent)
+	local all_ready = retire_legacy_rejection_tool(hud_silent)
+	if not retire_legacy_crosshair_rejection_tool(hud_silent) then all_ready = false end
+	if not is_developer_mode() then return all_ready end
+	local present = reconcile_actor_developer_items(hud_silent)
+	if not present then return false end
+	for _, essential in ipairs(DEVELOPER_ESSENTIAL_DEFINITIONS) do
+		if not ensure_qa_tool(essential[1], essential[2], present, hud_silent) then all_ready = false end
+	end
+	for _, tool in ipairs(QA_TOOL_DEFINITIONS) do
+		if not ensure_qa_tool(tool[1], tool[2], present, hud_silent) then all_ready = false end
+	end
+	return all_ready
+end
+
+local function nearest_catalog_stash()
+	if not db.actor then return nil end
+	local actor_position = db.actor:position()
+	local nearest = nil
+	local nearest_distance_sqr = nil
+	for _, object in alife():objects() do
+		if QA_CATALOG_REMOVAL_SECTIONS[object:section_name()] then
+			local position = object.position
+			local dx = position.x - actor_position.x
+			local dy = position.y - actor_position.y
+			local dz = position.z - actor_position.z
+			local distance_sqr = dx * dx + dy * dy + dz * dz
+			if not nearest_distance_sqr or distance_sqr < nearest_distance_sqr or
+				(distance_sqr == nearest_distance_sqr and object.id < nearest.id) then
+				nearest = object
+				nearest_distance_sqr = distance_sqr
+			end
+		end
+	end
+	return nearest, nearest_distance_sqr
+end
+
+function mark_nearest_stash_for_catalog_removal()
+	local server_object, distance_sqr = nearest_catalog_stash()
+	if not server_object then
+		report("No existing fixed or QA stash was found")
+		return false
+	end
+	local position = vector():set(server_object.position)
+	local ok, added = append_catalog_rejection_log(server_object, position)
+	if not ok then
+		report("Failed to write the stash catalogue rejection log")
+		return false
+	end
+	local distance = math.sqrt(distance_sqr or 0)
+	if not added then
+		report(string.format(
+			"Nearest stash is already marked: %.3f, %.3f, %.3f (%.1f m)",
+			position.x, position.y, position.z, distance
+		))
+		return true
+	end
+	report(string.format(
+		"Nearest stash marked for removal: %.3f, %.3f, %.3f " ..
+		"(id %s, %.1f m, model %s)",
+		position.x, position.y, position.z, tostring(server_object.id), distance,
+		configured_model(server_object:section_name())
+	))
+	return true
+end
+
+function use_stash_rejection_tool(_item)
+	mark_nearest_stash_for_catalog_removal()
+	-- The custom inventory action must not invoke the native Eat path after the
+	-- log was written. Quick slots use Eat directly and are handled by the global
+	-- OnInventoryEat callback owned by the late-loading QA bridge addon.
+	return false
+end
+
+function use_stash_teleport_tool(_item)
+	teleport_to_next_stash()
+	-- As above, the context action performs the QA operation itself and must not
+	-- fall through to the native Eat path. Quick slots are handled below.
+	return false
+end
+
+function use_stash_markers_tool(_item)
+	toggle_all_stash_markers()
+	return false
+end
+
+function use_stash_catalog_markers_tool(item)
+	local overlay = rawget(_G, "pf_stash_catalog_qa")
+	if overlay and overlay.use_tool then return overlay.use_tool(item) end
+	report("Canonical stash catalogue QA API is unavailable")
+	return false
+end
+
+function use_stash_spawn_tool(_item)
+	spawn_stash_at_crosshair()
+	return false
+end
+
+function use_stash_delete_tool(_item)
+	delete_qa_object_at_crosshair()
+	return false
+end
+
+function use_stash_undo_tool(_item)
+	undo_last_qa_placement()
+	return false
+end
+
+local function record_future_light_point()
+	local recorder = pf_bunker_qa
+	if not recorder or not recorder.record_light_point then
+		report("Bunker light-point QA API is unavailable")
+		return false
+	end
+	return recorder.record_light_point()
+end
+
+local function record_future_npc_spawn_point()
+	local recorder = pf_bunker_qa
+	if not recorder or not recorder.record_npc_point then
+		report("NPC spawn-point QA API is unavailable")
+		return false
+	end
+	return recorder.record_npc_point()
+end
+
+function use_light_point_tool(_item)
+	record_future_light_point()
+	return false
+end
+
+function teleport_to_scientists()
+	local bunker = pf_scientist_bunker
+	if not bunker or not bunker.teleport_actor_to_scientists then
+		report("Scientist-bunker teleport API is unavailable")
+		return false
+	end
+
+	local ok, destination = bunker.teleport_actor_to_scientists()
+	if not ok then
+		report("Scientist teleport failed: " .. tostring(destination))
+		return false
+	end
+
+	report(string.format(
+		"Teleported to scientists at %.3f, %.3f, %.3f",
+		destination.x, destination.y, destination.z
+	))
+	return true
+end
+
+function use_scientist_teleport_tool(_item)
+	teleport_to_scientists()
+	return false
+end
+
+function use_story_document_tool(item)
+	pf_story_documents.debug_give_next(item)
+	return false
+end
+
+function use_lore_notes_tool(_item)
+	local mechanics = rawget(_G, "lz_new_mechanics")
+	if not mechanics or not mechanics.debug_spawn_lore_test_stash then
+		report("Lore-notes QA API is unavailable")
+		return false
+	end
+	mechanics.debug_spawn_lore_test_stash()
+	return false
+end
+
+function use_order_point_capture_tool(_item)
+	if not is_developer_mode() then
+		report("Order delivery-point tool is available only in Developer mode")
+		return false
+	end
+	local orders = rawget(_G, "lz_orders")
+	if not orders or not orders.capture_drop_point then
+		report("Order delivery-point QA API is unavailable")
+		return false
+	end
+	orders.capture_drop_point()
+	return false
+end
+
+function use_order_point_undo_tool(_item)
+	if not is_developer_mode() then
+		report("Order delivery-point tool is available only in Developer mode")
+		return false
+	end
+	local orders = rawget(_G, "lz_orders")
+	if not orders or not orders.undo_drop_point then
+		report("Order delivery-point QA API is unavailable")
+		return false
+	end
+	orders.undo_drop_point()
+	return false
+end
+
+local function restore_qa_tool_uses(item)
+	local max_uses = item:get_max_uses()
+	if max_uses and max_uses > 0 then
+		item:set_remaining_uses(max_uses)
+	end
+end
+
+function on_inventory_eat(actor, item)
+	local section = item and item:section() or nil
+	if section == QA_RELOAD_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		pf_bunker_qa_tool.use_reload_tool(item)
+	elseif section == QA_LIGHT_POINT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		record_future_light_point()
+	elseif section == QA_NPC_SPAWN_POINT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		record_future_npc_spawn_point()
+	elseif section == QA_SCIENTIST_TELEPORT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		teleport_to_scientists()
+	elseif section == LEGACY_QA_REJECTION_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		mark_nearest_stash_for_catalog_removal()
+	elseif section == QA_CROSSHAIR_REJECTION_TOOL_SECTION or
+		section == LEGACY_QA_CROSSHAIR_REJECTION_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		delete_stash_at_crosshair_and_log()
+	elseif section == QA_TELEPORT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		teleport_to_next_stash()
+	elseif section == QA_MARKERS_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		toggle_all_stash_markers()
+	elseif section == QA_CATALOG_MARKERS_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		use_stash_catalog_markers_tool(item)
+	elseif section == QA_INTERIOR_TELEPORT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		teleport_to_random_stash_candidate("interior")
+	elseif section == QA_OUTDOOR_TELEPORT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		teleport_to_random_stash_candidate("outdoor")
+	elseif section == QA_SPAWN_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		spawn_stash_at_crosshair()
+	elseif section == QA_DELETE_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		delete_qa_object_at_crosshair()
+	elseif section == QA_UNDO_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		undo_last_qa_placement()
+	elseif section == QA_STORY_DOCUMENT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		pf_story_documents.debug_give_next(item)
+	elseif section == QA_LORE_NOTES_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		local mechanics = rawget(_G, "lz_new_mechanics")
+		if mechanics and mechanics.debug_spawn_lore_test_stash then
+			mechanics.debug_spawn_lore_test_stash()
+		else
+			report("Lore-notes QA API is unavailable")
+		end
+	elseif section == QA_ORDER_POINT_TOOL_SECTION then
+		restore_qa_tool_uses(item)
+		use_order_point_capture_tool(item)
+	end
+
+	-- The active bridge owns the single engine callback, but ordinary items
+	-- must retain the sleeping-pill and other mechanics from the existing addon.
+	local mechanics = rawget(_G, "lz_new_mechanics")
+	if mechanics and mechanics.on_inventory_eat then
+		return mechanics.on_inventory_eat(actor, item)
+	end
+	return true
+end
+
+local function qa_actor_on_update()
+	if not db.actor then return end
+	process_new_game_mode_request()
+	enforce_developer_clear_weather()
+	if qa_tools_checked then return end
+	if time_global() < qa_tools_check_due then return end
+	qa_tools_checked = ensure_stash_qa_tools(true)
+end
+
+local function qa_on_game_load()
+	qa_tools_checked = false
+	qa_tools_check_due = time_global() + 1000
+	qa_issue_actor_id = nil
+	qa_pending_sections = {}
+	new_game_mode_checked = false
+end
+
+function on_game_start()
+	if qa_callbacks_registered then return end
+	if type(RegisterScriptCallback) ~= "function" then
+		report("RegisterScriptCallback is unavailable for the QA rejection tool", true)
+		return
+	end
+	RegisterScriptCallback("update", qa_actor_on_update)
+	RegisterScriptCallback("load", qa_on_game_load)
+	qa_callbacks_registered = true
+end
+
+local function remove_log_record(filename, object, position)
+	local path = qa_log_path(filename)
+	local file = io.open(path, "r")
+	if not file then return true, false end
+
+	local kept_lines = {}
+	local removed = false
+	local expected_id = tostring(object.id)
+	local expected_level = level.name()
+	local expected_section = object:section_name()
+	for line in file:lines() do
+		local recorded_id, recorded_level, recorded_section, _, x, y, z = string.match(
+			line,
+			"^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t"
+		)
+		local same_position = x and y and z and
+			math.abs((tonumber(x) or 1e30) - position.x) <= 0.001 and
+			math.abs((tonumber(y) or 1e30) - position.y) <= 0.001 and
+			math.abs((tonumber(z) or 1e30) - position.z) <= 0.001
+		if string.sub(line, 1, 1) ~= "#" and
+			recorded_id == expected_id and recorded_level == expected_level and
+			recorded_section == expected_section and same_position then
+			removed = true
+		else
+			table.insert(kept_lines, line)
+		end
+	end
+	file:close()
+	if not removed then return true, false end
+
+	file = io.open(path, "w")
+	if not file then return false, false end
+	for _, line in ipairs(kept_lines) do file:write(line .. "\n") end
+	file:close()
+	return true, true
+end
+
+local function remove_placement_log_record(object, position)
+	return remove_log_record(QA_LOG_FILENAME, object, position)
+end
+
+local function remove_pattern_log_record(object, position)
+	return remove_log_record(QA_PATTERN_LOG_FILENAME, object, position)
+end
+
+local function last_placement_log_record()
+	local file = io.open(qa_log_path(QA_LOG_FILENAME), "r")
+	if not file then return nil end
+	local last = nil
+	for line in file:lines() do
+		local id, recorded_level, section, _, x, y, z = string.match(
+			line,
+			"^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t"
+		)
+		if string.sub(line, 1, 1) ~= "#" and id and
+			QA_DELETABLE_SECTIONS[section] then
+			last = {
+				id = tonumber(id),
+				level = recorded_level,
+				section = section,
+				position = vector():set(tonumber(x), tonumber(y), tonumber(z))
+			}
+		end
+	end
+	file:close()
+	return last
+end
+
+local function spawn_at_crosshair(section, label)
+	if not db.actor then return false end
+	local position, ray, camera_position, camera_direction = crosshair_hit_position()
+	if not position then
+		report("Crosshair ray did not hit any surface")
+		return false
+	end
+
+	local object = alife():create(
+		section,
+		position,
+		db.actor:level_vertex_id(),
+		db.actor:game_vertex_id()
+	)
+	if not object then
+		report("Failed to spawn " .. label)
+		return false
+	end
+
+	local direction = vector():set(device().cam_dir)
+	object.angle = vector():set(0, math.atan2(direction.x, direction.z), 0)
+	if not append_placement_log(object, position) then
+		alife():release(object, true)
+		report("Failed to write the QA placement log; object was not kept")
+		return false
+	end
+	if not append_pattern_log(object, position, ray, camera_direction) then
+		remove_placement_log_record(object, position)
+		alife():release(object, true)
+		report("Failed to write the QA pattern log; object was not kept")
+		return false
+	end
+	report(string.format(
+		"%s spawned at %.3f, %.3f, %.3f (id %s, element %s, material %s)",
+		label, position.x, position.y, position.z, tostring(object.id),
+		tostring(ray:get_element()), tostring(ray:get_material())
+	))
+	return true
+end
+
+-- Console equivalents:
+-- run_string pf_stash_qa.spawn_stash_at_crosshair()
+-- run_string pf_stash_qa.delete_qa_object_at_crosshair()
+-- run_string pf_stash_qa.undo_last_qa_placement()
+-- run_string pf_stash_qa.mark_stash_for_catalog_removal()
+function spawn_stash_at_crosshair()
+	return spawn_at_crosshair(QA_STASH_SECTION, "stash")
+end
+
+function toggle_all_stash_markers()
+	local manager = pf_dynamic_stashes
+	if not manager or not manager.debug_toggle_all_physical_stash_markers then
+		report("Dynamic stash QA map API is unavailable")
+		return false
+	end
+	local visible, count = manager.debug_toggle_all_physical_stash_markers()
+	if count == 0 then
+		report("No existing dynamic stash containers to mark")
+		return false
+	end
+	report(string.format(
+		"Dynamic stash PDA markers %s: %d",
+		visible and "shown" or "hidden", count
+	))
+	return true
+end
+
+local function teleport_entry_distance_sqr(left, right)
+	local dx = left.x - right.x
+	local dy = left.y - right.y
+	local dz = left.z - right.z
+	return dx * dx + dy * dy + dz * dz
+end
+
+local function build_stash_teleport_queue()
+	local remaining = {}
+	local manager = pf_dynamic_stashes
+	if manager and manager.debug_active_stash_points then
+		for _, point in ipairs(manager.debug_active_stash_points()) do
+			table.insert(remaining, {
+				id = -point.slot_index,
+				dynamic_slot = point.slot_index,
+				x = point.x,
+				y = point.y,
+				z = point.z
+			})
+		end
+	end
+	for _, object in alife():objects() do
+		local section = object:section_name()
+		if QA_CATALOG_REMOVAL_SECTIONS[section] then
+			local position = object.position
+			table.insert(remaining, {
+				id = object.id,
+				section = section,
+				x = position.x,
+				y = position.y,
+				z = position.z
+			})
+		end
+	end
+
+	-- A deterministic nearest-neighbour route keeps consecutive inspections in
+	-- the same part of the map while still visiting every captured object once.
+	local queue = {}
+	local cursor = db.actor:position()
+	while #remaining > 0 do
+		local best_index = 1
+		local best_distance = teleport_entry_distance_sqr(cursor, remaining[1])
+		for index = 2, #remaining do
+			local distance = teleport_entry_distance_sqr(cursor, remaining[index])
+			if distance < best_distance or
+				(distance == best_distance and
+				remaining[index].id < remaining[best_index].id) then
+				best_index = index
+				best_distance = distance
+			end
+		end
+		local entry = table.remove(remaining, best_index)
+		table.insert(queue, entry)
+		cursor = entry
+	end
+
+	stash_teleport_queue = queue
+	stash_teleport_index = 0
+	stash_teleport_skipped = 0
+	stash_teleport_complete = #queue == 0
+	return #queue
+end
+
+local function teleport_landing_position(target)
+	-- QA inspection must work even where the actor has no navigation vertex.
+	-- Keep the stash exactly under the actor instead of snapping to level.ai.
+	-- CActor::ForceTransform also resets movement velocity to zero, while the
+	-- vertical clearance keeps the actor capsule out of the stash/furniture.
+	return vector():set(
+		target.x, target.y + TELEPORT_STASH_UNDERFOOT_HEIGHT, target.z
+	)
+end
+
+local function teleport_queue_entry(entry)
+	if entry.dynamic_slot then
+		local target = vector():set(entry.x, entry.y, entry.z)
+		local landing = teleport_landing_position(target)
+		db.actor:set_actor_position(landing)
+		return true, target, landing
+	end
+	local server_object = alife():object(entry.id, true)
+	if not server_object or server_object:section_name() ~= entry.section then
+		return false
+	end
+	local target = server_object.position
+	if teleport_entry_distance_sqr(target, entry) >
+		TELEPORT_QUEUE_POSITION_EPSILON_SQR then
+		return false
+	end
+
+	local landing = teleport_landing_position(target)
+	db.actor:set_actor_position(landing)
+	return true, target, landing
+end
+
+function reset_stash_teleport_queue()
+	stash_teleport_queue = nil
+	stash_teleport_index = 0
+	stash_teleport_skipped = 0
+	stash_teleport_complete = false
+	report("Stash teleport queue reset")
+	return true
+end
+
+function teleport_to_next_stash()
+	if not db.actor then return false end
+	if stash_teleport_complete then
+		report(string.format(
+			"Stash teleport queue complete: %d visited, %d unavailable",
+			stash_teleport_index - stash_teleport_skipped,
+			stash_teleport_skipped
+		))
+		return true
+	end
+	if not stash_teleport_queue then
+		local count = build_stash_teleport_queue()
+		if count == 0 then
+			report("No active dynamic, fixed, or QA stashes found")
+			return false
+		end
+	end
+
+	while stash_teleport_index < #stash_teleport_queue do
+		stash_teleport_index = stash_teleport_index + 1
+		local entry = stash_teleport_queue[stash_teleport_index]
+		local ok, target, landing = teleport_queue_entry(entry)
+		if ok then
+			if stash_teleport_index == #stash_teleport_queue then
+				stash_teleport_complete = true
+			end
+			report(string.format(
+				"Stash %d/%d at %.3f, %.3f, %.3f (%s, landing %.1f m)%s",
+				stash_teleport_index, #stash_teleport_queue,
+				target.x, target.y, target.z,
+				entry.dynamic_slot and ("active " .. tostring(entry.dynamic_slot)) or
+					("id " .. tostring(entry.id)),
+				landing:distance_to(target),
+				stash_teleport_complete and " - queue complete" or ""
+			))
+			return true
+		end
+		stash_teleport_skipped = stash_teleport_skipped + 1
+	end
+
+	stash_teleport_complete = true
+	report(string.format(
+		"Stash teleport queue complete: %d visited, %d unavailable",
+		#stash_teleport_queue - stash_teleport_skipped,
+		stash_teleport_skipped
+	))
+	return true
+end
+
+local function random_stash_candidate_pool(kind)
+	local cached = random_teleport_pools[kind]
+	if cached then return cached end
+
+	local source = nil
+	if kind == "interior" then
+		if pf_stash_interior_candidates and pf_stash_interior_candidates.get then
+			source = pf_stash_interior_candidates.get()
+		end
+	elseif kind == "outdoor" then
+		if pf_stash_candidates and pf_stash_candidates.get then
+			source = pf_stash_candidates.get()
+		end
+	end
+
+	if not source then return nil end
+	local pool = {}
+	for _, candidate in ipairs(source) do
+		if candidate.kind == kind and candidate.level_vertex_id and candidate.position then
+			table.insert(pool, candidate)
+		end
+	end
+	random_teleport_pools[kind] = pool
+	return pool
+end
+
+function teleport_to_random_stash_candidate(kind)
+	if not db.actor then return false end
+	if level.name() ~= RANDOM_TELEPORT_LEVEL then
+		report("Random location teleport is available only on Pripyat Full")
+		return false
+	end
+
+	local pool = random_stash_candidate_pool(kind)
+	if not pool or #pool == 0 then
+		report("No " .. tostring(kind) .. " teleport candidates are available")
+		return false
+	end
+
+	local index = math.random(1, #pool)
+	if #pool > 1 and pool[index].id == random_teleport_last_id[kind] then
+		index = index % #pool + 1
+	end
+	local candidate = pool[index]
+	local vertex_position = level.vertex_position(candidate.level_vertex_id)
+	if not vertex_position then
+		report(string.format(
+			"Invalid AI vertex %s for %s candidate %s",
+			tostring(candidate.level_vertex_id), tostring(kind), tostring(candidate.id)
+		))
+		return false
+	end
+
+	-- Candidate coordinates can sit against furniture or static geometry. The
+	-- linked AI vertex is the safe nearby standing point used for QA travel.
+	local landing = vector():set(
+		vertex_position.x, vertex_position.y + 0.20, vertex_position.z
+	)
+	db.actor:set_actor_position(landing)
+	random_teleport_last_id[kind] = candidate.id
+	report(string.format(
+		"Random %s location %s: %.3f, %.3f, %.3f (AI vertex %s)",
+		tostring(kind), tostring(candidate.id),
+		candidate.position[1], candidate.position[2], candidate.position[3],
+		tostring(candidate.level_vertex_id)
+	))
+	return true
+end
+
+function delete_qa_object_at_crosshair()
+	local ray = crosshair_ray()
+	local client_object = ray and ray:get_object() or nil
+	if not client_object then
+		report("Crosshair is not pointing at a QA stash")
+		return false
+	end
+
+	local server_object = alife():object(client_object:id(), true)
+	local section = server_object and server_object:section_name() or nil
+	if not server_object or not QA_DELETABLE_SECTIONS[section] then
+		report("Target is not a deletable QA stash")
+		return false
+	end
+
+	local position = vector():set(server_object.position)
+	local id = server_object.id
+	local model = configured_model(section)
+	local log_ok, log_removed = remove_placement_log_record(server_object, position)
+	local pattern_ok, pattern_removed = remove_pattern_log_record(server_object, position)
+	if not log_ok or not pattern_ok then
+		report("Failed to update the QA placement/pattern logs; object was not deleted")
+		return false
+	end
+	alife():release(server_object, true)
+	report(string.format(
+		"QA object deleted at %.3f, %.3f, %.3f (id %s, model %s, logs %s/%s)",
+		position.x, position.y, position.z, tostring(id), model,
+		log_removed and "placement removed" or "no placement",
+		pattern_removed and "pattern removed" or "no pattern"
+	))
+	return true
+end
+
+local function catalog_stash_at_crosshair()
+	local ray = crosshair_ray()
+	local client_object = ray and ray:get_object() or nil
+	if not client_object then
+		return nil, "Crosshair is not pointing at a fixed or QA stash"
+	end
+
+	local server_object = alife():object(client_object:id(), true)
+	local section = server_object and server_object:section_name() or nil
+	if not server_object or not QA_CATALOG_REMOVAL_SECTIONS[section] then
+		return nil, "Target is not a fixed or QA stash"
+	end
+	return server_object
+end
+
+function mark_stash_for_catalog_removal()
+	local server_object, error_message = catalog_stash_at_crosshair()
+	if not server_object then
+		report(error_message)
+		return false
+	end
+
+	local position = vector():set(server_object.position)
+	local ok, added = append_catalog_rejection_log(server_object, position)
+	if not ok then
+		report("Failed to write the stash catalogue rejection log")
+		return false
+	end
+	if not added then
+		report(string.format(
+			"Stash at %.3f, %.3f, %.3f is already marked for catalogue removal",
+			position.x, position.y, position.z
+		))
+		return true
+	end
+	report(string.format(
+		"Stash marked for catalogue removal at %.3f, %.3f, %.3f (id %s, model %s)",
+		position.x, position.y, position.z, tostring(server_object.id),
+		configured_model(section)
+	))
+	return true
+end
+
+function delete_stash_at_crosshair_and_log()
+	local server_object, error_message = catalog_stash_at_crosshair()
+	if not server_object then
+		report(error_message)
+		return false
+	end
+
+	-- Preserve all authoring information before releasing the live object. The
+	-- rejection log is the source record for removing the same placement from
+	-- the fixed catalogue; if it cannot be written, keep the object untouched.
+	local position = vector():set(server_object.position)
+	local id = server_object.id
+	local section = server_object:section_name()
+	local model = configured_model(section)
+	local ok, added = append_catalog_rejection_log(server_object, position)
+	if not ok then
+		report("Failed to write the stash catalogue rejection log; object was not deleted")
+		return false
+	end
+
+	alife():release(server_object, true)
+	report(string.format(
+		"Stash deleted and marked for catalogue removal at %.3f, %.3f, %.3f " ..
+		"(id %s, model %s, log %s)",
+		position.x, position.y, position.z, tostring(id), model,
+		added and "added" or "already present"
+	))
+	return true
+end
+
+function undo_last_qa_placement()
+	local record = last_placement_log_record()
+	if not record then
+		report("UNDO: the QA placement log is empty")
+		return false
+	end
+	if record.level ~= level.name() then
+		report("UNDO: the last QA placement belongs to another level")
+		return false
+	end
+
+	local server_object = record.id and alife():object(record.id, true) or nil
+	local current_section = server_object and server_object:section_name() or nil
+	local current_position = server_object and server_object.position or nil
+	local same_position = current_position and
+		math.abs(current_position.x - record.position.x) <= 0.001 and
+		math.abs(current_position.y - record.position.y) <= 0.001 and
+		math.abs(current_position.z - record.position.z) <= 0.001
+	if not server_object or current_section ~= record.section or not same_position then
+		report("UNDO: the last logged QA object no longer exists")
+		return false
+	end
+
+	local position = vector():set(server_object.position)
+	local log_ok, log_removed = remove_placement_log_record(server_object, position)
+	local pattern_ok, pattern_removed = remove_pattern_log_record(server_object, position)
+	if not log_ok or not pattern_ok or not log_removed then
+		report("UNDO: failed to update the QA logs; object was not deleted")
+		return false
+	end
+	alife():release(server_object, true)
+	report(string.format(
+		"UNDO: removed last QA object at %.3f, %.3f, %.3f (logs %s/%s)",
+		position.x, position.y, position.z,
+		log_removed and "placement removed" or "no placement",
+		pattern_removed and "pattern removed" or "no pattern"
+	))
+	return true
+end
+
+function on_key_press(dik)
+	return false
+end
+
+-- mod_script imports modules but does not invoke this callback automatically.
+on_game_start()

@@ -1,0 +1,541 @@
+-- Persistent Monolith base character and his progressive purchase of all
+-- thirty-six Notes of the Dead City.
+
+local LEVEL_NAME = "pripyat_full"
+local GUARDIAN_SECTION = "pf_monolith_guardian"
+local IMPORTANT_MARKER = "ui_pda2_quest_npc_location"
+local IMPORTANT_HINT = "pf_monolith_guardian_name"
+local BASE_WALK_PATH = "pf_monolith_rest_camp_walker_7_walk"
+local TARGET_POSITION = {x = 103, y = 3, z = -157}
+local PLACEMENT_TOLERANCE_SQR = 0.01
+local CHECK_INTERVAL_MS = 1000
+local NOTE_COUNT = 36
+local GUARDIAN_COMPASS_SECTION = "pf_guardian_compass"
+local COMPASS_SPRINT_BONUS = 0.05
+local RED_STASH_TIER = "red"
+local RED_STASH_NEWS = "pf_monolith_guardian_red_stash_revealed"
+local EXCHANGE_PRECONDITION_CACHE_MS = 250
+local COOKED_EXCHANGE_REQUIREMENTS = {
+	[2] = 5, -- Modificats.
+	[3] = 3, -- Mesomodificats.
+	[4] = 2  -- Hypermodificats.
+}
+
+local REWARD_STAGES = {
+	[12] = {
+		previous = nil,
+		flag = "pf_monolith_guardian_reward_12_taken",
+		notes = 12,
+		rewards = {"af_dik_1"}
+	},
+	[18] = {
+		previous = "pf_monolith_guardian_reward_12_taken",
+		flag = "pf_monolith_guardian_reward_18_taken",
+		notes = 6,
+		rewards = {"af_babka_2"}
+	},
+	[24] = {
+		previous = "pf_monolith_guardian_reward_18_taken",
+		flag = "pf_monolith_guardian_reward_24_taken",
+		notes = 6,
+		rewards = {GUARDIAN_COMPASS_SECTION}
+	},
+	[36] = {
+		previous = "pf_monolith_guardian_reward_24_taken",
+		flag = "pf_monolith_guardian_reward_36_taken",
+		notes = 12,
+		rewards = {"pf_guardian_seva_outfit"}
+	}
+}
+
+local next_check = 0
+local guardian_id = nil
+local guardian_placed_id = nil
+local guardian_spawn_failure_reported = false
+local compass_sprint_active = false
+local compass_base_sprint = nil
+local compass_item_ids = {}
+local compass_inventory_dirty = true
+local exchange_cache_time = -1
+local exchange_cache_tier_counts = {}
+local exchange_cache_section_counts = {}
+local exchange_cache_red_available = false
+
+local function find_server_object(section)
+	for _, object in alife():objects() do
+		if object:section_name() == section then return object end
+	end
+	return nil
+end
+
+local function prerequisites_met()
+	return db.actor ~= nil and
+		db.actor:has_info("pf_story_doc_12_found") and
+		db.actor:has_info("pf_story_preacher_reunion_finished") and
+		db.actor:has_info("pf_monolith_story_npcs_enabled")
+end
+
+local function resolve_spawn_data()
+	local walk_path = patrol(BASE_WALK_PATH)
+	local desired = vector():set(TARGET_POSITION.x, TARGET_POSITION.y, TARGET_POSITION.z)
+	local level_vertex_id = level.vertex_id(desired)
+	if not level.valid_vertex_id(level_vertex_id) then
+		-- The requested point was captured in-game and should be valid. Keep the
+		-- old verified base patrol point only as protection against another level
+		-- graph revision.
+		local walk_position = walk_path:point(0)
+		level_vertex_id = walk_path:level_vertex_id(0)
+		desired = vector():set(walk_position.x, walk_position.y, walk_position.z)
+		printf("! [PF GUARDIAN] requested position has no valid level vertex; using patrol fallback")
+	end
+
+	local yaw = 0
+	if db.actor then
+		local actor_position = db.actor:position()
+		local dx = actor_position.x - desired.x
+		local dz = actor_position.z - desired.z
+		if dx * dx + dz * dz > 0.001 then yaw = math.atan2(dx, dz) end
+	end
+	return desired, level_vertex_id, walk_path:game_vertex_id(0), yaw
+end
+
+local function resolve_creation_data()
+	-- ALife creation needs position, level vertex and game vertex from one
+	-- coherent graph point. The requested display position is applied only after
+	-- the server object exists; mixing it with a patrol game vertex could return
+	-- nil without ever creating the Keeper.
+	local walk_path = patrol(BASE_WALK_PATH)
+	local walk_position = walk_path:point(0)
+	return vector():set(walk_position.x, walk_position.y, walk_position.z),
+		walk_path:level_vertex_id(0), walk_path:game_vertex_id(0)
+end
+
+local function place_guardian(server_guardian, force)
+	if not server_guardian or level.name() ~= LEVEL_NAME then return false end
+	local position, level_vertex_id, game_vertex_id, yaw = resolve_spawn_data()
+	local current = server_guardian.position
+	local dx = current and current.x - position.x or 999
+	local dy = current and current.y - position.y or 999
+	local dz = current and current.z - position.z or 999
+	if not force and dx * dx + dy * dy + dz * dz <= PLACEMENT_TOLERANCE_SQR and
+		server_guardian.m_level_vertex_id == level_vertex_id then return false end
+
+	server_guardian.position = position
+	server_guardian.m_level_vertex_id = level_vertex_id
+	server_guardian.m_game_vertex_id = game_vertex_id
+	server_guardian.angle = vector():set(0, yaw, 0)
+	local client_guardian = level.object_by_id(server_guardian.id)
+	if client_guardian then
+		client_guardian:set_desired_position()
+		client_guardian:set_desired_direction()
+		client_guardian:set_npc_position(position)
+	end
+	printf(
+		"[PF GUARDIAN] placed at requested point (id=%d, lvid=%d, gvid=%d, pos=%.3f,%.3f,%.3f)",
+		server_guardian.id, level_vertex_id, game_vertex_id,
+		position.x, position.y, position.z
+	)
+	return true
+end
+
+local function spawn_guardian()
+	local existing = find_server_object(GUARDIAN_SECTION)
+	if existing then
+		guardian_id = existing.id
+		place_guardian(existing, false)
+		guardian_placed_id = existing.id
+		return existing
+	end
+	if level.name() ~= LEVEL_NAME then return nil end
+
+	local creation_position, creation_level_vertex_id, creation_game_vertex_id =
+		resolve_creation_data()
+	local guardian = alife():create(
+		GUARDIAN_SECTION, creation_position,
+		creation_level_vertex_id, creation_game_vertex_id
+	)
+	if not guardian then
+		if not guardian_spawn_failure_reported then
+			printf(
+				"! [PF GUARDIAN] failed to create section=%s at coherent patrol vertex lvid=%d gvid=%d",
+				GUARDIAN_SECTION, creation_level_vertex_id, creation_game_vertex_id)
+			guardian_spawn_failure_reported = true
+		end
+		return nil
+	end
+
+	place_guardian(guardian, true)
+	guardian_id = guardian.id
+	guardian_placed_id = guardian.id
+	guardian_spawn_failure_reported = false
+	local position, level_vertex_id, game_vertex_id = resolve_spawn_data()
+	printf(
+		"[PF GUARDIAN] spawned at Monolith base (id=%d, lvid=%d, gvid=%d, pos=%.3f,%.3f,%.3f)",
+		guardian.id, level_vertex_id, game_vertex_id,
+		position.x, position.y, position.z
+	)
+	return guardian
+end
+
+local function keep_guardian_neutral(server_guardian)
+	if not server_guardian or not db.actor then return end
+	local guardian = level.object_by_id(server_guardian.id)
+	if guardian and guardian:alive() then
+		guardian:force_set_goodwill(0, db.actor)
+	end
+end
+
+local function ensure_important_marker(server_guardian)
+	if not server_guardian then return end
+	if level.map_has_object_spot(server_guardian.id, IMPORTANT_MARKER) == 0 then
+		level.map_add_object_spot_ser(
+			server_guardian.id, IMPORTANT_MARKER, IMPORTANT_HINT
+		)
+	end
+end
+
+function found_note_count()
+	if not db.actor then return 0 end
+	local count = 0
+	for index = 1, NOTE_COUNT do
+		if db.actor:has_info(string.format("lz_ghost_city_note_%02d_found", index)) then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function inventory_notes()
+	local notes = {}
+	local indexes = {}
+	if not db.actor or not lz_new_mechanics or
+		not lz_new_mechanics.ghost_city_note_index then return notes end
+
+	db.actor:iterate_inventory(function(_, item)
+		local index = item and lz_new_mechanics.ghost_city_note_index(item:section()) or nil
+		-- Notes are a unique collection. A duplicated debug item must not count
+		-- as another page of the archive.
+		if index and not indexes[index] then
+			indexes[index] = true
+			table.insert(notes, {index = index, section = item:section()})
+		end
+	end, db.actor)
+	table.sort(notes, function(left, right) return left.index < right.index end)
+	return notes
+end
+
+function inventory_note_count()
+	return #inventory_notes()
+end
+
+function can_exchange(milestone)
+	milestone = tonumber(milestone)
+	local stage = REWARD_STAGES[milestone]
+	if not stage or not db.actor or db.actor:has_info(stage.flag) then return false end
+	if stage.previous and not db.actor:has_info(stage.previous) then return false end
+	return found_note_count() >= milestone and inventory_note_count() >= stage.notes
+end
+
+local function transfer_one_from_actor_silently(first_speaker, second_speaker, section)
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+	local item = db.actor and db.actor:object(section) or nil
+	if not npc or not item then return false end
+	db.actor:transfer_item(item, npc)
+	return true
+end
+
+local function give_one_to_actor_silently(first_speaker, second_speaker, section)
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+	if not db.actor or not npc then return false end
+	local item = npc:object(section)
+	if item then
+		npc:transfer_item(item, db.actor)
+	else
+		alife():create(
+			section, db.actor:position(), db.actor:level_vertex_id(),
+			db.actor:game_vertex_id(), db.actor:id()
+		)
+	end
+	return true
+end
+
+function exchange(first_speaker, second_speaker, milestone)
+	milestone = tonumber(milestone)
+	local stage = REWARD_STAGES[milestone]
+	if not stage or not can_exchange(milestone) then
+		printf("! [PF GUARDIAN] rejected invalid exchange milestone=%s", tostring(milestone))
+		return false
+	end
+
+	local notes = inventory_notes()
+	for index = 1, stage.notes do
+		transfer_one_from_actor_silently(first_speaker, second_speaker, notes[index].section)
+	end
+	for _, section in ipairs(stage.rewards) do
+		give_one_to_actor_silently(first_speaker, second_speaker, section)
+		-- While the dialogue is open this becomes an iconed line in its chat,
+		-- using the actual localized inventory name of the granted reward.
+		news_manager.relocate_item(db.actor, "in", section)
+	end
+	db.actor:give_info_portion(stage.flag)
+	printf(
+		"[PF GUARDIAN] exchange complete milestone=%d notes=%d rewards=%d",
+		milestone, stage.notes, #stage.rewards
+	)
+	return true
+end
+
+local function is_exchangeable_cooked(item)
+	if item == nil or db.actor == nil or db.actor:is_on_belt(item) then return false end
+	local tier = lz_nlc_anomaly_registry.artifact_tier(item:section())
+	return tier ~= nil and tier >= 2 and tier <= 5
+end
+
+local function rucksack_cooked_artifacts(tier, section)
+	local artifacts = {}
+	if not db.actor then return artifacts end
+	db.actor:iterate_inventory(function(_, item)
+		if is_exchangeable_cooked(item) and
+			lz_nlc_anomaly_registry.artifact_tier(item:section()) == tier and
+			(section == nil or item:section() == section) then
+			table.insert(artifacts, item)
+		end
+	end, db.actor)
+	table.sort(artifacts, function(left, right) return left:id() < right:id() end)
+	return artifacts
+end
+
+local function invalidate_exchange_cache()
+	exchange_cache_time = -1
+	exchange_cache_tier_counts = {}
+	exchange_cache_section_counts = {}
+	exchange_cache_red_available = false
+end
+
+local function cached_exchange_inventory()
+	local now = time_global()
+	if exchange_cache_time >= 0 and
+		now - exchange_cache_time <= EXCHANGE_PRECONDITION_CACHE_MS then
+		return exchange_cache_tier_counts, exchange_cache_section_counts,
+			exchange_cache_red_available
+	end
+
+	local tier_counts = {}
+	local section_counts = {}
+	if db.actor then
+		db.actor:iterate_inventory(function(_, item)
+			if is_exchangeable_cooked(item) then
+				local section = item:section()
+				local tier = lz_nlc_anomaly_registry.artifact_tier(section)
+				tier_counts[tier] = (tier_counts[tier] or 0) + 1
+				section_counts[section] = (section_counts[section] or 0) + 1
+			end
+		end, db.actor)
+	end
+	exchange_cache_tier_counts = tier_counts
+	exchange_cache_section_counts = section_counts
+	exchange_cache_red_available = pf_dynamic_stashes and
+		pf_dynamic_stashes.can_grant_hint and
+		pf_dynamic_stashes.can_grant_hint(RED_STASH_TIER) or false
+	exchange_cache_time = now
+	return exchange_cache_tier_counts, exchange_cache_section_counts,
+		exchange_cache_red_available
+end
+
+function can_exchange_cooked_tier(tier)
+	local required = COOKED_EXCHANGE_REQUIREMENTS[tier]
+	if not required then return false end
+	local tier_counts, _, red_available = cached_exchange_inventory()
+	return red_available and (tier_counts[tier] or 0) >= required
+end
+
+function can_exchange_absolute(section)
+	if not lz_nlc_anomaly_registry.is_absolute(section) then return false end
+	local _, section_counts, red_available = cached_exchange_inventory()
+	return red_available and (section_counts[section] or 0) >= 1
+end
+
+local function exchange_artifacts_for_hint(first_speaker, second_speaker, tier, amount, section)
+	local artifacts = rucksack_cooked_artifacts(tier, section)
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+	if #artifacts < amount or not npc or not pf_dynamic_stashes or
+		not pf_dynamic_stashes.can_grant_hint or
+		not pf_dynamic_stashes.can_grant_hint(RED_STASH_TIER) then
+		printf(
+			"! [PF GUARDIAN] rejected cooked exchange tier=%s amount=%s section=%s",
+			tostring(tier), tostring(amount), tostring(section)
+		)
+		return false
+	end
+
+	-- Reveal first: if no hint can be granted, every rucksack item remains safe.
+	if not pf_dynamic_stashes.grant_hint(RED_STASH_TIER, RED_STASH_NEWS) then
+		printf(
+			"! [PF GUARDIAN] failed to reveal a red stash tier=%s amount=%s section=%s",
+			tostring(tier), tostring(amount), tostring(section)
+		)
+		return false
+	end
+
+	for index = 1, amount do
+		db.actor:transfer_item(artifacts[index], npc)
+	end
+	invalidate_exchange_cache()
+	printf(
+		"[PF GUARDIAN] cooked exchange complete artifact_tier=%d amount=%d section=%s stash_tier=%s",
+		tier, amount, tostring(section), RED_STASH_TIER
+	)
+	return true
+end
+
+function exchange_cooked_tier(first_speaker, second_speaker, tier)
+	local required = COOKED_EXCHANGE_REQUIREMENTS[tier]
+	if not required then
+		printf("! [PF GUARDIAN] rejected unsupported cooked tier=%s", tostring(tier))
+		return false
+	end
+	return exchange_artifacts_for_hint(first_speaker, second_speaker, tier, required, nil)
+end
+
+function exchange_absolute(first_speaker, second_speaker, section)
+	if not lz_nlc_anomaly_registry.is_absolute(section) then
+		printf("! [PF GUARDIAN] rejected non-absolute exchange item=%s", tostring(section))
+		return false
+	end
+	return exchange_artifacts_for_hint(first_speaker, second_speaker, 5, 1, section)
+end
+
+local function refresh_compass_item_id()
+	compass_item_ids = {}
+	if db.actor then
+		db.actor:iterate_inventory(function(_, item)
+			if item and item:section() == GUARDIAN_COMPASS_SECTION then
+				table.insert(compass_item_ids, item:id())
+			end
+		end, db.actor)
+	end
+	compass_inventory_dirty = false
+end
+
+local function guardian_compass_on_belt()
+	if not db.actor then return false end
+	if compass_inventory_dirty then refresh_compass_item_id() end
+	local stale = false
+	for _, id in ipairs(compass_item_ids) do
+		local item = level.object_by_id(id)
+		if item and item:section() == GUARDIAN_COMPASS_SECTION then
+			if db.actor:is_on_belt(item) then return true end
+		else
+			stale = true
+		end
+	end
+	if stale then
+		refresh_compass_item_id()
+		for _, id in ipairs(compass_item_ids) do
+			local item = level.object_by_id(id)
+			if item and db.actor:is_on_belt(item) then return true end
+		end
+	end
+	return false
+end
+
+local function restore_compass_sprint()
+	if compass_sprint_active and db.actor and compass_base_sprint then
+		db.actor:set_actor_sprint_koef(compass_base_sprint)
+	end
+	compass_sprint_active = false
+	compass_base_sprint = nil
+end
+
+function on_actor_inventory_item_take(item)
+	if item and item:section() == GUARDIAN_COMPASS_SECTION then
+		compass_inventory_dirty = true
+	end
+end
+
+function on_actor_inventory_item_drop(item)
+	if item and item:section() == GUARDIAN_COMPASS_SECTION then
+		compass_inventory_dirty = true
+	end
+end
+
+function on_actor_inventory_trade(item, sell_bye)
+	if not item or item:section() == GUARDIAN_COMPASS_SECTION then
+		compass_inventory_dirty = true
+	end
+end
+
+local function update_compass_sprint()
+	if not db.actor then return end
+	local equipped = guardian_compass_on_belt()
+	if equipped == compass_sprint_active then return end
+	if compass_sprint_active then restore_compass_sprint() end
+	if equipped then
+		compass_base_sprint = db.actor:get_actor_sprint_koef()
+		db.actor:set_actor_sprint_koef(compass_base_sprint * (1 + COMPASS_SPRINT_BONUS))
+		compass_sprint_active = true
+	end
+end
+
+function ensure_story_spawn()
+	if not db.actor or level.name() ~= LEVEL_NAME or not prerequisites_met() then
+		return false
+	end
+	local guardian = (guardian_id and alife():object(guardian_id, true)) or
+		find_server_object(GUARDIAN_SECTION) or spawn_guardian()
+	if not guardian then return false end
+	guardian_id = guardian.id
+	-- Placement is a one-shot migration for old saves. Reapplying an exact
+	-- position every second fights the NPC physics/remark scheme and makes him
+	-- visibly jump between the requested point and the corrected stance.
+	if guardian_placed_id ~= guardian.id then
+		place_guardian(guardian, false)
+		guardian_placed_id = guardian.id
+	end
+	keep_guardian_neutral(guardian)
+	ensure_important_marker(guardian)
+	return true
+end
+
+function update()
+	if not db.actor then return end
+	local now = time_global()
+	if now < next_check then return end
+	next_check = now + CHECK_INTERVAL_MS
+	update_compass_sprint()
+	ensure_story_spawn()
+end
+
+function reset()
+	restore_compass_sprint()
+	invalidate_exchange_cache()
+	next_check = 0
+	guardian_id = nil
+	guardian_placed_id = nil
+	guardian_spawn_failure_reported = false
+	compass_item_ids = {}
+	compass_inventory_dirty = true
+end
+
+-- QA: run_string pf_monolith_guardian.debug_status()
+function debug_status()
+	local guardian = (guardian_id and alife():object(guardian_id, true)) or
+		find_server_object(GUARDIAN_SECTION)
+	printf(
+		"[PF GUARDIAN] status level=%s prerequisites=%s spawned=%s notes=%d inventory_notes=%d compass_sprint=%s",
+		tostring(level.name()), tostring(prerequisites_met()),
+		tostring(guardian ~= nil), found_note_count(), inventory_note_count(),
+		tostring(compass_sprint_active)
+	)
+	return guardian ~= nil
+end
+
+-- QA shortcut for placement checks; it does not grant story information.
+-- run_string pf_monolith_guardian.debug_spawn()
+function debug_spawn()
+	if not db.actor or level.name() ~= LEVEL_NAME then return false end
+	local guardian = spawn_guardian()
+	keep_guardian_neutral(guardian)
+	ensure_important_marker(guardian)
+	return guardian ~= nil
+end

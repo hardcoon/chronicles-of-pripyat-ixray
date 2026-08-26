@@ -1,0 +1,688 @@
+; Registration of data belonging to the pripyat_full location.
+; This file extends the stock Call of Pripyat lists through DLTX and avoids
+; replacing system.ltx with the incompatible IWP/CoC version.
+
+#include "zones\mod_zones_pripyat_full.ltx"
+
+; Keep the original IWP late-afternoon start, but set the calendar to the
+; 30th anniversary of the Chernobyl disaster.
+![alife]
+start_date = 26.04.2016
+start_time = 16:30:00
+
+![info_portions]
+>files = info_pripyat_full
+
+![dialogs]
+>files = dialogs_pripyat_full, dialogs_pf_yanov_trapper, dialogs_pf_yanov_nimble
+
+![profiles]
+>files = npc_profile_pripyat_full, npc_profile_pf_yanov_nimble
+>specific_characters_files = character_desc_pripyat_full, character_desc_pf_yanov_nimble
+
+; Fixed Monolith detachments for the central Pripyat complex.  Both lineups
+; deliberately stop at rank 2: rank 3/4 profiles may select heavy/exoskeleton
+; visuals, while rank 2 is the requested upper limit (SEVA-class equipment).
+[pf_monolith_rest_squad]:online_offline_group
+faction = monolith
+npc = sim_default_monolith_2, sim_default_monolith_2, sim_default_monolith_1, sim_default_monolith_1, sim_default_monolith_1, sim_default_monolith_0, sim_default_monolith_0
+target_smart = pf_monolith_rest_camp
+spawn_point = pf_monolith_rest_camp_walker_1_walk
+
+; Keep the anonymous actor portrait when the starting suit is equipped.
+![stalker_outfit]
+character_portrait = ui_inGame2_no_data
+actor_visual = actors\stalker_neutral\stalker_neutral_2_mask.ogf
+
+; The protagonist is an unknown stalker, not Major Degtyarev. Use ordinary
+; NPC world models that match the equipped suit and hide the unique face.
+![actor]
+visual = actors\stalker_neutral\stalker_neutral_1.ogf
+
+![novice_outfit]
+; The stock/addon model is Degtyarev in a black coat. Use the ordinary
+; black-coated bandit body instead.
+actor_visual = actors\stalker_bandit\stalker_bandit_4.ogf
+
+; STCoP adds three more light/coat outfits whose actor models are also
+; Degtyarev-specific (stalker_hero_*). Keep the clothes, but use ordinary
+; NPC bodies with the matching jacket/coat colour.
+![bandit_outfit]
+actor_visual = actors\stalker_bandit\stalker_bandit_1.ogf
+
+![bandit_brownrain_outfit]
+actor_visual = actors\stalker_bandit\stalker_bandit_3.ogf
+
+![bandit_blackrain_outfit]
+actor_visual = actors\stalker_bandit\stalker_bandit_4.ogf
+
+![svoboda_light_outfit]
+actor_visual = actors\stalker_freedom\stalker_freedom_2_mask.ogf
+
+![dolg_outfit]
+actor_visual = actors\stalker_dolg\stalker_dolg_2.ogf
+
+![scientific_outfit]
+actor_visual = actors\stalker_neutral\stalker_neutral_nauchniy.ogf
+
+![cs_heavy_outfit]
+actor_visual = actors\stalker_neutral\stalker_neutral_3.ogf
+
+![svoboda_heavy_outfit]
+actor_visual = actors\stalker_freedom\stalker_freedom_3.ogf
+
+![svoboda_outfit]
+actor_visual = actors\stalker_freedom\stalker_freedom_1.ogf
+
+![specops_outfit]
+actor_visual = actors\stalker_soldier\stalker_soldier_2.ogf
+
+![military_outfit]
+actor_visual = actors\stalker_soldier\stalker_soldier_4.ogf
+
+![dolg_heavy_outfit]
+actor_visual = actors\stalker_dolg\stalker_dolg_3.ogf
+
+![exo_outfit]
+actor_visual = actors\stalker_neutral\stalker_neutral_4.ogf
+
+![monolith_outfit]
+actor_visual = actors\stalker_monolith\stalker_monolith_2.ogf
+
+; A sound-only stash detector. The separate black-and-white model and HUD keep
+; it visually distinct from the stock artefact detector. af_radius=0 disables
+; native artefact detection; pf_dynamic_stashes.script drives the stash pulse.
+[pf_metal_detector_homemade]:detector_simple
+$spawn = "devices\pf_metal_detector_homemade"
+visual = dynamics\devices\dev_detector_1\pf_detector_bw1.ogf
+hud = pf_metal_detector_homemade_hud
+inv_name = pf_metal_detector_homemade_name
+inv_name_short = pf_metal_detector_homemade_name
+description = pf_metal_detector_homemade_descr
+inv_weight = 0.55
+cost = 900
+can_trade = true
+icons_texture = ui\pf_metal_detector_homemade_rust
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+af_radius = 0
+af_vis_radius = 0
+use_condition = true
+lz_detector_battery_lifetime = 3600
+use1_text = lz_nm_action_disassemble_detector
+use1_functor = lz_new_mechanics.disassemble_detector
+
+[pf_metal_detector_homemade_hud]:detector_simple_hud
+item_visual = dynamics\devices\dev_detector_1\pf_detector_bw1_hud
+
+; Black-and-white stash-detector variants. They keep the stock Bear/Veles
+; animations and silhouettes while sharing Homemade's stash-search balance.
+[pf_metal_detector_wave]:detector_advanced
+$spawn = "devices\pf_metal_detector_wave"
+visual = dynamics\devices\dev_detector_2\pf_detector_bw2.ogf
+hud = pf_metal_detector_wave_hud
+inv_name = pf_metal_detector_wave_name
+inv_name_short = pf_metal_detector_wave_name
+description = pf_metal_detector_wave_descr
+inv_weight = 0.55
+cost = 900
+can_trade = true
+icons_texture = ui\pf_metal_detector_wave_rust
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 1
+inv_grid_y = 0
+af_radius = 0
+af_vis_radius = 0
+use_condition = true
+lz_detector_battery_lifetime = 2700
+use1_text = lz_nm_action_disassemble_detector
+use1_functor = lz_new_mechanics.disassemble_detector
+
+[pf_metal_detector_wave_hud]:detector_advanced_hud
+item_visual = dynamics\devices\dev_detector_2\pf_detector_bw2_hud
+
+[pf_metal_detector_magnet]:detector_elite
+$spawn = "devices\pf_metal_detector_magnet"
+visual = dynamics\devices\dev_detector_3\pf_detector_bw3.ogf
+hud = pf_metal_detector_magnet_hud
+ui_xml_tag = pf_magnet
+inv_name = pf_metal_detector_magnet_name
+inv_name_short = pf_metal_detector_magnet_name
+description = pf_metal_detector_magnet_descr
+inv_weight = 0.55
+cost = 900
+can_trade = true
+icons_texture = ui\pf_metal_detector_magnet_rust
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 0
+af_radius = 0
+af_vis_radius = 0
+use_condition = true
+lz_detector_battery_lifetime = 1800
+use1_text = lz_nm_action_disassemble_detector
+use1_functor = lz_new_mechanics.disassemble_detector
+
+[pf_metal_detector_magnet_hud]:detector_elite_hud
+item_visual = dynamics\devices\dev_detector_3\pf_detector_bw3_hud
+
+; Separate reusable QA tool. The Guide gives the original hand_radio section,
+; which is presented as the debug metal detector and manually retrieves a
+; nearby discovered stash through geometry.
+![hand_radio]
+inv_name = pf_metal_detector_name
+inv_name_short = pf_metal_detector_name
+description = pf_metal_detector_descr
+use1_text = pf_metal_detector_use
+use1_functor = pf_dynamic_stashes.use_metal_detector
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 18
+inv_grid_y = 38
+
+; Lootable one-use PDAs. They deliberately inherit the attachable-item class
+; from hand_radio instead of S_PDA: this exposes IX-Ray's custom Use action
+; without occupying the actor's permanent PDA slot.
+[pf_stash_pda_novice]:hand_radio
+$spawn = "devices\pf_stash_pda_novice"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_stash_pda_novice_name
+inv_name_short = pf_stash_pda_novice_name
+description = pf_stash_pda_novice_descr
+inv_weight = 0.1
+cost = 500
+can_trade = true
+use1_text = pf_stash_pda_use
+use1_functor = pf_dynamic_stashes.use_stash_pda
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\pf_stash_pda_icons
+
+[pf_stash_pda_stalker]:hand_radio
+$spawn = "devices\pf_stash_pda_stalker"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_stash_pda_stalker_name
+inv_name_short = pf_stash_pda_stalker_name
+description = pf_stash_pda_stalker_descr
+inv_weight = 0.1
+cost = 1500
+can_trade = true
+use1_text = pf_stash_pda_use
+use1_functor = pf_dynamic_stashes.use_stash_pda
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 1
+inv_grid_y = 0
+icons_texture = ui\pf_stash_pda_icons
+
+[pf_stash_pda_veteran]:hand_radio
+$spawn = "devices\pf_stash_pda_veteran"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_stash_pda_veteran_name
+inv_name_short = pf_stash_pda_veteran_name
+description = pf_stash_pda_veteran_descr
+inv_weight = 0.1
+cost = 4000
+can_trade = true
+use1_text = pf_stash_pda_use
+use1_functor = pf_dynamic_stashes.use_stash_pda
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 0
+icons_texture = ui\pf_stash_pda_icons
+
+[pf_stash_pda_master]:hand_radio
+$spawn = "devices\pf_stash_pda_master"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_stash_pda_master_name
+inv_name_short = pf_stash_pda_master_name
+description = pf_stash_pda_master_descr
+inv_weight = 0.1
+cost = 10000
+can_trade = true
+use1_text = pf_stash_pda_use
+use1_functor = pf_dynamic_stashes.use_stash_pda
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 3
+inv_grid_y = 0
+icons_texture = ui\pf_stash_pda_icons
+
+; The Pripyat Full spawn uses lightweight pf_stage_* wrappers for anomaly
+; streaming. Register those exact section names with the native HUD detector,
+; otherwise it cannot see them and neither the Geiger counter nor the anomaly
+; warning beep is played.
+![all_zone_detector]
+
+zone_class_54 = pf_stage_zone_mine_gravitational_strong
+zone_freq_54 = 0.05, 2
+zone_sound_54_ = detectors\DA-2_beep1
+
+zone_class_55 = pf_stage_zone_field_radioactive_strong
+zone_freq_55 = 0.01, 2
+zone_sound_55_ = detectors\geiger_1
+zone_sound_55_1 = detectors\geiger_2
+zone_sound_55_2 = detectors\geiger_3
+zone_sound_55_3 = detectors\geiger_4
+zone_sound_55_4 = detectors\geiger_5
+zone_sound_55_5 = detectors\geiger_6
+zone_sound_55_6 = detectors\geiger_1
+zone_sound_55_7 = detectors\geiger_1
+zone_sound_55_8 = detectors\geiger_1
+
+zone_class_56 = pf_stage_zone_mine_acidic_strong
+zone_freq_56 = 0.05, 2
+zone_sound_56_ = detectors\DA-2_beep1
+
+zone_class_57 = pf_stage_zone_mine_electric_strong
+zone_freq_57 = 0.05, 2
+zone_sound_57_ = detectors\DA-2_beep1
+
+zone_class_58 = pf_stage_zone_field_acidic_strong
+zone_freq_58 = 0.05, 2
+zone_sound_58_ = detectors\DA-2_beep1
+
+zone_class_59 = pf_stage_zone_field_acidic_average
+zone_freq_59 = 0.05, 2
+zone_sound_59_ = detectors\DA-2_beep1
+
+zone_class_60 = pf_stage_zone_zharka_static_strong
+zone_freq_60 = 0.05, 2
+zone_sound_60_ = detectors\DA-2_beep1
+
+zone_class_61 = pf_stage_zone_burning_fuzz_strong
+zone_freq_61 = 0.05, 2
+zone_sound_61_ = detectors\DA-2_beep1
+
+zone_class_62 = pf_stage_zone_mine_gravitational_average
+zone_freq_62 = 0.05, 2
+zone_sound_62_ = detectors\DA-2_beep1
+
+zone_class_63 = pf_stage_zone_field_thermal_strong
+zone_freq_63 = 0.05, 2
+zone_sound_63_ = detectors\DA-2_beep1
+
+zone_class_64 = pf_stage_zone_buzz_weak
+zone_freq_64 = 0.05, 2
+zone_sound_64_ = detectors\DA-2_beep1
+
+; Svarog owns a separate native zone list. Keep its inherited vanilla entries
+; 1..33 contiguous, then register the streamed Pripyat Full wrappers here.
+; Gaps are not allowed: CZoneList stops reading at the first missing index.
+![detector_scientific]
+
+zone_class_34 = pf_stage_zone_mine_gravitational_strong
+zone_freq_34 = 0.05, 2
+
+zone_class_35 = pf_stage_zone_field_radioactive_strong
+zone_freq_35 = 0.05, 2
+
+zone_class_36 = pf_stage_zone_mine_acidic_strong
+zone_freq_36 = 0.05, 2
+
+zone_class_37 = pf_stage_zone_mine_electric_strong
+zone_freq_37 = 0.05, 2
+
+zone_class_38 = pf_stage_zone_field_acidic_strong
+zone_freq_38 = 0.05, 2
+
+zone_class_39 = pf_stage_zone_field_acidic_average
+zone_freq_39 = 0.05, 2
+
+zone_class_40 = pf_stage_zone_zharka_static_strong
+zone_freq_40 = 0.05, 2
+
+zone_class_41 = pf_stage_zone_burning_fuzz_strong
+zone_freq_41 = 0.05, 2
+
+zone_class_42 = pf_stage_zone_mine_gravitational_average
+zone_freq_42 = 0.05, 2
+
+zone_class_43 = pf_stage_zone_field_thermal_strong
+zone_freq_43 = 0.05, 2
+
+zone_class_44 = pf_stage_zone_buzz_weak
+zone_freq_44 = 0.05, 2
+
+; Lootable backpacks placed by pf_kpp_stashes.script in the checkpoint room.
+[pf_kpp_loot_backpack]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak.ogf
+
+; Production sections used by persistent scripted stashes.
+[pf_stash_backpack]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak_ol.ogf
+
+[pf_stash_box_1c]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak_bw.ogf
+
+[pf_stash_box_1a]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak_gb.ogf
+
+[pf_stash_box_1b]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak_bk.ogf
+
+[pf_stash_backpack_khaki]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak_kh.ogf
+
+[pf_stash_backpack_sandstone]:inventory_box
+visual = dynamics\devices\dev_rukzak\dev_rukzak_ds.ogf
+
+[pf_stash_barrel_1]:inventory_box
+visual = dynamics\balon\bochka_close_1.ogf
+
+[pf_stash_barrel_2]:inventory_box
+visual = dynamics\balon\bochka_close_2.ogf
+
+[pf_stash_barrel_3]:inventory_box
+visual = dynamics\balon\bochka_close_3.ogf
+
+[pf_stash_barrel_4]:inventory_box
+visual = dynamics\balon\bochka_close_4.ogf
+
+[pf_stash_box_metal]:inventory_box
+visual = dynamics\box\box_metall_01.ogf
+
+[pf_stash_safe_container]:inventory_box
+visual = dynamics\equipments\quest\safe_container.ogf
+
+; Empty QA container placed directly at the crosshair by pf_stash_qa.script.
+; Its unique section keeps manual test placements outside the production
+; dynamic-stash manager even after that manager is enabled again.
+[pf_qa_crosshair_stash]:pf_stash_backpack
+
+; Persistent empty containers for the first manually approved two-house
+; catalogue. They are independent of the disabled rotating stash manager.
+[pf_fixed_house_stash_backpack]:inventory_box
+$spawn = "devices\pf_fixed_house_stash_backpack"
+visual = dynamics\devices\dev_rukzak\dev_rukzak_ol.ogf
+radius = 1
+
+[pf_fixed_house_stash_wood_box]:inventory_box
+$spawn = "devices\pf_fixed_house_stash_wood_box"
+visual = dynamics\box\box_wood_01.ogf
+radius = 1
+
+; Stash ambush squads use ordinary faction character profiles and therefore
+; retain the global equipment/death-loot balance. Only their count is fixed to
+; the requested random range of two to four attackers.
+[pf_ambush_merc_novice]:online_offline_group
+faction = killer
+npc_random = sim_default_killer_0, sim_default_killer_1
+npc_in_squad = 2, 4
+relationship = enemy
+
+[pf_ambush_monolith_novice]:online_offline_group
+faction = monolith
+npc_random = sim_default_monolith_0, sim_default_monolith_1
+npc_in_squad = 2, 4
+relationship = enemy
+
+[pf_ambush_merc_advanced]:online_offline_group
+faction = killer
+npc_random = sim_default_killer_1, sim_default_killer_2
+npc_in_squad = 2, 4
+relationship = enemy
+
+[pf_ambush_monolith_advanced]:online_offline_group
+faction = monolith
+npc_random = sim_default_monolith_1, sim_default_monolith_2
+npc_in_squad = 2, 4
+relationship = enemy
+
+; Strange-consumable wake-up encounters. Each section is a coherent pack;
+; the script chooses one section at random and spawns it behind the actor.
+[lz_nm_strange_mutants_strong_bloodsuckers]:online_offline_group
+faction = monster
+npc_random = bloodsucker_strong
+npc_in_squad = 2, 3
+
+[lz_nm_strange_mutants_strong_snorks]:online_offline_group
+faction = monster
+npc_random = snork_indoor_strong
+npc_in_squad = 4, 6
+
+[lz_nm_strange_mutants_strong_boars]:online_offline_group
+faction = monster
+npc_random = boar_strong
+npc_in_squad = 4, 6
+
+[lz_nm_strange_mutants_strong_chimeras]:online_offline_group
+faction = monster
+npc_random = chimera_normal
+npc_in_squad = 2, 2
+
+[lz_nm_strange_mutants_weak_dogs]:online_offline_group
+faction = monster
+npc_random = dog_weak
+npc_in_squad = 5, 8
+
+[lz_nm_strange_mutants_weak_tushkano]:online_offline_group
+faction = monster
+npc_random = tushkano_normal
+npc_in_squad = 8, 12
+
+[lz_nm_strange_mutants_weak_flesh]:online_offline_group
+faction = monster
+npc_random = flesh_normal
+npc_in_squad = 4, 6
+
+[lz_nm_strange_mutants_weak_boars]:online_offline_group
+faction = monster
+npc_random = boar_normal
+npc_in_squad = 3, 5
+
+[lz_nm_strange_mercs_weak]:online_offline_group
+faction = killer
+npc_random = sim_default_killer_0
+npc_in_squad = 3, 5
+relationship = enemy
+
+; STCoP's quest/trade tables retain these two stock Nimble section names,
+; while its weapon pack omits the corresponding definitions. Keep the IDs
+; valid by inheriting the pack's own base weapons and overriding only safe,
+; data-only identity fields (no incompatible donor HUD or model paths).
+[wpn_fn2000_nimble]:wpn_fn2000
+$spawn = "weapons\wpn_fn2000_nimble"
+description = st_wpn_fn2000_nimble_descr
+inv_name = st_wpn_fn2000_nimble
+inv_name_short = st_wpn_fn2000_nimble
+cost = 110000
+
+[wpn_protecta_nimble]:wpn_protecta
+$spawn = "weapons\wpn_protecta_nimble"
+description = st_wpn_protecta_nimble_descr
+inv_name = st_wpn_protecta_nimble
+inv_name_short = st_wpn_protecta_nimble
+cost = 135000
+
+; Scientist-bunker population. The stable product contract for Hermann and
+; guards 01/02 is documented in docs/PF_BUNKER_NPC_RUNTIME.md. Novikov is
+; explicitly excluded from that reference until his custom pose is fixed.
+; No walker/animpoint paths, smart terrains or squads are assigned here.
+[pf_bunker_novikov]:stalker
+$spawn = "respawn\pf_bunker_novikov"
+character_profile = pf_bunker_novikov
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_bunker_novikov.ltx
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+
+[pf_bunker_hermann]:stalker
+$spawn = "respawn\pf_bunker_hermann"
+character_profile = pf_bunker_hermann
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_bunker_hermann.ltx
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+
+[pf_bunker_guard_01]:stalker
+$spawn = "respawn\pf_bunker_guard_01"
+character_profile = pf_bunker_guard_01
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_bunker_guard_commander.ltx
+story_id = pf_bunker_guard_01
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+
+[pf_bunker_guard_02]:stalker
+$spawn = "respawn\pf_bunker_guard_02"
+character_profile = pf_bunker_guard_02
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_bunker_guard_static.ltx
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+
+[pf_bunker_guard_03]:stalker
+$spawn = "respawn\pf_bunker_guard_03"
+character_profile = pf_bunker_guard_03
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_bunker_guard_03.ltx
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+
+[pf_bunker_guard_04]:stalker
+$spawn = "respawn\pf_bunker_guard_04"
+character_profile = pf_bunker_guard_04
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_bunker_guard_04.ltx
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+
+; Yanov station residents. These project-local sections deliberately avoid
+; the stock Jupiter story/dialog IDs, which still belong to the original map.
+[pf_yanov_hawaiian]:stalker
+$spawn = "respawn\pf_yanov_hawaiian"
+character_profile = pf_yanov_hawaiian
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_yanov_hawaiian.ltx
+story_id = pf_yanov_hawaiian
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+trade_section = pf_yanov_hawaiian_trade_prices
+; The authored bartender placement overlaps the counter with the stock
+; 0.35/0.40 m horizontal half-size. Keep the normal vertical boxes and narrow
+; only this stationary trader's X/Z footprint so physics does not push him out.
+ph_box0_size = 0.15, 0.9, 0.15
+ph_box1_size = 0.15, 0.6, 0.15
+
+[pf_yanov_hawaiian_trade_prices]
+buy_price_factor_hostile = 0.10
+buy_price_factor_friendly = 0.10
+sell_price_factor_hostile = 2.00
+sell_price_factor_friendly = 2.00
+
+; Azot/Nitro is a permanently seated technician whose visual pose overlaps the
+; table. Keep a small foot-level physics proxy so he remains supported by the
+; floor, but end it below the lowest table collision surface. This is personal
+; to Azot and must never be inherited by walking or combat NPCs.
+[pf_yanov_nitro]:stalker
+$spawn = "respawn\pf_yanov_nitro"
+character_profile = pf_yanov_nitro
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_yanov_nitro.ltx
+story_id = pf_yanov_nitro
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+ph_box0_center = 0.0, 0.30, 0.0
+ph_box0_size = 0.05, 0.30, 0.05
+ph_box1_center = 0.0, 0.30, 0.0
+ph_box1_size = 0.05, 0.30, 0.05
+
+; Zveroboy/Trapper is authored off the AI mesh in the Yanov basement. Keep
+; normal character physics: unlike the counter/table poses above, sit_ass does
+; not require a reduced collision box or a periodic position correction.
+[pf_yanov_trapper]:stalker
+$spawn = "respawn\pf_yanov_trapper"
+character_profile = pf_yanov_trapper
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_yanov_trapper.ltx
+story_id = pf_yanov_trapper
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+
+; Nimble is promoted from an NPC Editor authoring record to a permanent Yanov
+; resident. A project-local profile deliberately omits all stock Zaton order
+; and weapon-dialog IDs; only the minimal hello/bye graph remains available.
+; The baked bench would push a normal stalker capsule forward. As with Nitro,
+; keep only a small foot-level proxy below the seat collision surface.
+[pf_yanov_nimble]:stalker
+$spawn = "respawn\pf_yanov_nimble"
+character_profile = pf_yanov_nimble
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_yanov_nimble.ltx
+story_id = pf_yanov_nimble
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+ph_box0_center = 0.0, 0.30, 0.0
+ph_box0_size = 0.05, 0.30, 0.05
+ph_box1_center = 0.0, 0.30, 0.0
+ph_box1_size = 0.05, 0.30, 0.05
+
+; Configuration-level immortality cannot be reverted by stalker_generic's
+; per-frame invulnerability synchronization.
+[pf_bunker_immortal_immunities]
+burn_immunity = 0.0
+strike_immunity = 0.0
+shock_immunity = 0.0
+wound_immunity = 0.0
+radiation_immunity = 0.0
+telepatic_immunity = 0.0
+chemical_burn_immunity = 0.0
+explosion_immunity = 0.0
+fire_wound_immunity = 0.0
+wound_2_immunity = 0.0
+
+; Persistent physical objective for the bunker-access quest. The runtime
+; creates a single ALife instance only after the commander gives coordinates.
+[pf_bunker_access_case]:device_pda
+$spawn = "quest_items\pf_bunker_access_case"
+$prefetch = 16
+story_id = pf_bunker_access_case
+visual = dynamics\equipments\quest\safe_container.ogf
+slot = -1
+default_to_ruck = true
+inv_name = pf_bunker_access_case_name
+inv_name_short = pf_bunker_access_case_name
+description = pf_bunker_access_case_descr
+inv_weight = 2.0
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 23
+cost = 0
+can_trade = false
+quest_item = true
+
+; Portable 20-litre canister for profile-enabled DCP vehicles.
+[pf_vehicle_fuel_canister]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_vehicle_fuel_canister"
+$prefetch = 16
+cform = skeleton
+class = II_ATTCH
+visual = dynamics\equipments\pf_vehicle_fuel_canister.ogf
+slot = -1
+default_to_ruck = true
+inv_name = pf_vehicle_fuel_canister_name
+inv_name_short = pf_vehicle_fuel_canister_name_short
+description = pf_vehicle_fuel_canister_descr
+use1_text = pf_vehicle_fuel_action_refuel
+use1_functor = pf_vehicle_fuel.use_canister
+inv_weight = 10.0
+icons_texture = ui\pf_vehicle_fuel_canister
+inv_grid_width = 1
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+cost = 6000
+can_trade = true
+quest_item = false
+auto_attach = false

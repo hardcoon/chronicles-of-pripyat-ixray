@@ -1,0 +1,24 @@
+local original_traveler_precond = nil
+local installed = false
+
+local function monolith_filtered_traveler_precond(actor, npc)
+	if npc ~= nil and npc:character_community() == "monolith" then
+		return false
+	end
+
+	return original_traveler_precond(actor, npc)
+end
+
+function register(_)
+	if installed then
+		return
+	end
+
+	original_traveler_precond = travel_manager.uni_traveler_precond
+	if type(original_traveler_precond) ~= "function" then
+		abort("Monolith dialog guard: travel_manager.uni_traveler_precond is unavailable")
+	end
+
+	travel_manager.uni_traveler_precond = monolith_filtered_traveler_precond
+	installed = true
+end

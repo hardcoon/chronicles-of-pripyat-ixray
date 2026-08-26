@@ -1,0 +1,555 @@
+function give_radio(first_speaker, second_speaker)
+	if db.actor:has_info("pf_guide_radio_received") then
+		return
+	end
+
+	dialogs.relocate_item_section_to_actor(first_speaker, second_speaker, "hand_radio")
+	db.actor:give_info_portion("pf_guide_radio_received")
+end
+
+function finish_guide_dialog(first_speaker, second_speaker)
+	if not db.actor:has_info("pf_guide_dialog_done") then
+		db.actor:give_info_portion("pf_guide_dialog_done")
+	end
+
+	local story_just_started = not db.actor:has_info("pf_story_past_started")
+	if not db.actor:has_info("pf_story_past_started") then
+		db.actor:give_info_portion("pf_story_past_started")
+		task_manager.get_task_manager():give_task("pf_learn_past")
+	end
+
+	if story_just_started then
+		xr_effects.scenario_autosave(
+			db.actor, second_speaker, {"st_save_pf_story_started"})
+	end
+	level.add_complex_effector("fade_in_out", 8914)
+end
+
+-- Non-lethal encounter branch: after the sermon Sergey may hand over the
+-- pendant voluntarily. Taking it still drives the same document chain as
+-- looting it from his corpse.
+function give_preacher_pendant(first_speaker, second_speaker)
+	dialogs.relocate_item_section_to_actor(first_speaker, second_speaker, "pf_story_brother_pendant")
+	pf_story_encounter.on_pendant_given_alive(second_speaker)
+end
+
+-- The reunion no longer takes Sergey's pendant away. He keeps the clue while
+-- he is alive, withdraws from the conversation and goes aside to pray.
+function finish_preacher_reunion(first_speaker, second_speaker)
+	pf_story_encounter.on_preacher_reunion_finished(second_speaker)
+end
+
+function guardian_can_exchange_12(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange(12)
+end
+
+function guardian_can_exchange_18(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange(18)
+end
+
+function guardian_can_exchange_24(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange(24)
+end
+
+function guardian_can_exchange_36(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange(36)
+end
+
+function guardian_exchange_12(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange(first_speaker, second_speaker, 12)
+end
+
+function guardian_exchange_18(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange(first_speaker, second_speaker, 18)
+end
+
+function guardian_exchange_24(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange(first_speaker, second_speaker, 24)
+end
+
+function guardian_exchange_36(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange(first_speaker, second_speaker, 36)
+end
+
+local guardian_t3_pair_groups = {
+	gravi = {
+		"af_gravi", "af_gold_fish", "af_eye", "af_fire",
+		"af_baloon", "af_glass", "af_dummy_dummy", "af_ice"
+	},
+	gold_fish = {
+		"af_gold_fish", "af_eye", "af_fire", "af_baloon",
+		"af_glass", "af_dummy_dummy", "af_ice"
+	},
+	eye = {
+		"af_eye", "af_fire", "af_baloon", "af_glass", "af_dummy_dummy", "af_ice"
+	},
+	fire = {"af_fire", "af_baloon", "af_glass", "af_dummy_dummy", "af_ice"},
+	baloon = {"af_baloon", "af_glass", "af_dummy_dummy", "af_ice"},
+	glass = {"af_glass", "af_dummy_dummy", "af_ice"},
+	dummy_dummy = {"af_dummy_dummy", "af_ice"},
+	ice = {"af_ice"}
+}
+
+function guardian_can_single_gravi(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_gravi")
+end
+
+function guardian_exchange_single_gravi(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_gravi")
+end
+
+function guardian_can_single_gold_fish(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_gold_fish")
+end
+
+function guardian_exchange_single_gold_fish(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_gold_fish")
+end
+
+function guardian_can_single_eye(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_eye")
+end
+
+function guardian_exchange_single_eye(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_eye")
+end
+
+function guardian_can_single_fire(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_fire")
+end
+
+function guardian_exchange_single_fire(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_fire")
+end
+
+function guardian_can_single_baloon(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_baloon")
+end
+
+function guardian_exchange_single_baloon(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_baloon")
+end
+
+function guardian_can_single_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_glass")
+end
+
+function guardian_exchange_single_glass(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_glass")
+end
+
+function guardian_can_single_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_dummy_dummy")
+end
+
+function guardian_exchange_single_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_dummy_dummy")
+end
+
+function guardian_can_single_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_single("af_ice")
+end
+
+function guardian_exchange_single_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_single(first_speaker, second_speaker, "af_ice")
+end
+
+function guardian_can_group_gravi(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_gravi", guardian_t3_pair_groups.gravi)
+end
+
+function guardian_can_group_gold_fish(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_gold_fish", guardian_t3_pair_groups.gold_fish)
+end
+
+function guardian_can_group_eye(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_eye", guardian_t3_pair_groups.eye)
+end
+
+function guardian_can_group_fire(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_fire", guardian_t3_pair_groups.fire)
+end
+
+function guardian_can_group_baloon(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_baloon", guardian_t3_pair_groups.baloon)
+end
+
+function guardian_can_group_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_glass", guardian_t3_pair_groups.glass)
+end
+
+function guardian_can_group_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_dummy_dummy", guardian_t3_pair_groups.dummy_dummy)
+end
+
+function guardian_can_group_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_group(
+		"af_ice", guardian_t3_pair_groups.ice)
+end
+
+function guardian_can_pair_gravi_gravi(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_gravi")
+end
+
+function guardian_exchange_pair_gravi_gravi(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_gravi")
+end
+
+function guardian_can_pair_gravi_gold_fish(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_gold_fish")
+end
+
+function guardian_exchange_pair_gravi_gold_fish(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_gold_fish")
+end
+
+function guardian_can_pair_gravi_eye(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_eye")
+end
+
+function guardian_exchange_pair_gravi_eye(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_eye")
+end
+
+function guardian_can_pair_gravi_fire(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_fire")
+end
+
+function guardian_exchange_pair_gravi_fire(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_fire")
+end
+
+function guardian_can_pair_gravi_baloon(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_baloon")
+end
+
+function guardian_exchange_pair_gravi_baloon(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_baloon")
+end
+
+function guardian_can_pair_gravi_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_glass")
+end
+
+function guardian_exchange_pair_gravi_glass(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_glass")
+end
+
+function guardian_can_pair_gravi_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_dummy_dummy")
+end
+
+function guardian_exchange_pair_gravi_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_dummy_dummy")
+end
+
+function guardian_can_pair_gravi_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gravi", "af_ice")
+end
+
+function guardian_exchange_pair_gravi_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gravi", "af_ice")
+end
+
+function guardian_can_pair_gold_fish_gold_fish(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gold_fish", "af_gold_fish")
+end
+
+function guardian_exchange_pair_gold_fish_gold_fish(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gold_fish", "af_gold_fish")
+end
+
+function guardian_can_pair_gold_fish_eye(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gold_fish", "af_eye")
+end
+
+function guardian_exchange_pair_gold_fish_eye(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gold_fish", "af_eye")
+end
+
+function guardian_can_pair_gold_fish_fire(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gold_fish", "af_fire")
+end
+
+function guardian_exchange_pair_gold_fish_fire(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gold_fish", "af_fire")
+end
+
+function guardian_can_pair_gold_fish_baloon(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gold_fish", "af_baloon")
+end
+
+function guardian_exchange_pair_gold_fish_baloon(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gold_fish", "af_baloon")
+end
+
+function guardian_can_pair_gold_fish_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gold_fish", "af_glass")
+end
+
+function guardian_exchange_pair_gold_fish_glass(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gold_fish", "af_glass")
+end
+
+function guardian_can_pair_gold_fish_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gold_fish", "af_dummy_dummy")
+end
+
+function guardian_exchange_pair_gold_fish_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gold_fish", "af_dummy_dummy")
+end
+
+function guardian_can_pair_gold_fish_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_gold_fish", "af_ice")
+end
+
+function guardian_exchange_pair_gold_fish_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_gold_fish", "af_ice")
+end
+
+function guardian_can_pair_eye_eye(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_eye", "af_eye")
+end
+
+function guardian_exchange_pair_eye_eye(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_eye", "af_eye")
+end
+
+function guardian_can_pair_eye_fire(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_eye", "af_fire")
+end
+
+function guardian_exchange_pair_eye_fire(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_eye", "af_fire")
+end
+
+function guardian_can_pair_eye_baloon(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_eye", "af_baloon")
+end
+
+function guardian_exchange_pair_eye_baloon(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_eye", "af_baloon")
+end
+
+function guardian_can_pair_eye_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_eye", "af_glass")
+end
+
+function guardian_exchange_pair_eye_glass(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_eye", "af_glass")
+end
+
+function guardian_can_pair_eye_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_eye", "af_dummy_dummy")
+end
+
+function guardian_exchange_pair_eye_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_eye", "af_dummy_dummy")
+end
+
+function guardian_can_pair_eye_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_eye", "af_ice")
+end
+
+function guardian_exchange_pair_eye_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_eye", "af_ice")
+end
+
+function guardian_can_pair_fire_fire(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_fire", "af_fire")
+end
+
+function guardian_exchange_pair_fire_fire(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_fire", "af_fire")
+end
+
+function guardian_can_pair_fire_baloon(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_fire", "af_baloon")
+end
+
+function guardian_exchange_pair_fire_baloon(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_fire", "af_baloon")
+end
+
+function guardian_can_pair_fire_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_fire", "af_glass")
+end
+
+function guardian_exchange_pair_fire_glass(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_fire", "af_glass")
+end
+
+function guardian_can_pair_fire_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_fire", "af_dummy_dummy")
+end
+
+function guardian_exchange_pair_fire_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_fire", "af_dummy_dummy")
+end
+
+function guardian_can_pair_fire_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_fire", "af_ice")
+end
+
+function guardian_exchange_pair_fire_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_fire", "af_ice")
+end
+
+function guardian_can_pair_baloon_baloon(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_baloon", "af_baloon")
+end
+
+function guardian_exchange_pair_baloon_baloon(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_baloon", "af_baloon")
+end
+
+function guardian_can_pair_baloon_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_baloon", "af_glass")
+end
+
+function guardian_exchange_pair_baloon_glass(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_baloon", "af_glass")
+end
+
+function guardian_can_pair_baloon_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_baloon", "af_dummy_dummy")
+end
+
+function guardian_exchange_pair_baloon_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_baloon", "af_dummy_dummy")
+end
+
+function guardian_can_pair_baloon_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_baloon", "af_ice")
+end
+
+function guardian_exchange_pair_baloon_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_baloon", "af_ice")
+end
+
+function guardian_can_pair_glass_glass(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_glass", "af_glass")
+end
+
+function guardian_exchange_pair_glass_glass(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_glass", "af_glass")
+end
+
+function guardian_can_pair_glass_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_glass", "af_dummy_dummy")
+end
+
+function guardian_exchange_pair_glass_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_glass", "af_dummy_dummy")
+end
+
+function guardian_can_pair_glass_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_glass", "af_ice")
+end
+
+function guardian_exchange_pair_glass_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_glass", "af_ice")
+end
+
+function guardian_can_pair_dummy_dummy_dummy_dummy(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_dummy_dummy", "af_dummy_dummy")
+end
+
+function guardian_exchange_pair_dummy_dummy_dummy_dummy(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_dummy_dummy", "af_dummy_dummy")
+end
+
+function guardian_can_pair_dummy_dummy_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_dummy_dummy", "af_ice")
+end
+
+function guardian_exchange_pair_dummy_dummy_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_dummy_dummy", "af_ice")
+end
+
+function guardian_can_pair_ice_ice(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_t3_pair("af_ice", "af_ice")
+end
+
+function guardian_exchange_pair_ice_ice(first_speaker, second_speaker)
+	pf_monolith_guardian.exchange_t3_pair(
+		first_speaker, second_speaker, "af_ice", "af_ice")
+end
+
+function pf_bunker_access_assign_case(first_speaker, second_speaker)
+	pf_bunker_access.assign_case(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_has_case(first_speaker, second_speaker)
+	return pf_bunker_access.has_case(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_deliver_case(first_speaker, second_speaker)
+	pf_bunker_access.deliver_case(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_can_give_vodka(first_speaker, second_speaker)
+	return pf_bunker_access.can_give_vodka(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_deliver_vodka(first_speaker, second_speaker)
+	pf_bunker_access.deliver_vodka(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_deliver_vodka_from_case_dialog(first_speaker, second_speaker)
+	pf_bunker_access.deliver_vodka_from_case_dialog(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_deliver_vodka_from_vodka_dialog(first_speaker, second_speaker)
+	pf_bunker_access.deliver_vodka_from_vodka_dialog(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_mark_finish_dialog_active(first_speaker, second_speaker)
+	pf_bunker_access.mark_finish_dialog_active(first_speaker, second_speaker)
+end
+
+function pf_bunker_access_complete(first_speaker, second_speaker)
+	pf_bunker_access.complete_access(first_speaker, second_speaker)
+end

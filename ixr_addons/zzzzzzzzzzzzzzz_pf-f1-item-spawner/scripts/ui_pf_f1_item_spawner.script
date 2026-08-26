@@ -1,0 +1,846 @@
+local PAGE_SIZE = 30
+local CARD_COLUMNS = 5
+local CARD_X = { 0, 136, 272, 408, 544 }
+local CARD_Y = { 0, 81, 162, 243, 324, 405 }
+local CARD_ICON_OFFSET_X = 18
+local CARD_ICON_OFFSET_Y = 4
+local CARD_ICON_WIDTH = 94
+local CARD_ICON_HEIGHT = 46
+local GRID_X = 36
+local GRID_Y = 139
+local CARD_WIDTH = 130
+local CARD_HEIGHT = 75
+local CONTEXT_WIDTH = 240
+local CONTEXT_HEIGHT = 71
+local CARD_COLOR = GetARGB(225, 235, 235, 228)
+local CARD_SELECTED_COLOR = GetARGB(255, 224, 164, 70)
+local TAB_COLOR = GetARGB(225, 235, 235, 228)
+local TAB_ACTIVE_COLOR = GetARGB(255, 224, 164, 70)
+local remembered_tab = "items"
+local remembered_group = 0
+
+local function tr(string_id)
+	return game.translate_string(string_id)
+end
+
+local function format_text(string_id, ...)
+	return string.format(tr(string_id), ...)
+end
+
+local function fit_icon(control, item, box_x, box_y, box_width, box_height)
+	if not control or not item then
+		if control then control:Show(false) end
+		return
+	end
+	local texture = item.texture or "ui\\ui_noise"
+	local ok = pcall(function() control:InitTexture(texture) end)
+	if not ok then
+		texture = "ui\\ui_noise"
+		control:InitTexture(texture)
+	end
+	local source_width = math.max(tonumber(item.icon_width) or 50, 1)
+	local source_height = math.max(tonumber(item.icon_height) or 50, 1)
+	local factor = math.min(box_width / source_width, box_height / source_height)
+	local draw_width = math.max(source_width * factor, 1)
+	local draw_height = math.max(source_height * factor, 1)
+	control:SetTextureRect(Frect():set(
+		item.icon_x or 0,
+		item.icon_y or 0,
+		(item.icon_x or 0) + source_width,
+		(item.icon_y or 0) + source_height))
+	control:SetStretchTexture(true)
+	control:SetWndPos(vector2():set(
+		box_x + (box_width - draw_width) * 0.5,
+		box_y + (box_height - draw_height) * 0.5))
+	control:SetWndSize(vector2():set(draw_width, draw_height))
+	control:Show(true)
+end
+
+class "pf_f1_vehicle_list_item" (CUIListBoxItem)
+
+function pf_f1_vehicle_list_item:__init(index, vehicle, width) super(42)
+	-- CUIListBoxItem's own data field is reliably returned by IX-Ray; arbitrary
+	-- Lua members on the wrapper may be lost when GetSelectedItem crosses C++.
+	self.data = index
+	self:SetWndSize(vector2():set(width, 42))
+	local text = self:GetTextItem()
+	text:SetFont(GetFontLetterica16Russian())
+	text:SetEllipsis(true)
+	text:SetWndPos(vector2():set(7, 0))
+	text:SetWndSize(vector2():set(width - 14, 42))
+	text:SetText(string.format("%02d. %s", index, vehicle.name))
+end
+
+class "item_spawner_dialog" (CUIScriptWnd)
+
+function item_spawner_dialog:__init(owner) super()
+	self.owner = owner
+	self.catalog = {}
+	self.filtered = {}
+	self.counts = {}
+	self.slot_items = {}
+	self.page = 1
+	self.group_filter = 0
+	self.spawn_mode = "inventory"
+	self.active_tab = remembered_tab
+	self.last_group_filter = remembered_group
+	self.selected_item = nil
+	self.vehicle_catalog = pf_f1_item_catalog.build_vehicle_catalog()
+	self.selected_vehicle = self.vehicle_catalog[1]
+	self.pending_item = nil
+	self.pending_mode = nil
+	self.context_item = nil
+	self.skipped_items = 0
+	self:InitControls()
+	self:InitCallbacks()
+	self:SetAutoDelete(false)
+end
+
+function item_spawner_dialog:InitControls()
+	local xml = CScriptXmlInit()
+	local aspect = (tonumber(device().width) or 1024) /
+		math.max(tonumber(device().height) or 768, 1)
+	local layout = aspect >= 2.15 and "ui_pf_f1_item_spawner_21.xml" or
+		(aspect > 1.40 and "ui_pf_f1_item_spawner_16.xml" or
+			"ui_pf_f1_item_spawner.xml")
+	xml:ParseFile(layout)
+	xml:InitWindow("main", 0, self)
+	xml:InitStatic("main:shade", self)
+	self.form = xml:InitStatic("main:form", self)
+	xml:InitStatic("main:form:screen_noise", self.form)
+	xml:InitFrameLine("main:form:top_left_bar", self.form)
+	xml:InitFrameLine("main:form:top_right_bar", self.form)
+	xml:InitFrame("main:form:content_frame", self.form)
+	self.caption = xml:InitTextWnd("main:form:caption", self.form)
+	-- CScriptXmlInit::InitWindow is only safe for the dialog root in this
+	-- IX-Ray build. Nested tab containers must be UI statics; using InitWindow
+	-- here crashes inside the luabind constructor before Lua can report an error.
+	self.items_panel = xml:InitStatic("main:form:items_panel", self.form)
+	self.category = xml:InitComboBox("main:form:items_panel:category", self.items_panel)
+	self.search_edit = xml:InitEditBox("main:form:items_panel:search_edit", self.items_panel)
+	self.grid = xml:InitFrame("main:form:items_panel:grid", self.items_panel)
+	self.detail = xml:InitFrame("main:form:items_panel:detail", self.items_panel)
+	self.detail_icon = xml:InitStatic("main:form:items_panel:detail:icon", self.detail)
+	self.detail_name = xml:InitTextWnd("main:form:items_panel:detail:name", self.detail)
+	self.detail_section = xml:InitTextWnd("main:form:items_panel:detail:section", self.detail)
+	self.detail_group = xml:InitTextWnd("main:form:items_panel:detail:group", self.detail)
+	self.detail_warning = xml:InitTextWnd("main:form:items_panel:detail:warning", self.detail)
+	self.detail_description_scroll = xml:InitScrollView(
+		"main:form:items_panel:detail:description_scroll", self.detail)
+	self.detail_description = xml:InitTextWnd(
+		"main:form:items_panel:detail:description_scroll:description",
+		self.detail_description_scroll)
+	self.page_text = xml:InitTextWnd("main:form:items_panel:page", self.items_panel)
+
+	self.card_buttons = {}
+	self.card_icons = {}
+	for slot = 1, PAGE_SIZE do
+		local suffix = string.format("%02d", slot)
+		local button = xml:Init3tButton("main:form:items_panel:grid:card_" .. suffix, self.grid)
+		local icon = xml:InitStatic("main:form:items_panel:grid:icon_" .. suffix, self.grid)
+		local callback_name = "pf_f1_card_" .. suffix
+		self.card_buttons[slot] = button
+		self.card_icons[slot] = icon
+		-- The icon is drawn above the card but must never consume its click.
+		icon:Enable(false)
+		self:Register(button, callback_name)
+		local selected_slot = slot
+		self:AddCallback(callback_name, ui_events.BUTTON_CLICKED,
+			function(dialog) dialog:OnCard(selected_slot) end, self)
+		pcall(function() button:TextControl():SetElipsis(true) end)
+	end
+
+	self.search_button = xml:Init3tButton(
+		"main:form:items_panel:search_button", self.items_panel)
+	self.clear_button = xml:Init3tButton(
+		"main:form:items_panel:clear_button", self.items_panel)
+	self.inventory_button = xml:Init3tButton(
+		"main:form:items_panel:inventory_button", self.items_panel)
+	self.world_button = xml:Init3tButton(
+		"main:form:items_panel:world_button", self.items_panel)
+	self.previous_button = xml:Init3tButton(
+		"main:form:items_panel:previous_button", self.items_panel)
+	self.next_button = xml:Init3tButton(
+		"main:form:items_panel:next_button", self.items_panel)
+	self.spawn_button = xml:Init3tButton(
+		"main:form:items_panel:spawn_button", self.items_panel)
+	self.vehicles_panel = xml:InitStatic("main:form:vehicles_panel", self.form)
+	self.vehicle_list = xml:InitListBox("main:form:vehicles_panel:list", self.vehicles_panel)
+	self.vehicle_list:ShowSelectedItem(true)
+	self.vehicle_name = xml:InitTextWnd("main:form:vehicles_panel:name", self.vehicles_panel)
+	self.vehicle_section = xml:InitTextWnd("main:form:vehicles_panel:section", self.vehicles_panel)
+	self.vehicle_description = xml:InitTextWnd(
+		"main:form:vehicles_panel:description", self.vehicles_panel)
+	self.vehicle_spawn = xml:Init3tButton("main:form:vehicles_panel:spawn", self.vehicles_panel)
+	self.tools_panel = xml:InitStatic("main:form:tools_panel", self.form)
+	self.time_value = xml:InitTextWnd("main:form:tools_panel:time_value", self.tools_panel)
+	self.time_factor = xml:InitComboBox("main:form:tools_panel:time_factor", self.tools_panel)
+	self.time_plus_1 = xml:Init3tButton("main:form:tools_panel:time_plus_1", self.tools_panel)
+	self.time_plus_6 = xml:Init3tButton("main:form:tools_panel:time_plus_6", self.tools_panel)
+	self.surge_button = xml:Init3tButton("main:form:tools_panel:surge", self.tools_panel)
+	self.coordinates_value = xml:InitTextWnd(
+		"main:form:tools_panel:coordinates_value", self.tools_panel)
+	self.coordinates_refresh = xml:Init3tButton(
+		"main:form:tools_panel:coordinates_refresh", self.tools_panel)
+	self.teleport_x = xml:InitEditBox("main:form:tools_panel:teleport_x", self.tools_panel)
+	self.teleport_y = xml:InitEditBox("main:form:tools_panel:teleport_y", self.tools_panel)
+	self.teleport_z = xml:InitEditBox("main:form:tools_panel:teleport_z", self.tools_panel)
+	self.teleport_current = xml:Init3tButton(
+		"main:form:tools_panel:teleport_current", self.tools_panel)
+	self.teleport_apply = xml:Init3tButton(
+		"main:form:tools_panel:teleport_apply", self.tools_panel)
+	self.money_value = xml:InitTextWnd("main:form:tools_panel:money_value", self.tools_panel)
+	self.money_plus = xml:Init3tButton("main:form:tools_panel:money_plus", self.tools_panel)
+	self.money_minus = xml:Init3tButton("main:form:tools_panel:money_minus", self.tools_panel)
+	self.weather = xml:InitComboBox("main:form:tools_panel:weather", self.tools_panel)
+	self.weather_apply = xml:Init3tButton(
+		"main:form:tools_panel:weather_apply", self.tools_panel)
+
+	-- These controls belong to the whole dialog. Create them last so they stay
+	-- above each full-size tab panel and always receive mouse input.
+	self.status = xml:InitTextWnd("main:form:status", self.form)
+	self.close_button = xml:Init3tButton("main:form:close_button", self.form)
+	self.items_tab = xml:Init3tButton("main:form:items_tab", self.form)
+	self.vehicles_tab = xml:Init3tButton("main:form:vehicles_tab", self.form)
+	self.world_tools_tab = xml:Init3tButton("main:form:world_tools_tab", self.form)
+	self.context_menu = xml:InitFrame("main:form:context_menu", self.form)
+	self.context_inventory = xml:Init3tButton(
+		"main:form:context_menu:spawn_inventory", self.context_menu)
+	self.context_world = xml:Init3tButton(
+		"main:form:context_menu:spawn_world", self.context_menu)
+	self.context_menu:Show(false)
+
+	self.message_box = CUIMessageBoxEx()
+	self:Register(self.message_box, "pf_f1_message_box")
+	self:Register(self.category, "pf_f1_category")
+	self:Register(self.search_edit, "pf_f1_search_edit")
+	self:Register(self.search_button, "pf_f1_search")
+	self:Register(self.clear_button, "pf_f1_clear")
+	self:Register(self.inventory_button, "pf_f1_inventory")
+	self:Register(self.world_button, "pf_f1_world")
+	self:Register(self.previous_button, "pf_f1_previous")
+	self:Register(self.next_button, "pf_f1_next")
+	self:Register(self.spawn_button, "pf_f1_spawn")
+	self:Register(self.close_button, "pf_f1_close")
+	for _, entry in ipairs({
+		{ self.items_tab, "pf_f1_items_tab" },
+		{ self.vehicles_tab, "pf_f1_vehicles_tab" },
+		{ self.world_tools_tab, "pf_f1_tools_tab" },
+		{ self.vehicle_list, "pf_f1_vehicle_list" },
+		{ self.vehicle_spawn, "pf_f1_vehicle_spawn" },
+		{ self.time_factor, "pf_f1_time_factor" },
+		{ self.time_plus_1, "pf_f1_time_plus_1" },
+		{ self.time_plus_6, "pf_f1_time_plus_6" },
+		{ self.surge_button, "pf_f1_surge" },
+		{ self.coordinates_refresh, "pf_f1_coordinates_refresh" },
+		{ self.teleport_current, "pf_f1_teleport_current" },
+		{ self.teleport_apply, "pf_f1_teleport_apply" },
+		{ self.money_plus, "pf_f1_money_plus" },
+		{ self.money_minus, "pf_f1_money_minus" },
+		{ self.weather, "pf_f1_weather" },
+		{ self.weather_apply, "pf_f1_weather_apply" },
+		{ self.context_inventory, "pf_f1_context_inventory" },
+		{ self.context_world, "pf_f1_context_world" },
+	}) do self:Register(entry[1], entry[2]) end
+	self:PopulateVehicles()
+	self:PopulateWorldTools()
+	self:SetActiveTab(self.active_tab)
+end
+
+function item_spawner_dialog:InitCallbacks()
+	self:AddCallback("pf_f1_category", ui_events.LIST_ITEM_SELECT, self.OnCategory, self)
+	self:AddCallback("pf_f1_search_edit", ui_events.EDIT_TEXT_COMMIT, self.OnSearch, self)
+	self:AddCallback("pf_f1_search", ui_events.BUTTON_CLICKED, self.OnSearch, self)
+	self:AddCallback("pf_f1_clear", ui_events.BUTTON_CLICKED, self.OnClearSearch, self)
+	self:AddCallback("pf_f1_inventory", ui_events.BUTTON_CLICKED, self.OnInventoryMode, self)
+	self:AddCallback("pf_f1_world", ui_events.BUTTON_CLICKED, self.OnWorldMode, self)
+	self:AddCallback("pf_f1_previous", ui_events.BUTTON_CLICKED, self.OnPreviousPage, self)
+	self:AddCallback("pf_f1_next", ui_events.BUTTON_CLICKED, self.OnNextPage, self)
+	self:AddCallback("pf_f1_spawn", ui_events.BUTTON_CLICKED, self.OnSpawn, self)
+	self:AddCallback("pf_f1_close", ui_events.BUTTON_CLICKED, self.OnClose, self)
+	self:AddCallback("pf_f1_message_box", ui_events.MESSAGE_BOX_YES_CLICKED,
+		self.OnConfirmYes, self)
+	self:AddCallback("pf_f1_message_box", ui_events.MESSAGE_BOX_NO_CLICKED,
+		self.OnConfirmNo, self)
+	self:AddCallback("pf_f1_items_tab", ui_events.BUTTON_CLICKED, self.OnItemsTab, self)
+	self:AddCallback("pf_f1_vehicles_tab", ui_events.BUTTON_CLICKED, self.OnVehiclesTab, self)
+	self:AddCallback("pf_f1_tools_tab", ui_events.BUTTON_CLICKED, self.OnToolsTab, self)
+	self:AddCallback("pf_f1_vehicle_list", ui_events.LIST_ITEM_CLICKED,
+		self.OnVehicleSelected, self)
+	self:AddCallback("pf_f1_vehicle_spawn", ui_events.BUTTON_CLICKED,
+		self.OnVehicleSpawn, self)
+	self:AddCallback("pf_f1_time_factor", ui_events.LIST_ITEM_SELECT,
+		self.OnTimeFactor, self)
+	self:AddCallback("pf_f1_time_plus_1", ui_events.BUTTON_CLICKED,
+		self.OnTimePlus1, self)
+	self:AddCallback("pf_f1_time_plus_6", ui_events.BUTTON_CLICKED,
+		self.OnTimePlus6, self)
+	self:AddCallback("pf_f1_surge", ui_events.BUTTON_CLICKED, self.OnSurge, self)
+	self:AddCallback("pf_f1_coordinates_refresh", ui_events.BUTTON_CLICKED,
+		self.RefreshWorldTools, self)
+	self:AddCallback("pf_f1_teleport_current", ui_events.BUTTON_CLICKED,
+		self.OnUseCurrentCoordinates, self)
+	self:AddCallback("pf_f1_teleport_apply", ui_events.BUTTON_CLICKED,
+		self.OnTeleport, self)
+	self:AddCallback("pf_f1_money_plus", ui_events.BUTTON_CLICKED,
+		self.OnMoneyPlus, self)
+	self:AddCallback("pf_f1_money_minus", ui_events.BUTTON_CLICKED,
+		self.OnMoneyMinus, self)
+	self:AddCallback("pf_f1_weather_apply", ui_events.BUTTON_CLICKED,
+		self.OnWeatherApply, self)
+	self:AddCallback("pf_f1_context_inventory", ui_events.BUTTON_CLICKED,
+		self.OnContextInventory, self)
+	self:AddCallback("pf_f1_context_world", ui_events.BUTTON_CLICKED,
+		self.OnContextWorld, self)
+end
+
+function item_spawner_dialog:SetStatus(text)
+	self.status:SetText(text or "")
+end
+
+function item_spawner_dialog:SetActiveTab(tab)
+	if tab ~= "items" and tab ~= "vehicles" and tab ~= "tools" then tab = "items" end
+	self:HideContextMenu()
+	self.active_tab = tab
+	remembered_tab = tab
+	self.items_panel:Show(tab == "items")
+	self.vehicles_panel:Show(tab == "vehicles")
+	self.tools_panel:Show(tab == "tools")
+	self.items_tab:SetTextureColor(tab == "items" and TAB_ACTIVE_COLOR or TAB_COLOR)
+	self.vehicles_tab:SetTextureColor(tab == "vehicles" and TAB_ACTIVE_COLOR or TAB_COLOR)
+	self.world_tools_tab:SetTextureColor(tab == "tools" and TAB_ACTIVE_COLOR or TAB_COLOR)
+	if tab == "tools" then self:RefreshWorldTools() end
+end
+
+function item_spawner_dialog:OnItemsTab()
+	self:SetActiveTab("items")
+end
+
+function item_spawner_dialog:OnVehiclesTab()
+	self:SetActiveTab("vehicles")
+end
+
+function item_spawner_dialog:OnToolsTab()
+	self:SetActiveTab("tools")
+end
+
+function item_spawner_dialog:PopulateVehicles()
+	self.vehicle_list:RemoveAll()
+	local width = self.vehicle_list:GetWidth() - 8
+	for index, vehicle in ipairs(self.vehicle_catalog) do
+		self.vehicle_list:AddExistingItem(
+			pf_f1_vehicle_list_item(index, vehicle, width))
+	end
+	self.selected_vehicle = self.vehicle_catalog[1]
+	self:OnVehicleSelected()
+end
+
+function item_spawner_dialog:OnVehicleSelected()
+	local row = self.vehicle_list:GetSelectedItem()
+	local index = row and tonumber(row.data) or nil
+	if index then self.selected_vehicle = self.vehicle_catalog[index] end
+	local vehicle = self.selected_vehicle
+	if not vehicle then
+		self.vehicle_name:SetText(tr("pf_f1_no_vehicle"))
+		self.vehicle_section:SetText("")
+		self.vehicle_description:SetText("")
+		self.vehicle_spawn:Enable(false)
+		return
+	end
+	self.vehicle_name:SetText(vehicle.name)
+	self.vehicle_section:SetText(format_text("pf_f1_detail_section", vehicle.section))
+	self.vehicle_description:SetText(vehicle.description ~= "" and
+		vehicle.description or tr("pf_f1_vehicle_default_description"))
+	self.vehicle_spawn:Enable(true)
+end
+
+function item_spawner_dialog:OnVehicleSpawn()
+	local object, error_id = pf_f1_item_catalog.spawn_vehicle(self.selected_vehicle)
+	if object then
+		self:SetStatus(format_text("pf_f1_status_vehicle_created",
+			self.selected_vehicle.name, self.selected_vehicle.section))
+	else
+		self:SetStatus(tr(error_id or "pf_f1_status_create_failed"))
+	end
+end
+
+function item_spawner_dialog:PopulateWorldTools()
+	self.time_factor:ClearList()
+	for _, factor in ipairs(pf_f1_world_tools.time_factors()) do
+		self.time_factor:AddItem(string.format("x%d", factor), factor)
+	end
+	local current_factor = pf_f1_world_tools.current_time_factor()
+	local factor_index = 0
+	for index, factor in ipairs(pf_f1_world_tools.time_factors()) do
+		if factor == current_factor then factor_index = index - 1 break end
+	end
+	self.time_factor:SetCurrentIdx(factor_index)
+	self.time_factor:SetText(string.format(
+		"x%d", pf_f1_world_tools.time_factors()[factor_index + 1]))
+	self.weather:ClearList()
+	self.weather_cycles = pf_f1_world_tools.weather_cycles()
+	for _, entry in ipairs(self.weather_cycles) do
+		self.weather:AddItem(string.format("%s [%s]", entry.name, entry.section), entry.section)
+	end
+	local first_weather = self.weather_cycles[1]
+	if first_weather then
+		self.weather:SetCurrentIdx(0)
+		self.weather:SetText(string.format("%s [%s]", first_weather.name, first_weather.section))
+		self.weather:Enable(true)
+		self.weather_apply:Enable(true)
+	else
+		self.weather:SetText(tr("pf_f1_weather_none"))
+		self.weather:Enable(false)
+		self.weather_apply:Enable(false)
+	end
+end
+
+function item_spawner_dialog:RefreshWorldTools()
+	self.time_value:SetText(format_text("pf_f1_time_value",
+		pf_f1_world_tools.current_time_text(),
+		pf_f1_world_tools.current_time_factor()))
+	local coordinates, error_id = pf_f1_world_tools.current_coordinates()
+	self.coordinates_value:SetText(coordinates or tr(error_id))
+	if db.actor then
+		self.money_value:SetText(format_text("pf_f1_money_value", db.actor:money()))
+	else
+		self.money_value:SetText(tr("pf_f1_status_actor_missing"))
+	end
+end
+
+function item_spawner_dialog:OnTimeFactor()
+	local text = self.time_factor:GetText() or ""
+	local ok, error_id = pf_f1_world_tools.set_time_factor(
+		tonumber(string.match(text, "(%d+)")))
+	self:SetStatus(ok and tr("pf_f1_status_time_factor") or tr(error_id))
+	self:RefreshWorldTools()
+end
+
+function item_spawner_dialog:ForwardTime(hours)
+	local ok, error_id = pf_f1_world_tools.forward_time(hours)
+	self:SetStatus(ok and format_text("pf_f1_status_time_forwarded", hours) or tr(error_id))
+	self:RefreshWorldTools()
+end
+
+function item_spawner_dialog:OnTimePlus1() self:ForwardTime(1) end
+function item_spawner_dialog:OnTimePlus6() self:ForwardTime(6) end
+
+function item_spawner_dialog:OnSurge()
+	local ok, error_id = pf_f1_world_tools.start_surge()
+	self:SetStatus(ok and tr("pf_f1_status_surge_started") or tr(error_id))
+end
+
+function item_spawner_dialog:OnUseCurrentCoordinates()
+	if not db.actor then return self:SetStatus(tr("pf_f1_status_actor_missing")) end
+	local position = db.actor:position()
+	self.teleport_x:SetText(string.format("%.3f", position.x))
+	self.teleport_y:SetText(string.format("%.3f", position.y))
+	self.teleport_z:SetText(string.format("%.3f", position.z))
+	self:SetStatus(tr("pf_f1_status_coordinates_copied"))
+end
+
+function item_spawner_dialog:OnTeleport()
+	local ok, error_id = pf_f1_world_tools.teleport_to(
+		self.teleport_x:GetText(), self.teleport_y:GetText(), self.teleport_z:GetText())
+	self:SetStatus(ok and tr("pf_f1_status_teleported") or tr(error_id))
+	self:RefreshWorldTools()
+end
+
+function item_spawner_dialog:ChangeMoney(delta)
+	local ok, error_id, money = pf_f1_world_tools.change_money(delta)
+	self:SetStatus(ok and format_text("pf_f1_status_money_changed", money) or tr(error_id))
+	self:RefreshWorldTools()
+end
+
+function item_spawner_dialog:OnMoneyPlus() self:ChangeMoney(10000) end
+function item_spawner_dialog:OnMoneyMinus() self:ChangeMoney(-10000) end
+
+function item_spawner_dialog:OnWeatherApply()
+	local selected_section = string.match(self.weather:GetText() or "", "%[([^%]]+)%]")
+	local entry
+	for _, candidate in ipairs(self.weather_cycles or {}) do
+		if candidate.section == selected_section then entry = candidate break end
+	end
+	local ok, error_id
+	if entry then
+		ok, error_id = pf_f1_world_tools.set_weather(entry.section)
+	else
+		ok, error_id = false, "pf_f1_status_weather_missing"
+	end
+	local weather_name = entry and entry.name or ""
+	self:SetStatus(ok and format_text("pf_f1_status_weather_set", weather_name) or tr(error_id))
+end
+
+function item_spawner_dialog:RefreshCatalog()
+	local catalog, counts, skipped, error_id = pf_f1_item_catalog.build_catalog()
+	self.catalog = catalog or {}
+	self.counts = counts or {}
+	self.skipped_items = skipped or 0
+	self.group_filter = self.last_group_filter or 0
+	self.pending_item = nil
+	self.pending_mode = nil
+	self:PopulateCategories()
+	self:UpdateModeButtons()
+	self:ApplyFilter()
+	if error_id then
+		self:SetStatus(tr(error_id))
+	elseif self.skipped_items > 0 then
+		self:SetStatus(format_text("pf_f1_status_incomplete", self.skipped_items))
+	else
+		self:SetStatus(format_text("pf_f1_status_ready", #self.catalog))
+	end
+	printf("pf_f1_item_spawner: catalog=[%s] developer=[%s] skipped=[%s]",
+		tostring(#self.catalog), tostring(pf_f1_item_catalog.developer_mode()),
+		tostring(self.skipped_items))
+	self:SetActiveTab(self.active_tab)
+end
+
+function item_spawner_dialog:PopulateCategories()
+	self.refreshing_categories = true
+	self.category:ClearList()
+	self.category:AddItem(format_text("pf_f1_group_all", #self.catalog), 0)
+	for _, group in ipairs(pf_f1_item_catalog.group_order()) do
+		local count = self.counts[group] or 0
+		if count > 0 then
+			local label = tr(pf_f1_item_catalog.group_label_id(group))
+			local position = pf_f1_item_catalog.group_position(group)
+			self.category:AddItem(string.format("%d. %s (%d)", position, label, count), group)
+		end
+	end
+	local selected_index = 0
+	local visible_index = 0
+	for _, group in ipairs(pf_f1_item_catalog.group_order()) do
+		if (self.counts[group] or 0) > 0 then
+			visible_index = visible_index + 1
+			if group == self.group_filter then selected_index = visible_index end
+		end
+	end
+	if selected_index == 0 then
+		self.group_filter = 0
+		self.last_group_filter = 0
+		remembered_group = 0
+	end
+	self.category:SetCurrentIdx(selected_index)
+	if self.group_filter == 0 then
+		self.category:SetText(format_text("pf_f1_group_all", #self.catalog))
+	else
+		self.category:SetText(string.format("%d. %s (%d)",
+			pf_f1_item_catalog.group_position(self.group_filter),
+			tr(pf_f1_item_catalog.group_label_id(self.group_filter)),
+			self.counts[self.group_filter] or 0))
+	end
+	self.refreshing_categories = false
+end
+
+function item_spawner_dialog:ApplyFilter()
+	self:HideContextMenu()
+	local query = pf_f1_item_catalog.fold_text(self.search_edit:GetText() or "")
+	self.filtered = {}
+	for _, item in ipairs(self.catalog) do
+		local group_matches = self.group_filter == 0 or item.group == self.group_filter
+		local text_matches = query == "" or string.find(item.search, query, 1, true) ~= nil
+		if group_matches and text_matches then table.insert(self.filtered, item) end
+	end
+	self.page = 1
+	local selection_still_visible = false
+	for _, item in ipairs(self.filtered) do
+		if item == self.selected_item then selection_still_visible = true break end
+	end
+	if not selection_still_visible then self.selected_item = nil end
+	self:RenderPage()
+	self:SetStatus(format_text("pf_f1_status_filtered", #self.filtered, #self.catalog))
+end
+
+function item_spawner_dialog:RenderPage()
+	local page_count = math.max(1, math.ceil(#self.filtered / PAGE_SIZE))
+	self.page = math.max(1, math.min(self.page, page_count))
+	local first_index = (self.page - 1) * PAGE_SIZE + 1
+	local last_index = math.min(first_index + PAGE_SIZE - 1, #self.filtered)
+	local selected_on_page = false
+	if self.selected_item then
+		for index = first_index, last_index do
+			if self.filtered[index] == self.selected_item then selected_on_page = true break end
+		end
+	end
+	if not selected_on_page then self.selected_item = self.filtered[first_index] end
+
+	for slot = 1, PAGE_SIZE do
+		local item = self.filtered[first_index + slot - 1]
+		local button = self.card_buttons[slot]
+		local icon = self.card_icons[slot]
+		self.slot_items[slot] = item
+		if item then
+			local column = (slot - 1) % CARD_COLUMNS + 1
+			local row = math.floor((slot - 1) / CARD_COLUMNS) + 1
+			button:SetText(item.name)
+			button:SetTextureColor(item == self.selected_item and
+				CARD_SELECTED_COLOR or CARD_COLOR)
+			button:Show(true)
+			button:Enable(true)
+			fit_icon(icon, item,
+				CARD_X[column] + CARD_ICON_OFFSET_X,
+				CARD_Y[row] + CARD_ICON_OFFSET_Y,
+				CARD_ICON_WIDTH, CARD_ICON_HEIGHT)
+		else
+			button:Show(false)
+			button:Enable(false)
+			icon:Show(false)
+		end
+	end
+	self.page_text:SetText(format_text(
+		"pf_f1_page", self.page, page_count, #self.filtered))
+	self.previous_button:Enable(self.page > 1)
+	self.next_button:Enable(self.page < page_count)
+	self:UpdateDetails()
+end
+
+function item_spawner_dialog:UpdateDetails()
+	local item = self.selected_item
+	if not item then
+		self.detail_icon:Show(false)
+		self.detail_name:SetText(tr("pf_f1_no_selection"))
+		self.detail_section:SetText("")
+		self.detail_group:SetText("")
+		self.detail_warning:SetText("")
+		self:SetDescription("")
+		self.spawn_button:Enable(false)
+		return
+	end
+	fit_icon(self.detail_icon, item, 37, 40, 190, 116)
+	self.detail_name:SetText(item.name)
+	self.detail_section:SetText(format_text("pf_f1_detail_section", item.section))
+	self.detail_group:SetText(format_text("pf_f1_detail_group",
+		tr(pf_f1_item_catalog.group_label_id(item.group))))
+	self.detail_warning:SetText(item.quest and tr("pf_f1_warning_quest") or "")
+	self:SetDescription(item.description ~= "" and
+		item.description or tr("pf_f1_no_description"))
+	self.spawn_button:Enable(true)
+end
+
+function item_spawner_dialog:SetDescription(text)
+	self.detail_description:SetText(text or "")
+	self.detail_description:AdjustHeightToText()
+	-- A text window does not notify its scroll-view parent when
+	-- AdjustHeightToText changes the height, so explicitly invalidate layout.
+	-- RemoveWindow deletes auto-owned children; temporarily retain this one
+	-- before detaching it, then restore scroll-view ownership in AddWindow.
+	self.detail_description:SetAutoDelete(false)
+	self.detail_description_scroll:RemoveWindow(self.detail_description)
+	self.detail_description_scroll:AddWindow(self.detail_description, true)
+	self.detail_description_scroll:ScrollToBegin()
+end
+
+function item_spawner_dialog:HideContextMenu()
+	if self.context_menu then self.context_menu:Show(false) end
+	self.context_item = nil
+end
+
+function item_spawner_dialog:CardAtCursor(cursor)
+	if self.active_tab ~= "items" then return nil end
+	local relative_x = cursor.x - GRID_X
+	local relative_y = cursor.y - GRID_Y
+	for slot = 1, PAGE_SIZE do
+		local column = (slot - 1) % CARD_COLUMNS + 1
+		local row = math.floor((slot - 1) / CARD_COLUMNS) + 1
+		local x = CARD_X[column]
+		local y = CARD_Y[row]
+		if relative_x >= x and relative_x <= x + CARD_WIDTH and
+			relative_y >= y and relative_y <= y + CARD_HEIGHT then
+			return self.slot_items[slot] and slot or nil
+		end
+	end
+	return nil
+end
+
+function item_spawner_dialog:ShowContextMenu(item, cursor)
+	local x = math.max(0, math.min(cursor.x + 4, 1024 - CONTEXT_WIDTH))
+	local y = math.max(0, math.min(cursor.y + 4, 768 - CONTEXT_HEIGHT))
+	self.context_item = item
+	self.context_menu:SetWndPos(vector2():set(x, y))
+	self.context_menu:Show(true)
+end
+
+function item_spawner_dialog:CursorInContextMenu(cursor)
+	local position = self.context_menu:GetWndPos()
+	return cursor.x >= position.x and cursor.x <= position.x + CONTEXT_WIDTH and
+		cursor.y >= position.y and cursor.y <= position.y + CONTEXT_HEIGHT
+end
+
+function item_spawner_dialog:OnCardContext(slot, cursor)
+	local item = self.slot_items[slot]
+	if not item then return end
+	self.selected_item = item
+	self:RenderPage()
+	self:ShowContextMenu(item, cursor)
+end
+
+function item_spawner_dialog:OnContextInventory()
+	local item = self.context_item
+	self:HideContextMenu()
+	self:RequestSpawn(item, "inventory")
+end
+
+function item_spawner_dialog:OnContextWorld()
+	local item = self.context_item
+	self:HideContextMenu()
+	self:RequestSpawn(item, "world")
+end
+
+function item_spawner_dialog:UpdateModeButtons()
+	local inventory_prefix = self.spawn_mode == "inventory" and "> " or ""
+	local world_prefix = self.spawn_mode == "world" and "> " or ""
+	self.inventory_button:SetText(inventory_prefix .. tr("pf_f1_target_inventory"))
+	self.world_button:SetText(world_prefix .. tr("pf_f1_target_world"))
+end
+
+function item_spawner_dialog:OnCategory()
+	if self.refreshing_categories then return end
+	local text = self.category:GetText() or ""
+	self.group_filter = tonumber(string.match(text, "^(%d+)%.")) or 0
+	self.last_group_filter = self.group_filter
+	remembered_group = self.group_filter
+	self:ApplyFilter()
+end
+
+function item_spawner_dialog:OnSearch()
+	self:ApplyFilter()
+end
+
+function item_spawner_dialog:OnClearSearch()
+	self.search_edit:SetText("")
+	self:ApplyFilter()
+end
+
+function item_spawner_dialog:OnInventoryMode()
+	self:HideContextMenu()
+	self.spawn_mode = "inventory"
+	self:UpdateModeButtons()
+end
+
+function item_spawner_dialog:OnWorldMode()
+	self:HideContextMenu()
+	self.spawn_mode = "world"
+	self:UpdateModeButtons()
+end
+
+function item_spawner_dialog:OnPreviousPage()
+	self:HideContextMenu()
+	if self.page <= 1 then return end
+	self.page = self.page - 1
+	self.selected_item = nil
+	self:RenderPage()
+end
+
+function item_spawner_dialog:OnNextPage()
+	self:HideContextMenu()
+	local page_count = math.max(1, math.ceil(#self.filtered / PAGE_SIZE))
+	if self.page >= page_count then return end
+	self.page = self.page + 1
+	self.selected_item = nil
+	self:RenderPage()
+end
+
+function item_spawner_dialog:OnCard(slot)
+	self:HideContextMenu()
+	local item = self.slot_items[slot]
+	if not item then return end
+	self.selected_item = item
+	self:RenderPage()
+end
+
+function item_spawner_dialog:OnSpawn()
+	self:HideContextMenu()
+	self:RequestSpawn(self.selected_item, self.spawn_mode)
+end
+
+function item_spawner_dialog:RequestSpawn(item, mode)
+	if not item then
+		self:SetStatus(tr("pf_f1_status_no_selection"))
+		return
+	end
+	mode = mode == "world" and "world" or "inventory"
+	if pf_f1_item_catalog.is_sensitive(item) then
+		self.pending_item = item
+		self.pending_mode = mode
+		local target_id = mode == "world" and
+			"pf_f1_target_world" or "pf_f1_target_inventory"
+		self.message_box:InitMessageBox("message_box_yes_no")
+		self.message_box:SetText(format_text(
+			"pf_f1_confirm_quest", item.name, item.section, tr(target_id)))
+		self.message_box:ShowDialog(true)
+		return
+	end
+	self:PerformSpawn(item, mode)
+end
+
+function item_spawner_dialog:PerformSpawn(item, mode)
+	local object, error_id = pf_f1_item_catalog.spawn(item, mode)
+	if object then
+		local target_id = mode == "world" and
+			"pf_f1_target_world" or "pf_f1_target_inventory"
+		self:SetStatus(format_text(
+			"pf_f1_status_created", item.name, item.section, tr(target_id)))
+	else
+		self:SetStatus(tr(error_id or "pf_f1_status_create_failed"))
+		printf("pf_f1_item_spawner: failed section=[%s] target=[%s] reason=[%s]",
+			tostring(item and item.section), tostring(mode), tostring(error_id))
+	end
+end
+
+function item_spawner_dialog:OnConfirmYes()
+	local item = self.pending_item
+	local mode = self.pending_mode
+	self.pending_item = nil
+	self.pending_mode = nil
+	if item and mode then self:PerformSpawn(item, mode) end
+end
+
+function item_spawner_dialog:OnConfirmNo()
+	self.pending_item = nil
+	self.pending_mode = nil
+	self:SetStatus(tr("pf_f1_status_cancelled"))
+end
+
+function item_spawner_dialog:OnClose()
+	self:HideContextMenu()
+	self.pending_item = nil
+	self.pending_mode = nil
+	self:HideDialog()
+	if self.owner then
+		self.owner:ShowDialog(true)
+		self.owner:Show(true)
+	end
+end
+
+function item_spawner_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		if dik == DIK_keys.MOUSE_2 then
+			local cursor = GetCursorPosition()
+			if self.context_menu:IsShown() and
+				self:CursorInContextMenu(cursor) then
+				self:HideContextMenu()
+				return true
+			end
+			local slot = self:CardAtCursor(cursor)
+			if slot then
+				self:OnCardContext(slot, cursor)
+				return true
+			end
+			if self.context_menu:IsShown() then
+				self:HideContextMenu()
+				return true
+			end
+		elseif dik == DIK_keys.MOUSE_1 and self.context_menu:IsShown() then
+			self:HideContextMenu()
+			return true
+		elseif dik_to_bind(dik) == key_bindings.kQUIT then
+			if self.context_menu:IsShown() then
+				self:HideContextMenu()
+			else
+				self:OnClose()
+			end
+			return true
+		end
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end

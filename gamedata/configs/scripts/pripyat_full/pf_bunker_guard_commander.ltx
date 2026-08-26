@@ -1,0 +1,36 @@
+[logic]
+active = remark@pf_bunker_guard_commander
+level_spot = quest_npc
+
+[remark@pf_bunker_guard_commander]
+anim = guard
+meet = meet@pf_bunker_guard_commander
+combat_ignore_cond = true
+combat_ignore_keep_when_attacked = true
+invulnerable = true
+gather_items_enabled = false
+help_wounded_enabled = false
+corpse_detection_enabled = false
+use_camp = false
+
+[meet@pf_bunker_guard_commander]
+close_distance = 0
+close_anim = nil
+close_snd_hello = nil
+close_snd_bye = nil
+close_snd_distance = 3
+close_victim = nil
+far_distance = 0
+far_anim = nil
+far_victim = nil
+far_snd = nil
+meet_on_talking = false
+; Keep one start dialog for the whole conversation. xr_meet reopens the talk UI
+; whenever a conditional meet_dialog changes, which used to interrupt hand-ins.
+meet_dialog = pf_bunker_guard_commander_dialog
+trade_enable = false
+use = true
+; The phrase graph never finalizes itself. Only the player's normal close key
+; may end the talk window.
+allow_break = true
+abuse = false

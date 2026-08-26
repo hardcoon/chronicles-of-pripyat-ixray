@@ -1,0 +1,94 @@
+; Technical ARTEFACT class is used only so these salvage components can be
+; equipped on the belt and handled by the existing artefact bonus code.
+; Their original section IDs, visuals, names, dismantling drops and order logic
+; remain unchanged in the lower lz-new-mechanics layer.
+
+![lz_nm_armor_pouch]:af_base
+class = ARTEFACT
+belt = true
+slot = -1
+default_to_ruck = true
+can_be_controlled = false
+lights_enabled = false
+af_actor_properties = on
+health_restore_speed = 0
+radiation_restore_speed = 0
+satiety_restore_speed = 0
+thirst_restore_speed = 0
+power_restore_speed = 0
+bleeding_restore_speed = 0
+additional_inventory_weight = 2
+hit_absorbation_sect = lz_nm_armor_pouch_absorbation
+use_condition = false
+degrade_rate = 0
+
+[lz_nm_armor_pouch_absorbation]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0
+
+![lz_nm_rubber_padding]:af_base
+class = ARTEFACT
+belt = true
+slot = -1
+default_to_ruck = true
+can_be_controlled = false
+lights_enabled = false
+af_actor_properties = on
+health_restore_speed = 0
+radiation_restore_speed = 0
+satiety_restore_speed = 0
+thirst_restore_speed = 0
+power_restore_speed = 0
+bleeding_restore_speed = 0
+additional_inventory_weight = 0
+hit_absorbation_sect = lz_nm_rubber_padding_absorbation
+use_condition = false
+degrade_rate = 0
+
+[lz_nm_rubber_padding_absorbation]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0.002
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0
+
+![lz_nm_combat_boots]:af_base
+class = ARTEFACT
+belt = true
+slot = -1
+default_to_ruck = true
+can_be_controlled = false
+lights_enabled = false
+af_actor_properties = on
+health_restore_speed = 0
+radiation_restore_speed = 0
+satiety_restore_speed = 0
+thirst_restore_speed = 0
+power_restore_speed = 0
+bleeding_restore_speed = 0
+additional_inventory_weight = 0
+hit_absorbation_sect = lz_nm_combat_boots_absorbation
+use_condition = false
+degrade_rate = 0
+
+[lz_nm_combat_boots_absorbation]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0.01
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0

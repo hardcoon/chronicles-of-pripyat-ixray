@@ -1,0 +1,611 @@
+-- IRC-only inline text editor.
+--
+-- IX-Ray's native CUIEditBox stores its keyboard capturer in its parent.
+-- The IRC tab is a nested CUIScriptWnd rather than a modal dialog, so that
+-- capturer neither receives keyboard holds correctly nor gets cleared safely
+-- when the PDA is destroyed by a quick-load. This module therefore never calls
+-- CaptureFocus and never uses CUIEditBox. It edits the text displayed by a
+-- CUIStatic, polls the real Windows keyboard layout, and confines mouse focus
+-- to a transparent button placed exactly over that static.
+
+local ffi_ok, ffi = pcall(require, "ffi")
+local user32 = nil
+
+if ffi_ok then
+    pcall(ffi.cdef, [[
+        short __stdcall GetAsyncKeyState(int virtual_key);
+        short __stdcall GetKeyState(int virtual_key);
+        void* __stdcall GetForegroundWindow(void);
+        unsigned long __stdcall GetWindowThreadProcessId(
+            void* window,
+            unsigned long* process_id
+        );
+        void* __stdcall GetKeyboardLayout(unsigned long thread_id);
+        int __stdcall GetKeyboardState(unsigned char* state);
+    ]])
+    local loaded, library = pcall(ffi.load, "user32")
+    if loaded then user32 = library end
+end
+
+local VK_LBUTTON = 0x01
+local VK_BACK = 0x08
+local VK_TAB = 0x09
+local VK_RETURN = 0x0D
+local VK_SHIFT = 0x10
+local VK_CONTROL = 0x11
+local VK_MENU = 0x12
+local VK_CAPITAL = 0x14
+local VK_ESCAPE = 0x1B
+local VK_SPACE = 0x20
+local VK_END = 0x23
+local VK_HOME = 0x24
+local VK_LEFT = 0x25
+local VK_UP = 0x26
+local VK_RIGHT = 0x27
+local VK_DOWN = 0x28
+local VK_DELETE = 0x2E
+local VK_LWIN = 0x5B
+local VK_RWIN = 0x5C
+
+local REPEAT_DELAY_MS = 430
+local REPEAT_INTERVAL_MS = 38
+local CARET = "|"
+
+local function now_ms()
+    return time_global and time_global() or 0
+end
+
+local function key_down(state, virtual_key)
+    return state and tonumber(state[virtual_key]) >= 128
+end
+
+local function async_key_down(virtual_key, fallback_state)
+    if user32 then
+        local ok, state = pcall(user32.GetAsyncKeyState, virtual_key)
+        if ok and state ~= nil then return state < 0 end
+    end
+    return key_down(fallback_state, virtual_key)
+end
+
+local function synchronize_key_state(state, virtual_key)
+    if not state then return false end
+    local down = async_key_down(virtual_key, state)
+    local toggle = tonumber(state[virtual_key]) % 2
+    state[virtual_key] = down and (128 + toggle) or toggle
+    return down
+end
+
+local function read_keyboard_state()
+    if not ffi_ok or not user32 then return nil end
+    local state = ffi.new("unsigned char[256]")
+    -- SDL can leave the Win32 thread keyboard snapshot unavailable for an
+    -- individual frame. The zeroed state is still usable because physical
+    -- down bits are synchronized below through GetAsyncKeyState.
+    pcall(user32.GetKeyboardState, state)
+    local ok, value = pcall(user32.GetKeyState, VK_CAPITAL)
+    if ok and value ~= nil then state[VK_CAPITAL] = tonumber(value) % 2 end
+    return state
+end
+
+local function mouse_left_down()
+    if not ffi_ok or not user32 then return false end
+    local ok, state = pcall(user32.GetAsyncKeyState, VK_LBUTTON)
+    return ok and state ~= nil and state < 0
+end
+
+local function point_inside(rect, point)
+    return rect and point and point.x >= rect.x1 and point.x <= rect.x2 and
+        point.y >= rect.y1 and point.y <= rect.y2
+end
+
+local function layout_identifier()
+    if not ffi_ok or not user32 then return 0x0409 end
+    local ok, result = pcall(function()
+        -- Lua callbacks may run on a different thread from the Win32/SDL
+        -- window procedure. Alt+Shift and Win+Space change the layout of the
+        -- foreground window thread, while GetKeyboardLayout(0) would keep
+        -- returning the stale layout attached to the Lua update thread.
+        local window = user32.GetForegroundWindow()
+        local thread_id = 0
+        if window ~= nil and tonumber(ffi.cast("uintptr_t", window)) ~= 0 then
+            thread_id = tonumber(user32.GetWindowThreadProcessId(window, nil)) or 0
+        end
+
+        local keyboard_layout_handle = user32.GetKeyboardLayout(thread_id)
+        return tonumber(ffi.cast("uintptr_t", keyboard_layout_handle)) % 0x10000
+    end)
+    return ok and result or 0x0409
+end
+
+function keyboard_layout()
+    return layout_identifier() == 0x0419 and "RU" or "EN"
+end
+
+local function utf8_step(byte)
+    if not byte then return 1 end
+    if byte < 0x80 then return 1 end
+    if byte < 0xE0 then return 2 end
+    if byte < 0xF0 then return 3 end
+    if byte < 0xF8 then return 4 end
+    return 1
+end
+
+local function utf8_offsets(text)
+    text = tostring(text or "")
+    local offsets = {}
+    local index = 1
+    while index <= #text do
+        offsets[#offsets + 1] = index
+        index = index + utf8_step(text:byte(index))
+    end
+    offsets[#offsets + 1] = #text + 1
+    return offsets, #offsets - 1
+end
+
+local function utf8_count(text)
+    local _, count = utf8_offsets(text)
+    return count
+end
+
+local function utf8_slice(text, first_character, last_character)
+    local offsets, count = utf8_offsets(text)
+    local first = math.max(0, math.min(count, first_character or 0))
+    local last = math.max(first, math.min(count, last_character or count))
+    return text:sub(offsets[first + 1], offsets[last + 1] - 1)
+end
+
+local function insert_at(text, caret, addition)
+    local offsets, count = utf8_offsets(text)
+    caret = math.max(0, math.min(count, caret or count))
+    local byte_index = offsets[caret + 1]
+    return text:sub(1, byte_index - 1) .. addition .. text:sub(byte_index),
+        caret + utf8_count(addition)
+end
+
+local function erase_before(text, caret)
+    local offsets, count = utf8_offsets(text)
+    caret = math.max(0, math.min(count, caret or count))
+    if caret == 0 then return text, caret end
+    return text:sub(1, offsets[caret] - 1) .. text:sub(offsets[caret + 1]), caret - 1
+end
+
+local function erase_at(text, caret)
+    local offsets, count = utf8_offsets(text)
+    caret = math.max(0, math.min(count, caret or count))
+    if caret >= count then return text, caret end
+    return text:sub(1, offsets[caret + 1] - 1) .. text:sub(offsets[caret + 2]), caret
+end
+
+local function add_key(list, dik, virtual_key, printable, repeatable)
+    list[#list + 1] = {
+        dik = dik,
+        vk = virtual_key,
+        printable = printable == true,
+        repeatable = repeatable == true
+    }
+end
+
+local POLLED_KEYS = {}
+
+-- Controls are first so Enter/Escape win over any simultaneous printable key.
+add_key(POLLED_KEYS, 40, VK_RETURN, false, false)
+add_key(POLLED_KEYS, 88, VK_RETURN, false, false)
+add_key(POLLED_KEYS, 41, VK_ESCAPE, false, false)
+add_key(POLLED_KEYS, 42, VK_BACK, false, true)
+add_key(POLLED_KEYS, 43, VK_TAB, false, false)
+add_key(POLLED_KEYS, 74, VK_HOME, false, true)
+add_key(POLLED_KEYS, 76, VK_DELETE, false, true)
+add_key(POLLED_KEYS, 77, VK_END, false, true)
+add_key(POLLED_KEYS, 79, VK_RIGHT, false, true)
+add_key(POLLED_KEYS, 80, VK_LEFT, false, true)
+add_key(POLLED_KEYS, 81, VK_DOWN, false, true)
+add_key(POLLED_KEYS, 82, VK_UP, false, true)
+
+-- SDL scancodes 4..29 are the physical A..Z keys.
+for dik = 4, 29 do add_key(POLLED_KEYS, dik, 0x41 + dik - 4, true, true) end
+-- SDL scancodes 30..38 are 1..9; 39 is 0.
+for dik = 30, 38 do add_key(POLLED_KEYS, dik, 0x31 + dik - 30, true, true) end
+add_key(POLLED_KEYS, 39, 0x30, true, true)
+add_key(POLLED_KEYS, 44, VK_SPACE, true, true)
+
+local punctuation = {
+    {45, 0xBD}, {46, 0xBB}, {47, 0xDB}, {48, 0xDD}, {49, 0xDC},
+    {50, 0xE2}, {51, 0xBA}, {52, 0xDE}, {53, 0xC0}, {54, 0xBC},
+    {55, 0xBE}, {56, 0xBF}
+}
+for _, item in ipairs(punctuation) do add_key(POLLED_KEYS, item[1], item[2], true, true) end
+
+-- Numeric keypad.
+add_key(POLLED_KEYS, 84, 0x6F, true, true)
+add_key(POLLED_KEYS, 85, 0x6A, true, true)
+add_key(POLLED_KEYS, 86, 0x6D, true, true)
+add_key(POLLED_KEYS, 87, 0x6B, true, true)
+for dik = 89, 97 do add_key(POLLED_KEYS, dik, 0x61 + dik - 89, true, true) end
+add_key(POLLED_KEYS, 98, 0x60, true, true)
+add_key(POLLED_KEYS, 99, 0x6E, true, true)
+
+local EN_LETTERS = "abcdefghijklmnopqrstuvwxyz"
+local RU_LOWER = {
+    "ф", "и", "с", "в", "у", "а", "п", "р", "ш", "о", "л", "д", "ь",
+    "т", "щ", "з", "й", "к", "ы", "е", "г", "м", "ц", "ч", "н", "я"
+}
+local RU_UPPER = {
+    "Ф", "И", "С", "В", "У", "А", "П", "Р", "Ш", "О", "Л", "Д", "Ь",
+    "Т", "Щ", "З", "Й", "К", "Ы", "Е", "Г", "М", "Ц", "Ч", "Н", "Я"
+}
+local EN_DIGITS = {
+    [30] = {"1", "!"}, [31] = {"2", "@"}, [32] = {"3", "#"},
+    [33] = {"4", "$"}, [34] = {"5", "%"}, [35] = {"6", "^"},
+    [36] = {"7", "&"}, [37] = {"8", "*"}, [38] = {"9", "("},
+    [39] = {"0", ")"}
+}
+local RU_DIGITS = {
+    [30] = {"1", "!"}, [31] = {"2", "\""}, [32] = {"3", "№"},
+    [33] = {"4", ";"}, [34] = {"5", "%"}, [35] = {"6", ":"},
+    [36] = {"7", "?"}, [37] = {"8", "*"}, [38] = {"9", "("},
+    [39] = {"0", ")"}
+}
+local EN_PUNCTUATION = {
+    [45] = {"-", "_"}, [46] = {"=", "+"}, [47] = {"[", "{"},
+    [48] = {"]", "}"}, [49] = {"\\", "|"}, [50] = {"\\", "|"},
+    [51] = {";", ":"}, [52] = {"'", "\""}, [53] = {"`", "~"},
+    [54] = {",", "<"}, [55] = {".", ">"}, [56] = {"/", "?"}
+}
+local RU_PUNCTUATION = {
+    [45] = {"-", "_"}, [46] = {"=", "+"}, [47] = {"х", "Х"},
+    [48] = {"ъ", "Ъ"}, [49] = {"\\", "/"}, [50] = {"\\", "/"},
+    [51] = {"ж", "Ж"}, [52] = {"э", "Э"}, [53] = {"ё", "Ё"},
+    [54] = {"б", "Б"}, [55] = {"ю", "Ю"}, [56] = {".", ","}
+}
+
+local function toggled(state, virtual_key)
+    return state and tonumber(state[virtual_key]) % 2 == 1
+end
+
+local function translate_key(key, state)
+    if not key.printable or not state then return "" end
+    if key_down(state, VK_CONTROL) or key_down(state, VK_MENU) or
+        key_down(state, VK_LWIN) or key_down(state, VK_RWIN) then return "" end
+    local shift = key_down(state, VK_SHIFT)
+    local russian = keyboard_layout() == "RU"
+
+    if key.dik >= 4 and key.dik <= 29 then
+        local index = key.dik - 3
+        local upper = shift ~= toggled(state, VK_CAPITAL)
+        if russian then return upper and RU_UPPER[index] or RU_LOWER[index] end
+        local letter = EN_LETTERS:sub(index, index)
+        return upper and letter:upper() or letter
+    end
+
+    local digits = russian and RU_DIGITS or EN_DIGITS
+    local digit = digits[key.dik]
+    if digit then return digit[shift and 2 or 1] end
+    if key.dik == 44 then return " " end
+
+    local punctuation_table = russian and RU_PUNCTUATION or EN_PUNCTUATION
+    local punctuation_character = punctuation_table[key.dik]
+    if punctuation_character then return punctuation_character[shift and 2 or 1] end
+
+    if key.dik >= 89 and key.dik <= 97 then return tostring(key.dik - 88) end
+    if key.dik == 98 then return "0" end
+    if key.dik == 99 then return russian and "," or "." end
+    if key.dik == 84 then return "/" end
+    if key.dik == 85 then return "*" end
+    if key.dik == 86 then return "-" end
+    if key.dik == 87 then return "+" end
+    return ""
+end
+
+local function movement_actions()
+    if not key_bindings then return {} end
+    local names = {
+        "kFWD", "kBACK", "kL_STRAFE", "kR_STRAFE", "kL_LOOKOUT", "kR_LOOKOUT",
+        "kLEFT", "kRIGHT", "kUP", "kDOWN", "kJUMP", "kCROUCH", "kACCEL",
+        "kCAM_ZOOM_IN", "kCAM_ZOOM_OUT"
+    }
+    local result, seen = {}, {}
+    for _, name in ipairs(names) do
+        local action = key_bindings[name]
+        if action ~= nil and not seen[action] then
+            seen[action] = true
+            result[#result + 1] = action
+        end
+    end
+    return result
+end
+
+local MOVEMENT_ACTIONS = movement_actions()
+
+local coordinator = {}
+coordinator.__index = coordinator
+
+function create()
+    return setmetatable({
+        fields = {},
+        field_order = {},
+        active_name = nil,
+        mouse_was_down = false,
+        key_was_down = {},
+        repeat_at = {},
+        owned_action_blocks = {},
+        disposed = false
+    }, coordinator)
+end
+
+function coordinator:bind(name, scope, display, hitbox, max_characters, visible_characters)
+    local field = {
+        name = name,
+        scope = scope,
+        display = display,
+        hitbox = hitbox,
+        max_characters = tonumber(max_characters) or 256,
+        visible_characters = tonumber(visible_characters) or 48,
+        text = "",
+        original = "",
+        caret = 0,
+        select_all = false
+    }
+    self.fields[name] = field
+    self.field_order[#self.field_order + 1] = field
+end
+
+function coordinator:is_active()
+    return self.active_name ~= nil
+end
+
+function coordinator:active_field()
+    return self.active_name
+end
+
+function coordinator:block_movement()
+    for _, action in ipairs(MOVEMENT_ACTIONS) do
+        if not self.owned_action_blocks[action] then
+            local ok, blocked = pcall(level.is_block_action, action)
+            if ok and not blocked then
+                local did_block = pcall(level.block_action, action)
+                if did_block then self.owned_action_blocks[action] = true end
+            end
+        end
+    end
+end
+
+function coordinator:release_movement()
+    for action in pairs(self.owned_action_blocks) do
+        pcall(level.unblock_action, action)
+    end
+    self.owned_action_blocks = {}
+end
+
+function coordinator:render(field)
+    if not field or not field.display then return end
+    if self.active_name ~= field.name then
+        field.display:SetText(field.text or "")
+        return
+    end
+
+    local count = utf8_count(field.text)
+    field.caret = math.max(0, math.min(count, field.caret or count))
+    local visible = math.max(4, field.visible_characters)
+    local first, last = 0, count
+    if count > visible then
+        local left_span = math.max(1, math.floor(visible * 0.8))
+        first = math.max(0, field.caret - left_span)
+        last = math.min(count, first + visible)
+        if last - first < visible then first = math.max(0, last - visible) end
+    end
+    local left = utf8_slice(field.text, first, field.caret)
+    local right = utf8_slice(field.text, field.caret, last)
+    field.display:SetText(left .. CARET .. right)
+end
+
+function coordinator:snapshot_keys()
+    self.key_was_down = {}
+    self.repeat_at = {}
+    local state = read_keyboard_state()
+    if not state then return end
+    for _, key in ipairs(POLLED_KEYS) do
+        self.key_was_down[key.dik] = async_key_down(key.vk, state)
+    end
+end
+
+function coordinator:focus(name)
+    if self.disposed then return false end
+    local field = self.fields[name]
+    if not field or not field.display then return false end
+    if self.active_name == name then return true end
+
+    if self.active_name then
+        local previous = self.fields[self.active_name]
+        if previous then self:render_inactive(previous) end
+    end
+
+    self.active_name = name
+    field.text = tostring(field.display:GetText() or "")
+    field.original = field.text
+    field.caret = utf8_count(field.text)
+    field.select_all = false
+    self:block_movement()
+    self:snapshot_keys()
+    self:render(field)
+    return true
+end
+
+function coordinator:render_inactive(field)
+    if not field or not field.display then return end
+    field.display:SetText(field.text or "")
+end
+
+function coordinator:blur()
+    local field = self.active_name and self.fields[self.active_name] or nil
+    if field then self:render_inactive(field) end
+    self.active_name = nil
+    self.key_was_down = {}
+    self.repeat_at = {}
+    self:release_movement()
+    return true
+end
+
+function coordinator:commit(name)
+    if self.active_name ~= name then return false end
+    self:blur()
+    return true
+end
+
+function coordinator:cancel(name)
+    if self.active_name ~= name then return false end
+    local field = self.fields[name]
+    if field then
+        field.text = field.original or ""
+        field.caret = utf8_count(field.text)
+    end
+    self:blur()
+    return true
+end
+
+function coordinator:shutdown()
+    -- Do not touch any C++ UI object here. During F9 the Lua wrapper can
+    -- outlive the destroyed PDA window. Only release our action references and
+    -- forget the fields; there is no native keyboard capturer to clean up.
+    self.active_name = nil
+    self.fields = {}
+    self.field_order = {}
+    self.key_was_down = {}
+    self.repeat_at = {}
+    self:release_movement()
+    self.disposed = true
+end
+
+function coordinator:replace_selection(field)
+    if not field.select_all then return end
+    field.text = ""
+    field.caret = 0
+    field.select_all = false
+end
+
+function coordinator:process_key(field, key, state)
+    if key.vk == VK_RETURN then return "commit", field.name end
+    if key.vk == VK_ESCAPE then return "cancel", field.name end
+    if key.vk == VK_TAB or key.vk == VK_UP or key.vk == VK_DOWN then return nil end
+
+    local control = key_down(state, VK_CONTROL)
+    if control then
+        if key.vk == 0x41 then
+            field.select_all = true
+            field.caret = utf8_count(field.text)
+            self:render(field)
+        end
+        return nil
+    end
+
+    if key.vk == VK_HOME then
+        field.caret = 0
+        field.select_all = false
+    elseif key.vk == VK_END then
+        field.caret = utf8_count(field.text)
+        field.select_all = false
+    elseif key.vk == VK_LEFT then
+        field.caret = math.max(0, field.caret - 1)
+        field.select_all = false
+    elseif key.vk == VK_RIGHT then
+        field.caret = math.min(utf8_count(field.text), field.caret + 1)
+        field.select_all = false
+    elseif key.vk == VK_BACK then
+        if field.select_all then self:replace_selection(field)
+        else field.text, field.caret = erase_before(field.text, field.caret) end
+    elseif key.vk == VK_DELETE then
+        if field.select_all then self:replace_selection(field)
+        else field.text, field.caret = erase_at(field.text, field.caret) end
+    elseif key.printable then
+        local addition = translate_key(key, state)
+        if addition ~= "" then
+            self:replace_selection(field)
+            local available = field.max_characters - utf8_count(field.text)
+            if available > 0 then
+                addition = utf8_slice(addition, 0, available)
+                field.text, field.caret = insert_at(field.text, field.caret, addition)
+            end
+        end
+    end
+    self:render(field)
+    return nil
+end
+
+function coordinator:update_keyboard(field)
+    local state = read_keyboard_state()
+    if not state then return nil end
+    synchronize_key_state(state, VK_SHIFT)
+    synchronize_key_state(state, VK_CONTROL)
+    synchronize_key_state(state, VK_MENU)
+    synchronize_key_state(state, VK_LWIN)
+    synchronize_key_state(state, VK_RWIN)
+    local now = now_ms()
+    local result, result_name = nil, nil
+
+    for _, key in ipairs(POLLED_KEYS) do
+        local down = async_key_down(key.vk, state)
+        local toggle = tonumber(state[key.vk]) % 2
+        state[key.vk] = down and (128 + toggle) or toggle
+        local was_down = self.key_was_down[key.dik] == true
+        local fire = down and not was_down
+        if down and was_down and key.repeatable and self.repeat_at[key.dik] and
+            now >= self.repeat_at[key.dik] then fire = true end
+
+        if down then
+            if not was_down then
+                self.repeat_at[key.dik] = key.repeatable and (now + REPEAT_DELAY_MS) or nil
+            elseif fire and key.repeatable then
+                self.repeat_at[key.dik] = now + REPEAT_INTERVAL_MS
+            end
+        else
+            self.repeat_at[key.dik] = nil
+        end
+        self.key_was_down[key.dik] = down
+
+        if fire and not result then
+            result, result_name = self:process_key(field, key, state)
+        end
+    end
+    return result, result_name
+end
+
+function coordinator:update(scope)
+    if self.disposed then return nil end
+    local active = self.active_name and self.fields[self.active_name] or nil
+    if active and active.scope ~= scope then
+        self:blur()
+        active = nil
+    end
+
+    local mouse_down = mouse_left_down()
+    if mouse_down and not self.mouse_was_down then
+        local ok, cursor = pcall(GetCursorPosition)
+        local selected = nil
+        if ok and cursor and scope then
+            for _, field in ipairs(self.field_order) do
+                if field.scope == scope and field.hitbox and field.hitbox:IsShown() and
+                    field.hitbox:IsEnabled() then
+                    local rect = Frect()
+                    local rect_ok = pcall(function() field.hitbox:GetAbsoluteRect(rect) end)
+                    if rect_ok and point_inside(rect, cursor) then
+                        selected = field.name
+                        break
+                    end
+                end
+            end
+        end
+        if selected then self:focus(selected)
+        elseif self.active_name then self:blur() end
+    end
+    self.mouse_was_down = mouse_down
+
+    active = self.active_name and self.fields[self.active_name] or nil
+    if active then return self:update_keyboard(active) end
+    return nil
+end
+
+function coordinator:on_keyboard()
+    -- Press/release events that reach the nested tab are consumed here. Keys
+    -- bound to movement are stopped earlier by level.block_action and are read
+    -- by update_keyboard through the Windows state, so WASD still types text.
+    return self.active_name ~= nil
+end

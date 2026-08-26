@@ -1,0 +1,107 @@
+-- Stable inventory/debug facade for the standalone NLC cooking addon.
+-- The active lz_new_mechanics override owns load/update registration because
+-- this IX-Ray build imports mod_script modules without invoking their local
+-- RegisterScriptCallback lifecycle reliably.
+
+function actor_on_inventory_item_drop(item)
+	return lz_nlc_art_cooking_runtime.actor_on_inventory_item_drop(item)
+end
+
+function actor_on_inventory_item_take(item)
+	return lz_nlc_art_cooking_runtime.actor_on_inventory_item_take(item)
+end
+
+function actor_on_inventory_trade(item, sell_bye)
+	return lz_nlc_art_cooking_runtime.actor_on_inventory_trade(item, sell_bye)
+end
+
+function on_game_load()
+	return lz_nlc_art_cooking_runtime.on_game_load()
+end
+
+function debug_smoke_test()
+	return lz_nlc_art_cooking_runtime.debug_smoke_test()
+end
+
+-- Guardian dialogue adapters. Cooked-tier bundles may mix families; Absolute
+-- options remain explicit so the actor controls which unique result is spent.
+-- pf_monolith_guardian performs the fail-closed belt and stash checks.
+function guardian_can_modificat_bundle(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_cooked_tier(2)
+end
+
+function guardian_exchange_modificat_bundle(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_cooked_tier(first_speaker, second_speaker, 2)
+end
+
+function guardian_can_mesomodificat_bundle(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_cooked_tier(3)
+end
+
+function guardian_exchange_mesomodificat_bundle(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_cooked_tier(first_speaker, second_speaker, 3)
+end
+
+function guardian_can_hypermodificat_bundle(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_cooked_tier(4)
+end
+
+function guardian_exchange_hypermodificat_bundle(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_cooked_tier(first_speaker, second_speaker, 4)
+end
+
+function guardian_can_absolute_spirit(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_absolute("af_spirit_4")
+end
+
+function guardian_exchange_absolute_spirit(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_absolute(first_speaker, second_speaker, "af_spirit_4")
+end
+
+function guardian_can_absolute_cry(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_absolute("af_cry_4")
+end
+
+function guardian_exchange_absolute_cry(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_absolute(first_speaker, second_speaker, "af_cry_4")
+end
+
+function guardian_can_absolute_dik(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_absolute("af_dik_4")
+end
+
+function guardian_exchange_absolute_dik(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_absolute(first_speaker, second_speaker, "af_dik_4")
+end
+
+function guardian_can_absolute_kol(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_absolute("af_kol_4")
+end
+
+function guardian_exchange_absolute_kol(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_absolute(first_speaker, second_speaker, "af_kol_4")
+end
+
+function guardian_can_absolute_babka(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_absolute("af_babka_4")
+end
+
+function guardian_exchange_absolute_babka(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_absolute(first_speaker, second_speaker, "af_babka_4")
+end
+
+function guardian_can_absolute_pudd(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_absolute("af_pudd_4")
+end
+
+function guardian_exchange_absolute_pudd(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_absolute(first_speaker, second_speaker, "af_pudd_4")
+end
+
+function guardian_can_absolute_armor(first_speaker, second_speaker)
+	return pf_monolith_guardian.can_exchange_absolute("af_armor_4")
+end
+
+function guardian_exchange_absolute_armor(first_speaker, second_speaker)
+	return pf_monolith_guardian.exchange_absolute(first_speaker, second_speaker, "af_armor_4")
+end
