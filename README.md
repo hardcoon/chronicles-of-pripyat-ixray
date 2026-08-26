@@ -4,7 +4,7 @@
 
 ## Установка
 
-1. Скачайте `ChroniclesLauncher.exe` из раздела
+1. Скачайте `ChroniclesLauncher-2026.08.27.exe` из раздела
    [Releases](https://github.com/hardcoon/chronicles-of-pripyat-ixray/releases).
 2. Поместите лаунчер в отдельную папку, в которую должна быть установлена игра.
 3. Запустите лаунчер и нажмите **УСТАНОВИТЬ ИГРУ**.
