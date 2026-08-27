@@ -1,0 +1,194 @@
+-- Developer-only PDA overlay for every coordinate in the canonical stash
+-- catalogue. Marker anchors are permanently offline ALife records: they exist
+-- only because the PDA map API accepts object IDs rather than bare coordinates.
+
+local LEVEL_NAME = "pripyat_full"
+local ANCHOR_SECTION = "pf_stash_catalog_anchor"
+local MARKER_TYPE = "pf_qa_stash_catalog"
+local MARKER_HINT = "pf_stash_catalog_marker_name"
+local BATCH_SIZE = 24
+local BATCH_INTERVAL_MS = 100
+local state = {
+	candidates = nil,
+	anchor_ids = {},
+	next_index = 1,
+	failed = 0,
+	building = false,
+	cleanup_pending = true,
+	next_batch = 0,
+	callbacks_registered = false
+}
+
+local function report(message, hud_silent)
+	printf("[PF STASH CATALOG QA] %s", message)
+	if db.actor and hud_silent ~= true then
+		db.actor:give_game_news("QA", message, "pf_news_stash", 0, 3000)
+	end
+end
+
+local function is_developer_mode()
+	local qa = rawget(_G, "pf_stash_qa")
+	return qa and qa.is_developer_mode and qa.is_developer_mode() == true
+end
+
+local function build_candidates()
+	if state.candidates then return state.candidates end
+	local candidates = {}
+	local next_id = 10001
+	next_id = pf_fixed_house_stashes.append_dynamic_candidates(
+		candidates, next_id, "manual")
+	next_id = pf_static_property_stashes.append_dynamic_candidates(
+		candidates, next_id, "property")
+	pf_static_vehicle_stashes.append_dynamic_candidates(
+		candidates, next_id, "vehicle")
+	state.candidates = candidates
+	return candidates
+end
+
+local function collect_anchor_ids()
+	local ids = {}
+	local sim = alife()
+	if not sim then return ids end
+	for _, object in sim:objects() do
+		if object:section_name() == ANCHOR_SECTION then
+			table.insert(ids, object.id)
+		end
+	end
+	return ids
+end
+
+local function clear_anchors()
+	local ids = collect_anchor_ids()
+	local sim = alife()
+	if not sim then return 0 end
+	for _, id in ipairs(ids) do
+		if level.map_has_object_spot(id, MARKER_TYPE) ~= 0 then
+			level.map_remove_object_spot(id, MARKER_TYPE)
+		end
+		local object = sim:object(id, true)
+		if object then sim:release(object, true) end
+	end
+	state.anchor_ids = {}
+	state.next_index = 1
+	state.failed = 0
+	state.building = false
+	state.next_batch = 0
+	return #ids
+end
+
+local function spawn_anchor(point)
+	if not point or not point.position then return nil end
+	local sim = alife()
+	if not sim then return nil end
+	local position = vector():set(
+		point.position[1], point.position[2], point.position[3])
+	local level_vertex_id = point.level_vertex_id or level.vertex_id(position)
+	local game_vertex_id = point.game_vertex_id or db.actor:game_vertex_id()
+	local anchor = sim:create(
+		ANCHOR_SECTION, position, level_vertex_id, game_vertex_id)
+	if not anchor then return nil end
+
+	-- A script_object has no safe online representation. The old QA overlay left
+	-- this flag enabled, so approaching a catalogue point tried to materialize
+	-- SCRPTOBJ and could crash the engine. Keep the server record permanently
+	-- offline; the map manager still reads its exact world position normally.
+	sim:set_switch_online(anchor.id, false)
+
+	-- The overlay is session-only. Its locations and anchors are removed by the
+	-- second tool use or by the load callback and never affect stash state.
+	level.map_add_object_spot(anchor.id, MARKER_TYPE, MARKER_HINT)
+	return anchor.id
+end
+
+local function update_overlay()
+	if not db.actor or level.name() ~= LEVEL_NAME then return end
+	if state.cleanup_pending then
+		clear_anchors()
+		state.cleanup_pending = false
+	end
+	if not state.building then return end
+	if not is_developer_mode() then
+		clear_anchors()
+		return
+	end
+	local now = time_global()
+	if now < state.next_batch then return end
+	state.next_batch = now + BATCH_INTERVAL_MS
+
+	local candidates = build_candidates()
+	local last_index = math.min(
+		state.next_index + BATCH_SIZE - 1, #candidates)
+	for index = state.next_index, last_index do
+		local id = spawn_anchor(candidates[index])
+		if id then
+			table.insert(state.anchor_ids, id)
+		else
+			state.failed = state.failed + 1
+		end
+	end
+	state.next_index = last_index + 1
+	if state.next_index <= #candidates then return end
+
+	state.building = false
+	report(string.format(
+		"Canonical stash catalogue shown: %d/%d points%s",
+		#state.anchor_ids, #candidates,
+		state.failed > 0 and string.format(" (%d failed)", state.failed) or ""
+	))
+end
+
+local function on_game_load()
+	state.anchor_ids = {}
+	state.next_index = 1
+	state.failed = 0
+	state.building = false
+	state.cleanup_pending = true
+	state.next_batch = 0
+end
+
+function toggle()
+	if not is_developer_mode() then
+		report("Canonical stash catalogue overlay is available only in Developer mode")
+		return false
+	end
+	if not db.actor or level.name() ~= LEVEL_NAME then
+		report("Canonical stash catalogue overlay is available only on Pripyat Full")
+		return false
+	end
+
+	local existing = collect_anchor_ids()
+	if state.building or #existing > 0 then
+		local removed = clear_anchors()
+		report(string.format("Canonical stash catalogue hidden: %d points", removed))
+		return true
+	end
+
+	local candidates = build_candidates()
+	state.anchor_ids = {}
+	state.next_index = 1
+	state.failed = 0
+	state.building = true
+	state.cleanup_pending = false
+	state.next_batch = 0
+	report(string.format(
+		"Building canonical stash catalogue overlay: %d points", #candidates))
+	return true
+end
+
+function use_tool(_item)
+	toggle()
+	return false
+end
+
+function on_game_start()
+	if state.callbacks_registered then return end
+	if type(RegisterScriptCallback) ~= "function" then
+		report("Script callback API is unavailable for the stash catalogue overlay", true)
+		return
+	end
+	RegisterScriptCallback("update", update_overlay)
+	RegisterScriptCallback("load", on_game_load)
+	state.callbacks_registered = true
+end
+
+on_game_start()

@@ -64,7 +64,7 @@ inv_grid_x = 2
 use1_text = pf_stash_markers_tool_use
 use1_functor = pf_stash_qa.use_stash_markers_tool
 
-; Separate overlay for all 971 canonical coordinates, including both the
+; Separate overlay for all 1236 canonical coordinates, including both the
 ; selected logical stashes and the unused rotation/hint reserve.
 [pf_stash_catalog_markers_tool]:pf_stash_rejection_tool
 $spawn = "food and drugs\pf_stash_catalog_markers_tool"
@@ -84,9 +84,10 @@ visual = dynamics\devices\dev_rukzak\dev_rukzak_ol.ogf
 radius = 1
 
 ; Invisible, non-interactive server anchor required only because the PDA map
-; API accepts object IDs rather than bare coordinates. It has no visual,
-; collision container, inventory or loot and is released when the overlay is
-; hidden or a save is loaded.
+; API accepts object IDs rather than bare coordinates. Lua permanently disables
+; online switching before the marker is registered, so approaching the point
+; can never materialize SCRPTOBJ in the world. It has no visual, collision,
+; inventory or loot and is released when the overlay is hidden or a save loads.
 [pf_stash_catalog_anchor]:script_object
 $spawn = "script\pf_stash_catalog_anchor"
 Scheduled = off
