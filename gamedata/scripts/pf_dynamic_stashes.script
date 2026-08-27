@@ -54,7 +54,8 @@ local impl = {}
 local state = {
 	slot_grid = {},
 	slot_grid_point_ids = {},
-	loot_rng = nil
+	loot_rng = nil,
+	pending_metal_detector_use = nil
 }
 local story_document_tiers = {
 	cyan = true,
@@ -3467,8 +3468,7 @@ function on_legendary_stash_searched()
 	return impl.roll_hint("red", 50)
 end
 
--- Custom inventory action for the reusable hand-radio metal detector.
-function use_metal_detector(detector)
+function impl.complete_metal_detector_use(detector)
 	if not SYSTEM_ENABLED then return false end
 	if not db.actor or level.name() ~= LEVEL_NAME then return false end
 	if not impl.require_actor_item(detector) then return false end
@@ -3528,6 +3528,34 @@ function use_metal_detector(detector)
 	end
 	impl.retire_empty_slot(nearest_slot)
 	impl.send_detector_news(game.translate_string("pf_metal_detector_found") .. " " .. table.concat(names, ", "))
+	return false
+end
+
+function impl.update_pending_metal_detector_use(now)
+	local pending = state.pending_metal_detector_use
+	if not pending or now < pending.due then return end
+	state.pending_metal_detector_use = nil
+	local detector = level.object_by_id(pending.object_id)
+	if detector then impl.complete_metal_detector_use(detector) end
+end
+
+-- Native inventory actions execute while the property box owns the UI lock.
+-- Defer every inventory transfer and stash release until that callback returns.
+function use_metal_detector(detector)
+	if not SYSTEM_ENABLED then return false end
+	if not db.actor or level.name() ~= LEVEL_NAME then return false end
+	if not impl.require_actor_item(detector) then return false end
+	if state.pending_metal_detector_use then return false end
+	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+	if menu and menu:GetInvBox() then
+		impl.send_detector_news(game.translate_string("lz_nm_close_stash_before_action"))
+		return false
+	end
+	state.pending_metal_detector_use = {
+		object_id = detector:id(),
+		-- Match the proven delay used by the other inventory-tool callbacks.
+		due = time_global() + 150
+	}
 	return false
 end
 
@@ -3644,6 +3672,7 @@ function update()
 	impl.update_fixed_pda_rewards(now)
 	if not SYSTEM_ENABLED then return end
 	impl.update_pending_empty_slots(now)
+	impl.update_pending_metal_detector_use(now)
 	impl.update_strange_ambush_targets(now)
 	impl.update_active_metal_detector(now)
 	if now < next_check then return end
@@ -3799,4 +3828,5 @@ function reset()
 	next_detector_pulse = 0
 	detector_pulse_sound = nil
 	state.loot_rng = nil
+	state.pending_metal_detector_use = nil
 end
