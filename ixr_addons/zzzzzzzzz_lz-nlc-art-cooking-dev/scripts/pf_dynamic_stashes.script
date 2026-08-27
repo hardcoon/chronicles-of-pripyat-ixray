@@ -3501,11 +3501,8 @@ function impl.complete_metal_detector_use(detector)
 	if not SYSTEM_ENABLED then return false end
 	if not db.actor or level.name() ~= LEVEL_NAME then return false end
 	if not impl.require_actor_item(detector) then return false end
-	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
-	if menu and menu:GetInvBox() then
-		impl.send_detector_news(game.translate_string("lz_nm_close_stash_before_action"))
-		return false
-	end
+	-- The public callback already rejected a genuinely open stash before queueing.
+	-- Do not re-read m_pInvBox here: it may remain stale in normal inventory mode.
 	impl.build_candidate_indexes()
 	if #slots == 0 then impl.initialize_slots() end
 	impl.find_existing_objects()
