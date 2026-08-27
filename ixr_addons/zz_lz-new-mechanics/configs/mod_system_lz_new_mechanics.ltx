@@ -1,0 +1,1266 @@
+; Chronicles of Pripyat 4.26 / IX-Ray - self-contained IWP mechanics adaptation.
+; Remove or rename the parent addon folder to disable all of these changes.
+
+; Keep native IX-Ray artefact condition wear disabled for every artefact
+; derived from af_base.
+![af_base]
+use_condition = false
+degrade_rate = 0
+
+; Polarity reuses the Altered Wheel icon and world model. Its unique attraction
+; is implemented by lz_nm_polarity only while this exact section is on the belt.
+[af_polarity]:af_base
+$spawn = "artefacts\af_polarity"
+class = SCRPTART
+visual = dynamics\artefacts\af_control.ogf
+description = st_af_polarity_descr
+inv_name = st_af_polarity_name
+inv_name_short = st_af_polarity_name
+inv_weight = 0.5
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_af_voronka
+jump_height = 0.2
+cost = 15000
+det_show_particles = artefact\af_acidic_show
+det_hide_particles = artefact\af_acidic_hide
+af_rank = 0
+lights_enabled = true
+trail_light_color = 0.4, 0.6, 1.0
+trail_light_range = 7.5
+can_trade = true
+quest_item = false
+health_restore_speed = 0
+radiation_restore_speed = 0.001
+satiety_restore_speed = 0
+power_restore_speed = 0
+bleeding_restore_speed = 0
+additional_inventory_weight = 0
+additional_inventory_weight2 = 0
+hit_absorbation_sect = af_polarity_absorbation
+
+[af_polarity_absorbation]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0
+
+; -----------------------------------------------------------------------------
+; New consumables. First-person use animators are applied by the later
+; mod_system_lz_zz_iwp_consumable_anims.ltx override.
+; -----------------------------------------------------------------------------
+
+; Load-only compatibility for saves which already contain the three removed
+; consumables. The script releases every such object immediately after load;
+; none are spawned by the new stash or sold by traders anymore.
+[snickers]:booster
+$spawn = ""
+class = S_FOOD
+visual = dynamics\devices\dev_bandage\dev_bandage.ogf
+description = st_snickers_descr
+inv_name = st_snickers
+inv_name_short = st_snickers
+inv_weight = 0.2
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 21
+inv_grid_y = 11
+icons_texture = ui\ui_lz_new_mechanics
+cost = 0
+can_trade = false
+eat_satiety = 0.3
+
+[energy_drink1]:energy_drink
+$spawn = ""
+visual = dynamics\devices\dev_bandage\dev_bandage.ogf
+description = st_energy_drink1_descr
+inv_name = st_energy_drink1
+inv_name_short = st_energy_drink1
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 24
+inv_grid_y = 10
+icons_texture = ui\ui_lz_new_mechanics
+cost = 0
+can_trade = false
+
+[bandage_army]:booster
+$spawn = ""
+visual = dynamics\devices\dev_bandage\dev_bandage.ogf
+description = st_bandage_army_descr
+inv_name = st_bandage_army
+inv_name_short = st_bandage_army
+inv_weight = 0.05
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 20
+inv_grid_y = 1
+icons_texture = ui\ui_lz_new_mechanics
+cost = 0
+can_trade = false
+
+[mineral_water]:booster
+$spawn = "food and drugs\mineral_water"
+class = S_FOOD
+visual = dynamics\devices\dev_bandage\dev_bandage.ogf
+description = st_mineral_water_descr
+inv_name = st_mineral_water
+inv_name_short = st_mineral_water
+inv_weight = 0.5
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 20
+inv_grid_y = 11
+icons_texture = ui\ui_lz_new_mechanics
+cost = 200
+boost_time = 1
+boost_power_restore = 0.001
+eat_alcohol = -0.02
+eat_satiety = 0
+use_sound = interface\inv_softdrink
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+
+[drug_sleep]:booster
+$spawn = "food and drugs\drug_sleep"
+visual = dynamics\devices\dev_bandage\dev_bandage.ogf
+description = st_drug_sleep_descr
+inv_name = st_drug_sleep
+inv_name_short = st_drug_sleep
+inv_weight = 0.03
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 6
+inv_grid_y = 5
+icons_texture = ui\ui_lz_new_mechanics
+cost = 500
+use_sound = interface\inv_pills
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+
+[lz_nm_strange_stew]:booster
+$spawn = "food and drugs\lz_nm_strange_stew"
+class = S_FOOD
+visual = dynamics\devices\dev_conserv\dev_conserv.ogf
+description = st_lz_nm_strange_stew_descr
+inv_name = st_lz_nm_strange_stew
+inv_name_short = st_lz_nm_strange_stew
+inv_weight = 0.5
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_strange_stew
+cost = 200
+eat_satiety = 0
+use_sound = $silent
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+
+[lz_nm_strange_shot]:booster
+$spawn = "food and drugs\lz_nm_strange_shot"
+class = S_FOOD
+visual = dynamics\devices\dev_drink_stalker\dev_drink_stalker1.ogf
+description = st_lz_nm_strange_shot_descr
+inv_name = st_lz_nm_strange_shot
+inv_name_short = st_lz_nm_strange_shot
+inv_weight = 0.2
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_strange_drinks
+cost = 200
+eat_satiety = 0
+use_sound = $silent
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+
+[lz_nm_strange_drink]:booster
+$spawn = "food and drugs\lz_nm_strange_drink"
+class = S_FOOD
+visual = dynamics\devices\dev_voda\dev_voda.ogf
+description = st_lz_nm_strange_drink_descr
+inv_name = st_lz_nm_strange_drink
+inv_name_short = st_lz_nm_strange_drink
+inv_weight = 0.5
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 1
+inv_grid_y = 0
+icons_texture = ui\ui_lz_strange_drinks
+cost = 200
+eat_satiety = 0
+use_sound = $silent
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+
+; -----------------------------------------------------------------------------
+; Repair kits. Drag onto an exact target, or use the context-menu action to
+; repair currently equipped gear. II_ATTCH prevents the inherited booster from
+; being consumed by the engine without calling our repair script.
+; -----------------------------------------------------------------------------
+
+[itm_gunsmith_toolkit]:identity_immunities
+GroupControlSection = spawn_group
+$spawn = "devices\repair_kit_10"
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\equipments\quest\box_toolkit_1.ogf
+description = st_itm_gunsmith_toolkit_descr_lz_nm
+inv_name = st_itm_gunsmith_toolkit
+inv_name_short = st_itm_gunsmith_toolkit
+inv_weight = 2.45
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 58
+inv_grid_y = 0
+icons_texture = ui\ui_lz_new_mechanics
+cost = 9500
+can_trade = true
+repair_min_condition = 0.20
+repair_max_condition = 0.90
+repair_add_condition = 0.20
+repair_type = weapon
+use_condition = true
+max_uses = 2
+condition = 1.0
+remove_after_use = false
+empty_weight = 1.75
+use1_text = lz_nm_action_repair_weapon
+use1_functor = lz_new_mechanics.use_repair_target_1
+use2_text = lz_nm_action_repair_weapon
+use2_functor = lz_new_mechanics.use_repair_target_2
+
+[itm_outfit_toolkit]:itm_gunsmith_toolkit
+visual = dynamics\equipments\quest\box_toolkit_2.ogf
+description = st_itm_outfit_toolkit_descr_lz_nm
+inv_name = st_itm_outfit_toolkit
+inv_name_short = st_itm_outfit_toolkit
+inv_weight = 1.75
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 56
+inv_grid_y = 0
+cost = 12500
+repair_type = outfit
+empty_weight = 1.2
+use1_text = lz_nm_action_repair_outfit
+use1_functor = lz_new_mechanics.use_repair_target_1
+use2_text = lz_nm_action_repair_outfit
+use2_functor = lz_new_mechanics.use_repair_target_2
+
+; Unified reusable five-charge kit. RMB lists equipped weapons, outfit and
+; helmet; dragging the kit selects an exact weapon or armor inventory item.
+[lz_nm_weapon_disassembly_kit]:identity_immunities
+GroupControlSection = spawn_group
+$spawn = "devices\lz_nm_weapon_disassembly_kit"
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\devices\dev_instrument_1\dev_instrument_1.ogf
+description = lz_nm_weapon_disassembly_kit_desc
+inv_name = lz_nm_weapon_disassembly_kit_name
+inv_name_short = lz_nm_weapon_disassembly_kit_name
+inv_weight = 1.25
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_weapon_disassembly_kit
+cost = 6500
+can_trade = true
+use_condition = true
+max_uses = 5
+condition = 1.0
+remove_after_use = false
+empty_weight = 0.65
+use1_text = lz_nm_action_disassemble_equipment
+use1_functor = lz_new_mechanics.use_disassemble_target_1
+use2_text = lz_nm_action_disassemble_equipment
+use2_functor = lz_new_mechanics.use_disassemble_target_2
+use3_text = lz_nm_action_disassemble_equipment
+use3_functor = lz_new_mechanics.use_disassemble_target_3
+use4_text = lz_nm_action_disassemble_equipment
+use4_functor = lz_new_mechanics.use_disassemble_target_4
+
+; Save-compatibility alias for the removed armor-only kit. It inherits the
+; unified name, description, icon and behavior, but can no longer be acquired.
+[lz_nm_armor_disassembly_kit]:lz_nm_weapon_disassembly_kit
+can_trade = false
+
+; One-shot 9 V cell for detector power only. Lua converts its fixed fifteen
+; minutes into the correct condition fraction for each detector lifetime.
+[lz_nm_krona_battery]:jup_b200_tech_materials_transistor
+$spawn = "devices\lz_nm_krona_battery"
+description = lz_nm_krona_battery_desc
+inv_name = lz_nm_krona_battery_name
+inv_name_short = lz_nm_krona_battery_name
+inv_weight = 0.05
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_krona_battery
+cost = 650
+can_trade = true
+quest_item = false
+use_condition = false
+condition = 1.0
+remove_after_use = false
+use1_text = lz_nm_action_charge_detector
+use1_functor = lz_new_mechanics.use_detector_battery_target_1
+use2_text = lz_nm_action_charge_detector
+use2_functor = lz_new_mechanics.use_detector_battery_target_2
+use3_text = lz_nm_action_charge_detector
+use3_functor = lz_new_mechanics.use_detector_battery_target_3
+use4_text = lz_nm_action_charge_detector
+use4_functor = lz_new_mechanics.use_detector_battery_target_4
+
+; Distinct salvage items. Stock technical materials supply their world meshes;
+; dedicated textures provide their inventory icons.
+[lz_nm_metal_part]:jup_b200_tech_materials_wire
+$spawn = "devices\lz_nm_metal_part"
+description = lz_nm_metal_part_desc
+inv_name = lz_nm_metal_part_name
+inv_name_short = lz_nm_metal_part_name
+inv_weight = 0.18
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_metal_part
+cost = 300
+can_trade = true
+quest_item = false
+use1_text = lz_nm_action_repair_weapon_with_part
+use1_functor = lz_new_mechanics.use_metal_part_target_1
+use2_text = lz_nm_action_repair_weapon_with_part
+use2_functor = lz_new_mechanics.use_metal_part_target_2
+use3_text = lz_nm_action_repair_weapon_with_part
+use3_functor = lz_new_mechanics.use_metal_part_target_3
+use4_text = lz_nm_action_repair_weapon_with_part
+use4_functor = lz_new_mechanics.use_metal_part_target_4
+
+[lz_nm_armor_pouch]:jup_b200_tech_materials_wire
+$spawn = "devices\lz_nm_armor_pouch"
+description = lz_nm_armor_pouch_desc
+inv_name = lz_nm_armor_pouch_name
+inv_name_short = lz_nm_armor_pouch_name
+inv_weight = 0.20
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_armor_pouch
+cost = 250
+can_trade = true
+quest_item = false
+
+[lz_nm_rubber_padding]:jup_b200_tech_materials_textolite
+$spawn = "devices\lz_nm_rubber_padding"
+description = lz_nm_rubber_padding_desc
+inv_name = lz_nm_rubber_padding_name
+inv_name_short = lz_nm_rubber_padding_name
+inv_weight = 0.35
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_rubber_padding
+cost = 300
+can_trade = true
+quest_item = false
+
+[lz_nm_combat_boots]:jup_b200_tech_materials_acetone
+$spawn = "devices\lz_nm_combat_boots"
+description = lz_nm_combat_boots_desc
+inv_name = lz_nm_combat_boots_name
+inv_name_short = lz_nm_combat_boots_name
+inv_weight = 1.10
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_combat_boots
+cost = 500
+can_trade = true
+quest_item = false
+
+[lz_nm_used_filter]:jup_b200_tech_materials_acetone
+$spawn = "devices\lz_nm_used_filter"
+description = lz_nm_used_filter_desc
+inv_name = lz_nm_used_filter_name
+inv_name_short = lz_nm_used_filter_name
+inv_weight = 0.30
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_used_filter
+cost = 250
+can_trade = true
+quest_item = false
+
+; Stock technician upgrades do not have physical inventory sections. One
+; generic carrier is created per extracted upgrade; Lua stores its exact
+; upgrade id by object id and renders the translated upgrade name in its info.
+[lz_nm_recovered_upgrade]:jup_b200_tech_materials_textolite
+$spawn = "devices\lz_nm_recovered_upgrade"
+description = lz_nm_recovered_upgrade_desc
+inv_name = lz_nm_recovered_upgrade_name
+inv_name_short = lz_nm_recovered_upgrade_name
+inv_weight = 0.35
+cost = 2500
+can_trade = true
+quest_item = false
+use_condition = false
+
+; Field modules use the addon's generated three-slot graph. Each module is a
+; stackable one-shot consumable and is removed only after IX-Ray accepts and
+; installs the weapon-specific percentage effect.
+[itm_repairkit_tier_1]:itm_gunsmith_toolkit
+$spawn = "devices\upgrade_tool_rough"
+visual = dynamics\equipments\quest\box_toolkit_1.ogf
+description = lz_nm_tool_rough_desc
+inv_name = lz_nm_tool_rough_name
+inv_name_short = lz_nm_tool_rough_name
+inv_weight = 0.5
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 6
+inv_grid_y = 7
+cost = 9000
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+use1_text = lz_nm_action_upgrade_weapon
+use1_functor = lz_new_mechanics.use_upgrade_target_1
+use2_text = lz_nm_action_upgrade_weapon
+use2_functor = lz_new_mechanics.use_upgrade_target_2
+
+[itm_repairkit_tier_2]:itm_repairkit_tier_1
+$spawn = "devices\upgrade_tool_fine"
+visual = dynamics\equipments\quest\box_toolkit_2.ogf
+description = lz_nm_tool_fine_desc
+inv_name = lz_nm_tool_fine_name
+inv_name_short = lz_nm_tool_fine_name
+inv_weight = 0.5
+inv_grid_x = 8
+cost = 15000
+max_uses = 1
+condition = 1.0
+
+[itm_repairkit_tier_soft]:itm_repairkit_tier_1
+$spawn = "devices\upgrade_tool_soft"
+visual = dynamics\equipments\quest\box_toolkit_2.ogf
+description = lz_nm_tool_soft_desc
+inv_name = lz_nm_tool_soft_name
+inv_name_short = lz_nm_tool_soft_name
+inv_weight = 0.5
+inv_grid_x = 18
+inv_grid_y = 23
+cost = 14000
+max_uses = 1
+condition = 1.0
+
+[itm_repairkit_tier_3]:itm_repairkit_tier_1
+$spawn = "devices\upgrade_tool_calibration"
+visual = dynamics\equipments\quest\box_toolkit_3.ogf
+description = lz_nm_tool_calibration_desc
+inv_name = lz_nm_tool_calibration_name
+inv_name_short = lz_nm_tool_calibration_name
+inv_weight = 0.5
+inv_grid_x = 10
+cost = 25000
+max_uses = 1
+condition = 1.0
+
+; Common inert base for the colored field-kit family. Individual kits opt into
+; their own mechanics instead of leaking those actions through inheritance.
+[itm_field_upgrade_kit_base]:identity_immunities
+GroupControlSection = spawn_group
+$spawn = ""
+class = II_ATTCH
+cform = skeleton
+inv_weight = 0.5
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_y = 0
+icons_texture = ui\ui_lz_upgrade_kits_variants
+cost = 2500
+can_trade = false
+
+[itm_field_upgrade_kit_blue]:itm_field_upgrade_kit_base
+$spawn = "devices\field_upgrade_kit_blue"
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\equipments\quest\box_toolkit_2.ogf
+description = lz_nm_field_kit_blue_desc
+inv_name = lz_nm_field_kit_blue_name
+inv_name_short = lz_nm_field_kit_blue_name
+inv_weight = 0.5
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_upgrade_kits_variants
+cost = 2500
+can_trade = false
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+use1_text = lz_nm_action_upgrade_weapon
+use1_functor = lz_new_mechanics.use_upgrade_target_1
+use2_text = lz_nm_action_upgrade_weapon
+use2_functor = lz_new_mechanics.use_upgrade_target_2
+
+[itm_field_upgrade_kit_red]:itm_field_upgrade_kit_base
+$spawn = "devices\field_upgrade_kit_red"
+visual = dynamics\equipments\quest\box_toolkit_3.ogf
+description = lz_nm_field_kit_red_desc
+inv_name = lz_nm_field_kit_red_name
+inv_name_short = lz_nm_field_kit_red_name
+inv_grid_x = 2
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+use1_text = lz_nm_action_upgrade_weapon
+use1_functor = lz_new_mechanics.use_upgrade_target_1
+use2_text = lz_nm_action_upgrade_weapon
+use2_functor = lz_new_mechanics.use_upgrade_target_2
+
+[itm_field_upgrade_kit_yellow]:itm_field_upgrade_kit_base
+$spawn = "devices\field_upgrade_kit_yellow"
+visual = dynamics\equipments\quest\box_toolkit_1.ogf
+description = lz_nm_field_kit_yellow_desc
+inv_name = lz_nm_field_kit_yellow_name
+inv_name_short = lz_nm_field_kit_yellow_name
+inv_grid_x = 4
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+use1_text = lz_nm_action_upgrade_weapon
+use1_functor = lz_new_mechanics.use_upgrade_target_1
+use2_text = lz_nm_action_upgrade_weapon
+use2_functor = lz_new_mechanics.use_upgrade_target_2
+
+[itm_field_upgrade_kit_green]:itm_field_upgrade_kit_base
+$spawn = "devices\field_upgrade_kit_green"
+visual = dynamics\equipments\quest\box_toolkit_3.ogf
+description = lz_nm_field_kit_green_desc
+inv_name = lz_nm_field_kit_green_name
+inv_name_short = lz_nm_field_kit_green_name
+inv_grid_x = 6
+use_condition = false
+max_uses = 1
+condition = 1.0
+remove_after_use = true
+empty_weight = 0.0
+use1_text = lz_nm_action_upgrade_weapon
+use1_functor = lz_new_mechanics.use_upgrade_target_1
+use2_text = lz_nm_action_upgrade_weapon
+use2_functor = lz_new_mechanics.use_upgrade_target_2
+
+; -----------------------------------------------------------------------------
+; Mutant trophies.
+; -----------------------------------------------------------------------------
+
+[mutant_part_general]:identity_immunities
+GroupControlSection = spawn_group
+$spawn = "devices\monster_items\mutant_part_general"
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\equipments\item_psevdodog_tail.ogf
+inv_weight = 0.2
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 1
+inv_grid_y = 1
+icons_texture = ui\ui_lz_new_mechanics
+cost = 1
+can_trade = true
+
+[mutant_part_krovosos_jaw]:mutant_part_general
+visual = dynamics\equipments\item_krovosos_jaw.ogf
+inv_name = mutant_krovosos_jaw
+inv_name_short = mutant_krovosos_jaw
+description = mutant_krovosos_jaw_description
+inv_weight = 0.324
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+cost = 1500
+
+[mutant_part_boar_leg]:mutant_part_general
+visual = dynamics\equipments\item_boar_leg.ogf
+inv_name = mutant_boar_leg
+inv_name_short = mutant_boar_leg
+description = mutant_boar_leg_description
+inv_weight = 0.468
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 13
+inv_grid_y = 2
+cost = 250
+
+; Legacy id retained for save compatibility. This item is now the tushkano
+; appendage represented by the existing icon.
+[mutant_part_chimera_kogot]:mutant_part_general
+visual = dynamics\equipments\item_chimera_head.ogf
+inv_name = mutant_chimera_head
+inv_name_short = mutant_chimera_head
+description = mutant_chimera_head_description
+inv_weight = 0.524
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 11
+inv_grid_y = 3
+cost = 4500
+
+[mutant_part_chimera_claw]:mutant_part_general
+visual = dynamics\equipments\item_chimera_cogot.ogf
+inv_name = mutant_chimera_claw
+inv_name_short = mutant_chimera_claw
+description = mutant_chimera_claw_description
+inv_weight = 0.244
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 10
+inv_grid_y = 2
+cost = 1500
+
+[mutant_part_dog_tail]:mutant_part_general
+visual = dynamics\equipments\item_dog_tail.ogf
+inv_name = mutant_dog_tail
+inv_name_short = mutant_dog_tail
+description = mutant_dog_tail_description
+inv_weight = 0.174
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 8
+inv_grid_y = 1
+cost = 200
+
+[mutant_part_flesh_eye]:mutant_part_general
+visual = dynamics\equipments\item_flesh_eye.ogf
+inv_name = mutant_flesh_eye
+inv_name_short = mutant_flesh_eye
+description = mutant_flesh_eye_description
+inv_weight = 0.046
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 14
+inv_grid_y = 3
+cost = 200
+
+[mutant_part_psevdodog_tail]:mutant_part_general
+visual = dynamics\equipments\item_psevdodog_tail.ogf
+inv_name = mutant_psevdodog_tail
+inv_name_short = mutant_psevdodog_tail
+description = mutant_psevdodog_tail_description
+inv_weight = 0.213
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 8
+inv_grid_y = 0
+cost = 500
+
+[mutant_part_snork_leg]:mutant_part_general
+visual = dynamics\equipments\item_snork_leg.ogf
+inv_name = mutant_snork_hand
+inv_name_short = mutant_snork_hand
+description = mutant_snork_hand_description
+inv_weight = 0.446
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 2
+inv_grid_x = 12
+inv_grid_y = 2
+cost = 0
+can_trade = false
+
+[mutant_part_snork_hand]:mutant_part_general
+visual = dynamics\zpf\raw_snork.ogf
+inv_name = mutant_snork_hand
+inv_name_short = mutant_snork_hand
+description = mutant_snork_hand_description
+inv_weight = 0.136
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 5
+inv_grid_y = 4
+cost = 400
+
+; The legacy section id is kept for save compatibility. The actual item is a
+; burer brain; its visible text and corpse-drop mapping are defined accordingly.
+[mutant_part_tushkano_head]:mutant_part_general
+visual = dynamics\equipments\poltergeist_glas.ogf
+inv_name = mutant_tushkano_head
+inv_name_short = mutant_tushkano_head
+description = mutant_tushkano_head_description
+inv_weight = 0.112
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 13
+inv_grid_y = 3
+cost = 200
+
+[mutant_part_pseudogigant_hand]:mutant_part_general
+visual = dynamics\equipments\psevdogigant_hand.ogf
+inv_name = mutant_pseudogigant_hand
+inv_name_short = mutant_pseudogigant_hand
+description = mutant_pseudogigant_hand_description
+inv_weight = 0.368
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 1
+inv_grid_y = 5
+cost = 3550
+
+[mutant_part_pseudogigant_eye]:mutant_part_general
+visual = dynamics\equipments\psevdogigant_eye.ogf
+inv_name = mutant_pseudogigant_eye
+inv_name_short = mutant_pseudogigant_eye
+description = mutant_pseudogigant_eye_description
+inv_weight = 0.068
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 15
+inv_grid_y = 2
+cost = 4500
+
+[mutant_part_controller_glass]:mutant_part_general
+visual = dynamics\equipments\poltergeist_glas.ogf
+inv_name = mutant_controller_glas
+inv_name_short = mutant_controller_glas
+description = mutant_controller_glas_description
+inv_weight = 0.095
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 5
+cost = 4200
+
+[mutant_part_controller_hand]:mutant_part_general
+visual = dynamics\equipments\item_controller_hand.ogf
+inv_name = mutant_controller_hand
+inv_name_short = mutant_controller_hand
+description = mutant_controller_hand_description
+inv_weight = 0.212
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 13
+inv_grid_y = 1
+cost = 3800
+
+[mutant_part_burer_hand]:mutant_part_general
+visual = dynamics\equipments\item_burer_hand.ogf
+inv_name = mutant_burer_hand
+inv_name_short = mutant_burer_hand
+description = mutant_burer_hand_description
+inv_weight = 0.234
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 11
+inv_grid_y = 2
+cost = 2400
+
+[mutant_part_cat_tail]:mutant_part_general
+visual = dynamics\equipments\tail_cat.ogf
+inv_name = mutant_cat_tail
+inv_name_short = mutant_cat_tail
+description = mutant_cat_tail_description
+inv_weight = 0.262
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 10
+inv_grid_y = 0
+cost = 200
+
+[mutant_part_fracture_hand]:mutant_part_general
+visual = dynamics\equipments\fracture_hand.ogf
+inv_name = mutant_fracture_hand
+inv_name_short = mutant_fracture_hand
+description = mutant_fracture_hand_description
+inv_weight = 0.243
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 6
+inv_grid_y = 0
+cost = 400
+
+[mutant_part_zombi_hand]:mutant_part_general
+visual = dynamics\equipments\item_zombie_hand.ogf
+inv_name = mutant_zombi_hand
+inv_name_short = mutant_zombi_hand
+description = mutant_zombi_hand_description
+inv_weight = 0.184
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 4
+cost = 300
+
+; -----------------------------------------------------------------------------
+; Mutant meat is currently a trophy/trade item only. Keeping the cooked
+; sections preserves compatibility with existing saves, but none is usable.
+; -----------------------------------------------------------------------------
+
+[mutant_part_general_meat]:identity_immunities
+GroupControlSection = spawn_group
+$spawn = "devices\monster_items\mutant_meat"
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\zpf\raw_flesh.ogf
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = ui\ui_lz_new_mechanics
+can_trade = true
+
+[mutant_part_flesh_meat]:mutant_part_general_meat
+visual = dynamics\zpf\raw_flesh.ogf
+inv_name = mutant_flesh_meat
+inv_name_short = mutant_flesh_meat
+description = mutant_flesh_meat_description
+inv_weight = 0.336
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 16
+inv_grid_y = 8
+cost = 50
+
+[mutant_part_boar_chop]:mutant_part_general_meat
+visual = dynamics\zpf\raw_boar.ogf
+inv_name = mutant_boar_chop
+inv_name_short = mutant_boar_chop
+description = mutant_boar_chop_description
+inv_weight = 0.389
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 16
+inv_grid_y = 6
+cost = 100
+
+[mutant_part_dog_meat]:mutant_part_general_meat
+visual = dynamics\zpf\raw_dog.ogf
+inv_name = mutant_dog_meat
+inv_name_short = mutant_dog_meat
+description = mutant_dog_meat_description
+inv_weight = 0.146
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 16
+inv_grid_y = 4
+cost = 60
+
+[mutant_part_psevdodog_meat]:mutant_part_general_meat
+visual = dynamics\zpf\raw_dog.ogf
+inv_name = mutant_psevdodog_meat
+inv_name_short = mutant_psevdodog_meat
+description = mutant_psevdodog_meat_description
+inv_weight = 0.321
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 18
+inv_grid_y = 2
+cost = 100
+
+[mutant_part_krovosos_meat]:mutant_part_general_meat
+visual = dynamics\zpf\raw_tushkano.ogf
+inv_name = mutant_krovosos_meat
+inv_name_short = mutant_krovosos_meat
+description = mutant_krovosos_meat_description
+inv_weight = 0.351
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 18
+inv_grid_y = 0
+cost = 150
+
+[mutant_part_chimera_meat]:mutant_part_general_meat
+visual = dynamics\zpf\meat_chimera.ogf
+inv_name = mutant_chimera_meat
+inv_name_short = mutant_chimera_meat
+description = mutant_chimera_meat_description
+inv_weight = 0.519
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 16
+inv_grid_y = 0
+cost = 500
+
+[mutant_part_tushkano_meat]:mutant_part_general_meat
+visual = dynamics\zpf\raw_tushkano.ogf
+inv_name = mutant_tushkano_meat
+inv_name_short = mutant_tushkano_meat
+description = mutant_tushkano_meat_description
+inv_weight = 0.086
+icons_texture = ui\ui_mutant_icon_replacement
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 16
+inv_grid_y = 2
+cost = 60
+
+[mutant_part_krovosos_meat_cook]:mutant_part_general_meat
+visual = dynamics\zpf\meat_bloodsucker.ogf
+inv_name = mutant_krovosos_meat_cook
+inv_name_short = mutant_krovosos_meat_cook
+description = mutant_krovosos_meat_cook_description
+inv_weight = 0.234
+inv_grid_x = 76
+inv_grid_y = 37
+cost = 700
+
+[mutant_part_boar_chop_cook]:mutant_part_general_meat
+visual = dynamics\zpf\meat_boar.ogf
+inv_name = mutant_boar_chop_cook
+inv_name_short = mutant_boar_chop_cook
+description = mutant_boar_chop_cook_description
+inv_weight = 0.259
+inv_grid_x = 77
+inv_grid_y = 37
+cost = 350
+
+[mutant_part_chimera_meat_cook]:mutant_part_general_meat
+visual = dynamics\zpf\meat_chimera.ogf
+inv_name = mutant_chimera_meat_cook
+inv_name_short = mutant_chimera_meat_cook
+description = mutant_chimera_meat_cook_description
+inv_weight = 0.346
+inv_grid_x = 78
+inv_grid_y = 37
+cost = 1000
+
+[mutant_part_dog_meat_cook]:mutant_part_general_meat
+visual = dynamics\zpf\meat_dog.ogf
+inv_name = mutant_dog_meat_cook
+inv_name_short = mutant_dog_meat_cook
+description = mutant_dog_meat_cook_description
+inv_weight = 0.097
+inv_grid_x = 79
+inv_grid_y = 37
+cost = 200
+
+[mutant_part_flesh_meat_cook]:mutant_part_general_meat
+visual = dynamics\zpf\meat_flesh.ogf
+inv_name = mutant_flesh_meat_cook
+inv_name_short = mutant_flesh_meat_cook
+description = mutant_flesh_meat_cook_description
+inv_weight = 0.224
+inv_grid_x = 80
+inv_grid_y = 37
+cost = 300
+
+[mutant_part_psevdodog_meat_cook]:mutant_part_general_meat
+visual = dynamics\zpf\meat_pseudodog.ogf
+inv_name = mutant_psevdodog_meat_cook
+inv_name_short = mutant_psevdodog_meat_cook
+description = mutant_psevdodog_meat_cook_description
+inv_weight = 0.214
+inv_grid_x = 76
+inv_grid_y = 38
+cost = 350
+
+[mutant_part_tushkano_meat_cook]:mutant_part_general_meat
+visual = dynamics\zpf\meat_tushkano.ogf
+inv_name = mutant_tushkano_meat_cook
+inv_name_short = mutant_tushkano_meat_cook
+description = mutant_tushkano_meat_cook_description
+inv_weight = 0.057
+inv_grid_x = 77
+inv_grid_y = 38
+cost = 150
+
+; -----------------------------------------------------------------------------
+; Deployable backpack stash and reusable sleeping bag.
+; -----------------------------------------------------------------------------
+
+[lz_nm_action_item]:identity_immunities
+GroupControlSection = spawn_group
+class = II_ATTCH
+cform = skeleton
+can_trade = true
+icons_texture = ui\ui_lz_new_mechanics
+
+[itm_backpack]:lz_nm_action_item
+$spawn = "devices\itm_backpack"
+visual = dynamics\equipments\item_rukzak.ogf
+description = lz_nm_backpack_item_desc
+inv_name = st_itm_backpack_name
+inv_name_short = st_itm_backpack_name
+inv_weight = 1.0
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_field_backpack
+cost = 3000
+use1_text = lz_nm_action_deploy_backpack
+use1_functor = lz_new_mechanics.deploy_backpack
+
+[itm_sleepbag]:lz_nm_action_item
+$spawn = "devices\itm_sleepbag"
+visual = dynamics\equipments\quest\safe_container.ogf
+description = lz_nm_sleepbag_item_desc
+inv_name = lz_nm_sleepbag_name
+inv_name_short = lz_nm_sleepbag_name
+inv_weight = 1.0
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_sleepbag
+cost = 950
+use1_text = lz_nm_action_use_sleepbag
+use1_functor = lz_new_mechanics.use_sleepbag
+
+[lz_nm_backpack_fold_control]:lz_nm_action_item
+$spawn = "devices\lz_nm_backpack_fold_control"
+visual = dynamics\equipments\quest\safe_container.ogf
+description = lz_nm_backpack_fold_desc
+inv_name = lz_nm_backpack_fold_name
+inv_name_short = lz_nm_backpack_fold_name
+inv_weight = 0.0
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_field_backpack
+cost = 0
+can_trade = false
+quest_item = true
+use1_text = lz_nm_action_pack_backpack
+use1_functor = lz_new_mechanics.pack_backpack
+
+[lz_nm_backpack_box]:inventory_box
+$spawn = "devices\lz_nm_backpack_box"
+visual = dynamics\devices\dev_rukzak\dev_rukzak.ogf
+custom_data = scripts\treasure_inventory_box.ltx
+radius = 1
+
+[lz_nm_start_stash]:inventory_box
+$spawn = "devices\lz_nm_start_stash"
+visual = dynamics\box\box_metall_01.ogf
+radius = 1
+
+[lz_nm_lore_test_stash]:inventory_box
+$spawn = "devices\lz_nm_lore_test_stash"
+visual = dynamics\box\box_metall_01.ogf
+radius = 1
+
+; Inventory-only beacon for exposing the contents of a deployed field backpack
+; in its existing PDA map hint. It has no use action or trader-list entries.
+[lz_nm_stash_beacon]:device_pda
+$spawn = "devices\lz_nm_stash_beacon"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+description = lz_nm_stash_beacon_desc
+inv_name = lz_nm_stash_beacon_name
+inv_name_short = lz_nm_stash_beacon_name
+inv_weight = 0.2
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_lz_stash_beacon
+cost = 2500
+can_trade = true
+quest_item = false
+default_to_ruck = true
+
+; Portable radio beacon. The inventory object deliberately reuses the stock
+; Jupiter scanner icon/model, while the placed object has its own section and
+; binder so the quest scanner remains untouched.
+[lz_nm_radio_beacon]:device_pda
+$spawn = "devices\lz_nm_radio_beacon"
+visual = dynamics\equipments\quest\scanner_anomaly.ogf
+description = lz_nm_beacon_desc
+inv_name = lz_nm_beacon_name
+inv_name_short = lz_nm_beacon_name
+inv_weight = 2.0
+inv_grid_width = 1
+inv_grid_height = 2
+inv_grid_x = 10
+inv_grid_y = 23
+cost = 7500
+can_trade = true
+quest_item = false
+use1_text = lz_nm_action_place_beacon
+use1_functor = lz_new_mechanics.place_beacon
+
+[lz_nm_radio_beacon_world]:physic_object
+$spawn = "dynamic_objects\lz_nm_radio_beacon_world"
+visual = dynamics\equipments\quest\scanner_anomaly.ogf
+startup_animation = idle
+fixed_bones = link
+script_binding = lz_new_mechanics.bind_beacon
+
+[lz_nm_order_dropbox]:inventory_box
+$spawn = "devices\lz_nm_order_dropbox"
+visual = dynamics\equipments\quest\safe_container.ogf
+radius = 1
+script_binding = lz_orders.bind_dropbox
+
+; Tazon's five technical materials now also serve as ordinary electronic
+; salvage: they can be dropped and sold while retaining their quest sections.
+![jup_b200_tech_materials_wire]
+quest_item = false
+can_trade = true
+inv_name_short = jup_b200_tech_materials_wire
+
+![jup_b200_tech_materials_acetone]
+quest_item = false
+can_trade = true
+inv_name_short = jup_b200_tech_materials_acetone
+
+![jup_b200_tech_materials_textolite]
+quest_item = false
+can_trade = true
+inv_name_short = jup_b200_tech_materials_textolite
+
+![jup_b200_tech_materials_transistor]
+quest_item = false
+can_trade = true
+inv_name_short = jup_b200_tech_materials_transistor
+
+![jup_b200_tech_materials_capacitor]
+quest_item = false
+can_trade = true
+inv_name_short = jup_b200_tech_materials_capacitor
+
+; Real right-click inventory action. Every detector is patched explicitly so
+; the action does not depend on the order in which inherited sections resolve.
+![detector_simple]
+description = lz_nm_detector_simple_descr
+use_condition = true
+lz_detector_battery_lifetime = 10800
+use1_text = lz_nm_action_disassemble_detector
+use1_functor = lz_new_mechanics.disassemble_detector
+
+![detector_advanced]
+description = lz_nm_detector_advanced_descr
+use_condition = true
+lz_detector_battery_lifetime = 9000
+use1_text = lz_nm_action_disassemble_detector
+use1_functor = lz_new_mechanics.disassemble_detector
+
+![detector_elite]
+description = lz_nm_detector_elite_descr
+use_condition = true
+lz_detector_battery_lifetime = 7200
+use1_text = lz_nm_action_disassemble_detector
+use1_functor = lz_new_mechanics.disassemble_detector
+
+![detector_scientific]
+description = lz_nm_detector_scientific_descr
+use_condition = true
+lz_detector_battery_lifetime = 5400
+use1_text = lz_nm_action_disassemble_detector
+use1_functor = lz_new_mechanics.disassemble_detector
+
+; -----------------------------------------------------------------------------
+; Native IX-Ray monster inventory spawning. Repeated section names intentionally
+; represent multiple possible pieces, each with its own independent roll.
+; -----------------------------------------------------------------------------
+
+![m_bloodsucker_e]
+Spawn_Inventory_Item_Section = mutant_part_krovosos_jaw, mutant_part_krovosos_meat, mutant_part_krovosos_meat
+Spawn_Inventory_Item_Probability = 0.66, 0.75, 0.75
+
+![m_boar_e]
+Spawn_Inventory_Item_Section = mutant_part_boar_leg, mutant_part_boar_leg, mutant_part_boar_leg, mutant_part_boar_leg, mutant_part_boar_chop, mutant_part_boar_chop
+Spawn_Inventory_Item_Probability = 0.25, 0.25, 0.25, 0.25, 0.66, 0.66
+
+![m_burer_e]
+Spawn_Inventory_Item_Section = mutant_part_tushkano_head, mutant_part_burer_hand, mutant_part_burer_hand
+Spawn_Inventory_Item_Probability = 0.66, 0.75, 0.75
+
+![m_chimera_e]
+Spawn_Inventory_Item_Section = mutant_part_chimera_claw, mutant_part_chimera_claw, mutant_part_chimera_claw, mutant_part_chimera_claw, mutant_part_chimera_claw, mutant_part_chimera_claw, mutant_part_chimera_meat, mutant_part_chimera_meat
+Spawn_Inventory_Item_Probability = 0.33, 0.33, 0.33, 0.33, 0.33, 0.33, 0.80, 0.80
+
+![m_controller_e]
+Spawn_Inventory_Item_Section = mutant_part_controller_glass, mutant_part_controller_glass, mutant_part_controller_hand, mutant_part_controller_hand
+Spawn_Inventory_Item_Probability = 0.66, 0.66, 0.66, 0.66
+
+![m_dog_e]
+Spawn_Inventory_Item_Section = mutant_part_dog_tail, mutant_part_dog_meat, mutant_part_dog_meat
+Spawn_Inventory_Item_Probability = 0.33, 0.45, 0.45
+
+![m_flesh_e]
+Spawn_Inventory_Item_Section = mutant_part_flesh_eye, mutant_part_flesh_eye, mutant_part_flesh_meat, mutant_part_flesh_meat, mutant_part_flesh_meat
+Spawn_Inventory_Item_Probability = 0.50, 0.50, 0.66, 0.66, 0.66
+
+![m_gigant_e]
+Spawn_Inventory_Item_Section = mutant_part_pseudogigant_hand, mutant_part_pseudogigant_hand, mutant_part_pseudogigant_eye, mutant_part_pseudogigant_eye
+Spawn_Inventory_Item_Probability = 0.75, 0.75, 0.75, 0.75
+
+![m_pseudodog_e]
+Spawn_Inventory_Item_Section = mutant_part_psevdodog_tail, mutant_part_psevdodog_meat, mutant_part_psevdodog_meat
+Spawn_Inventory_Item_Probability = 0.50, 0.66, 0.66
+
+![psy_dog]
+Spawn_Inventory_Item_Section = mutant_part_psevdodog_tail, mutant_part_psevdodog_meat, mutant_part_psevdodog_meat
+Spawn_Inventory_Item_Probability = 0.75, 0.75, 0.75
+
+![m_snork_e]
+Spawn_Inventory_Item_Section = mutant_part_snork_hand, mutant_part_snork_hand
+Spawn_Inventory_Item_Probability = 0.33, 0.33
+
+![m_tushkano_e]
+Spawn_Inventory_Item_Section = mutant_part_chimera_kogot, mutant_part_tushkano_meat
+Spawn_Inventory_Item_Probability = 0.25, 0.66
