@@ -1,16 +1,17 @@
 -- Persistent rotating stash manager for Pripyat Full.
--- A new world starts with 350 stashes selected from the 971 manually approved
+-- A new world starts with 400 stashes selected from the 1236 manually approved
 -- coordinates. Persistent hints may claim additional unused coordinates.
 -- Only nearby or explicitly hinted stashes are materialized as server objects.
 
 local LEVEL_NAME = "pripyat_full"
 local EXTERNAL_STATE_KEY = "pf_dynamic_stashes"
 local FIXED_PDA_STATE_KEY = "pf_fixed_pda_rewards_v1"
-local STATE_VERSION = 17
+local STATE_VERSION = 18
+local PURPLE_DISCOVERY_REWARD_VERSION = 1
 local DETERMINISTIC_MODULUS = 2147483647
 local SYSTEM_ENABLED = true
 local LEGACY_SAVE_PREFIX = "pf_dynamic_stashes_v1_"
-local STARTING_STASH_COUNT = 350
+local STARTING_STASH_COUNT = 400
 local CHECK_INTERVAL_MS = 2000
 local MAX_PHYSICAL_STASHES = 32
 local MAX_MATERIALIZATIONS_PER_UPDATE = 1
@@ -115,9 +116,9 @@ local stash_hint_messages = {
 }
 
 local tier_data = {
-	green = { marker = "pf_stash_green", discovery_distance_sqr = 8 * 8, hint_required = false, provision_chance = 20 },
-	cyan = { marker = "pf_stash_cyan", discovery_distance_sqr = 4 * 4, hint_required = false, provision_chance = 50 },
-	purple = { marker = "pf_stash_purple", discovery_distance_sqr = 1 * 1, hint_required = false, provision_chance = 70 },
+	green = { marker = "pf_stash_green", discovery_distance_sqr = 10 * 10, hint_required = false, provision_chance = 20 },
+	cyan = { marker = "pf_stash_cyan", discovery_distance_sqr = 5 * 5, hint_required = false, provision_chance = 50 },
+	purple = { marker = "pf_stash_purple", discovery_distance_sqr = 3 * 3, hint_required = false, provision_chance = 70 },
 	orange = { marker = "pf_stash_orange", hint_required = true, provision_chance = 100 },
 	red = { marker = "pf_stash_red", hint_required = true, provision_chance = 100 }
 }
@@ -133,6 +134,18 @@ local red_detector_sequence = {
 	"pf_metal_detector_homemade",
 	"pf_metal_detector_wave",
 	"pf_metal_detector_magnet"
+}
+
+-- The first three purple discoveries provide a compact onboarding chain. The
+-- global stage chooses the discovery, while the slot-local stage keeps every
+-- reward stable across streaming and save/load.
+local purple_discovery_reward_sequence = {
+	{ items = { { section = "pf_metal_detector_homemade", count = 1 } } },
+	{
+		items = { { section = "lz_nm_radio_beacon", count = 1 } },
+		guaranteed_usb_level = 1
+	},
+	{ items = { { section = "pf_stash_pda_stalker", count = 3 } } }
 }
 
 -- The manager owns the black-and-white detector lookup. This is deliberately
@@ -155,13 +168,13 @@ local active_metal_detectors = {
 	}
 }
 
--- Exact starting quotas for a new world: 60%/20%/10%/about 5%/about 5%.
+-- Exact starting quotas for a new world: 60%/20%/10%/5%/5%.
 -- These are not tier caps: hint rewards may append more logical slots.
 function impl.tier_for_index(index)
-	if index <= 210 then return "green" end
-	if index <= 280 then return "cyan" end
-	if index <= 315 then return "purple" end
-	if index <= 333 then return "orange" end
+	if index <= 240 then return "green" end
+	if index <= 320 then return "cyan" end
+	if index <= 360 then return "purple" end
+	if index <= 380 then return "orange" end
 	if index <= STARTING_STASH_COUNT then return "red" end
 	return nil
 end
@@ -1164,6 +1177,8 @@ function impl.get_persistent_state()
 			slots = {},
 			checked_sources = {},
 			searched_counts = {},
+			purple_discovery_reward_version = PURPLE_DISCOVERY_REWARD_VERSION,
+			purple_discovery_reward_stage = 0,
 			loot_seed = math.random(1, DETERMINISTIC_MODULUS - 1)
 		}
 		root[EXTERNAL_STATE_KEY] = state
@@ -1273,8 +1288,30 @@ function impl.get_persistent_state()
 			end
 			state.red_detector_awarded = nil
 		end
+		-- The purple onboarding chain was introduced without a legacy-save
+		-- baseline. On the first load only, exclude purple slots which had already
+		-- been discovered before the chain existed. Their next rotation is a new
+		-- discovery and becomes eligible again. Existing assigned stages survive.
+		local purple_reward_version = math.max(0,
+			math.floor(tonumber(state.purple_discovery_reward_version) or 0))
+		if purple_reward_version < PURPLE_DISCOVERY_REWARD_VERSION then
+			for _, saved in pairs(state.slots) do
+				local reward_stage = type(saved) == "table" and
+					math.floor(tonumber(saved.purple_discovery_reward_stage) or 0) or 0
+				if type(saved) == "table" and saved.tier == "purple" and
+						saved.discovered == true and reward_stage <= 0 then
+					saved.purple_discovery_reward_legacy_skipped = true
+				end
+			end
+			state.purple_discovery_reward_version = PURPLE_DISCOVERY_REWARD_VERSION
+		end
 		state.version = STATE_VERSION
 	end
+	state.purple_discovery_reward_version = PURPLE_DISCOVERY_REWARD_VERSION
+	state.purple_discovery_reward_stage = math.max(0, math.min(
+		#purple_discovery_reward_sequence,
+		math.floor(tonumber(state.purple_discovery_reward_stage) or 0)
+	))
 	state.searched_counts = type(state.searched_counts) == "table" and state.searched_counts or {}
 	for tier in pairs(tier_data) do
 		state.searched_counts[tier] = math.max(0, tonumber(state.searched_counts[tier]) or 0)
@@ -1454,7 +1491,7 @@ function impl.initialize_slots()
 end
 
 -- Find a navigable arrival point roughly the requested distance from a stash.
--- The actor must remain outside the purple tier's one-metre discovery radius,
+-- The actor must remain outside the purple tier's three-metre discovery radius,
 -- so snapping to a vertex is accepted only within a narrow 14-16 m band.
 function impl.arrival_position_near_stash(point, requested_distance)
 	if not point then return nil end
@@ -2120,7 +2157,9 @@ end
 
 function impl.sync_red_detector_stage(saved)
 	local stage = math.floor(tonumber(saved.red_unique_detector_stage) or 0)
-	stage = math.max(0, math.min(#red_detector_sequence, stage))
+	-- Homemade is now the guaranteed first-purple reward. Red caches continue
+	-- the same saved sequence from Wave and can never duplicate that milestone.
+	stage = math.max(1, math.min(#red_detector_sequence, stage))
 	while stage < #red_detector_sequence and db.actor and
 			db.actor:object(red_detector_sequence[stage + 1]) do
 		stage = stage + 1
@@ -2325,7 +2364,8 @@ function impl.build_red_loot()
 	-- success can a third pass its conditional 20% roll (7% absolute).
 	impl.add_red_natural_artefacts(loot)
 
-	-- Red caches alone advance the ordered black-and-white detector sequence.
+	-- The first purple discovery owns Homemade; red caches advance Wave and
+	-- Magnet in the remaining ordered black-and-white detector sequence.
 	-- A failed roll keeps the same target for the next red cache. Recording the
 	-- stage when loot is generated prevents a detector from repeating if it is
 	-- left behind, sold or lost; owning the current target also advances it.
@@ -2479,6 +2519,16 @@ function impl.ensure_hacking_usb(slot, box)
 		return false
 	end
 
+	-- USB-1 is reserved for the second purple-discovery milestone. Ordinary
+	-- percentage rolls resume immediately after that unique reservation has
+	-- been committed (or USB-1 was obtained from an external canonical source).
+	local saved = impl.get_persistent_state()
+	local usb_one_acquired = hacking.usb_level_is_acquired and
+		hacking.usb_level_is_acquired(1)
+	if not usb_one_acquired and saved.purple_second_usb_committed ~= true then
+		return false
+	end
+
 	if slot.state.usb_roll_checked then return false end
 	local ceiling = hacking_usb_tier_ceiling[slot.tier]
 	if not ceiling then return false end
@@ -2506,6 +2556,100 @@ function impl.ensure_hacking_usb(slot, box)
 		return true
 	end
 	return false
+end
+
+function impl.loot_manifest_section_count(loot, section)
+	local count = 0
+	for _, entry in ipairs(loot or {}) do
+		if entry.section == section then count = count + 1 end
+	end
+	return count
+end
+
+function impl.stash_section_count(box, section)
+	if not box or not section then return 0 end
+	local count = 0
+	for child_id in alife():get_children(box) do
+		local child = alife():object(child_id, true)
+		if child and child:section_name() == section then count = count + 1 end
+	end
+	return count
+end
+
+function impl.reserve_second_purple_usb(slot, saved)
+	if saved.purple_second_usb_committed == true then return true end
+	local hacking = rawget(_G, "lz_pda_hacking")
+	if not hacking or not hacking.usb_level_is_acquired then return false end
+	if hacking.usb_level_is_acquired(1) then
+		saved.purple_second_usb_committed = true
+		return true
+	end
+	if not hacking.reserve_next_usb_guaranteed then return false end
+	local attempted, level = hacking.reserve_next_usb_guaranteed(1, slot.index)
+	if not attempted or tonumber(level) ~= 1 then return false end
+	slot.state.usb_roll_checked = true
+	slot.state.usb_reserved_level = 1
+	saved.purple_second_usb_committed = true
+	printf("[PF STASH] guaranteed PDA Hacking USB-1 reserved for second purple slot %d",
+		slot.index or 0)
+	return true
+end
+
+-- Assigns each onboarding reward exactly once, when a purple slot first becomes
+-- discovered. The manifest is the save-stable source of truth; a live container
+-- receives only the missing guaranteed copies and is never replenished later.
+function impl.ensure_purple_discovery_reward(slot, box)
+	if not slot or slot.tier ~= "purple" or not slot.state or
+			not slot.state.discovered then return false end
+	-- A purple stash discovered before this reward chain existed must not consume
+	-- one of its three stages merely because an old save was loaded.
+	if slot.state.purple_discovery_reward_legacy_skipped == true then return false end
+	local saved = impl.get_persistent_state()
+	local reward_stage = math.floor(tonumber(slot.state.purple_discovery_reward_stage) or 0)
+	if reward_stage <= 0 then
+		local global_stage = math.max(0,
+			math.floor(tonumber(saved.purple_discovery_reward_stage) or 0))
+		if global_stage >= #purple_discovery_reward_sequence then return false end
+		reward_stage = global_stage + 1
+		slot.state.purple_discovery_reward_stage = reward_stage
+		saved.purple_discovery_reward_stage = reward_stage
+	end
+	local reward = purple_discovery_reward_sequence[reward_stage]
+	if not reward then return false end
+
+	local loot = impl.build_slot_loot(slot)
+	for _, item in ipairs(reward.items or {}) do
+		local required = math.max(1, math.floor(tonumber(item.count) or 1))
+		local present = impl.loot_manifest_section_count(loot, item.section)
+		while present < required do
+			table.insert(loot, { section = item.section })
+			present = present + 1
+		end
+	end
+
+	if reward.guaranteed_usb_level == 1 then
+		impl.reserve_second_purple_usb(slot, saved)
+	end
+	if not box or not slot.loot_materialized then return true end
+
+	if slot.state.purple_discovery_reward_materialized ~= true then
+		local complete = true
+		for _, item in ipairs(reward.items or {}) do
+			local required = math.max(1, math.floor(tonumber(item.count) or 1))
+			local present = impl.stash_section_count(box, item.section)
+			while present < required do
+				if not impl.spawn_item({ section = item.section }, box.id) then
+					complete = false
+					break
+				end
+				present = present + 1
+			end
+			if present < required then complete = false end
+		end
+		if complete then slot.state.purple_discovery_reward_materialized = true end
+	end
+	if reward.guaranteed_usb_level == 1 then impl.ensure_hacking_usb(slot, box) end
+	return true
 end
 
 function spawn_green_corpse_loot(parent_id)
@@ -3036,6 +3180,10 @@ function impl.reveal_hint_slot(slot, message, silent)
 	slot.state.hinted = true
 	slot.state.discovered = true
 	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
+	impl.ensure_purple_discovery_reward(
+		slot,
+		slot.id and alife():object(slot.id, true) or nil
+	)
 	impl.try_assign_random_story_document(slot)
 	impl.add_tier_marker(slot)
 	if not silent then
@@ -3483,6 +3631,7 @@ function on_inventory_box_open(box)
 	local server_box = alife():object(box:id(), true)
 	if server_box then
 		impl.materialize_slot_loot(slot, server_box)
+		impl.ensure_purple_discovery_reward(slot, server_box)
 		impl.ensure_hacking_usb(slot, server_box)
 		impl.ensure_ghost_city_note(slot, server_box)
 		impl.apply_slot_item_conditions(server_box, slot)
@@ -3633,6 +3782,9 @@ function impl.rotate_slot(slot)
 	slot.state.usb_roll_checked = nil
 	slot.state.usb_reserved_level = nil
 	slot.state.usb_roll = nil
+	slot.state.purple_discovery_reward_stage = nil
+	slot.state.purple_discovery_reward_materialized = nil
+	slot.state.purple_discovery_reward_legacy_skipped = nil
 	slot.state.container_model = nil
 	slot.state.loot_generation = math.max(
 		0, math.floor(tonumber(slot.state.loot_generation) or 0)) + 1
@@ -3663,6 +3815,7 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 		slot.loot_materialized = false
 		slot.state.defer_loot = nil
 	end
+	if slot.state.discovered then impl.ensure_purple_discovery_reward(slot, box) end
 	if box and not slot.state.depleted then
 		impl.ensure_hacking_usb(slot, box)
 		impl.ensure_ghost_city_note(slot, box)
@@ -3672,6 +3825,7 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 			point_distance_sqr < tier.discovery_distance_sqr then
 			slot.state.discovered = true
 			impl.try_assign_random_story_document(slot)
+			impl.ensure_purple_discovery_reward(slot, box)
 		end
 		if slot.state.discovered and level.map_has_object_spot(slot.id, marker_type) == 0 then
 			level.map_add_object_spot_ser(slot.id, marker_type, SPOT_HINT)

@@ -559,7 +559,7 @@ end
 
 -- Returns attempted, level, section. attempted=false means another reservation
 -- or no eligible missing level; the stash must not consume its one-time roll.
-function reserve_next_usb(max_level, slot_index, fixed_roll)
+function reserve_next_usb(max_level, slot_index, fixed_roll, guaranteed)
 	local state = get_state()
 	if state.reservation and state.acquired[state.reservation.level] then
 		state.reservation = nil
@@ -575,13 +575,20 @@ function reserve_next_usb(max_level, slot_index, fixed_roll)
 	else
 		roll = math.random(100)
 	end
-	if roll > chance then return true, nil, nil end
+	if not guaranteed and roll > chance then return true, nil, nil end
 
 	state.reservation = {
 		level = level,
 		slot = tonumber(slot_index) or 0
 	}
 	return true, level, USB_SECTIONS[level]
+end
+
+-- Story/progression guarantees use the same global reservation and ordered
+-- level selection as ordinary stash rolls, but bypass only the percentage
+-- check. This keeps USB uniqueness intact while allowing a fixed milestone.
+function reserve_next_usb_guaranteed(max_level, slot_index)
+	return reserve_next_usb(max_level, slot_index, 1, true)
 end
 
 function release_usb_reservation(slot_index)
