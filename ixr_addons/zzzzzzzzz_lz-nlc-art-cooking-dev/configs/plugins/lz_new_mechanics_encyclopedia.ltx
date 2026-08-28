@@ -1,9 +1,11 @@
 [encyclopedia]
-lz_nlc_art_cooking_recipes
-lz_nm_encyclopedia_mechanics
-lz_nm_encyclopedia_mutants
+; Keep bare section IDs: ui_lz_encyclopedia_tab.script applies the canonical
+; visible order after CInifile returns these keys lexicographically.
 pf_story_encyclopedia_documents
 lz_ghost_city_encyclopedia
+lz_nm_encyclopedia_mutants
+lz_nm_encyclopedia_mechanics
+lz_nlc_art_cooking_recipes
 
 [lz_nlc_art_cooking_recipes]
 ; CInifile sorts section keys lexicographically. Numeric ordinals therefore
@@ -53,12 +55,12 @@ lz_nm_article_repair
 lz_nm_article_upgrades
 lz_nm_article_disassembly
 lz_nm_article_detectors
-lz_nm_article_metal_detectors
 lz_nm_article_backpack
 lz_nm_article_sleep
 lz_nm_article_beacon
 lz_nm_article_pda_hacking
-lz_nm_article_strange_consumables
+; The obsolete standalone stash-detector and strange-consumable articles are
+; intentionally not registered: their text no longer matches active mechanics.
 
 [lz_nm_encyclopedia_mutants]
 lz_nm_article_bloodsucker
@@ -204,6 +206,7 @@ lz_ghost_city_article_36 = st_lz_lore_unprocessed_pripyat_film_name
 [encyclopedia_article_texts]
 lz_nlc_art_cooking_overview = st_lz_nlc_enc_overview_text
 lz_nm_article_00_stashes = lz_nm_article_stashes_text
+lz_nm_article_sleep = pf_encyclopedia_sleep_text
 lz_nlc_art_cooking_recipe_010_spirit_1 = st_lz_nlc_enc_recipe_spirit_1_text
 lz_nlc_art_cooking_recipe_011_spirit_2 = st_lz_nlc_enc_recipe_spirit_2_text
 lz_nlc_art_cooking_recipe_012_spirit_3 = st_lz_nlc_enc_recipe_spirit_3_text
@@ -316,12 +319,10 @@ lz_nm_article_repair = lz_nm_encyclopedia_repair_found
 lz_nm_article_upgrades = lz_nm_encyclopedia_upgrades_found
 lz_nm_article_disassembly = lz_nm_encyclopedia_disassembly_found
 lz_nm_article_detectors = lz_nm_encyclopedia_detectors_found
-lz_nm_article_metal_detectors = lz_nm_encyclopedia_metal_detectors_found
 lz_nm_article_backpack = lz_nm_encyclopedia_backpack_found
 lz_nm_article_sleep = lz_nm_encyclopedia_sleep_found
 lz_nm_article_beacon = lz_nm_encyclopedia_beacon_found
 lz_nm_article_pda_hacking = lz_nm_encyclopedia_pda_hacking_found
-lz_nm_article_strange_consumables = lz_nm_encyclopedia_strange_consumables_found
 pf_story_article_01 = pf_story_doc_01_found
 pf_story_article_02 = pf_story_doc_02_found
 pf_story_article_03 = pf_story_doc_03_found
@@ -396,9 +397,9 @@ detector_advanced = lz_nm_encyclopedia_detectors_found
 detector_elite = lz_nm_encyclopedia_detectors_found
 detector_scientific = lz_nm_encyclopedia_detectors_found
 lz_nm_krona_battery = lz_nm_encyclopedia_detectors_found
-pf_metal_detector_homemade = lz_nm_encyclopedia_detectors_found, lz_nm_encyclopedia_metal_detectors_found
-pf_metal_detector_wave = lz_nm_encyclopedia_detectors_found, lz_nm_encyclopedia_metal_detectors_found
-pf_metal_detector_magnet = lz_nm_encyclopedia_detectors_found, lz_nm_encyclopedia_metal_detectors_found
+pf_metal_detector_homemade = lz_nm_encyclopedia_detectors_found
+pf_metal_detector_wave = lz_nm_encyclopedia_detectors_found
+pf_metal_detector_magnet = lz_nm_encyclopedia_detectors_found
 af_electra_sparkler = lz_nm_encyclopedia_detectors_found
 af_electra_flash = lz_nm_encyclopedia_detectors_found
 af_electra_moonlight = lz_nm_encyclopedia_detectors_found
@@ -421,7 +422,3 @@ pda_hack_usb_1 = lz_nm_encyclopedia_pda_hacking_found
 pda_hack_usb_2 = lz_nm_encyclopedia_pda_hacking_found
 pda_hack_usb_3 = lz_nm_encyclopedia_pda_hacking_found
 lz_ph_reflash_module = lz_nm_encyclopedia_pda_hacking_found
-
-lz_nm_strange_stew = lz_nm_encyclopedia_strange_consumables_found
-lz_nm_strange_shot = lz_nm_encyclopedia_strange_consumables_found
-lz_nm_strange_drink = lz_nm_encyclopedia_strange_consumables_found

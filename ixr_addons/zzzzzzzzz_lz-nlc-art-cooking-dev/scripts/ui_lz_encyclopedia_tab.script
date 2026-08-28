@@ -1,0 +1,275 @@
+local singleton = nil
+
+local function visible_length(value)
+	-- Inline %c[A,R,G,B] tags affect colour, not the rendered line width.
+	value = string.gsub(value or "", "%%c%[[^%]]+%]", "")
+	local _, count = string.gsub(value, "[^\128-\191]", "")
+	return count
+end
+
+local function wrap_paragraph(paragraph, limit)
+	if paragraph == "" or string.match(paragraph, "^%s*$") then return paragraph end
+	local result = {}
+	local line_length = 0
+	for word in string.gmatch(paragraph, "%S+") do
+		local word_length = visible_length(word)
+		if line_length > 0 and line_length + 1 + word_length > limit then
+			table.insert(result, "\\n")
+			line_length = 0
+		elseif line_length > 0 then
+			table.insert(result, " ")
+			line_length = line_length + 1
+		end
+		table.insert(result, word)
+		line_length = line_length + word_length
+	end
+	return table.concat(result)
+end
+
+-- Stock article titles can arrive as CP1251 while addon strings arrive as
+-- UTF-8. Normalize every displayed value to UTF-8 before concatenation. Keep
+-- U+00A0 as ASCII decimal escapes so editors cannot silently alter its bytes.
+local UTF8_NBSP = "\194\160"
+-- Mandatory for every current and future encyclopedia list entry: prepend
+-- exactly two real NBSP (Alt+255) characters to both parent categories and
+-- child articles. Keep this indent in the text so selection fills the row;
+-- do not replace it with XML geometry or ordinary spaces.
+local LIST_ENTRY_INDENT = UTF8_NBSP .. UTF8_NBSP
+
+-- CInifile enumerates bare LTX keys lexicographically, not in file order.
+-- Sort the loaded categories explicitly; unknown future categories follow the
+-- canonical ones and remain deterministic by section ID.
+local CATEGORY_ORDER = {
+	pf_story_encyclopedia_documents = 10,
+	lz_ghost_city_encyclopedia = 20,
+	lz_nm_encyclopedia_mutants = 30,
+	lz_nm_encyclopedia_mechanics = 40,
+	lz_nlc_art_cooking_recipes = 50
+}
+
+local function category_less(left, right)
+	local left_order = CATEGORY_ORDER[left.section] or 1000
+	local right_order = CATEGORY_ORDER[right.section] or 1000
+	if left_order ~= right_order then return left_order < right_order end
+	return tostring(left.section) < tostring(right.section)
+end
+
+local function utf8_text(value)
+	value = tostring(value or "")
+	if lz_new_mechanics and lz_new_mechanics.text_for_utf8 then
+		return lz_new_mechanics.text_for_utf8(value)
+	end
+	return value
+end
+
+local function keep_explicit_paragraph_spacing(value)
+	local result = {}
+	local position = 1
+	while true do
+		local newline = string.find(value, "\\n", position, true)
+		if not newline then
+			table.insert(result, string.sub(value, position))
+			break
+		end
+		table.insert(result, string.sub(value, position, newline - 1))
+		table.insert(result, "\\n" .. UTF8_NBSP .. "\\n")
+		position = newline + 2
+		-- One NBSP spacer replaces any run of one or more explicit newlines.
+		while string.sub(value, position, position + 1) == "\\n" do
+			position = position + 2
+		end
+	end
+	return table.concat(result)
+end
+
+local function wrap_text_by_words(value, width, keep_paragraphs)
+	-- IX-Ray's multibyte SplitByWidth cuts Cyrillic strings at an arbitrary
+	-- glyph. Insert conservative explicit breaks at spaces before it does so.
+	if keep_paragraphs then value = keep_explicit_paragraph_spacing(value) end
+	local limit = math.max(24, math.floor(((width or 320) - 10) / 9))
+	local result = {}
+	local position = 1
+	while true do
+		local newline = string.find(value, "\\n", position, true)
+		local paragraph = newline and string.sub(value, position, newline - 1) or
+			string.sub(value, position)
+		table.insert(result, wrap_paragraph(paragraph, limit))
+		if not newline then break end
+		table.insert(result, "\\n")
+		position = newline + 2
+	end
+	return table.concat(result)
+end
+
+function get_ui()
+	if singleton then
+		singleton:RefreshArticles()
+	else
+		singleton = lz_encyclopedia_tab()
+	end
+	return singleton
+end
+
+function refresh_if_created()
+	if singleton then singleton:RefreshArticles() end
+end
+
+class "lz_encyclopedia_entry" (CUIListBoxItem)
+
+function lz_encyclopedia_entry:__init() super(22)
+	self.text = self:GetTextItem()
+	self.text:SetWndRect(Frect():set(0, 0, 300, 22))
+	self:SetTextColor(GetARGB(255, 216, 186, 140))
+	self.text:SetFont(GetFontLetterica18Russian())
+	self.text:SetWndSize(vector2():set(400, 22))
+	self.text:SetEllipsis(true)
+end
+
+class "lz_encyclopedia_tab" (CUIScriptWnd)
+
+function lz_encyclopedia_tab:__init() super()
+	self.categories = {}
+	self:LoadArticles()
+	self:InitControls()
+	self:InitCallbacks()
+	self:InitCategories()
+end
+
+function lz_encyclopedia_tab:__finalize()
+end
+
+function lz_encyclopedia_tab:LoadArticles()
+	self.categories = {}
+	self.ghost_city_found = 0
+	self.ghost_city_total = 0
+	local ini = ini_file("plugins\\lz_new_mechanics_encyclopedia.ltx")
+	self.article_ini = ini
+	if not ini:section_exist("encyclopedia") then return end
+
+	for line = 0, (ini:line_count("encyclopedia") or 0) - 1 do
+		local _, section = ini:r_line("encyclopedia", line, "", "")
+		if section and section ~= "" then
+			local category = { section = section, articles = {}, total_articles = 0 }
+			if ini:section_exist(section) then
+				for article_line = 0, (ini:line_count(section) or 0) - 1 do
+					local _, article = ini:r_line(section, article_line, "", "")
+					if article and article ~= "" then
+						category.total_articles = category.total_articles + 1
+						local unlocked = true
+						if ini:section_exist("encyclopedia_unlocks") and
+							ini:line_exist("encyclopedia_unlocks", article) then
+							local info = ini:r_string("encyclopedia_unlocks", article)
+							unlocked = db.actor ~= nil and db.actor:has_info(info)
+						end
+						if unlocked then table.insert(category.articles, article) end
+					end
+				end
+			end
+			if section == "lz_ghost_city_encyclopedia" then
+				self.ghost_city_found = #category.articles
+				self.ghost_city_total = category.total_articles
+			end
+			-- A locked story category should not advertise that unread evidence exists.
+			if #category.articles > 0 then table.insert(self.categories, category) end
+		end
+	end
+	table.sort(self.categories, category_less)
+end
+
+function lz_encyclopedia_tab:ResolveArticleString(section, article, fallback)
+	local ini = self.article_ini
+	if ini and ini:section_exist(section) and ini:line_exist(section, article) then
+		return ini:r_string(section, article)
+	end
+	return fallback
+end
+
+function lz_encyclopedia_tab:RefreshArticles()
+	self:LoadArticles()
+	self:UpdateCaption()
+	if self.category_list then self:InitCategories() end
+end
+
+function lz_encyclopedia_tab:UpdateCaption()
+	if not self.caption then return end
+	local format = game.translate_string("pda_encyclopedia_ghost_counter")
+	self.caption:TextControl():SetText(string.format(
+		format,
+		self.ghost_city_found or 0,
+		self.ghost_city_total or 0
+	))
+end
+
+function lz_encyclopedia_tab:InitControls()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pda_encyclopedia.xml")
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	xml:InitFrame("frame1", self)
+	xml:InitFrame("frame2", self)
+	xml:InitFrame("border", self)
+	self.caption = xml:InitStatic("frame1:caption", self)
+	self:UpdateCaption()
+
+	self.article_list = xml:InitListBox("article_list", self)
+	self:Register(self.article_list, "article_list")
+	self.category_list = xml:InitListBox("category_list", self)
+	self:Register(self.category_list, "category_list")
+	self.information = xml:InitTextWnd("description:information", nil)
+	self.scrollbar = xml:InitScrollView("description:scrollbar", self)
+	self.scrollbar:AddWindow(self.information, true)
+	self.information:SetAutoDelete(false)
+end
+
+function lz_encyclopedia_tab:InitCallbacks()
+	self:AddCallback("article_list", ui_events.LIST_ITEM_SELECT, self.SelectArticle, self)
+	self:AddCallback("category_list", ui_events.LIST_ITEM_SELECT, self.SelectCategory, self)
+end
+
+function lz_encyclopedia_tab:InitCategories()
+	self.category_list:RemoveAll()
+	for _, category in ipairs(self.categories) do
+		local item = lz_encyclopedia_entry()
+		item.text:SetText(LIST_ENTRY_INDENT .. utf8_text(game.translate_string(category.section)))
+		self.category_list:AddExistingItem(item)
+	end
+	if #self.categories > 0 then self:SelectCategory(1) end
+end
+
+function lz_encyclopedia_tab:SelectCategory(index)
+	index = index or (self.category_list:GetSelectedIndex() + 1)
+	self.category_list:SetSelectedIndex(index - 1)
+	self.article_list:RemoveAll()
+	local category = self.categories[index]
+	if not category then return end
+	for _, article in ipairs(category.articles) do
+		local item = lz_encyclopedia_entry()
+		local title_id = self:ResolveArticleString("encyclopedia_article_titles", article, article)
+		item.text:SetText(LIST_ENTRY_INDENT .. utf8_text(game.translate_string(title_id)))
+		self.article_list:AddExistingItem(item)
+	end
+	if #category.articles > 0 then self:SelectArticle(1) end
+end
+
+function lz_encyclopedia_tab:SelectArticle(article_index)
+	local category_index = self.category_list:GetSelectedIndex() + 1
+	article_index = article_index or (self.article_list:GetSelectedIndex() + 1)
+	local category = self.categories[category_index]
+	local article = category and category.articles[article_index] or nil
+	if not article then return end
+	self.article_list:SetSelectedIndex(article_index - 1)
+	local text_id = self:ResolveArticleString("encyclopedia_article_texts", article, article .. "_text")
+	local article_text = utf8_text(game.translate_string(text_id))
+	-- Keep the protagonist's reflection visually separate from the document.
+	-- The explicit break is expanded through the same Alt+255 paragraph spacer.
+	article_text = string.gsub(article_text, "КОММЕНТАРИЙ", "Мои мысли:\\n")
+	self.information:SetText(wrap_text_by_words(
+		article_text,
+		self.information:GetWidth(),
+		true
+	))
+	self.information:AdjustHeightToText()
+	self.information:SetWndSize(vector2():set(self.information:GetWidth(), self.information:GetHeight() + 7))
+	self.scrollbar:Clear()
+	self.scrollbar:AddWindow(self.information, true)
+	self.information:SetAutoDelete(false)
+end
