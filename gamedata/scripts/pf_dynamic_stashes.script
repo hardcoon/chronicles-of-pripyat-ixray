@@ -3672,7 +3672,7 @@ function impl.complete_metal_detector_use(detector)
 		if counts[section] > 1 then name = name .. " x" .. tostring(counts[section]) end
 		table.insert(names, name)
 	end
-	impl.retire_empty_slot(nearest_slot)
+	impl.queue_empty_slot_check(nearest_slot)
 	impl.send_detector_news(game.translate_string("pf_metal_detector_found") .. " " .. table.concat(names, ", "))
 	return false
 end
