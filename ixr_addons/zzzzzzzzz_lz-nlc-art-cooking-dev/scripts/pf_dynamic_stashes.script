@@ -3722,7 +3722,9 @@ function use_metal_detector(detector)
 	if not impl.require_actor_item(detector) then return false end
 	if state.pending_metal_detector_use then return false end
 	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
-	if menu and menu:GetInvBox() then
+	-- GetInvBox() can retain the previous container after the search window has
+	-- closed. Only DeadBodySearch mode means that a stash is genuinely open.
+	if menu and menu:GetMenuMode() == 4 and menu:GetInvBox() then
 		impl.send_detector_news(game.translate_string("lz_nm_close_stash_before_action"))
 		return false
 	end
