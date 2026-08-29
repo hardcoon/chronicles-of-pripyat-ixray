@@ -1,0 +1,391 @@
+-- Dynamic emission shelter detection for IX-Ray.
+-- This is an original implementation based only on level CFORM ray queries.
+
+local CFG_PATH = "misc\\lz_dynamic_surge_cover.ltx"
+local DIRECTION_COUNT = 72
+local STATIC_RAY_FLAGS = 2
+local RAY_EPSILON = 0.02
+
+local cfg = nil
+local directions = nil
+local cast = nil
+local samples = {}
+local next_direction = 1
+local completed_samples = 0
+local blocked_samples = 0
+local scan_ready = false
+local dynamic_safe = false
+local loss_started_at = nil
+local movement_anchor = nil
+local pending = nil
+local hud_window = nil
+local overall_safe_last = nil
+local surge_was_active = false
+local queries_last_frame = 0
+local queries_total = 0
+
+local function trim(value)
+	return string.gsub(string.gsub(value or "", "^%s+", ""), "%s+$", "")
+end
+
+local function csv_set(value, numeric)
+	local result = {}
+	for token in string.gmatch(value or "", "[^,%s]+") do
+		local key = numeric and tonumber(token) or trim(token)
+		if key ~= nil and key ~= "" then result[key] = true end
+	end
+	return result
+end
+
+local function config_string(ini, key, fallback)
+	if ini:line_exist("settings", key) then
+		return ini:r_string("settings", key)
+	end
+	return fallback
+end
+
+local function config_number(ini, key, fallback)
+	return tonumber(config_string(ini, key, tostring(fallback))) or fallback
+end
+
+local function config_bool(ini, key, fallback)
+	local value = string.lower(trim(config_string(ini, key, fallback and "true" or "false")))
+	return value == "true" or value == "1" or value == "yes" or value == "on"
+end
+
+local function load_config()
+	if cfg then return cfg end
+	local ini = ini_file(CFG_PATH)
+	cfg = {
+		enabled = config_bool(ini, "enabled", true),
+		levels = csv_set(config_string(ini, "levels", "pripyat_full"), false),
+		ray_range = math.max(0.1, config_number(ini, "ray_range", 8.0)),
+		rays_per_frame = math.max(1, math.min(8, math.floor(config_number(ini, "rays_per_frame", 8)))),
+		enter_threshold = config_number(ini, "enter_threshold", 0.78),
+		exit_threshold = config_number(ini, "exit_threshold", 0.70),
+		grace_period_ms = math.max(0, config_number(ini, "grace_period_ms", 1000)),
+		movement_reset_distance = math.max(0.1, config_number(ini, "movement_reset_distance", 1.0)),
+		max_passthrough = math.max(0, math.floor(config_number(ini, "max_passthrough", 4))),
+		show_bar = config_bool(ini, "show_bar", true),
+		npc_mode = trim(config_string(ini, "npc_mode", "immune")),
+		material_profile_md5 = trim(config_string(ini, "material_profile_md5", "")),
+		ignored_materials = csv_set(config_string(ini, "ignored_material_indices", ""), true)
+	}
+	return cfg
+end
+
+local function build_directions()
+	if directions then return end
+	directions = {}
+	local elevations = {0, 25, 50, 70}
+	local rad = math.pi / 180
+	for _, elevation in ipairs(elevations) do
+		local el = elevation * rad
+		local horizontal = math.cos(el)
+		for azimuth = 0, 15 do
+			local az = azimuth * 22.5 * rad
+			directions[#directions + 1] = vector():set(
+				math.cos(az) * horizontal,
+				math.sin(el),
+				math.sin(az) * horizontal
+			)
+		end
+	end
+	local top = 82 * rad
+	local horizontal = math.cos(top)
+	for azimuth = 0, 7 do
+		local az = azimuth * 45 * rad
+		directions[#directions + 1] = vector():set(
+			math.cos(az) * horizontal,
+			math.sin(top),
+			math.sin(az) * horizontal
+		)
+	end
+end
+
+local function copy_position(position)
+	return vector():set(position)
+end
+
+local function clear_scan(keep_dynamic_state)
+	samples = {}
+	next_direction = 1
+	completed_samples = 0
+	blocked_samples = 0
+	scan_ready = false
+	pending = nil
+	if not keep_dynamic_state then
+		dynamic_safe = false
+		loss_started_at = nil
+	end
+end
+
+local function surge_active()
+	if not surge_manager or not surge_manager.get_surge_manager then return false end
+	local manager = surge_manager.get_surge_manager()
+	return manager ~= nil and manager.started == true and manager.task_given == true
+end
+
+local function static_actor_in_cover()
+	if not db.actor or not surge_manager or not surge_manager.get_surge_manager then return false end
+	local manager = surge_manager.get_surge_manager()
+	-- Let CSurgeManager consume its load flag first. Calling get_nearest_cover
+	-- while it is still set would append the same restrictors more than once.
+	if not manager or manager.loaded then return false end
+	local cover_id = manager:get_nearest_cover()
+	local storage = cover_id and db.storage[cover_id]
+	return storage ~= nil and storage.object ~= nil and storage.object:inside(db.actor:position())
+end
+
+class "lz_nm_surge_cover_hud" (CUIScriptWnd)
+
+function lz_nm_surge_cover_hud:__init() super()
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	self:SetAutoDelete(true)
+	self.render_holder = nil
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_lz_dynamic_surge_cover.xml")
+	self.root = xml:InitStatic("cover_hud", self)
+	self.background = xml:InitStatic("cover_hud:background", self.root)
+	self.bar = xml:InitProgressBar("cover_hud:cover_bar", self.root)
+end
+
+function lz_nm_surge_cover_hud:__finalize()
+	-- The binder performs the normal teardown before save reload destroys the
+	-- old Lua state. Keep this fallback for exceptional shutdown paths.
+	pcall(function()
+		local holder = self.render_holder
+		if holder then holder:RemoveDialogToRender(self) end
+		self.render_holder = nil
+	end)
+end
+
+function lz_nm_surge_cover_hud:SetRatio(ratio)
+	self.bar:SetProgressPos(math.max(0, math.min(1, ratio)))
+end
+
+local function remove_hud()
+	if not hud_window then return true end
+	local window = hud_window
+	-- get_hud() may already expose another holder during an in-process reload.
+	-- Unregister only from the exact holder used when the window was added.
+	local holder = window.render_holder
+	if not holder then return false end
+	holder:RemoveDialogToRender(window)
+	window.render_holder = nil
+	hud_window = nil
+	return true
+end
+
+local function update_hud(show, ratio)
+	if not show then
+		remove_hud()
+		return
+	end
+	if not hud_window then
+		local holder = get_hud()
+		if not holder then return end
+		local window = lz_nm_surge_cover_hud()
+		window.render_holder = holder
+		holder:AddDialogToRender(window)
+		hud_window = window
+		printf("lz_nm_surge_cover: surge HUD created")
+	end
+	hud_window:SetRatio(ratio)
+end
+
+local function show_transition_message(is_safe)
+	local hud = get_hud()
+	if not hud then return end
+	local id = is_safe and "lz_nm_surge_cover_found" or "lz_nm_surge_cover_lost"
+	hud:AddCustomStatic(id, true)
+end
+
+local function set_sample(index, blocked)
+	local old = samples[index]
+	if old == 1 then blocked_samples = blocked_samples - 1 end
+	if old == nil then completed_samples = completed_samples + 1 end
+	samples[index] = blocked and 1 or 0
+	if blocked then blocked_samples = blocked_samples + 1 end
+	if completed_samples >= DIRECTION_COUNT then scan_ready = true end
+end
+
+local function begin_direction(camera_position)
+	build_directions()
+	local index = next_direction
+	next_direction = next_direction + 1
+	if next_direction > DIRECTION_COUNT then next_direction = 1 end
+	pending = {
+		index = index,
+		origin = copy_position(camera_position),
+		direction = directions[index],
+		remaining = load_config().ray_range,
+		passes = 0
+	}
+end
+
+local function advance_ignored_hit(distance)
+	local step = math.max(0, distance) + RAY_EPSILON
+	pending.origin = vector():set(
+		pending.origin.x + pending.direction.x * step,
+		pending.origin.y + pending.direction.y * step,
+		pending.origin.z + pending.direction.z * step
+	)
+	pending.remaining = pending.remaining - step
+	pending.passes = pending.passes + 1
+end
+
+local function query_pending()
+	if not cast then cast = ray_pick() end
+	cast:set_flags(STATIC_RAY_FLAGS)
+	cast:set_range(pending.remaining)
+	cast:set_position(pending.origin)
+	cast:set_direction(pending.direction)
+	local hit_found = cast:query()
+	queries_total = queries_total + 1
+	queries_last_frame = queries_last_frame + 1
+	if not hit_found then
+		set_sample(pending.index, false)
+		pending = nil
+		return
+	end
+	local material = tonumber(cast:get_material())
+	if material and load_config().ignored_materials[material] and pending.passes < load_config().max_passthrough then
+		advance_ignored_hit(cast:get_distance())
+		if pending.remaining <= RAY_EPSILON then
+			set_sample(pending.index, false)
+			pending = nil
+		end
+		return
+	end
+	if material and load_config().ignored_materials[material] then
+		set_sample(pending.index, false)
+	else
+		set_sample(pending.index, true)
+	end
+	pending = nil
+end
+
+local function update_dynamic_state(now)
+	local ratio = blocked_samples / DIRECTION_COUNT
+	if dynamic_safe then
+		-- Keep the last confirmed state while a movement-triggered rescan is
+		-- incomplete. The loss grace starts only from a complete new sample.
+		if not scan_ready then
+			return
+		elseif ratio >= load_config().exit_threshold then
+			loss_started_at = nil
+		elseif loss_started_at == nil then
+			loss_started_at = now
+		elseif now - loss_started_at >= load_config().grace_period_ms then
+			dynamic_safe = false
+			loss_started_at = nil
+		end
+	elseif scan_ready and ratio >= load_config().enter_threshold then
+		dynamic_safe = true
+		loss_started_at = nil
+	end
+end
+
+function is_supported_level()
+	local settings = load_config()
+	return settings.enabled and level and settings.levels[level.name()] == true
+end
+
+function cover_ratio()
+	return blocked_samples / DIRECTION_COUNT
+end
+
+function actor_in_dynamic_cover()
+	return is_supported_level() and dynamic_safe == true
+end
+
+function npc_immunity_active()
+	return is_supported_level() and load_config().npc_mode == "immune"
+end
+
+function reset()
+	local hud_removed = remove_hud()
+	clear_scan(false)
+	movement_anchor = nil
+	overall_safe_last = nil
+	surge_was_active = false
+	queries_last_frame = 0
+	return hud_removed
+end
+
+function on_actor_net_destroy()
+	local had_hud = hud_window ~= nil
+	local hud_removed = reset()
+	if had_hud and not hud_removed then
+		error("surge HUD render holder is unavailable")
+	end
+	if had_hud then
+		printf("lz_nm_surge_cover: surge HUD detached before actor destroy")
+	end
+end
+
+function start_search()
+	reset()
+end
+
+function update(now)
+	now = now or time_global()
+	queries_last_frame = 0
+	local active = surge_active()
+	if not db.actor or not db.actor:alive() or not is_supported_level() or not active then
+		if surge_was_active then reset() else remove_hud() end
+		surge_was_active = active
+		return
+	end
+	surge_was_active = true
+
+	local camera_position = copy_position(device().cam_pos)
+	if not movement_anchor then
+		movement_anchor = copy_position(camera_position)
+	elseif movement_anchor:distance_to(camera_position) > load_config().movement_reset_distance then
+		-- Do not repeatedly discard an unfinished cycle while the actor keeps
+		-- moving. A cycle may span nearby camera positions, but it is guaranteed
+		-- to finish and replace the stale state instead of flickering protection.
+		if scan_ready or completed_samples == 0 then
+			clear_scan(true)
+		end
+		movement_anchor = copy_position(camera_position)
+	end
+
+	local budget = load_config().rays_per_frame
+	while queries_last_frame < budget do
+		if not pending then begin_direction(camera_position) end
+		query_pending()
+	end
+	update_dynamic_state(now)
+
+	local overall_safe = static_actor_in_cover() or dynamic_safe
+	if overall_safe_last ~= nil and overall_safe_last ~= overall_safe then
+		show_transition_message(overall_safe)
+	end
+	overall_safe_last = overall_safe
+	update_hud(load_config().show_bar and not overall_safe, cover_ratio())
+end
+
+function debug_dump()
+	local settings = load_config()
+	printf(
+		"lz_nm_surge_cover: level=%s supported=%s surge=%s ratio=%.3f safe=%s ready=%s samples=%d rays_frame=%d rays_total=%d material_md5=%s",
+		level and level.name() or "<nil>",
+		tostring(is_supported_level()), tostring(surge_active()), cover_ratio(),
+		tostring(dynamic_safe), tostring(scan_ready), completed_samples,
+		queries_last_frame, queries_total, settings.material_profile_md5
+	)
+	return {
+		supported = is_supported_level(),
+		active = surge_active(),
+		ratio = cover_ratio(),
+		safe = dynamic_safe,
+		ready = scan_ready,
+		completed_samples = completed_samples,
+		queries_last_frame = queries_last_frame,
+		queries_total = queries_total,
+		material_profile_md5 = settings.material_profile_md5
+	}
+end

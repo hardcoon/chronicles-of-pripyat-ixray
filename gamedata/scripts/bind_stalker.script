@@ -120,6 +120,12 @@ function actor_binder:net_spawn(data)
 end
 ----------------------------------------------------------------------------------------------------------------------
 function actor_binder:net_destroy()
+	if lz_nm_surge_cover and lz_nm_surge_cover.on_actor_net_destroy then
+		local cleanup_ok, cleanup_error = pcall(lz_nm_surge_cover.on_actor_net_destroy)
+		if not cleanup_ok then
+			printf("! lz_nm_surge_cover: surge HUD cleanup failed: [%s]", tostring(cleanup_error))
+		end
+	end
 	if lz_nlc_art_cooking_runtime and lz_nlc_art_cooking_runtime.on_actor_net_destroy then
 		local cleanup_ok, cleanup_error = pcall(lz_nlc_art_cooking_runtime.on_actor_net_destroy)
 		if not cleanup_ok then
