@@ -275,6 +275,7 @@ end
 class "lz_nlc_anomaly_analyzer_hud" (CUIScriptWnd)
 
 function lz_nlc_anomaly_analyzer_hud:__init() super()
+	self.render_holder = nil
 	self:SetWndRect(Frect():set(0, 0, 1024, 768))
 	self:SetAutoDelete(true)
 	local xml = CScriptXmlInit()
@@ -300,6 +301,16 @@ function lz_nlc_anomaly_analyzer_hud:__init() super()
 			last_color = nil
 		}
 	end
+end
+
+function lz_nlc_anomaly_analyzer_hud:__finalize()
+	-- Best-effort fallback for exceptional teardown. The normal save/load path
+	-- unregisters the HUD from actor_binder:net_destroy before Lua destroys it.
+	pcall(function()
+		local holder = self.render_holder
+		if holder then holder:RemoveDialogToRender(self) end
+		self.render_holder = nil
+	end)
 end
 
 function lz_nlc_anomaly_analyzer_hud:SetEntries(entries)
@@ -345,13 +356,16 @@ function lz_nlc_anomaly_analyzer_hud:SetEntries(entries)
 end
 
 function impl.hide_analyzer_text()
+	local hidden, error_message = true, nil
 	if analyzer_hud then
-		pcall(function()
-			local hud = get_hud()
+		hidden, error_message = pcall(function()
+			local hud = analyzer_hud.render_holder or get_hud()
 			if hud then hud:RemoveDialogToRender(analyzer_hud) end
+			analyzer_hud.render_holder = nil
 		end)
 	end
 	analyzer_hud = nil
+	return hidden, error_message
 end
 
 function impl.show_analyzer_entries(entries)
@@ -364,6 +378,9 @@ function impl.show_analyzer_entries(entries)
 		if not hud then return end
 		if not analyzer_hud then
 			analyzer_hud = lz_nlc_anomaly_analyzer_hud()
+			-- Keep the exact holder used for registration. During an in-process
+			-- save reload get_hud() may already refer to the next UI instance.
+			analyzer_hud.render_holder = hud
 			hud:AddDialogToRender(analyzer_hud)
 			printf("lz_nlc_art_cooking: analyzer world labels created")
 		end
@@ -924,6 +941,18 @@ function actor_on_inventory_trade(item, sell_bye)
 		impl.remove_boulder(item)
 	else
 		impl.add_boulder(item)
+	end
+end
+
+function on_actor_net_destroy()
+	-- Lua-owned render-only windows must leave CDialogHolder while their native
+	-- objects are still alive. Otherwise save reload keeps a dangling raw pointer
+	-- and CDialogHolder::OnFrame crashes at the next 100% transition.
+	local had_analyzer_hud = analyzer_hud ~= nil
+	local hidden, error_message = impl.hide_analyzer_text()
+	if not hidden then error(error_message) end
+	if had_analyzer_hud then
+		printf("lz_nlc_art_cooking: analyzer HUD detached before actor destroy")
 	end
 end
 

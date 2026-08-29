@@ -120,6 +120,12 @@ function actor_binder:net_spawn(data)
 end
 ----------------------------------------------------------------------------------------------------------------------
 function actor_binder:net_destroy()
+	if lz_nlc_art_cooking_runtime and lz_nlc_art_cooking_runtime.on_actor_net_destroy then
+		local cleanup_ok, cleanup_error = pcall(lz_nlc_art_cooking_runtime.on_actor_net_destroy)
+		if not cleanup_ok then
+			printf("! lz_nlc_art_cooking: analyzer HUD cleanup failed: [%s]", tostring(cleanup_error))
+		end
+	end
 	if pf_irc_chat and pf_irc_chat.on_actor_net_destroy then
 		pcall(pf_irc_chat.on_actor_net_destroy)
 	end
