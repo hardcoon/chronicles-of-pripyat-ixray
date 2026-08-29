@@ -2946,14 +2946,13 @@ function impl.retire_empty_slot(slot)
 	return true
 end
 
-function impl.queue_empty_slot_check(slot, accept_client_empty)
+function impl.queue_empty_slot_check(slot)
 	if not slot or not slot.id then return false end
 	local now = time_global()
 	pending_empty_slots[slot.index] = {
 		object_id = slot.id,
 		due = now + EMPTY_RETIRE_DELAY_MS,
-		expires = now + 3000,
-		accept_client_empty = accept_client_empty == true
+		expires = now + 3000
 	}
 	return true
 end
@@ -2968,9 +2967,7 @@ function impl.update_pending_empty_slots(now)
 				pending_empty_slots[slot_index] = nil
 			else
 				local client_box = level.object_by_id(entry.object_id)
-				local client_empty = client_box and client_box:is_inv_box_empty() or false
-				if (entry.accept_client_empty and client_empty) or
-					((not client_box or client_empty) and not impl.has_items(box)) then
+				if (not client_box or client_box:is_inv_box_empty()) and not impl.has_items(box) then
 					impl.retire_empty_slot(slot)
 				elseif now >= entry.expires then
 					pending_empty_slots[slot_index] = nil
@@ -3704,7 +3701,7 @@ function impl.complete_metal_detector_use(detector)
 		if counts[section] > 1 then name = name .. " x" .. tostring(counts[section]) end
 		table.insert(names, name)
 	end
-	impl.queue_empty_slot_check(nearest_slot, true)
+	impl.retire_empty_slot(nearest_slot)
 	impl.send_detector_news(game.translate_string("pf_metal_detector_found") .. " " .. table.concat(names, ", "))
 	return false
 end
