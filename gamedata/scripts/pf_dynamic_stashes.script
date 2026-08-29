@@ -963,10 +963,13 @@ function impl.nearest_retrievable_slot(actor_position)
 	local nearest_slot = nil
 	local nearest_distance_sqr = METAL_DETECTOR_DISTANCE_SQR + 1
 	for _, slot in pairs(slots) do
-		if slot and slot.point and slot.id and slot.state and slot.state.discovered and
-			not slot.state.depleted then
+		if slot and slot.point and slot.id and slot.state and not slot.state.depleted then
 			local distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
-			if distance_sqr <= METAL_DETECTOR_DISTANCE_SQR and
+			local tier = tier_data[slot.tier]
+			local detector_accessible = tier and
+				(slot.state.discovered or not tier.hint_required)
+			if detector_accessible and
+				distance_sqr <= METAL_DETECTOR_DISTANCE_SQR and
 				(distance_sqr < nearest_distance_sqr or
 				(distance_sqr == nearest_distance_sqr and nearest_slot and
 					slot.index < nearest_slot.index)) then
@@ -1017,15 +1020,24 @@ function impl.stash_object_point(point)
 end
 
 function impl.remove_all_markers(id)
-	for _, marker_type in ipairs(marker_types) do
-		if level.map_has_object_spot(id, marker_type) ~= 0 then
+	if not id then return end
+	local map_manager = level.map_manager and level.map_manager() or nil
+	if map_manager and map_manager.RemoveMapLocationByObjectID then
+		map_manager:RemoveMapLocationByObjectID(id)
+		return
+	end
+	local function remove_marker_type(marker_type)
+		local attempts = 0
+		while attempts < 16 and level.map_has_object_spot(id, marker_type) ~= 0 do
 			level.map_remove_object_spot(id, marker_type)
+			attempts = attempts + 1
 		end
 	end
+	for _, marker_type in ipairs(marker_types) do
+		remove_marker_type(marker_type)
+	end
 	for _, marker_type in ipairs(legacy_marker_types) do
-		if level.map_has_object_spot(id, marker_type) ~= 0 then
-			level.map_remove_object_spot(id, marker_type)
-		end
+		remove_marker_type(marker_type)
 	end
 end
 
@@ -1597,6 +1609,13 @@ function impl.find_existing_objects()
 			slot.loot_materialized = false
 			slot.state.defer_loot = nil
 		end
+	end
+	-- Reconcile historical detector saves immediately after every physical box
+	-- has been rebound. This also runs when the detector is used before the first
+	-- scheduled manager update, so stale empty boxes cannot reach search rolls.
+	for _, slot in ipairs(slots) do
+		local box = slot.id and alife():object(slot.id, true) or nil
+		if box then impl.reconcile_legacy_box_state(slot, box) end
 	end
 	searched_existing = true
 end
@@ -2859,6 +2878,14 @@ function impl.try_assign_random_story_document(slot)
 	return false
 end
 
+function impl.discover_slot(slot, box)
+	if not slot or not slot.state or slot.state.discovered then return false end
+	slot.state.discovered = true
+	impl.try_assign_random_story_document(slot)
+	impl.ensure_purple_discovery_reward(slot, box)
+	return true
+end
+
 function impl.spawn_slot(slot)
 	local point = slot.point
 	local section = point.model
@@ -2899,26 +2926,63 @@ function impl.has_items(box)
 	return false
 end
 
-function impl.retire_empty_slot(slot)
+function impl.deplete_slot(slot)
 	if not slot or not slot.id then return false end
 	local box_id = slot.id
-	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
-	local opened_box = menu and menu:GetInvBox() or nil
-	if opened_box and opened_box:id() == box_id and get_hud() then
-		get_hud():HideActorMenu()
-	end
-	impl.release_object(box_id)
-	slot.id = nil
+	-- Commit the persistent state and remove every map spot before touching the
+	-- inventory UI or the ALife object. Native UI/object teardown may re-enter
+	-- script code, but it must never leave a discovered empty stash active.
 	slot.spawned_at = 0
 	slot.state.depleted = true
 	slot.state.defer_loot = nil
 	slot.loot_materialized = false
 	pending_empty_slots[slot.index] = nil
+	impl.remove_all_markers(box_id)
+	return box_id
+end
+
+function impl.retire_empty_slot(slot)
+	local box_id = impl.deplete_slot(slot)
+	if not box_id then return false end
+	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+	local opened_box = menu and menu:GetMenuMode() == 4 and menu:GetInvBox() or nil
+	if opened_box and opened_box:id() == box_id and get_hud() then
+		get_hud():HideActorMenu()
+	end
+	impl.release_object(box_id)
+	if slot.id == box_id then slot.id = nil end
 	return true
 end
 
+function impl.reconcile_legacy_box_state(slot, box)
+	if not slot or not slot.state or not box then return box end
+	if slot.state.depleted then
+		if impl.has_items(box) then
+			-- Repair saves made by a broken detector version which committed the
+			-- slot before its physical children had actually left the box.
+			slot.state.depleted = false
+			slot.state.defer_loot = nil
+			slot.loot_materialized = true
+			pending_empty_slots[slot.index] = nil
+		else
+			impl.retire_empty_slot(slot)
+			return nil
+		end
+	end
+	-- find_existing_objects marks restored boxes with spawned_at=0. An empty,
+	-- already materialized one is the inverse half of the old transfer race:
+	-- ownership changed, but depleted was never committed.
+	if slot.loot_materialized and
+		(slot.spawned_at == 0 or time_global() - slot.spawned_at >= EMPTY_CHECK_DELAY_MS) and
+		not impl.has_items(box) then
+		impl.retire_empty_slot(slot)
+		return nil
+	end
+	return box
+end
+
 function impl.queue_empty_slot_check(slot)
-	if not slot or not slot.id then return false end
+	if not slot or not slot.id or slot.state.depleted then return false end
 	local now = time_global()
 	pending_empty_slots[slot.index] = {
 		object_id = slot.id,
@@ -2948,14 +3012,6 @@ function impl.update_pending_empty_slots(now)
 			end
 		end
 	end
-end
-
-function impl.item_display_name(section)
-	local ini = system_ini()
-	if ini:line_exist(section, "inv_name") then
-		return game.translate_string(ini:r_string(section, "inv_name"))
-	end
-	return section
 end
 
 function impl.send_detector_news(message)
@@ -3534,6 +3590,25 @@ function impl.process_stash_search(slot)
 	end
 end
 
+-- Put every one-time search consequence into the physical box before the
+-- native inventory window is opened. The same helper serves ordinary use and
+-- the metal detector, so documents, USBs, notes, ambushes and hint rolls cannot
+-- diverge between the two search paths.
+function impl.prepare_stash_search(slot, server_box)
+	if not slot or not server_box then return false end
+	if not impl.materialize_slot_loot(slot, server_box) then return false end
+	server_box = impl.reconcile_legacy_box_state(slot, server_box)
+	if not server_box then return false end
+	impl.discover_slot(slot, server_box)
+	impl.ensure_purple_discovery_reward(slot, server_box)
+	impl.ensure_hacking_usb(slot, server_box)
+	impl.ensure_ghost_city_note(slot, server_box)
+	impl.process_stash_search(slot)
+	impl.ensure_ghost_city_note(slot, server_box)
+	impl.apply_slot_item_conditions(server_box, slot)
+	return true
+end
+
 -- Called from actor_binder with the item's previous owner ID. Dynamic stash
 -- contents can trigger stash-specific rolls; corpses only update their managed
 -- loot state and never reveal coordinates directly.
@@ -3600,15 +3675,7 @@ function on_inventory_box_open(box)
 	local slot = impl.slot_by_object_id(box:id())
 	if not slot then return false end
 	local server_box = alife():object(box:id(), true)
-	if server_box then
-		impl.materialize_slot_loot(slot, server_box)
-		impl.ensure_purple_discovery_reward(slot, server_box)
-		impl.ensure_hacking_usb(slot, server_box)
-		impl.ensure_ghost_city_note(slot, server_box)
-		impl.apply_slot_item_conditions(server_box, slot)
-	end
-	impl.process_stash_search(slot)
-	return true
+	return server_box and impl.prepare_stash_search(slot, server_box) or false
 end
 
 -- Reserved integration point for the future legendary tier.
@@ -3621,8 +3688,6 @@ function impl.complete_metal_detector_use(detector)
 	if not SYSTEM_ENABLED then return false end
 	if not db.actor or level.name() ~= LEVEL_NAME then return false end
 	if not impl.require_actor_item(detector) then return false end
-	-- The public callback already rejected a genuinely open stash before queueing.
-	-- Do not re-read m_pInvBox here: it may remain stale in normal inventory mode.
 	impl.build_candidate_indexes()
 	if #slots == 0 then impl.initialize_slots() end
 	impl.find_existing_objects()
@@ -3631,49 +3696,28 @@ function impl.complete_metal_detector_use(detector)
 	local nearest_slot = impl.nearest_retrievable_slot(actor_position)
 	if not nearest_slot then impl.detector_no_result() return false end
 
-	local server_box = nearest_slot.id and alife():object(nearest_slot.id, true) or nil
-	if server_box then
-		impl.materialize_slot_loot(nearest_slot, server_box)
-		impl.ensure_hacking_usb(nearest_slot, server_box)
-		impl.ensure_ghost_city_note(nearest_slot, server_box)
-		impl.apply_slot_item_conditions(server_box, nearest_slot)
+	-- The public callback checked this before queueing, but another stash may have
+	-- opened during the 150 ms delay. Only DeadBodySearch is real; GetInvBox may
+	-- remain stale while the ordinary inventory menu is active.
+	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+	if menu and menu:GetMenuMode() == 4 and menu:GetInvBox() then
+		impl.send_detector_news(game.translate_string("lz_nm_close_stash_before_action"))
+		return false
 	end
-	local box = level.object_by_id(nearest_slot.id)
-	if not box then impl.detector_no_result() return false end
-	impl.try_spawn_ghost_city_note(nearest_slot)
-	local items = {}
-	local function collect_item(_, item) table.insert(items, item) end
-	box:iterate_inventory_box(collect_item, box)
-	if #items == 0 then
-		impl.process_stash_search(nearest_slot)
-		impl.retire_empty_slot(nearest_slot)
+	local server_box = nearest_slot.id and alife():object(nearest_slot.id, true) or nil
+	if not server_box then impl.detector_no_result() return false end
+	local client_box = level.object_by_id(nearest_slot.id)
+	if not client_box then impl.detector_no_result() return false end
+	if not impl.prepare_stash_search(nearest_slot, server_box) then
 		impl.detector_no_result()
 		return false
 	end
-	impl.record_stash_search(nearest_slot)
-
-	local counts = {}
-	local order = {}
-	for _, item in ipairs(items) do
-		local server_item = alife():object(item:id())
-		local section = server_item and server_item:section_name() or item:section()
-		local ghost_city_index = lz_new_mechanics and lz_new_mechanics.ghost_city_note_index and
-			lz_new_mechanics.ghost_city_note_index(section) or nil
-		if ghost_city_index and nearest_slot.state.ghost_city_note == ghost_city_index then
-			nearest_slot.state.ghost_city_note = nil
-		end
-		if not counts[section] then counts[section] = 0 table.insert(order, section) end
-		counts[section] = counts[section] + 1
-		box:transfer_item(item, db.actor)
-	end
-	local names = {}
-	for _, section in ipairs(order) do
-		local name = impl.item_display_name(section)
-		if counts[section] > 1 then name = name .. " x" .. tostring(counts[section]) end
-		table.insert(names, name)
-	end
-	impl.retire_empty_slot(nearest_slot)
-	impl.send_detector_news(game.translate_string("pf_metal_detector_found") .. " " .. table.concat(names, ", "))
+	-- Use the engine's normal inventory-box path. Native Take All/hotkeys now own
+	-- every physical transfer and fire the same item callbacks as a hand-opened
+	-- stash; the detector only supplies remote access to an unreachable box.
+	-- SetInvBox requires the inventory dialog to be fully hidden first.
+	if get_hud() then get_hud():HideActorMenu() end
+	client_box:use(db.actor)
 	return false
 end
 
@@ -3685,8 +3729,8 @@ function impl.update_pending_metal_detector_use(now)
 	if detector then impl.complete_metal_detector_use(detector) end
 end
 
--- Native inventory actions execute while the property box owns the UI lock.
--- Defer every inventory transfer and stash release until that callback returns.
+-- The property action runs while the inventory menu owns the UI lock.
+-- Defer closing that menu and opening the stash until the callback returns.
 function use_metal_detector(detector)
 	if not SYSTEM_ENABLED then return false end
 	if not db.actor or level.name() ~= LEVEL_NAME then return false end
@@ -3788,7 +3832,10 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 		slot.loot_materialized = false
 		slot.state.defer_loot = nil
 	end
-	if slot.state.discovered then impl.ensure_purple_discovery_reward(slot, box) end
+	box = impl.reconcile_legacy_box_state(slot, box)
+	if slot.state.discovered and not slot.state.depleted then
+		impl.ensure_purple_discovery_reward(slot, box)
+	end
 	if box and not slot.state.depleted then
 		impl.ensure_hacking_usb(slot, box)
 		impl.ensure_ghost_city_note(slot, box)
@@ -3796,17 +3843,10 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 		local marker_type = tier.marker
 		if not slot.state.discovered and not tier.hint_required and
 			point_distance_sqr < tier.discovery_distance_sqr then
-			slot.state.discovered = true
-			impl.try_assign_random_story_document(slot)
-			impl.ensure_purple_discovery_reward(slot, box)
+			impl.discover_slot(slot, box)
 		end
 		if slot.state.discovered and level.map_has_object_spot(slot.id, marker_type) == 0 then
 			level.map_add_object_spot_ser(slot.id, marker_type, SPOT_HINT)
-		end
-		if slot.loot_materialized and
-			time_global() - slot.spawned_at >= EMPTY_CHECK_DELAY_MS and not impl.has_items(box) then
-			impl.retire_empty_slot(slot)
-			return false, materialized
 		end
 		if slot.state.discovered then return true, materialized end
 	end
@@ -3824,8 +3864,8 @@ function update()
 	local now = time_global()
 	impl.update_fixed_pda_rewards(now)
 	if not SYSTEM_ENABLED then return end
-	impl.update_pending_empty_slots(now)
 	impl.update_pending_metal_detector_use(now)
+	impl.update_pending_empty_slots(now)
 	impl.update_strange_ambush_targets(now)
 	impl.update_active_metal_detector(now)
 	if now < next_check then return end
