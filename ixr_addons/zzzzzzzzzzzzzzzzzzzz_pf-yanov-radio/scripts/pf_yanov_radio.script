@@ -1,0 +1,418 @@
+-- Yanov world radio. This object-local binder owns one 3D sound at a time and
+-- performs no world scans or global callback registration.
+
+local settings = {
+	save_version = 1,
+	track_count = 19,
+	near_distance_sqr = 69.9 * 69.9,
+	far_distance_sqr = 70 * 70,
+	active_poll_ms = 100,
+	off_poll_ms = 250,
+	far_poll_ms = 1000,
+	silence_ms = 1000,
+	sound_min_distance = 5.0,
+	sound_max_distance = 20,
+	sound_volume = 0.8,
+	music_duck_inner_distance = 5,
+	music_duck_outer_distance = 20,
+	music_duck_min_factor = 0.08,
+	music_duck_lease_ms = 1500,
+	status_off = "st_pf_yanov_radio_status_off",
+	status_silence = "st_pf_yanov_radio_status_silence",
+	fixed_bone = "link"
+}
+
+local tracks = {
+	{ sound = [[pf_yanov_radio\tracks\track_01]], title = "st_pf_yanov_radio_track_01" },
+	{ sound = [[pf_yanov_radio\tracks\track_02]], title = "st_pf_yanov_radio_track_02" },
+	{ sound = [[pf_yanov_radio\tracks\track_03]], title = "st_pf_yanov_radio_track_03" },
+	{ sound = [[pf_yanov_radio\tracks\track_04]], title = "st_pf_yanov_radio_track_04" },
+	{ sound = [[pf_yanov_radio\tracks\track_05]], title = "st_pf_yanov_radio_track_05" },
+	{ sound = [[pf_yanov_radio\tracks\track_06]], title = "st_pf_yanov_radio_track_06" },
+	{ sound = [[pf_yanov_radio\tracks\track_07]], title = "st_pf_yanov_radio_track_07" },
+	{ sound = [[pf_yanov_radio\tracks\track_08]], title = "st_pf_yanov_radio_track_08" },
+	{ sound = [[pf_yanov_radio\tracks\track_09]], title = "st_pf_yanov_radio_track_09" },
+	{ sound = [[pf_yanov_radio\tracks\track_10]], title = "st_pf_yanov_radio_track_10" },
+	{ sound = [[pf_yanov_radio\tracks\track_11]], title = "st_pf_yanov_radio_track_11" },
+	{ sound = [[pf_yanov_radio\tracks\track_12]], title = "st_pf_yanov_radio_track_12" },
+	{ sound = [[pf_yanov_radio\tracks\track_13]], title = "st_pf_yanov_radio_track_13" },
+	{ sound = [[pf_yanov_radio\tracks\track_14]], title = "st_pf_yanov_radio_track_14" },
+	{ sound = [[pf_yanov_radio\tracks\track_15]], title = "st_pf_yanov_radio_track_15" },
+	{ sound = [[pf_yanov_radio\tracks\track_16]], title = "st_pf_yanov_radio_track_16" },
+	{ sound = [[pf_yanov_radio\tracks\track_17]], title = "st_pf_yanov_radio_track_17" },
+	{ sound = [[pf_yanov_radio\tracks\track_18]], title = "st_pf_yanov_radio_track_18" },
+	{ sound = [[pf_yanov_radio\tracks\track_19]], title = "st_pf_yanov_radio_track_19" }
+}
+
+local impl = {}
+
+function impl.queue_is_valid(queue, cursor)
+	if type(queue) ~= "table" or #queue ~= settings.track_count then return false end
+	if type(cursor) ~= "number" or cursor < 1 or cursor > settings.track_count + 1 then return false end
+
+	local seen = {}
+	for index = 1, settings.track_count do
+		local track_id = queue[index]
+		if type(track_id) ~= "number" or track_id < 1 or track_id > settings.track_count or seen[track_id] then
+			return false
+		end
+		seen[track_id] = true
+	end
+	return true
+end
+
+function impl.shuffle_queue(self)
+	local queue = {}
+	for index = 1, settings.track_count do queue[index] = index end
+
+	for index = settings.track_count, 2, -1 do
+		local swap_index = math.random(1, index)
+		queue[index], queue[swap_index] = queue[swap_index], queue[index]
+	end
+
+	-- A new cycle may not begin with the track that ended the previous cycle.
+	if self.last_track > 0 and queue[1] == self.last_track then
+		local swap_index = math.random(2, settings.track_count)
+		queue[1], queue[swap_index] = queue[swap_index], queue[1]
+	end
+
+	self.queue = queue
+	self.queue_cursor = 1
+end
+
+function impl.next_track(self)
+	if not impl.queue_is_valid(self.queue, self.queue_cursor) or self.queue_cursor > settings.track_count then
+		impl.shuffle_queue(self)
+	end
+
+	local track_id = self.queue[self.queue_cursor]
+	self.queue_cursor = self.queue_cursor + 1
+	self.last_track = track_id
+	return track_id
+end
+
+function impl.stop_sound(self)
+	if self.sound then
+		-- stop() is immediate (not deferred) and is safe even after the
+		-- sample reached its natural end. Always call it before dropping the handle.
+		self.sound:stop()
+		self.sound = nil
+	end
+end
+
+function impl.clear_music_duck(self)
+	if not self.music_duck_key or type(pf_copyright_music) ~= "table" then return end
+	if type(pf_copyright_music.clear_level_duck) == "function" then
+		pf_copyright_music.clear_level_duck(self.music_duck_key)
+	end
+end
+
+function impl.music_duck_factor(distance_sqr)
+	local inner = settings.music_duck_inner_distance
+	local outer = settings.music_duck_outer_distance
+	if distance_sqr <= inner * inner then return settings.music_duck_min_factor end
+	if distance_sqr >= outer * outer then return 1 end
+
+	local distance = math.sqrt(distance_sqr)
+	local normalized = (distance - inner) / (outer - inner)
+	local smooth = normalized * normalized * (3 - 2 * normalized)
+	local shaped = smooth * smooth * smooth * smooth
+	return settings.music_duck_min_factor + (1 - settings.music_duck_min_factor) * shaped
+end
+
+function impl.update_music_duck(self, distance_sqr)
+	if not self.music_duck_key or type(pf_copyright_music) ~= "table" then return end
+	if type(pf_copyright_music.set_level_duck) ~= "function" then return end
+
+	if not self.powered or distance_sqr >= settings.music_duck_outer_distance * settings.music_duck_outer_distance then
+		impl.clear_music_duck(self)
+		return
+	end
+
+	pf_copyright_music.set_level_duck(
+		self.music_duck_key,
+		impl.music_duck_factor(distance_sqr),
+		settings.music_duck_lease_ms
+	)
+end
+
+function impl.update_tip(self)
+	local tip_id = settings.status_silence
+
+	if not self.powered then
+		tip_id = settings.status_off
+	elseif self.phase == "track" and self.current_track > 0 and tracks[self.current_track] then
+		tip_id = tracks[self.current_track].title
+	end
+
+	-- Pass a string-table ID, not a Lua-concatenated translation. The engine
+	-- then owns key-binding substitution, UTF-8 handling, line breaks and color.
+	self.object:set_tip_text(tip_id)
+end
+
+function impl.play_sound(self, path)
+	impl.stop_sound(self)
+
+	local sound = sound_object(path)
+	sound:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+	-- play_at_pos reloads OGG metadata, so runtime limits are applied afterwards.
+	sound.min_distance = settings.sound_min_distance
+	sound.max_distance = settings.sound_max_distance
+	sound.volume = settings.sound_volume
+	self.sound = sound
+end
+
+function impl.play_next_track(self)
+	local track_id = impl.next_track(self)
+	self.current_track = track_id
+	self.phase = "track"
+	self.silence_deadline_ms = 0
+	impl.play_sound(self, tracks[track_id].sound)
+	impl.update_tip(self)
+end
+
+function impl.begin_silence(self, now)
+	impl.stop_sound(self)
+	self.current_track = 0
+	self.phase = "silence"
+	self.silence_deadline_ms = now + settings.silence_ms
+	impl.update_tip(self)
+end
+
+function impl.ensure_fixed(self)
+	if self.physics_fixed then return true end
+
+	local shell = self.object:get_physics_shell()
+	if not shell then return false end
+	local element = shell:get_element_by_bone_name(settings.fixed_bone)
+	if not element then return false end
+
+	if not element:is_fixed() then element:fix() end
+	self.physics_fixed = true
+	return true
+end
+
+function impl.enter_far_state(self)
+	impl.stop_sound(self)
+	self.near = false
+	self.current_track = 0
+	self.phase = "far"
+	self.silence_deadline_ms = 0
+	impl.update_tip(self)
+end
+
+function impl.enter_off_state(self)
+	impl.stop_sound(self)
+	self.current_track = 0
+	self.phase = "off"
+	self.silence_deadline_ms = 0
+	impl.update_tip(self)
+end
+
+function impl.ensure_queue(self)
+	if not impl.queue_is_valid(self.queue, self.queue_cursor) then impl.shuffle_queue(self) end
+end
+
+function impl.initialize_runtime(self, now, distance_sqr)
+	impl.ensure_queue(self)
+	self.runtime_ready = true
+	self.near = distance_sqr <= settings.near_distance_sqr
+
+	if not self.powered then
+		impl.enter_off_state(self)
+	elseif not self.near then
+		impl.enter_far_state(self)
+	elseif self.loaded or self.start_with_silence then
+		-- A playhead cannot be restored by the Lua sound API. Continue after a
+		-- one-second silent gap and then play the next queued track. The same
+		-- transition is used if the player toggles the receiver before its
+		-- first scheduled update.
+		impl.begin_silence(self, now)
+	else
+		-- A newly created radio is already switched on and starts immediately.
+		impl.play_next_track(self)
+	end
+
+	self.loaded = false
+	self.start_with_silence = false
+end
+
+function impl.update_range(self, now, distance_sqr)
+	if self.near and distance_sqr >= settings.far_distance_sqr then
+		impl.enter_far_state(self)
+	elseif not self.near and distance_sqr <= settings.near_distance_sqr then
+		self.near = true
+		if self.powered then
+			-- Returning into the lamp-style lifecycle radius always advances.
+			impl.begin_silence(self, now)
+		else
+			impl.enter_off_state(self)
+		end
+	end
+end
+
+function impl.update_playback(self, now)
+	if self.phase == "track" then
+		if not self.sound or not self.sound:playing() then impl.begin_silence(self, now) end
+	elseif self.phase == "silence" then
+		if now >= self.silence_deadline_ms then impl.play_next_track(self) end
+	else
+		impl.begin_silence(self, now)
+	end
+end
+
+class "pf_yanov_radio_binder" (object_binder)
+
+function pf_yanov_radio_binder:__init(object) super(object)
+	self.powered = true
+	self.loaded = false
+	self.start_with_silence = false
+	self.runtime_ready = false
+	self.near = false
+	self.phase = "idle"
+	self.current_track = 0
+	self.last_track = 0
+	self.queue = {}
+	self.queue_cursor = 1
+	self.sound = nil
+	self.silence_deadline_ms = 0
+	self.next_update_ms = 0
+	self.physics_fixed = false
+	self.music_duck_key = nil
+end
+
+function pf_yanov_radio_binder:net_spawn(data)
+	if not object_binder.net_spawn(self, data) then return false end
+	self.music_duck_key = "pf_yanov_radio:" .. tostring(self.object:id())
+	impl.clear_music_duck(self)
+	self.object:set_nonscript_usable(false)
+	self.object:set_callback(callback.use_object, self.use_callback, self)
+	impl.ensure_fixed(self)
+	impl.update_tip(self)
+	return true
+end
+
+function pf_yanov_radio_binder:net_destroy()
+	impl.clear_music_duck(self)
+	impl.stop_sound(self)
+	self.object:set_callback(callback.use_object, nil)
+	object_binder.net_destroy(self)
+end
+
+function pf_yanov_radio_binder:update(delta)
+	object_binder.update(self, delta)
+	if not self.physics_fixed then impl.ensure_fixed(self) end
+
+	local now = time_global()
+	if now < self.next_update_ms then return end
+	if not db.actor then
+		-- A level transition can temporarily remove the actor before the
+		-- object's net_destroy. Do not retain a playing source in that window.
+		impl.clear_music_duck(self)
+		if self.runtime_ready and (self.near or self.sound) then impl.enter_far_state(self) end
+		self.next_update_ms = now + settings.far_poll_ms
+		return
+	end
+
+	local distance_sqr = self.object:position():distance_to_sqr(db.actor:position())
+	if not self.runtime_ready then
+		impl.initialize_runtime(self, now, distance_sqr)
+	else
+		impl.update_range(self, now, distance_sqr)
+	end
+	impl.update_music_duck(self, distance_sqr)
+
+	if not self.near then
+		self.next_update_ms = now + settings.far_poll_ms
+		return
+	end
+
+	if not self.powered then
+		self.next_update_ms = now + settings.off_poll_ms
+		return
+	end
+
+	impl.update_playback(self, now)
+	self.next_update_ms = now + settings.active_poll_ms
+end
+
+function pf_yanov_radio_binder:use_callback(object, who)
+	self.powered = not self.powered
+	local now = time_global()
+
+	if not self.powered then
+		impl.clear_music_duck(self)
+		impl.enter_off_state(self)
+	elseif self.runtime_ready and self.near then
+		-- Manual re-enable never resumes the interrupted track.
+		impl.ensure_queue(self)
+		impl.begin_silence(self, time_global())
+	elseif self.runtime_ready then
+		impl.enter_far_state(self)
+	else
+		self.phase = "idle"
+		self.start_with_silence = true
+		impl.update_tip(self)
+	end
+
+	if self.powered and db.actor then
+		impl.update_music_duck(self, self.object:position():distance_to_sqr(db.actor:position()))
+	end
+	self.next_update_ms = now + settings.active_poll_ms
+end
+
+function pf_yanov_radio_binder:net_save_relevant()
+	return true
+end
+
+function pf_yanov_radio_binder:save(packet)
+	object_binder.save(self, packet)
+	packet:w_u8(settings.save_version)
+	packet:w_u8(self.powered and 1 or 0)
+	packet:w_u8(#self.queue)
+	packet:w_u8(self.queue_cursor)
+	packet:w_u8(self.last_track)
+	for index = 1, #self.queue do packet:w_u8(self.queue[index]) end
+end
+
+function pf_yanov_radio_binder:load(reader)
+	impl.clear_music_duck(self)
+	object_binder.load(self, reader)
+
+	local version = reader:r_u8()
+	if version == settings.save_version then
+		self.powered = reader:r_u8() ~= 0
+		local count = reader:r_u8()
+		self.queue_cursor = reader:r_u8()
+		self.last_track = reader:r_u8()
+		self.queue = {}
+		for index = 1, count do self.queue[index] = reader:r_u8() end
+	else
+		self.powered = true
+		self.queue = {}
+		self.queue_cursor = 1
+		self.last_track = 0
+	end
+
+	if self.last_track < 0 or self.last_track > settings.track_count then self.last_track = 0 end
+	if not impl.queue_is_valid(self.queue, self.queue_cursor) then
+		self.queue = {}
+		self.queue_cursor = 1
+	end
+
+	impl.stop_sound(self)
+	self.loaded = true
+	self.start_with_silence = true
+	self.runtime_ready = false
+	self.near = false
+	self.phase = self.powered and "idle" or "off"
+	self.current_track = 0
+	self.silence_deadline_ms = 0
+	self.next_update_ms = 0
+	self.physics_fixed = false
+	impl.update_tip(self)
+end
+
+function bind(object)
+	object:bind_object(pf_yanov_radio_binder(object))
+end

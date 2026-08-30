@@ -1,0 +1,422 @@
+local SETTINGS_FILE = "pf_music_pack.cfg"
+local LEGACY_SETTINGS_FILE = "pf_copyright_music.cfg"
+local PACK_COPYRIGHTED = "copyrighted"
+local PACK_MOOZE = "mooze"
+local COPYRIGHTED_MENU_TRACK = "music\\menu"
+local MOOZE_MENU_TRACK = "music\\menu_wasteland_ii"
+-- Match the authored menu theme to the 0.13-0.20 in-game music range without
+-- changing ambience tracks or the user's global music-volume setting.
+local COPYRIGHTED_MENU_VOLUME = 0.15
+-- Wasteland II is attenuated by 20 dB in the OGG itself.  Keep the source
+-- volume at 1 so the sound engine does not cull it prematurely at low settings.
+local MOOZE_MENU_VOLUME = 1
+local LEVEL_DUCK_ATTACK_SECONDS = 0.25
+local LEVEL_DUCK_RELEASE_SECONDS = 0.60
+local LEVEL_DUCK_DEFAULT_LEASE_MS = 1500
+
+local author_tracks = {
+    zaton = {
+        {"music\\zaton_morning", 5, 9, 0.13},
+        {"music\\zaton_day", 9, 18, 0.13},
+        {"music\\zaton_evening", 18, 23, 0.13},
+        {"music\\zaton_night", 23, 5, 0.15}
+    },
+    jupiter = {
+        {"music\\jupiter_morning", 5, 9, 0.13},
+        {"music\\jupiter_day", 9, 18, 0.13},
+        {"music\\jupiter_evening", 18, 23, 0.13},
+        {"music\\jupiter_night", 23, 5, 0.15}
+    },
+    pripyat = {
+        {"music\\lz_new_ambient\\aka_night", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\alpha_witchcraft", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\atc_black01", 0, 12, 0.2},
+        {"music\\lz_new_ambient\\atc_black02", 8, 20, 0.2},
+        {"music\\lz_new_ambient\\atc_black03", 16, 4, 0.2},
+        {"music\\lz_new_ambient\\atc_blessing", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\atc_decrepit", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\atc_great", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\atc_leviathan", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\atc_new", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\clb_centenial", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\dw_piotrek", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\melodies_thread", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\mind_eternal", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\mind_mereo", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\symphocat_draumur", 0, 24, 0.2}
+    },
+    underground = {
+        {"music\\lz_new_ambient\\atc_black03", 0, 24, 0.2},
+        {"music\\lz_new_ambient\\atc_decrepit", 0, 24, 0.2}
+    }
+}
+
+local mooze_tracks = {
+    {"music\\pf_mooze\\dead_cities_pt1", 0, 24, 0.2},
+    {"music\\pf_mooze\\dead_cities_pt2", 0, 24, 0.2},
+    {"music\\pf_mooze\\radwind_pt1", 0, 24, 0.2},
+    {"music\\pf_mooze\\radwind_pt2", 0, 24, 0.2},
+    {"music\\pf_mooze\\theme_of_garbage", 0, 24, 0.2},
+    {"music\\pf_mooze\\res", 0, 24, 0.2},
+    {"music\\pf_mooze\\stalker_ambience_2a", 0, 24, 0.2},
+    {"music\\pf_mooze\\stalker_ambience_1", 0, 24, 0.2},
+    {"music\\pf_mooze\\stalker_ambience_2b", 0, 24, 0.2},
+    {"music\\pf_mooze\\sleeping_in_ashes_v1", 0, 24, 0.2},
+    {"music\\pf_mooze\\sleeping_in_ashes_v2", 0, 24, 0.2},
+    {"music\\pf_mooze\\zone_triggers", 0, 24, 0.2},
+    {"music\\pf_mooze\\cold_freezing_out", 0, 24, 0.2},
+    {"music\\pf_mooze\\dark_valley", 0, 24, 0.2},
+    {"music\\pf_mooze\\mutation", 0, 24, 0.2}
+}
+
+local level_profiles = {
+    zaton = "zaton",
+    jupiter = "jupiter",
+    pripyat = "pripyat",
+    pripyat_full = "pripyat",
+    jupiter_underground = "underground",
+    labx8 = "underground"
+}
+
+local state = {
+    pack = nil,
+    menu_music = nil,
+    level_music = nil,
+    menu_volume = -1,
+    level_volume = -1,
+    level_track_volume = 0.2,
+    level_duck = 1,
+    level_duck_sources = {},
+    menu_active = false,
+    menu_start_frame = 0,
+    next_level_track_time = 0,
+    current_level = nil,
+    previous_track = nil,
+    callbacks_registered = false
+}
+
+local function app_data_path(file_name)
+    return getFS():update_path("$app_data_root$", file_name)
+end
+
+local function read_first_line(file_name)
+    local file = io.open(app_data_path(file_name), "r")
+    if not file then return nil end
+    local value = string.lower(file:read("*l") or "")
+    file:close()
+    return value
+end
+
+local function save_setting()
+    local file = io.open(app_data_path(SETTINGS_FILE), "w")
+    if not file then
+        printf("! Unable to save music pack setting")
+        return
+    end
+    file:write(state.pack .. "\n")
+    file:close()
+end
+
+local function load_setting()
+    if state.pack ~= nil then return end
+
+    local value = read_first_line(SETTINGS_FILE)
+    if value == PACK_MOOZE then
+        state.pack = PACK_MOOZE
+        return
+    elseif value == PACK_COPYRIGHTED then
+        state.pack = PACK_COPYRIGHTED
+        return
+    end
+
+    local legacy = read_first_line(LEGACY_SETTINGS_FILE)
+    if legacy == "off" or legacy == "false" or legacy == "0" then
+        state.pack = PACK_MOOZE
+        save_setting()
+        return
+    end
+
+    state.pack = PACK_COPYRIGHTED
+end
+
+local function stop_sound(field, volume_field)
+    local sound = state[field]
+    if sound then
+        if sound:playing() then sound:stop() end
+        state[field] = nil
+    end
+    state[volume_field] = -1
+end
+
+local function stop_menu_music()
+    stop_sound("menu_music", "menu_volume")
+end
+
+local function stop_level_music()
+    stop_sound("level_music", "level_volume")
+end
+
+local function compensated_volume(base_volume)
+    local music_volume = get_console():get_float("snd_volume_music")
+    local effects_volume = get_console():get_float("snd_volume_eff")
+    if effects_volume <= 0.0001 then return 0 end
+    return base_volume * music_volume / effects_volume
+end
+
+local function level_duck_target()
+    local now = time_global()
+    local target = 1
+
+    for source_key, source in pairs(state.level_duck_sources) do
+        if type(source) ~= "table"
+                or now < (source.updated_at or now)
+                or now >= (source.expires_at or 0) then
+            state.level_duck_sources[source_key] = nil
+        elseif source.factor < target then
+            target = source.factor
+        end
+    end
+
+    return target
+end
+
+local function update_level_duck()
+    local target = level_duck_target()
+    local current = state.level_duck
+    if current == target then return end
+
+    local frame_time = tonumber(device().f_time_delta) or 0
+    if frame_time <= 0 then return end
+    frame_time = math.min(frame_time, 0.1)
+
+    local duration = target < current and LEVEL_DUCK_ATTACK_SECONDS or LEVEL_DUCK_RELEASE_SECONDS
+    local step = frame_time / duration
+    if math.abs(target - current) <= step then
+        state.level_duck = target
+    elseif target < current then
+        state.level_duck = current - step
+    else
+        state.level_duck = current + step
+    end
+end
+
+-- Transient, keyed level-music ducking. Sources are deliberately not saved:
+-- every request has a short lease and game loading clears the whole table, so
+-- an interrupted object callback can never leave the user's music suppressed.
+function set_level_duck(source_key, factor, lease_ms)
+    if source_key == nil then return false end
+
+    local key = tostring(source_key)
+    local value = tonumber(factor)
+    if not value or value ~= value or value >= 1 then
+        state.level_duck_sources[key] = nil
+        return true
+    end
+
+    local now = time_global()
+    local duration = math.max(250, tonumber(lease_ms) or LEVEL_DUCK_DEFAULT_LEASE_MS)
+    local source = state.level_duck_sources[key]
+    if type(source) ~= "table" then
+        source = {}
+        state.level_duck_sources[key] = source
+    end
+    source.factor = math.max(0, value)
+    source.updated_at = now
+    source.expires_at = now + duration
+    return true
+end
+
+function clear_level_duck(source_key)
+    if source_key == nil then return false end
+    state.level_duck_sources[tostring(source_key)] = nil
+    return true
+end
+
+local function update_sound_volume(field, volume_field, base_volume)
+    local sound = state[field]
+    if not sound or not sound:playing() then return end
+    local volume = compensated_volume(base_volume)
+    if field == "level_music" then volume = volume * state.level_duck end
+    if volume ~= state[volume_field] then
+        sound.volume = volume
+        state[volume_field] = volume
+    end
+end
+
+local function start_menu_music()
+    load_setting()
+    local volume = state.pack == PACK_MOOZE and MOOZE_MENU_VOLUME or COPYRIGHTED_MENU_VOLUME
+    if state.menu_music and state.menu_music:playing() then
+        update_sound_volume("menu_music", "menu_volume", volume)
+        return
+    end
+
+    stop_menu_music()
+    local track = state.pack == PACK_MOOZE and MOOZE_MENU_TRACK or COPYRIGHTED_MENU_TRACK
+    state.menu_music = sound_object(track)
+    state.menu_music:play(nil, 0, sound_object.s2d + sound_object.looped)
+    update_sound_volume("menu_music", "menu_volume", volume)
+end
+
+local function track_is_active(track, hour)
+    local start_hour = track[2]
+    local end_hour = track[3]
+    if start_hour == 0 and end_hour == 24 then return true end
+    if end_hour < start_hour then
+        return hour >= start_hour or hour < end_hour
+    end
+    return hour >= start_hour and hour < end_hour
+end
+
+local function tracks_for_level(level_name)
+    if state.pack == PACK_MOOZE then return mooze_tracks end
+    local profile = level_profiles[level_name]
+    return profile and author_tracks[profile] or nil
+end
+
+local function choose_track(tracks)
+    local active = {}
+    local hour = level.get_time_hours()
+    for _, track in ipairs(tracks or {}) do
+        if track_is_active(track, hour) then table.insert(active, track) end
+    end
+    if #active == 0 then return nil end
+
+    local selected = active[math.random(#active)]
+    if #active > 1 and selected[1] == state.previous_track then
+        selected = active[math.random(#active)]
+    end
+    return selected
+end
+
+local function start_level_music(level_name)
+    local track = choose_track(tracks_for_level(level_name))
+    if not track then
+        state.next_level_track_time = time_global() + 10000
+        return
+    end
+
+    stop_level_music()
+    state.level_track_volume = track[4]
+    state.previous_track = track[1]
+    state.level_music = sound_object(track[1])
+    state.level_music:play(nil, 0, sound_object.s2d)
+    update_sound_volume("level_music", "level_volume", state.level_track_volume)
+    printf("* PF music pack: %s / %s", state.pack, track[1])
+end
+
+local function update_level_music()
+    if not db.actor or state.menu_active then
+        stop_level_music()
+        return
+    end
+
+    local level_name = level.name()
+    if state.current_level ~= level_name then
+        stop_level_music()
+        state.current_level = level_name
+        state.previous_track = nil
+        state.next_level_track_time = time_global() + 2000
+    end
+
+    if state.level_music and state.level_music:playing() then
+        update_sound_volume("level_music", "level_volume", state.level_track_volume)
+        return
+    end
+
+    if state.level_music then
+        stop_level_music()
+        state.next_level_track_time = time_global() + math.random(2000, 4000)
+    end
+    if time_global() >= state.next_level_track_time then start_level_music(level_name) end
+end
+
+function get_pack()
+    load_setting()
+    return state.pack
+end
+
+function set_pack(value)
+    load_setting()
+    local new_pack = value == PACK_MOOZE and PACK_MOOZE or PACK_COPYRIGHTED
+    local changed = state.pack ~= new_pack
+    state.pack = new_pack
+    save_setting()
+    if not changed then return end
+    stop_menu_music()
+    stop_level_music()
+    state.previous_track = nil
+    state.next_level_track_time = 0
+    if state.menu_active and alife() == nil then start_menu_music() end
+end
+
+function is_enabled()
+    return get_pack() == PACK_COPYRIGHTED
+end
+
+function set_enabled(value)
+    set_pack(value == true and PACK_COPYRIGHTED or PACK_MOOZE)
+end
+
+function menu_opened()
+    load_setting()
+    if not state.menu_active then
+        state.menu_start_frame = device().frame + 2
+        state.menu_active = true
+    end
+end
+
+function menu_closed()
+    state.menu_active = false
+    stop_menu_music()
+    if not state.level_music or not state.level_music:playing() then
+        state.next_level_track_time = 0
+    end
+end
+
+function update()
+    load_setting()
+    update_level_duck()
+    if state.menu_active then
+        -- This window is also the in-game Escape menu.  The actor proxy can be
+        -- temporarily nil while the ALife session remains loaded, so classify
+        -- the pause menu by the session and keep the location track in place.
+        if alife() ~= nil then
+            stop_menu_music()
+            update_sound_volume("level_music", "level_volume", state.level_track_volume)
+            return
+        end
+
+        stop_level_music()
+        if state.menu_music and state.menu_music:playing() then
+            local volume = state.pack == PACK_MOOZE and MOOZE_MENU_VOLUME or COPYRIGHTED_MENU_VOLUME
+            update_sound_volume("menu_music", "menu_volume", volume)
+        elseif device().frame >= state.menu_start_frame then
+            start_menu_music()
+        end
+        return
+    end
+
+    stop_menu_music()
+    update_level_music()
+end
+
+function on_game_load()
+    stop_level_music()
+    state.level_duck = 1
+    state.level_duck_sources = {}
+    state.current_level = nil
+    state.previous_track = nil
+    state.next_level_track_time = 0
+end
+
+function on_game_start()
+    if state.callbacks_registered then return true end
+    if type(RegisterScriptCallback) ~= "function" then return false end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_game_load)
+    state.callbacks_registered = true
+    return true
+end
+
+on_game_start()

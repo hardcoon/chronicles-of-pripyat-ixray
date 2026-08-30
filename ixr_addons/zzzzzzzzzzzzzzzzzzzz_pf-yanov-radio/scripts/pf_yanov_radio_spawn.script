@@ -1,0 +1,149 @@
+-- Save-compatible Yanov radio bootstrap. The addon owns this callback and
+-- never scans the ALife registry: a persistent actor pstor key points directly
+-- to the one server object created for this save.
+
+local settings = {
+	section = "pf_yanov_radio",
+	pstor_key = "pf_yanov_radio_object_id_v1",
+	-- The QA logger records the actor origin. Its saved camera ray hits the
+	-- tabletop here; the radio model has a zero-height lower bound, so the
+	-- collision-surface Y is also the authored object Y.
+	position_x = -957.756230,
+	position_y = 1.220000,
+	position_z = -1362.252221,
+	yaw = 5.029709154,
+	level_vertex_id = 2437626,
+	game_vertex_id = 377,
+	placement_tolerance_sqr = 0.05 * 0.05,
+	yaw_tolerance = 0.01,
+	retry_ms = 1000
+}
+
+local runtime = {
+	callbacks_registered = false,
+	update_armed = false,
+	fallback_complete = false,
+	next_try_ms = 0
+}
+
+local impl = {}
+
+function impl.authored_position()
+	return vector():set(settings.position_x, settings.position_y, settings.position_z)
+end
+
+function impl.placement_matches(object)
+	local position = object.position
+	local angle = object.angle
+	if not position or not angle then return false end
+	local dx = position.x - settings.position_x
+	local dy = position.y - settings.position_y
+	local dz = position.z - settings.position_z
+	if dx * dx + dy * dy + dz * dz > settings.placement_tolerance_sqr then return false end
+
+	local yaw_delta = math.abs(angle.y - settings.yaw) % (2 * math.pi)
+	if yaw_delta > math.pi then yaw_delta = 2 * math.pi - yaw_delta end
+	return yaw_delta <= settings.yaw_tolerance
+end
+
+function impl.stored_radio(sim)
+	local stored_id = tonumber(xr_logic.pstor_retrieve(db.actor, settings.pstor_key, -1)) or -1
+	if stored_id < 0 then return nil end
+
+	local object = sim:object(stored_id, true)
+	if object and object:section_name() == settings.section then return object end
+	return nil
+end
+
+function impl.spawn_radio(sim)
+	local position = impl.authored_position()
+	local object = sim:create(
+		settings.section,
+		position,
+		settings.level_vertex_id,
+		settings.game_vertex_id
+	)
+	if not object then return nil end
+
+	-- Mirror the authored transform onto the server record immediately. This
+	-- is the same proven path used by addon-owned runtime world objects.
+	object.position = position
+	object.angle = vector():set(0, settings.yaw, 0)
+	object.m_level_vertex_id = settings.level_vertex_id
+	object.m_game_vertex_id = settings.game_vertex_id
+	xr_logic.pstor_store(db.actor, settings.pstor_key, object.id)
+	printf("~ [pf_yanov_radio] created server object id [%s]", tostring(object.id))
+	return object
+end
+
+function impl.ensure_radio()
+	if not db.actor then return false end
+
+	local sim = alife()
+	if not sim then return false end
+	-- Fixed LV/GV values let ALife register this object offline on Pripyat even
+	-- while the actor is on another level. Old saves therefore need no
+	-- permanent level watcher and receive the receiver immediately.
+	local object = impl.stored_radio(sim)
+	if object and not impl.placement_matches(object) then
+		-- Replace only the one tracked object when an addon update changes its
+		-- authored position or yaw. This also repairs a receiver saved after it
+		-- physically fell.
+		printf("~ [pf_yanov_radio] repairing server object placement id [%s]", tostring(object.id))
+		local replacement = impl.spawn_radio(sim)
+		if not replacement then return nil end
+		sim:release(object, true)
+		return replacement
+	end
+	return object or impl.spawn_radio(sim)
+end
+
+function impl.arm_update()
+	runtime.fallback_complete = false
+	runtime.next_try_ms = 0
+	if runtime.update_armed then return true end
+	RegisterScriptCallback("update", impl.update)
+	runtime.update_armed = true
+	return true
+end
+
+function impl.finish_update()
+	-- IX-Ray's callback framework exposes the symmetric unregister operation.
+	-- Keep a one-branch fallback only for an unexpected older runtime.
+	if type(UnregisterScriptCallback) == "function" then
+		UnregisterScriptCallback("update", impl.update)
+		runtime.update_armed = false
+	else
+		runtime.fallback_complete = true
+	end
+end
+
+function impl.update()
+	if runtime.fallback_complete or not db.actor then return end
+
+	local now = time_global()
+	if now < runtime.next_try_ms then return end
+	runtime.next_try_ms = now + settings.retry_ms
+	if impl.ensure_radio() then impl.finish_update() end
+end
+
+function impl.on_actor_load()
+	-- Actor load is sent after pstor_load_all and the ALife registry load. Arm
+	-- a fresh one-shot because a quick-load can switch to another save.
+	impl.arm_update()
+end
+
+function on_game_start()
+	if runtime.callbacks_registered then return true end
+	if type(RegisterScriptCallback) ~= "function" then
+		printf("! [pf_yanov_radio] RegisterScriptCallback unavailable")
+		return false
+	end
+
+	RegisterScriptCallback("load", impl.on_actor_load)
+	runtime.callbacks_registered = true
+	impl.arm_update()
+	return true
+end
+
+on_game_start()

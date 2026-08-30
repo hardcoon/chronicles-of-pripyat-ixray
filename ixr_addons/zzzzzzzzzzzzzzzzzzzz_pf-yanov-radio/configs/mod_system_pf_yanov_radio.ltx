@@ -1,0 +1,8 @@
+; Fixed world radio for Yanov. The section is loaded automatically by IX-Ray
+; from the addon's mod_system_* layer; no shared system.ltx override is needed.
+
+[pf_yanov_radio]:physic_object
+$spawn = "physics\pf_yanov_radio"
+visual = dynamics\el_tehnika\priemnik_gorizont.ogf
+fixed_bones = link
+script_binding = pf_yanov_radio.bind
