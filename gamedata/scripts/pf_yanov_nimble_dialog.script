@@ -81,27 +81,31 @@ local VEHICLE_SALES = {
 		"pf_yanov_nimble_vehicle_marker_lada_2108",
 		{ x = -687.102905, y = 0.010304, z = 433.370911 },
 		{ x = -0.000882, y = -0.337859, z = -0.000037 }, 3725474, 269),
-	new_vehicle_sale("uaz_van_broken", 70000, "veh_dcp_uaz_van_broken",
+	new_vehicle_sale("uaz_van_broken", 80000, "veh_dcp_uaz_van_broken",
 		"pf_yanov_nimble_uaz_van_marker",
 		{ x = -866.272888, y = 0.011846, z = -653.678162 },
 		{ x = 0.001570, y = 1.956118, z = 0.000014 }, 2666028, 744),
-	new_vehicle_sale("gaz69", 75000, "veh_dcp_uaz_broken",
+	new_vehicle_sale("uaz_van_clean", 90000, "veh_dcp_uaz_van",
+		"pf_yanov_nimble_vehicle_marker_uaz_van_clean",
+		{ x = -1203.569336, y = 0.020563, z = -1043.804077 },
+		{ x = -0.001090, y = 2.795467, z = -0.001169 }, 1296745, 396),
+	new_vehicle_sale("gaz69", 65000, "veh_dcp_uaz_broken",
 		"pf_yanov_nimble_vehicle_marker_gaz69",
 		{ x = 1603.773071, y = -9.427285, z = -1154.049927 },
 		{ x = 0.002532, y = 0.549672, z = -0.002563 }, 15591155, 647),
-	new_vehicle_sale("niva_white", 85000, "veh_dcp_niva",
+	new_vehicle_sale("niva_white", 70000, "veh_dcp_niva",
 		"pf_yanov_nimble_vehicle_marker_niva_white",
 		{ x = 532.843567, y = 0.105640, z = -1021.273743 },
 		{ x = 0.001528, y = -2.478417, z = 0.008320 }, 9808053, 711),
-	new_vehicle_sale("niva_green", 85000, "veh_dcp_niva_green",
+	new_vehicle_sale("niva_green", 70000, "veh_dcp_niva_green",
 		"pf_yanov_nimble_vehicle_marker_niva_green",
 		{ x = -644.319092, y = 0.006486, z = -489.573090 },
 		{ x = 0.016444, y = -1.188145, z = -0.004984 }, 3758917, 754),
-	new_vehicle_sale("uaz_hunter", 95000, "veh_dcp_uaz",
+	new_vehicle_sale("uaz_hunter", 85000, "veh_dcp_uaz",
 		"pf_yanov_nimble_vehicle_marker_uaz_hunter",
 		{ x = -184.593048, y = 0.014939, z = 601.237915 },
 		{ x = -0.000409, y = 3.115421, z = 0.000001 }, 6119007, 165),
-	new_vehicle_sale("niva_2329", 110000, "veh_dcp_niva_2329",
+	new_vehicle_sale("niva_2329", 105000, "veh_dcp_niva_2329",
 		"pf_yanov_nimble_vehicle_marker_niva_2329",
 		{ x = 422.975128, y = 0.000478, z = 910.573486 },
 		{ x = 0.007571, y = -2.118350, z = -0.000002 }, 9267647, 557),
@@ -552,6 +556,7 @@ function vehicle_mercedes_w123_available(a, b) return vehicle_sale_available(VEH
 function vehicle_lada_2107_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.lada_2107, a, b) end
 function vehicle_lada_2108_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.lada_2108, a, b) end
 function vehicle_uaz_van_available(a, b) return vehicle_sale_available(UAZ_VAN_SALE, a, b) end
+function vehicle_uaz_van_clean_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.uaz_van_clean, a, b) end
 function vehicle_gaz69_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.gaz69, a, b) end
 function vehicle_niva_white_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.niva_white, a, b) end
 function vehicle_niva_green_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.niva_green, a, b) end
@@ -571,6 +576,7 @@ function select_vehicle_mercedes_w123() return select_vehicle_sale("mercedes_w12
 function select_vehicle_lada_2107() return select_vehicle_sale("lada_2107") end
 function select_vehicle_lada_2108() return select_vehicle_sale("lada_2108") end
 function select_vehicle_uaz_van() return select_vehicle_sale("uaz_van_broken") end
+function select_vehicle_uaz_van_clean() return select_vehicle_sale("uaz_van_clean") end
 function select_vehicle_gaz69() return select_vehicle_sale("gaz69") end
 function select_vehicle_niva_white() return select_vehicle_sale("niva_white") end
 function select_vehicle_niva_green() return select_vehicle_sale("niva_green") end

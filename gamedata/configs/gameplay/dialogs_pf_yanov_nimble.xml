@@ -1,0 +1,370 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+    <dialog id="pf_yanov_nimble_dialog">
+        <phrase_list>
+            <phrase id="0">
+                <text>pf_yanov_nimble_hello</text>
+                <next>1</next>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="1">
+                <text>pf_yanov_nimble_intro_actor_1</text>
+                <precondition>pf_yanov_nimble_dialog.needs_intro</precondition>
+                <next>2</next>
+            </phrase>
+            <phrase id="2">
+                <text>pf_yanov_nimble_intro_npc_1</text>
+                <next>3</next>
+            </phrase>
+            <phrase id="3">
+                <text>pf_yanov_nimble_intro_actor_2</text>
+                <next>4</next>
+            </phrase>
+            <phrase id="4">
+                <text>pf_yanov_nimble_intro_npc_2</text>
+                <next>5</next>
+            </phrase>
+            <phrase id="5">
+                <text>pf_yanov_nimble_intro_actor_3</text>
+                <next>6</next>
+            </phrase>
+            <phrase id="6">
+                <text>pf_yanov_nimble_intro_npc_3</text>
+                <next>7</next>
+            </phrase>
+            <phrase id="7">
+                <text>pf_yanov_nimble_intro_actor_4</text>
+                <next>8</next>
+            </phrase>
+            <phrase id="8">
+                <text>pf_yanov_nimble_intro_npc_4</text>
+                <next>9</next>
+            </phrase>
+            <phrase id="9">
+                <text>pf_yanov_nimble_intro_actor_5</text>
+                <action>pf_yanov_nimble_dialog.complete_intro</action>
+                <next>10</next>
+            </phrase>
+            <phrase id="10">
+                <text>pf_yanov_nimble_intro_end</text>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="100">
+                <text>pf_yanov_nimble_fuel_order_actor</text>
+                <precondition>pf_yanov_nimble_dialog.intro_done</precondition>
+                <next>101</next>
+                <next>106</next>
+            </phrase>
+            <phrase id="101">
+                <text>pf_yanov_nimble_fuel_order_npc</text>
+                <precondition>pf_yanov_nimble_dialog.fuel_sale_available</precondition>
+                <next>102</next>
+                <next>104</next>
+                <next>107</next>
+            </phrase>
+            <phrase id="102">
+                <text>pf_yanov_nimble_fuel_order_accept_actor</text>
+                <precondition>pf_yanov_nimble_dialog.can_buy_fuel_canister</precondition>
+                <next>103</next>
+            </phrase>
+            <phrase id="103">
+                <text>pf_yanov_nimble_fuel_order_accept_npc</text>
+                <action>pf_yanov_nimble_dialog.buy_fuel_canister</action>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="104">
+                <text>pf_yanov_nimble_fuel_order_lack_money_actor</text>
+                <precondition>pf_yanov_nimble_dialog.cannot_afford_fuel_canister</precondition>
+                <next>105</next>
+            </phrase>
+            <phrase id="105">
+                <text>pf_yanov_nimble_fuel_order_wait_npc</text>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="106">
+                <text>pf_yanov_nimble_fuel_sale_cooldown_npc</text>
+                <precondition>pf_yanov_nimble_dialog.fuel_sale_unavailable</precondition>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="107">
+                <text>pf_yanov_nimble_fuel_order_decline_actor</text>
+                <next>108</next>
+            </phrase>
+            <phrase id="108">
+                <text>pf_yanov_nimble_fuel_order_decline_npc</text>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="110">
+                <text>pf_yanov_nimble_fuel_collect_actor</text>
+                <precondition>pf_yanov_nimble_dialog.fuel_order_ready</precondition>
+                <next>111</next>
+            </phrase>
+            <phrase id="111">
+                <text>pf_yanov_nimble_fuel_collect_npc</text>
+                <action>pf_yanov_nimble_dialog.collect_fuel_order</action>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="120">
+                <text>pf_yanov_nimble_vehicle_catalog_actor</text>
+                <precondition>pf_yanov_nimble_dialog.intro_done</precondition>
+                <next>121</next>
+            </phrase>
+            <phrase id="121">
+                <text>pf_yanov_nimble_vehicle_catalog_npc</text>
+                <next>122</next>
+                <next>123</next>
+                <next>124</next>
+                <next>125</next>
+            </phrase>
+            <phrase id="122">
+                <text>pf_yanov_nimble_vehicle_category_light</text>
+                <next>200</next>
+            </phrase>
+            <phrase id="123">
+                <text>pf_yanov_nimble_vehicle_category_offroad</text>
+                <next>300</next>
+            </phrase>
+            <phrase id="124">
+                <text>pf_yanov_nimble_vehicle_category_heavy</text>
+                <next>400</next>
+            </phrase>
+            <phrase id="125">
+                <text>pf_yanov_nimble_vehicle_back_main</text>
+                <next>126</next>
+            </phrase>
+            <phrase id="126">
+                <text>pf_yanov_nimble_vehicle_main_prompt</text>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="127">
+                <text>pf_yanov_nimble_vehicle_category_prompt</text>
+                <next>122</next>
+                <next>123</next>
+                <next>124</next>
+                <next>125</next>
+            </phrase>
+            <phrase id="200">
+                <text>pf_yanov_nimble_vehicle_list_prompt</text>
+                <next>201</next>
+                <next>202</next>
+                <next>204</next>
+                <next>206</next>
+                <next>205</next>
+                <next>208</next>
+                <next>203</next>
+                <next>209</next>
+                <next>207</next>
+                <next>219</next>
+            </phrase>
+            <phrase id="201">
+                <text>pf_yanov_nimble_vehicle_zaz968</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_zaz968_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_zaz968</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="202">
+                <text>pf_yanov_nimble_vehicle_lada_2101</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_lada_2101_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_lada_2101</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="203">
+                <text>pf_yanov_nimble_vehicle_gaz24</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_gaz24_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_gaz24</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="204">
+                <text>pf_yanov_nimble_vehicle_moskvich_412</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_moskvich_412_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_moskvich_412</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="205">
+                <text>pf_yanov_nimble_vehicle_raf_2203</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_raf_2203_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_raf_2203</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="206">
+                <text>pf_yanov_nimble_vehicle_moskvich_2715</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_moskvich_2715_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_moskvich_2715</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="207">
+                <text>pf_yanov_nimble_vehicle_mercedes_w123</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_mercedes_w123_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_mercedes_w123</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="208">
+                <text>pf_yanov_nimble_vehicle_lada_2107</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_lada_2107_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_lada_2107</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="209">
+                <text>pf_yanov_nimble_vehicle_lada_2108</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_lada_2108_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_lada_2108</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="219">
+                <text>pf_yanov_nimble_vehicle_back_categories</text>
+                <next>127</next>
+            </phrase>
+            <phrase id="300">
+                <text>pf_yanov_nimble_vehicle_list_prompt</text>
+                <next>302</next>
+                <next>303</next>
+                <next>304</next>
+                <next>301</next>
+                <next>305</next>
+                <next>307</next>
+                <next>306</next>
+                <next>319</next>
+            </phrase>
+            <phrase id="301">
+                <text>pf_yanov_nimble_uaz_van_sale_actor</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_uaz_van_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_uaz_van</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="307">
+                <text>pf_yanov_nimble_vehicle_uaz_van_clean</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_uaz_van_clean_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_uaz_van_clean</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="302">
+                <text>pf_yanov_nimble_vehicle_gaz69</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_gaz69_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_gaz69</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="303">
+                <text>pf_yanov_nimble_vehicle_niva_2121_white</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_niva_white_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_niva_white</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="304">
+                <text>pf_yanov_nimble_vehicle_niva_2121_green</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_niva_green_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_niva_green</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="305">
+                <text>pf_yanov_nimble_vehicle_uaz_hunter</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_uaz_hunter_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_uaz_hunter</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="306">
+                <text>pf_yanov_nimble_vehicle_niva_2329</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_niva_2329_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_niva_2329</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="319">
+                <text>pf_yanov_nimble_vehicle_back_categories</text>
+                <next>127</next>
+            </phrase>
+            <phrase id="400">
+                <text>pf_yanov_nimble_vehicle_list_prompt</text>
+                <next>401</next>
+                <next>402</next>
+                <next>403</next>
+                <next>419</next>
+            </phrase>
+            <phrase id="401">
+                <text>pf_yanov_nimble_vehicle_zil130</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_zil130_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_zil130</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="402">
+                <text>pf_yanov_nimble_vehicle_zil131</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_zil131_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_zil131</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="403">
+                <text>pf_yanov_nimble_vehicle_kamaz_tent</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_kamaz_tent_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_kamaz_tent</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="419">
+                <text>pf_yanov_nimble_vehicle_back_categories</text>
+                <next>127</next>
+            </phrase>
+            <phrase id="500">
+                <text>pf_yanov_nimble_vehicle_sale_npc</text>
+                <next>501</next>
+                <next>503</next>
+                <next>505</next>
+            </phrase>
+            <phrase id="501">
+                <text>pf_yanov_nimble_vehicle_sale_accept_actor</text>
+                <precondition>pf_yanov_nimble_dialog.can_buy_selected_vehicle</precondition>
+                <next>502</next>
+            </phrase>
+            <phrase id="502">
+                <text>pf_yanov_nimble_vehicle_sale_accept_npc</text>
+                <action>pf_yanov_nimble_dialog.buy_selected_vehicle</action>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="503">
+                <text>pf_yanov_nimble_vehicle_sale_lack_money_actor</text>
+                <precondition>pf_yanov_nimble_dialog.cannot_afford_selected_vehicle</precondition>
+                <next>504</next>
+            </phrase>
+            <phrase id="504">
+                <text>pf_yanov_nimble_vehicle_sale_wait_npc</text>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="505">
+                <text>pf_yanov_nimble_vehicle_sale_decline_actor</text>
+                <next>506</next>
+            </phrase>
+            <phrase id="506">
+                <text>pf_yanov_nimble_vehicle_sale_decline_npc</text>
+                <next>100</next>
+                <next>120</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="90">
+                <text>pf_yanov_nimble_main_leave_actor</text>
+                <precondition>pf_yanov_nimble_dialog.intro_done</precondition>
+                <next>91</next>
+            </phrase>
+            <phrase id="91">
+                <text>pf_yanov_nimble_bye</text>
+                <action>dialogs.break_dialog</action>
+                <is_final>1</is_final>
+            </phrase>
+        </phrase_list>
+    </dialog>
+</game_dialogs>
