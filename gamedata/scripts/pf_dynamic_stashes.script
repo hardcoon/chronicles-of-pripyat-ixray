@@ -56,7 +56,8 @@ local state = {
 	slot_grid = {},
 	slot_grid_point_ids = {},
 	loot_rng = nil,
-	pending_metal_detector_use = nil
+	pending_metal_detector_use = nil,
+	pending_strange_zombied_loot = {}
 }
 local story_document_tiers = {
 	cyan = true,
@@ -1800,6 +1801,38 @@ function impl.update_strange_ambush_targets(now)
 	end
 end
 
+-- death_manager rebuilds and filters an NPC inventory after death. Event loot
+-- must be attached only after that pass sets death_droped; otherwise the normal
+-- zombied balance removes the freshly created bonus items again.
+function impl.update_pending_strange_zombied_loot(now)
+	for corpse_id, entry in pairs(state.pending_strange_zombied_loot) do
+		local corpse = alife():object(corpse_id, true)
+		if not corpse then
+			state.pending_strange_zombied_loot[corpse_id] = nil
+			log(string.format(
+				"! [PF STASH] rich zombied corpse [%s] disappeared before loot injection",
+				tostring(corpse_id)
+			))
+		elseif corpse.death_droped == true then
+			local created = spawn_strange_zombied_loot and
+				spawn_strange_zombied_loot(corpse_id) or 0
+			state.pending_strange_zombied_loot[corpse_id] = nil
+			if created <= 0 then
+				log(string.format(
+					"! [PF STASH] rich zombied corpse [%s] received no bonus loot",
+					tostring(corpse_id)
+				))
+			end
+		elseif now >= entry.expires_at then
+			state.pending_strange_zombied_loot[corpse_id] = nil
+			log(string.format(
+				"! [PF STASH] rich zombied corpse [%s] death processing timed out",
+				tostring(corpse_id)
+			))
+		end
+	end
+end
+
 function impl.spawn_strange_zombied_corpses()
 	local actor_position = db.actor:position()
 	local game_vertex_id = db.actor:game_vertex_id()
@@ -1844,11 +1877,11 @@ function impl.spawn_strange_zombied_corpses()
 	end
 	corpse.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
 	corpse:kill()
-	if spawn_strange_zombied_loot then
-		spawn_strange_zombied_loot(corpse.id)
-	end
+	state.pending_strange_zombied_loot[corpse.id] = {
+		expires_at = time_global() + 15000
+	}
 	log(string.format(
-		"[PF STASH] strange consumable spawned one rich zombied corpse [%s]",
+		"[PF STASH] strange consumable queued one rich zombied corpse [%s]",
 		profile
 	))
 	return true
@@ -3866,6 +3899,7 @@ function update()
 	if not SYSTEM_ENABLED then return end
 	impl.update_pending_metal_detector_use(now)
 	impl.update_pending_empty_slots(now)
+	impl.update_pending_strange_zombied_loot(now)
 	impl.update_strange_ambush_targets(now)
 	impl.update_active_metal_detector(now)
 	if now < next_check then return end
@@ -4022,4 +4056,5 @@ function reset()
 	detector_pulse_sound = nil
 	state.loot_rng = nil
 	state.pending_metal_detector_use = nil
+	state.pending_strange_zombied_loot = {}
 end

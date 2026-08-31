@@ -1,0 +1,343 @@
+local item_by_community = {}
+local item_dependence = {}
+local mul_by_level = {}
+local count_by_level = {}
+local always_keep_item = {}
+
+ammo_sections = {}
+
+local death_ini = ini_file("misc\\death_generic.ltx")
+local weapon_drop_state = {}
+
+local zombie_weapon_chance = {
+	novice = 5,
+	experienced = 7,
+	veteran = 8,
+	master = 10
+}
+
+local npc_weapon_chance = {
+	novice = 10,
+	experienced = 12,
+	veteran = 14,
+	master = 15
+}
+
+local zombie_ammo_chance = {
+	novice = 12,
+	experienced = 15,
+	veteran = 18,
+	master = 20
+}
+
+-- Roll consumable stash PDAs when stalkers die so every coordinate source is
+-- a physical item visible inside the corpse. Ordinary corpse searches must
+-- never reveal a dynamic stash directly.
+local stash_pda_by_rank = {
+	novice = {
+		{ section = "pf_stash_pda_novice", chance = 24 }
+	},
+	experienced = {
+		{ section = "pf_stash_pda_stalker", chance = 18 }
+	},
+	veteran = {
+		{ section = "pf_stash_pda_veteran", chance = 14 }
+	},
+	master = {
+		{ section = "pf_stash_pda_master", chance = 12 }
+	}
+}
+
+-- Zombified stalkers keep their deliberately leaner PDA distribution.
+local zombie_stash_pda_by_rank = {
+	novice = {
+		{ section = "pf_stash_pda_novice", chance = 17 },
+		{ section = "lz_ph_failed_pda_novice", chance = 18 }
+	},
+	experienced = {
+		{ section = "pf_stash_pda_stalker", chance = 10 },
+		{ section = "lz_ph_failed_pda_stalker", chance = 10 }
+	},
+	veteran = {
+		{ section = "pf_stash_pda_stalker", chance = 4 },
+		{ section = "pf_stash_pda_veteran", chance = 4 }
+	},
+	master = {
+		{ section = "pf_stash_pda_veteran", chance = 4 },
+		{ section = "pf_stash_pda_master", chance = 2 }
+	}
+}
+
+-- Zombie corpse policy. This death-time guard also cleans inventories of
+-- zombified stalkers already spawned before their character profiles changed.
+-- High-grade detectors remain progression rewards, not ordinary zombie loot.
+local zombie_forbidden_items = {
+	detector_advanced = true,
+	detector_elite = true,
+	detector_scientific = true,
+	-- Strip the generous living-stalker supply includes before the lean
+	-- community death table creates its own low-grade medical loot.
+	bandage = true,
+	medkit = true,
+	medkit_army = true,
+	medkit_scientic = true,
+	antirad = true,
+	drug_booster = true,
+	drug_coagulant = true,
+	drug_sleep = true,
+	drug_psy_blockade = true,
+	drug_antidot = true,
+	drug_radioprotector = true,
+	drug_anabiotic = true,
+	bread = true,
+	kolbasa = true,
+	conserva = true,
+	vodka = true,
+	energy_drink = true,
+	mineral_water = true,
+	flyaga = true
+}
+
+local npc_ammo_chance = {
+	novice = 30,
+	experienced = 35,
+	veteran = 40,
+	master = 45
+}
+
+local function npc_rank(npc)
+	local rank = ranks.get_obj_rank_name(npc)
+	if rank == nil then
+		return "novice"
+	end
+	return rank
+end
+
+local function release_item(item)
+	local se_item = alife():object(item:id())
+	if se_item ~= nil then
+		alife():release(se_item, true)
+	end
+end
+
+local function prepare_weapon_drop(npc)
+	local community = character_community(npc)
+	local rank = npc_rank(npc)
+	local chances = community == "zombied" and zombie_weapon_chance or npc_weapon_chance
+	local allow = math.random(100) <= (chances[rank] or chances.novice)
+	local target = npc:item_in_slot(3) or npc:item_in_slot(2)
+
+	weapon_drop_state[npc:id()] = {
+		allow = allow,
+		target_id = target and target:id() or nil,
+		kept = false,
+		community = community,
+		rank = rank
+	}
+end
+
+local function create_stash_pda(npc)
+	if level.name() ~= "pripyat_full" then return end
+	local drops = character_community(npc) == "zombied" and
+		zombie_stash_pda_by_rank or stash_pda_by_rank
+	local rank_drops = drops[npc_rank(npc)] or drops.novice
+	local roll = math.random(100)
+	local cumulative_chance = 0
+	for _, drop in ipairs(rank_drops) do
+		cumulative_chance = cumulative_chance + drop.chance
+		if roll <= cumulative_chance then
+			alife():create(drop.section, npc:position(), npc:level_vertex_id(),
+				npc:game_vertex_id(), npc:id())
+			break
+		end
+	end
+end
+
+function init_drop_settings()
+	local community_list = { "stalker", "dolg", "freedom", "bandit", "army", "zombied", "ecolog", "killer", "monolith" }
+
+	for _, community in pairs(community_list) do
+		item_by_community[community] = {}
+		if death_ini:section_exist(community) then
+			local id, value = "", ""
+			for i = 0, death_ini:line_count(community) - 1 do
+				result, id, value = death_ini:r_line(community, i, "", "")
+				item_by_community[community][id] = 100 * tonumber(value)
+			end
+		end
+	end
+
+	local id, value = "", ""
+	for i = 0, death_ini:line_count("item_dependence") - 1 do
+		result, id, value = death_ini:r_line("item_dependence", i, "", "")
+		item_dependence[id] = {}
+		for _, dependency in pairs(parse_names(value)) do
+			item_dependence[id][dependency] = true
+		end
+	end
+
+	local level_name = level.name()
+	if not death_ini:section_exist(level_name) then
+		level_name = "default"
+	end
+	for i = 0, death_ini:line_count(level_name) - 1 do
+		result, id, value = death_ini:r_line(level_name, i, "", "")
+		mul_by_level[id] = tonumber(value)
+	end
+
+	local item_count_section = "item_count_" .. level.get_game_difficulty()
+	for i = 0, death_ini:line_count(item_count_section) - 1 do
+		result, id, value = death_ini:r_line(item_count_section, i, "", "")
+		local values = parse_nums(value)
+		if values[1] == nil then
+			abort("Error on [death_ini] declaration. Section [%s], line [%s]", item_count_section, tostring(id))
+		end
+		local min = values[1]
+		local max = values[2] or min
+		mul_by_level[id] = mul_by_level[id] or 0
+		count_by_level[id] = {
+			min = tonumber(min) * mul_by_level[id],
+			max = tonumber(max) * mul_by_level[id]
+		}
+	end
+
+	for i = 0, death_ini:line_count("keep_items") - 1 do
+		result, id, value = death_ini:r_line("keep_items", i, "", "")
+		if value == "true" then
+			always_keep_item[id] = true
+		end
+	end
+
+	ammo_sections = {}
+	for i = 0, death_ini:line_count("ammo_sections") - 1 do
+		result, id, value = death_ini:r_line("ammo_sections", i, "", "")
+		ammo_sections[id] = true
+	end
+end
+
+class "drop_manager"
+function drop_manager:__init(npc)
+	self.npc = npc
+end
+
+function drop_manager:create_release_item()
+	local se_obj = alife():object(self.npc:id())
+	if se_obj == nil or se_obj.death_droped == true then
+		return
+	end
+	se_obj.death_droped = true
+
+	prepare_weapon_drop(self.npc)
+	self.npc:iterate_inventory(keep_item, self.npc)
+	weapon_drop_state[self.npc:id()] = nil
+	create_stash_pda(self.npc)
+
+	local ini = self.npc:spawn_ini()
+	if ini and ini:section_exist("dont_spawn_loot") then
+		return
+	end
+	local storage = db.storage[self.npc:id()]
+	local storage_ini = storage and storage.ini
+	if storage_ini and storage_ini:line_exist(storage.section_logic, "dont_spawn_loot") then
+		return
+	end
+
+	local spawn_items = item_by_community[character_community(self.npc)]
+	if spawn_items == nil then
+		return
+	end
+	for section, chance in pairs(spawn_items) do
+		if check_item_dependence(self.npc, section) == true then
+			if count_by_level[section] == nil then
+				abort("Incorrect count settings in death_manager for object[%s]", section)
+			end
+			local number = math.ceil(math.random(count_by_level[section].min, count_by_level[section].max))
+			create_items(self.npc, section, number, chance)
+		end
+	end
+end
+
+function keep_item(npc, item)
+	local section = item:section()
+	local ini = npc:spawn_ini()
+	if character_community(npc) == "zombied" and
+		(zombie_forbidden_items[section] or isArtefact(item)) then
+		release_item(item)
+		return
+	end
+
+	if ini and ini:section_exist("keep_items")
+		and section ~= "guitar_a"
+		and section ~= "harmonica_a"
+		and section ~= "wpn_binoc"
+		and section ~= "device_torch"
+		and section ~= "device_pda" then
+		return
+	end
+	if isArtefact(item) or section == "bolt" or always_keep_item[section] == true then
+		return
+	end
+
+	if isWeapon(item) and not (get_clsid(item) == clsid.wpn_grenade_rgd5_s or get_clsid(item) == clsid.wpn_grenade_f1_s) then
+		local state = weapon_drop_state[npc:id()]
+		local is_target = state and (state.target_id == nil or state.target_id == item:id())
+		if state and state.allow and not state.kept and is_target then
+			state.kept = true
+			set_weapon_drop_condition(item, state.community, state.rank)
+			return
+		end
+		release_item(item)
+		return
+	end
+
+	if xr_corpse_detection.lootable_table[section] == true and ammo_sections[section] == nil then
+		return
+	end
+	release_item(item)
+end
+
+function set_weapon_drop_condition(item, community, rank)
+	if community == "zombied" then
+		item:set_condition(math.random(10, 30) / 100)
+		return
+	end
+	local rank_bonus = rank == "master" and 10 or rank == "veteran" and 5 or 0
+	item:set_condition(math.random(20, 45 + rank_bonus) / 100)
+end
+
+function create_items(npc, section, number, rnd)
+	local community = character_community(npc)
+	local rank = npc_rank(npc)
+
+	if ammo_sections[section] == true then
+		local chances = community == "zombied" and zombie_ammo_chance or npc_ammo_chance
+		if number > 0 and math.random(100) <= (chances[rank] or chances.novice) then
+			local cap = community == "zombied" and 8 or 18
+			create_ammo(section, npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id(), math.min(number, cap))
+		end
+		return
+	end
+
+	local multiplier = community == "zombied" and 0.35 or 0.65
+	local adjusted_chance = rnd * multiplier
+	for i = 1, number do
+		if math.random(100) <= adjusted_chance then
+			alife():create(section, npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id())
+		end
+	end
+end
+
+function check_item_dependence(npc, section)
+	if item_dependence[section] == nil then
+		return true
+	end
+	local no_dependencies = true
+	for dependency in pairs(item_dependence[section]) do
+		local object = npc:object(dependency)
+		if object ~= nil and npc:marked_dropped(object) ~= true then
+			return true
+		end
+		no_dependencies = false
+	end
+	return no_dependencies
+end
