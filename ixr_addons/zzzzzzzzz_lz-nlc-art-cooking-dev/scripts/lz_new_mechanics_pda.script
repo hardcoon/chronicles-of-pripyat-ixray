@@ -3,6 +3,12 @@ local beacon_name_dialog_singleton = nil
 local beacon_destroy_dialog_singleton = nil
 local weather_tab_singleton = nil
 
+function on_game_load()
+	-- The PDA frame is rebuilt by F9, so the Orders wrapper owned by the old
+	-- frame must never be reused when the preserved tab is rebound.
+	weather_tab_singleton = nil
+end
+
 function refresh_encyclopedia_marker(refresh_articles)
 	local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
 	if not pda_menu then return false end
@@ -101,6 +107,16 @@ end
 function lz_nm_weather_tab:__finalize()
 end
 
+function lz_nm_weather_tab:Update()
+	if self.pf_restore_active_section then
+		local chat_pda = rawget(_G, "pf_irc_chat_pda")
+		if chat_pda and chat_pda.finish_active_section_restore then
+			chat_pda.finish_active_section_restore(self)
+		end
+	end
+	CUIScriptWnd.Update(self)
+end
+
 function lz_nm_weather_tab:ShowAvailable()
 	self.mode = "available"
 	self:Reset()
@@ -134,6 +150,10 @@ end
 function get_weather_ui()
 	weather_tab_singleton = weather_tab_singleton or lz_nm_weather_tab()
 	weather_tab_singleton:Reset()
+	return weather_tab_singleton
+end
+
+function get_existing_weather_ui()
 	return weather_tab_singleton
 end
 

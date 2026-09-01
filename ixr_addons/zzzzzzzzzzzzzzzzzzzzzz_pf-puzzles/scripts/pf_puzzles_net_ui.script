@@ -1,0 +1,924 @@
+local Controller = {}
+Controller.__index = Controller
+
+local ROOT_XML_TAG = "net"
+local MAX_CELLS = 121
+local DIFFICULTIES = { "easy", "normal", "hard" }
+local DIFFICULTY_VALID = { easy = true, normal = true, hard = true }
+local GEOMETRY = {
+    [7] = { tile = 52 },
+    [9] = { tile = 42 },
+    [11] = { tile = 34 }
+}
+local DIRECTIONS = {
+    { name = "east", bit = 1 },
+    { name = "north", bit = 2 },
+    { name = "west", bit = 4 },
+    { name = "south", bit = 8 }
+}
+local RULE_BLOCKS = {
+    { "goal_heading", 6 },
+    { "goal_body", 10 },
+    { "rotation_heading", 6 },
+    { "rotation_body", 10 },
+    { "locking_heading", 6 },
+    { "locking_body", 10 },
+    { "controls_heading", 6 },
+    { "controls_body", 10 },
+    { "lifecycle", 8 }
+}
+local COLORS = {
+    board = GetARGB(255, 27, 34, 34),
+    powered_board = GetARGB(255, 24, 45, 47),
+    locked_board = GetARGB(255, 43, 43, 38),
+    selection = GetARGB(88, 226, 171, 58),
+    wire = GetARGB(255, 164, 171, 166),
+    powered = GetARGB(255, 76, 208, 221),
+    terminal_unpowered = GetARGB(255, 239, 87, 70),
+    terminal_powered = GetARGB(255, 82, 211, 101),
+    loop = GetARGB(255, 226, 171, 58),
+    error = GetARGB(255, 239, 87, 70),
+    barrier = GetARGB(255, 205, 205, 195),
+    source = GetARGB(255, 226, 171, 58),
+    lock = GetARGB(255, 219, 190, 107),
+    active = GetARGB(255, 226, 171, 58),
+    normal = GetARGB(255, 205, 205, 195)
+}
+
+local function tr(id)
+    return game.translate_string(id)
+end
+
+local function formatted(id, ...)
+    return string.format(tr(id), ...)
+end
+
+local function set_visible(control, visible)
+    if not control then return end
+    control:Show(visible == true)
+    control:Enable(visible == true)
+end
+
+local function has_flag(value, flag)
+    value = tonumber(value) or 0
+    return math.floor(value / flag) % 2 == 1
+end
+
+local function native_module()
+    return rawget(_G, "pf_puzzles_net_native")
+end
+
+local function records_module()
+    return rawget(_G, "pf_puzzles_records")
+end
+
+local function session_module()
+    return rawget(_G, "pf_puzzles_session")
+end
+
+local function safe_owner_call(owner, name, ...)
+    local callback = owner and owner[name]
+    if type(callback) ~= "function" then return false, nil end
+    local ok, result = pcall(callback, owner, ...)
+    return ok, result
+end
+
+local function translated_error(error_id, detail)
+    local id = type(error_id) == "string" and error_id or
+        "pf_puzzles_error_native_call"
+    local text = tr(id)
+    if detail ~= nil and tostring(detail) ~= "" then
+        text = text .. " [" .. tostring(detail) .. "]"
+    end
+    return text
+end
+
+local function register_button(self, control, id, callback)
+    self.owner:Register(control, id)
+    self.owner:AddCallback(id, ui_events.BUTTON_CLICKED, callback, self)
+end
+
+local function snapshot_index(snapshot, x, y)
+    if not snapshot or not x or not y then return nil end
+    if x < 1 or x > snapshot.width or y < 1 or y > snapshot.height then
+        return nil
+    end
+    return (y - 1) * snapshot.width + x
+end
+
+local function selected_index(self, snapshot)
+    if snapshot and snapshot.cursor_visible then
+        return snapshot_index(snapshot, snapshot.cursor_x, snapshot.cursor_y)
+    end
+    local index = tonumber(self.selected_index)
+    if snapshot and index and index >= 1 and index <= snapshot.cell_count then
+        return index
+    end
+    return nil
+end
+
+local function selected_cell(self, snapshot)
+    local index = selected_index(self, snapshot)
+    return index and snapshot and snapshot.cells[index] or nil
+end
+
+local function wire_color(cell, bit)
+    if has_flag(cell.error_mask, bit) then return COLORS.error end
+    if has_flag(cell.loop_mask, bit) then return COLORS.loop end
+    return cell.powered and COLORS.powered or COLORS.wire
+end
+
+local function connection_count(mask)
+    local count = 0
+    for _, direction in ipairs(DIRECTIONS) do
+        if has_flag(mask, direction.bit) then count = count + 1 end
+    end
+    return count
+end
+
+function Controller:initialize(owner)
+    self.owner = owner
+    self.active = false
+    self.shutting_down = false
+    self.rules_open = false
+    self.catalog_rules = false
+    self.snapshot = nil
+    self.last_revision = -1
+    self.last_error = nil
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.selected_index = nil
+    self.cells = {}
+    self:initialize_controls()
+    self:initialize_callbacks()
+    self.root:Show(false)
+    self.root:Enable(false)
+    return self
+end
+
+function Controller:initialize_controls()
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_puzzles_net.xml")
+    self.root = xml:InitStatic(ROOT_XML_TAG, self.owner)
+    self.content = xml:InitStatic("net:content", self.root)
+    self.backdrop = xml:InitStatic("net:content:backdrop", self.content)
+    self.back = xml:Init3tButton("net:content:back", self.content)
+    self.game_name = xml:InitTextWnd("net:content:game_name", self.content)
+    self.status = xml:InitTextWnd("net:content:status", self.content)
+    self.difficulty_buttons = {
+        easy = xml:Init3tButton("net:content:difficulty_easy", self.content),
+        normal = xml:Init3tButton("net:content:difficulty_normal", self.content),
+        hard = xml:Init3tButton("net:content:difficulty_hard", self.content)
+    }
+    self.stats = xml:InitStatic("net:content:stats", self.content)
+    self.powered = xml:InitTextWnd("net:content:stats:powered", self.stats)
+    self.locked = xml:InitTextWnd("net:content:stats:locked", self.stats)
+    self.issues = xml:InitTextWnd("net:content:stats:issues", self.stats)
+    self.selection = xml:InitTextWnd("net:content:stats:selection", self.stats)
+    self.board_frame = xml:InitStatic("net:content:board_frame", self.content)
+    self.board_area = xml:InitStatic("net:content:board_area", self.content)
+    self.board_message = xml:InitTextWnd(
+        "net:content:board_message", self.content)
+    self.tools = xml:InitStatic("net:content:tools", self.content)
+    self.undo = xml:Init3tButton("net:content:tools:undo", self.tools)
+    self.restart = xml:Init3tButton("net:content:tools:restart", self.tools)
+    self.new_game = xml:Init3tButton("net:content:tools:new_game", self.tools)
+    self.rules_button = xml:Init3tButton("net:content:tools:rules", self.tools)
+    self.help = xml:InitTextWnd("net:content:tools:help", self.tools)
+
+    for index = 1, MAX_CELLS do
+        local root = xml:InitStatic("cell", self.board_area)
+        local visual = {
+            root = root,
+            bg = xml:InitStatic("cell:bg", root),
+            selection = xml:InitStatic("cell:selection", root),
+            wires = {
+                east = xml:InitStatic("cell:wire_east", root),
+                north = xml:InitStatic("cell:wire_north", root),
+                west = xml:InitStatic("cell:wire_west", root),
+                south = xml:InitStatic("cell:wire_south", root)
+            },
+            center = xml:InitStatic("cell:center", root),
+            source = xml:InitStatic("cell:source", root),
+            barriers = {
+                east = xml:InitStatic("cell:barrier_east", root),
+                north = xml:InitStatic("cell:barrier_north", root),
+                west = xml:InitStatic("cell:barrier_west", root),
+                south = xml:InitStatic("cell:barrier_south", root)
+            },
+            lock = xml:InitStatic("cell:lock", root),
+            hit = xml:Init3tButton("cell:hit", root)
+        }
+        set_visible(root, false)
+        self.cells[index] = visual
+    end
+
+    self.rules_shade = xml:InitStatic("net:rules_shade", self.root)
+    self.rules = xml:InitStatic("net:rules", self.root)
+    self.rules_caption = xml:InitTextWnd("net:rules:caption", self.rules)
+    self.rules_caption_line = xml:InitFrameLine(
+        "net:rules:caption_line", self.rules)
+    self.rules_scroll = xml:InitScrollView("net:rules:scroll", self.rules)
+    self.rules_back = xml:Init3tButton("net:rules:back", self.rules)
+    self.rules_texts = {}
+    for _, block in ipairs(RULE_BLOCKS) do
+        local text = xml:InitTextWnd("net:rules:" .. block[1], nil)
+        text:AdjustHeightToText()
+        text:SetWndSize(vector2():set(text:GetWidth(), text:GetHeight() + block[2]))
+        self.rules_scroll:AddWindow(text, true)
+        text:SetAutoDelete(false)
+        self.rules_texts[#self.rules_texts + 1] = text
+    end
+    self.confirm = CUIMessageBoxEx()
+    self.owner:Register(self.confirm, "pf_puzzles_net_confirm")
+    self:hide_rules()
+end
+
+function Controller:initialize_callbacks()
+    register_button(self, self.back, "pf_puzzles_net_back",
+        self.back_to_catalog)
+    register_button(self, self.undo, "pf_puzzles_net_undo", self.undo_move)
+    register_button(self, self.restart, "pf_puzzles_net_restart",
+        self.restart_game)
+    register_button(self, self.new_game, "pf_puzzles_net_new",
+        self.request_new_game)
+    register_button(self, self.rules_button, "pf_puzzles_net_rules",
+        self.show_rules)
+    register_button(self, self.rules_back, "pf_puzzles_net_rules_back",
+        self.hide_rules)
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local requested = difficulty
+        register_button(self, self.difficulty_buttons[difficulty],
+            "pf_puzzles_net_difficulty_" .. difficulty,
+            function(controller) controller:request_difficulty(requested) end)
+    end
+    for index, visual in ipairs(self.cells) do
+        local cell_index = index
+        register_button(self, visual.hit, "pf_puzzles_net_cell_" .. index,
+            function(controller) controller:click_cell(cell_index) end)
+    end
+    self.owner:AddCallback("pf_puzzles_net_confirm",
+        ui_events.MESSAGE_BOX_YES_CLICKED, self.confirm_pending, self)
+    self.owner:AddCallback("pf_puzzles_net_confirm",
+        ui_events.MESSAGE_BOX_NO_CLICKED, self.cancel_pending, self)
+end
+
+function Controller:saved_difficulty(fallback)
+    local value = DIFFICULTY_VALID[fallback] and fallback or "normal"
+    local records = records_module()
+    if records and type(records.session_game_difficulty) == "function" then
+        local ok, restored = pcall(records.session_game_difficulty,
+            "net", value)
+        if ok and DIFFICULTY_VALID[restored] then value = restored end
+    end
+    return value
+end
+
+function Controller:remember_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] then return false end
+    local records = records_module()
+    if not records or type(records.set_session_game_difficulty) ~= "function" then
+        return false
+    end
+    local called, result, detail = pcall(records.set_session_game_difficulty,
+        "net", difficulty)
+    if (not called or result == false) and type(printf) == "function" then
+        printf("! pf_puzzles: Net difficulty write failed: [%s]",
+            tostring(called and detail or result))
+    end
+    return called and result ~= false
+end
+
+function Controller:refresh_catalog()
+    safe_owner_call(self.owner, "RefreshCatalog")
+end
+
+function Controller:show_error(error_id, detail)
+    self.last_error = translated_error(error_id, detail)
+    self.status:SetText(tr("pf_puzzles_net_status_unavailable"))
+    self.status:SetTextColor(COLORS.error)
+    self.board_message:SetText(self.last_error)
+    self.board_message:Show(true)
+    self.board_message:Enable(true)
+    self:hide_board()
+    self:refresh_stats(nil)
+    self:refresh_actions(nil)
+    return false
+end
+
+function Controller:run_native(callback, ...)
+    if type(callback) ~= "function" then
+        return self:show_error("pf_puzzles_error_native_call", "missing wrapper")
+    end
+    local called, result, error_id, detail = pcall(callback, ...)
+    if not called then
+        return self:show_error("pf_puzzles_error_native_call", result)
+    end
+    if result == false or result == nil then
+        return self:show_error(error_id, detail)
+    end
+    self.last_error = nil
+    self:update(true)
+    return true
+end
+
+function Controller:start_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] then return false end
+    local native = native_module()
+    if not native then return self:show_error(nil, "wrapper unavailable") end
+    local session = session_module()
+    if session and session.can_replace then
+        local replaceable, replace_error = session.can_replace("net")
+        if not replaceable then
+            return self:show_error("pf_puzzles_error_native_call", replace_error)
+        end
+    end
+    local called, result, error_id, detail = pcall(native.start, difficulty)
+    if not called or result == false then
+        return self:show_error(called and error_id or nil,
+            called and detail or result)
+    end
+    local bound, bind_error = false, "session unavailable"
+    if session and session.bind_new_attempt then
+        bound, bind_error = session.bind_new_attempt("net", native)
+    end
+    if bound ~= true then
+        pcall(native.destroy)
+        if session and session.has_active and session.has_active("net") then
+            pcall(session.restore_game, "net", native)
+        end
+        return self:show_error("pf_puzzles_error_native_call",
+            bind_error or "session write failed")
+    end
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.selected_index = nil
+    self.last_revision = -1
+    self.last_error = nil
+    self:remember_difficulty(difficulty)
+    self:update(true)
+    self:refresh_catalog()
+    return true
+end
+
+function Controller:enter(difficulty)
+    self:hide_rules()
+    self.active = true
+    self.shutting_down = false
+    self.root:Show(true)
+    self.root:Enable(true)
+    self.content:Show(true)
+    self.content:Enable(true)
+    local native = native_module()
+    if not native then return self:show_error(nil, "wrapper unavailable") end
+    local available_called, available, error_id, detail = pcall(native.available)
+    if not available_called or available ~= true then
+        return self:show_error(available_called and error_id or nil,
+            available_called and detail or available)
+    end
+    if native.has_context() then
+        self:remember_difficulty(native.difficulty() or
+            self:saved_difficulty(difficulty))
+        self:update(true)
+        return true
+    end
+    local session = session_module()
+    if session and session.has_active and session.has_active("net") then
+        local restored, restore_error = session.restore_game("net", native)
+        if restored then
+            self:remember_difficulty(native.difficulty() or
+                self:saved_difficulty(difficulty))
+            self:update(true)
+            return true
+        end
+        session.discard_game("net")
+        if type(printf) == "function" then
+            printf("! pf_puzzles: Net session restore failed: [%s]",
+                tostring(restore_error))
+        end
+    end
+    return self:start_difficulty(self:saved_difficulty(difficulty))
+end
+
+function Controller:leave()
+    self:hide_rules()
+    self.active = false
+    self.root:Show(false)
+    self.root:Enable(false)
+end
+
+function Controller:back_to_catalog()
+    self:leave()
+    safe_owner_call(self.owner, "BackToCatalog")
+    self:refresh_catalog()
+end
+
+function Controller:is_active()
+    return self.active == true
+end
+
+function Controller:get_root()
+    return self.root
+end
+
+function Controller:current_snapshot()
+    return self.snapshot
+end
+
+function Controller:current_difficulty()
+    local native = native_module()
+    if native and native.has_context() then return native.difficulty() end
+    local session = session_module()
+    if session and session.active_difficulty then
+        local restored = session.active_difficulty("net")
+        if DIFFICULTY_VALID[restored] then return restored end
+    end
+    return self:saved_difficulty("normal")
+end
+
+function Controller:show_rules(return_page)
+    self.catalog_rules = return_page == "catalog" and not self.active
+    if not self.active and not self.catalog_rules then return end
+    if self.catalog_rules then
+        safe_owner_call(self.owner, "OnNetCatalogRulesVisible", true)
+        self.root:Show(true)
+        self.root:Enable(true)
+        self.content:Show(false)
+    end
+    self.rules_open = true
+    self.rules_scroll:ScrollToBegin()
+    self.content:Enable(false)
+    set_visible(self.rules_shade, true)
+    set_visible(self.rules, true)
+end
+
+function Controller:hide_rules()
+    local catalog_rules = self.catalog_rules
+    self.rules_open = false
+    self.catalog_rules = false
+    set_visible(self.rules_shade, false)
+    set_visible(self.rules, false)
+    if self.content then
+        self.content:Show(self.active == true)
+        self.content:Enable(self.active == true)
+    end
+    if catalog_rules and not self.active then
+        safe_owner_call(self.owner, "OnNetCatalogRulesVisible", false)
+        self.root:Show(false)
+        self.root:Enable(false)
+        self:refresh_catalog()
+    end
+end
+
+function Controller:is_rules_open()
+    return self.rules_open == true
+end
+
+function Controller:ask(action, difficulty)
+    self.pending_action = action
+    self.pending_difficulty = difficulty
+    self.confirm:InitMessageBox("message_box_yes_no")
+    local prompt = action == "difficulty" and
+        "pf_puzzles_net_confirm_difficulty" or "pf_puzzles_net_confirm_new"
+    self.confirm:SetText(tr(prompt))
+    self.confirm:ShowDialog(true)
+end
+
+function Controller:cancel_pending()
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self:sync_difficulty_buttons()
+end
+
+function Controller:confirm_pending()
+    local action, difficulty = self.pending_action, self.pending_difficulty
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    if action == "difficulty" then self:start_difficulty(difficulty) end
+    if action == "new_game" then self:perform_new_game() end
+end
+
+function Controller:request_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] or
+        difficulty == self:current_difficulty() then return end
+    local native = native_module()
+    if native and native.has_context() and
+        (not self.snapshot or not self.snapshot.won) then
+        self:ask("difficulty", difficulty)
+        self:sync_difficulty_buttons()
+        return
+    end
+    self:start_difficulty(difficulty)
+end
+
+function Controller:request_new_game()
+    if not self.snapshot then return end
+    if self.snapshot.won then
+        self:perform_new_game()
+        return
+    end
+    self:ask("new_game", self:current_difficulty())
+end
+
+function Controller:perform_new_game()
+    local native = native_module()
+    local difficulty = self:current_difficulty()
+    local session = session_module()
+    if session and session.can_replace then
+        local replaceable, replace_error = session.can_replace("net")
+        if not replaceable then
+            return self:show_error("pf_puzzles_error_native_call", replace_error)
+        end
+    end
+    if not native or not native.has_context() then
+        self:start_difficulty(difficulty)
+        return
+    end
+    self.selected_index = nil
+    if self:run_native(native.new_game, difficulty) then
+        local bound, bind_error = false, "session unavailable"
+        if session and session.bind_new_attempt then
+            bound, bind_error = session.bind_new_attempt("net", native)
+        end
+        if bound ~= true then
+            pcall(native.destroy)
+            if session and session.has_active and session.has_active("net") then
+                pcall(session.restore_game, "net", native)
+            end
+            return self:show_error("pf_puzzles_error_native_call",
+                bind_error or "session write failed")
+        end
+        self.pending_event = nil
+        self.notified_won_key = nil
+        self:remember_difficulty(difficulty)
+        self:refresh_catalog()
+    end
+end
+
+function Controller:restart_game()
+    if not self.snapshot or self.snapshot.won or not self.snapshot.can_undo then
+        return
+    end
+    local native = native_module()
+    self.selected_index = nil
+    if native then self:run_native(native.restart) end
+end
+
+function Controller:undo_move()
+    if not self.snapshot or self.snapshot.won or not self.snapshot.can_undo then
+        return
+    end
+    local native = native_module()
+    if native then self:run_native(native.undo) end
+end
+
+function Controller:click_cell(index)
+    local snapshot = self.snapshot
+    local cell = snapshot and snapshot.cells[index]
+    if not cell or snapshot.won or snapshot.locked then return end
+    local native = native_module()
+    if snapshot.cursor_visible and native then
+        -- A mouse selection replaces the keyboard cursor. Without clearing it,
+        -- selected_cell() would keep resolving the old cursor position and the
+        -- Unlock button could act on the wrong locked tile.
+        if not self:run_native(native.clear_cursor) then return end
+        snapshot = self.snapshot
+        cell = snapshot and snapshot.cells[index]
+        if not cell or snapshot.won or snapshot.locked then return end
+    end
+    self.selected_index = index
+    self:refresh_board(snapshot)
+    self:refresh_stats(snapshot)
+    self:refresh_actions(snapshot)
+    if cell.locked then return end
+    if native then self:run_native(native.rotate_cell, cell.x, cell.y, "ccw") end
+end
+
+function Controller:sync_difficulty_buttons()
+    local active = self:current_difficulty()
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local button = self.difficulty_buttons[difficulty]
+        button:Enable(difficulty ~= active)
+        button:TextControl():SetTextColor(difficulty == active and
+            COLORS.active or COLORS.normal)
+    end
+end
+
+function Controller:hide_board()
+    for _, visual in ipairs(self.cells) do set_visible(visual.root, false) end
+end
+
+function Controller:layout_cell(visual, x, y, geometry, origin_x, origin_y)
+    local tile = geometry.tile
+    local center = math.floor(tile / 2)
+    local thickness = math.max(3, math.floor(tile / 9))
+    local center_size = thickness + 2
+    local edge = 2
+    visual.root:SetWndPos(vector2():set(
+        origin_x + (x - 1) * tile, origin_y + (y - 1) * tile))
+    visual.root:SetWndSize(vector2():set(tile, tile))
+    visual.bg:SetWndPos(vector2():set(1, 1))
+    visual.bg:SetWndSize(vector2():set(tile - 2, tile - 2))
+    visual.selection:SetWndPos(vector2():set(2, 2))
+    visual.selection:SetWndSize(vector2():set(tile - 4, tile - 4))
+    visual.wires.north:SetWndPos(vector2():set(
+        center - math.floor(thickness / 2), 1))
+    visual.wires.north:SetWndSize(vector2():set(thickness, center))
+    visual.wires.east:SetWndPos(vector2():set(
+        center, center - math.floor(thickness / 2)))
+    visual.wires.east:SetWndSize(vector2():set(tile - center - 1, thickness))
+    visual.wires.south:SetWndPos(vector2():set(
+        center - math.floor(thickness / 2), center))
+    visual.wires.south:SetWndSize(vector2():set(thickness, tile - center - 1))
+    visual.wires.west:SetWndPos(vector2():set(
+        1, center - math.floor(thickness / 2)))
+    visual.wires.west:SetWndSize(vector2():set(center, thickness))
+    visual.center:SetWndPos(vector2():set(
+        center - math.floor(center_size / 2),
+        center - math.floor(center_size / 2)))
+    visual.center:SetWndSize(vector2():set(center_size, center_size))
+    local source_size = math.max(4, thickness)
+    visual.source:SetWndPos(vector2():set(
+        center - math.floor(source_size / 2),
+        center - math.floor(source_size / 2)))
+    visual.source:SetWndSize(vector2():set(source_size, source_size))
+    visual.barriers.north:SetWndPos(vector2():set(3, 1))
+    visual.barriers.north:SetWndSize(vector2():set(tile - 6, edge))
+    visual.barriers.south:SetWndPos(vector2():set(3, tile - edge - 1))
+    visual.barriers.south:SetWndSize(vector2():set(tile - 6, edge))
+    visual.barriers.west:SetWndPos(vector2():set(1, 3))
+    visual.barriers.west:SetWndSize(vector2():set(edge, tile - 6))
+    visual.barriers.east:SetWndPos(vector2():set(tile - edge - 1, 3))
+    visual.barriers.east:SetWndSize(vector2():set(edge, tile - 6))
+    local lock_size = math.max(5, math.floor(tile / 6))
+    visual.lock:SetWndPos(vector2():set(tile - lock_size - 3, 3))
+    visual.lock:SetWndSize(vector2():set(lock_size, lock_size))
+    visual.hit:SetWndPos(vector2():set(0, 0))
+    visual.hit:SetWndSize(vector2():set(tile, tile))
+end
+
+function Controller:refresh_cell(visual, cell, snapshot, geometry,
+    origin_x, origin_y, is_selected)
+    self:layout_cell(visual, cell.x, cell.y, geometry, origin_x, origin_y)
+    local terminal = connection_count(cell.connection_mask) == 1
+    if terminal then
+        local terminal_size = math.max(10, math.floor(geometry.tile / 3))
+        local center = math.floor(geometry.tile / 2)
+        visual.center:SetWndPos(vector2():set(
+            center - math.floor(terminal_size / 2),
+            center - math.floor(terminal_size / 2)))
+        visual.center:SetWndSize(vector2():set(terminal_size, terminal_size))
+    end
+    visual.bg:SetTextureColor(cell.locked and COLORS.locked_board or
+        (cell.powered and COLORS.powered_board or COLORS.board))
+    visual.selection:SetTextureColor(COLORS.selection)
+    visual.selection:Show(is_selected == true)
+    local center_color = cell.powered and COLORS.powered or COLORS.wire
+    if (cell.error_mask or 0) > 0 then center_color = COLORS.error
+    elseif (cell.loop_mask or 0) > 0 then center_color = COLORS.loop
+    elseif terminal then
+        center_color = cell.powered and COLORS.terminal_powered or
+            COLORS.terminal_unpowered
+    end
+    visual.center:SetTextureColor(center_color)
+    visual.source:SetTextureColor(COLORS.source)
+    visual.source:Show(cell.source == true)
+    visual.lock:SetTextureColor(COLORS.lock)
+    visual.lock:Show(cell.locked == true)
+    for _, direction in ipairs(DIRECTIONS) do
+        local wire = visual.wires[direction.name]
+        local barrier = visual.barriers[direction.name]
+        local connected = has_flag(cell.connection_mask, direction.bit)
+        wire:SetTextureColor(wire_color(cell, direction.bit))
+        wire:Show(connected)
+        barrier:SetTextureColor(COLORS.barrier)
+        barrier:Show(has_flag(cell.barrier_mask, direction.bit))
+    end
+    set_visible(visual.root, true)
+    visual.hit:Enable(not snapshot.won and not snapshot.locked)
+end
+
+function Controller:refresh_board(snapshot)
+    local geometry = snapshot and GEOMETRY[snapshot.width]
+    if not geometry or snapshot.width ~= snapshot.height then
+        self:hide_board()
+        return
+    end
+    local span = snapshot.width * geometry.tile
+    local origin_x = math.floor((self.board_area:GetWidth() - span) / 2)
+    local origin_y = math.floor((self.board_area:GetHeight() - span) / 2)
+    local active_index = selected_index(self, snapshot)
+    for index, visual in ipairs(self.cells) do
+        local cell = snapshot.cells[index]
+        if cell then
+            self:refresh_cell(visual, cell, snapshot, geometry,
+                origin_x, origin_y, index == active_index)
+        else
+            set_visible(visual.root, false)
+        end
+    end
+end
+
+function Controller:refresh_stats(snapshot)
+    if not snapshot then
+        self.powered:SetText("")
+        self.locked:SetText("")
+        self.issues:SetText("")
+        self.selection:SetText("")
+        return
+    end
+    self.powered:SetText(formatted("pf_puzzles_net_powered_format",
+        snapshot.powered_count or 0, snapshot.nonempty_count or 0))
+    self.locked:SetText(formatted("pf_puzzles_net_locked_format",
+        snapshot.locked_count or 0))
+    self.issues:SetText(formatted("pf_puzzles_net_issues_format",
+        snapshot.loop_count or 0, snapshot.error_count or 0))
+    self.issues:SetTextColor(((snapshot.loop_count or 0) > 0 or
+        (snapshot.error_count or 0) > 0) and COLORS.error or COLORS.normal)
+    local cell = selected_cell(self, snapshot)
+    self.selection:SetText(cell and formatted(
+        "pf_puzzles_net_selection_format", cell.x, cell.y) or
+        tr("pf_puzzles_net_selection_none"))
+end
+
+function Controller:refresh_actions(snapshot)
+    local playing = snapshot ~= nil and not snapshot.won and not snapshot.locked
+    set_visible(self.undo, playing and snapshot.can_undo)
+    set_visible(self.restart, playing and snapshot.can_undo)
+    set_visible(self.new_game, snapshot ~= nil)
+    set_visible(self.rules_button, true)
+end
+
+function Controller:refresh_status(snapshot)
+    local id = snapshot and snapshot.won and
+        "pf_puzzles_net_status_won" or "pf_puzzles_net_status_playing"
+    self.status:SetText(tr(id))
+    self.status:SetTextColor(snapshot and snapshot.won and
+        COLORS.active or COLORS.normal)
+    self.board_message:SetText(snapshot and snapshot.won and
+        tr("pf_puzzles_net_won_message") or "")
+    self.board_message:Show(snapshot ~= nil and snapshot.won)
+end
+
+function Controller:process_won(snapshot)
+    if not snapshot or not snapshot.won then return end
+    local native = native_module()
+    if not native then return end
+    local event, error_id, detail = native.peek_won(
+        snapshot.revision, snapshot.attempt_id)
+    if error_id then self:show_error(error_id, detail) return end
+    if not event then
+        local session = session_module()
+        if session and session.pending_completion then
+            event = session.pending_completion("net", snapshot)
+        end
+    end
+    if not event then return end
+    self.pending_event = event
+    local key = tostring(event.attempt_id) .. ":" .. tostring(event.revision)
+    if self.notified_won_key == key then return end
+    local called, handled = safe_owner_call(self.owner, "OnNetCompletion", event)
+    if called and handled ~= false then
+        if event.synthetic == true or
+            self:ack_won(event.attempt_id, event.revision) then
+            self.notified_won_key = key
+            self:refresh_catalog()
+        end
+    end
+end
+
+function Controller:pending_won()
+    return self.pending_event
+end
+
+function Controller:ack_won(attempt_id, revision)
+    local native = native_module()
+    if not native or not native.ack_won(attempt_id, revision) then return false end
+    if self.pending_event and self.pending_event.attempt_id == attempt_id and
+        self.pending_event.revision == revision then self.pending_event = nil end
+    return true
+end
+
+function Controller:update(force)
+    if self.shutting_down or not self.active then return false end
+    -- Net has no timer-driven state: every mutation enters through run_native,
+    -- which refreshes immediately. Avoid recomputing connectivity every frame.
+    if not force and self.snapshot then
+        if self.snapshot.won and not self.notified_won_key then
+            self:process_won(self.snapshot)
+        end
+        return true
+    end
+    local native = native_module()
+    if not native or not native.has_context() then
+        return self:show_error("pf_puzzles_error_context")
+    end
+    local revision, error_id, detail = native.revision()
+    if not revision then return self:show_error(error_id, detail) end
+    if not force and revision == self.last_revision then
+        if self.snapshot and self.snapshot.won and not self.notified_won_key then
+            self:process_won(self.snapshot)
+        end
+        return true
+    end
+    local snapshot
+    snapshot, error_id, detail = native.snapshot()
+    if not snapshot then return self:show_error(error_id, detail) end
+    self.snapshot = snapshot
+    self.last_revision = snapshot.revision or revision
+    self.last_error = nil
+    if snapshot.cursor_visible then
+        self.selected_index = snapshot_index(
+            snapshot, snapshot.cursor_x, snapshot.cursor_y)
+    elseif self.selected_index and self.selected_index > snapshot.cell_count then
+        self.selected_index = nil
+    end
+    self:sync_difficulty_buttons()
+    self:refresh_board(snapshot)
+    self:refresh_stats(snapshot)
+    self:refresh_actions(snapshot)
+    self:refresh_status(snapshot)
+    self:process_won(snapshot)
+    return true
+end
+
+function Controller:input_key(name)
+    local native = native_module()
+    if not native then return false end
+    return self:run_native(native.input_key, name)
+end
+
+function Controller:on_keyboard(dik, keyboard_action)
+    local keys = rawget(_G, "DIK_keys")
+    local binding = type(dik_to_bind) == "function" and dik_to_bind(dik) or nil
+    local escape = (keys and dik == keys.DIK_ESCAPE) or
+        (key_bindings and binding == key_bindings.kQUIT)
+    if self.rules_open then
+        if keyboard_action == ui_events.WINDOW_KEY_PRESSED and escape then
+            self:hide_rules()
+        end
+        return true
+    end
+    if not self.active then return false end
+    if keyboard_action ~= ui_events.WINDOW_KEY_PRESSED then return false end
+    if escape then return false end
+    if not self.snapshot or self.snapshot.won or self.snapshot.locked then
+        return false
+    end
+    if keys and dik == keys.DIK_LEFT then return self:input_key("left") end
+    if keys and dik == keys.DIK_RIGHT then return self:input_key("right") end
+    if keys and dik == keys.DIK_UP then return self:input_key("up") end
+    if keys and dik == keys.DIK_DOWN then return self:input_key("down") end
+    if keys and dik == keys.DIK_RETURN then return self:input_key("enter") end
+    if keys and dik == keys.DIK_SPACE then return self:input_key("space") end
+    if keys and dik == keys.DIK_A then return self:input_key("a") end
+    if keys and dik == keys.DIK_D then return self:input_key("d") end
+    if keys and dik == keys.DIK_F then return self:input_key("f") end
+    if keys and dik == keys.DIK_S then return self:input_key("s") end
+    return false
+end
+
+function Controller:destroy_context()
+    self.shutting_down = true
+    local native = native_module()
+    local ok, error_id, detail = true, nil, nil
+    if native and type(native.destroy) == "function" then
+        ok, error_id, detail = native.destroy()
+    end
+    self.snapshot = nil
+    self.last_revision = -1
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.selected_index = nil
+    self:hide_board()
+    self:refresh_stats(nil)
+    self:refresh_actions(nil)
+    if ok == false then return self:show_error(error_id, detail) end
+    return true
+end
+
+function Controller:on_game_load()
+    self:destroy_context()
+    self:leave()
+    self.shutting_down = false
+end
+
+function Controller:destroy()
+    self.shutting_down = true
+    self:leave()
+end
+
+function new(owner)
+    if not owner then return nil end
+    return setmetatable({}, Controller):initialize(owner)
+end
+
+function root_xml_tag()
+    return ROOT_XML_TAG
+end
+
+function root_ui_type()
+    return "CUIStatic"
+end

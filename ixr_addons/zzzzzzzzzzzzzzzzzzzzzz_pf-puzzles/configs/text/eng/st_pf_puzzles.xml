@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<string_table>
+    <string id="pf_puzzles_tab"><text>Applications</text></string>
+    <string id="pf_puzzles_tab_hint"><text>PDA applications</text></string>
+    <string id="pf_puzzles_title"><text>Applications</text></string>
+    <string id="pf_puzzles_samegame_name"><text>Same Game</text></string>
+    <string id="pf_puzzles_samegame_description"><text>Remove connected groups of matching tiles. Larger groups score more. Try to clear the entire board.</text></string>
+    <string id="pf_puzzles_samegame_description_short"><text>Remove matching groups, build your score, and try to clear the board.</text></string>
+    <string id="pf_puzzles_more_games"><text>More puzzles will follow after the first game is verified.</text></string>
+
+    <string id="pf_puzzles_view_tiles"><text>Tiles</text></string>
+    <string id="pf_puzzles_view_list"><text>List</text></string>
+    <string id="pf_puzzles_difficulty"><text>Difficulty:</text></string>
+    <string id="pf_puzzles_difficulty_easy"><text>Easy</text></string>
+    <string id="pf_puzzles_difficulty_normal"><text>Normal</text></string>
+    <string id="pf_puzzles_difficulty_hard"><text>Hard</text></string>
+    <string id="pf_puzzles_difficulty_locked"><text>Difficulty is locked until a new game</text></string>
+
+    <string id="pf_puzzles_play"><text>Play</text></string>
+    <string id="pf_puzzles_continue"><text>Continue</text></string>
+    <string id="pf_puzzles_rules"><text>Rules</text></string>
+    <string id="pf_puzzles_back"><text>Back</text></string>
+    <string id="pf_puzzles_undo"><text>Undo move</text></string>
+    <string id="pf_puzzles_redo"><text>Restore move</text></string>
+    <string id="pf_puzzles_restart"><text>Restart</text></string>
+    <string id="pf_puzzles_new_game"><text>New game</text></string>
+    <string id="pf_puzzles_clear_selection"><text>Clear selection</text></string>
+
+    <string id="pf_puzzles_best_none"><text>Best score: —</text></string>
+    <string id="pf_puzzles_best_format"><text>Best score: %d</text></string>
+    <string id="pf_puzzles_score_format"><text>Score: %d</text></string>
+    <string id="pf_puzzles_remaining_format"><text>Remaining: %d</text></string>
+    <string id="pf_puzzles_selected_format"><text>Selected: %d (+%d)</text></string>
+    <string id="pf_puzzles_status_ready"><text>Ready</text></string>
+    <string id="pf_puzzles_status_playing"><text>Playing</text></string>
+    <string id="pf_puzzles_status_complete"><text>Complete</text></string>
+    <string id="pf_puzzles_status_dead_end"><text>Dead end</text></string>
+    <string id="pf_puzzles_status_loading"><text>Loading...</text></string>
+    <string id="pf_puzzles_catalog_ready"><text>Choose a game; difficulty is changed on the game screen.</text></string>
+    <string id="pf_puzzles_keyboard_hint"><text>Arrows — cursor\nEnter — select / remove group\nSpace — alternate select</text></string>
+    <string id="pf_puzzles_confirm_replace"><text>The unfinished game will be lost. Start a new game?</text></string>
+    <string id="pf_puzzles_confirm_difficulty"><text>Changing difficulty will reset the current game. Change difficulty?</text></string>
+
+    <string id="pf_puzzles_rules_title"><text>Same Game — rules</text></string>
+    <string id="pf_puzzles_rules_goal_heading"><text>Goal</text></string>
+    <string id="pf_puzzles_rules_goal_body"><text>Remove as many tiles as possible and earn the highest score. A win (“Complete”) means the board is entirely clear. “Dead end” means tiles remain but no group of two or more adjacent matching tiles is available; a dead end does not update the record.</text></string>
+    <string id="pf_puzzles_rules_move_heading"><text>A move</text></string>
+    <string id="pf_puzzles_rules_move_body"><text>Select a vertically or horizontally connected group of matching tiles. Click it again, or press Enter on an already selected group, to remove it. A single tile cannot be removed. Tiles fall after a move and empty columns slide left.</text></string>
+    <string id="pf_puzzles_rules_scoring_heading"><text>Scoring</text></string>
+    <string id="pf_puzzles_rules_scoring_body"><text>Removing N tiles scores (N - 2)^2 points. There is no additional board-clear bonus.</text></string>
+    <string id="pf_puzzles_rules_controls_heading"><text>Controls</text></string>
+    <string id="pf_puzzles_rules_controls_body"><text>The whole game can be played with the cursor. Arrow keys move the keyboard cursor, and Enter selects a group or confirms removal. Space is an alternate select: on the selected group it clears selection, while on another group it selects that group. The Clear selection button always clears regardless of cursor position. Undo and Redo apply only to the current game.</text></string>
+    <string id="pf_puzzles_rules_lifecycle"><text>Quick load and menu load reset the current game. Saved records remain. A best score is written separately only after the board is completely clear.</text></string>
+
+    <string id="pf_puzzles_native_ready"><text>Native module ready.</text></string>
+    <string id="pf_puzzles_error_ffi_unavailable"><text>LuaJIT FFI is unavailable. The native puzzle cannot be opened.</text></string>
+    <string id="pf_puzzles_error_dll_missing"><text>pf_puzzles_native.dll was not found.</text></string>
+    <string id="pf_puzzles_error_dll_load"><text>The puzzle library could not be loaded from the add-on folder. Check that the file exists and uses the x64 architecture.</text></string>
+    <string id="pf_puzzles_error_abi_mismatch"><text>The puzzle library ABI does not match this add-on.</text></string>
+    <string id="pf_puzzles_error_native_call"><text>The native module returned an error.</text></string>
+    <string id="pf_puzzles_error_context"><text>No game is available. Start a new game.</text></string>
+    <string id="pf_puzzles_error_invalid_state"><text>That action is not available now.</text></string>
+    <string id="pf_puzzles_error_records"><text>The best score could not be saved atomically.</text></string>
+    <string id="pf_puzzles_error_detach"><text>Applications could not be detached safely; quick load was cancelled.</text></string>
+    <string id="pf_puzzles_wins_label"><text>Wins</text></string>
+    <string id="pf_puzzles_rules_session"><text>F5/F9 and menu loading preserve the exact active game during the current game process. The reward is fixed when an attempt starts and cannot be rerolled by loading. Easy gives no reward. A completed board cannot be replayed; New game creates a new attempt.</text></string>
+</string_table>

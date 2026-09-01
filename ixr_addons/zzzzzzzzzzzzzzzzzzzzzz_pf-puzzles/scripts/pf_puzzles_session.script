@@ -1,0 +1,1038 @@
+local USER_DIR_NAME = "pf_puzzles"
+local SESSION_FILE_NAME = "active_games.ltx"
+local SESSION_SECTION = "puzzles_active_session_v1"
+local SESSION_VERSION = 1
+local CHECKPOINT_KEY = "pf_puzzles_session_v2"
+local CHECKPOINT_VERSION = 2
+local MAX_BLOB_BYTES = 4 * 1024 * 1024
+local RETRY_INTERVAL_MS = 2000
+local GAME_ORDER = { "samegame", "unequal", "net", "solo", "wordle" }
+local GAMES = {
+    samegame = { native = "pf_puzzles_native", score = true },
+    unequal = { native = "pf_puzzles_unequal_native" },
+    net = { native = "pf_puzzles_net_native" },
+    solo = { native = "pf_puzzles_solo_native" },
+    wordle = { native = "pf_puzzles_wordle" }
+}
+local DIFFICULTIES = { easy = true, normal = true, hard = true }
+local REWARD_TIERS = { green = true, cyan = true, purple = true }
+local CONSUMED_TIERS = {
+    none = true, green = true, cyan = true, purple = true, spoiled = true
+}
+local STATUSES = { playing = true, won_pending = true, claimed = true }
+
+local ffi_ok, ffi = pcall(require, "ffi")
+local lfs_ok, lfs = pcall(require, "lfs")
+local kernel32 = nil
+if ffi_ok then
+    if rawget(_G, "__pf_puzzles_process_identity_cdef_v1") ~= true then
+        local cdef_ok = pcall(ffi.cdef, [[
+        typedef struct pf_puzzles_process_filetime_v1 {
+            unsigned long low;
+            unsigned long high;
+        } pf_puzzles_process_filetime_v1;
+        int __stdcall MoveFileExA(const char* existing_name, const char* new_name,
+            unsigned long flags);
+        unsigned long __stdcall GetCurrentProcessId(void);
+        void* __stdcall GetCurrentProcess(void);
+        int __stdcall GetProcessTimes(void* process,
+            pf_puzzles_process_filetime_v1* creation,
+            pf_puzzles_process_filetime_v1* exit_time,
+            pf_puzzles_process_filetime_v1* kernel_time,
+            pf_puzzles_process_filetime_v1* user_time);
+        ]])
+        if cdef_ok then
+            rawset(_G, "__pf_puzzles_process_identity_cdef_v1", true)
+        end
+    end
+    local loaded, library = pcall(ffi.load, "kernel32")
+    if loaded then kernel32 = library end
+end
+
+local state = {
+    loaded = false,
+    user_dir = nil,
+    path = nil,
+    process_id = nil,
+    process_started_low = nil,
+    process_started_high = nil,
+    sequence = 0,
+    entries = {},
+    reward_claims = {},
+    reward_claim_order = {},
+    retry_after = {},
+    reconcile_required = true,
+    reconcile_after = 0,
+    timeline_ready = true,
+    reload_pending = false
+}
+
+local function log_error(message, detail)
+    if type(printf) == "function" then
+        printf("! pf_puzzles session: %s: [%s]", tostring(message), tostring(detail))
+    end
+end
+
+local function trim(value)
+    return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function current_process_identity()
+    if not kernel32 then return nil end
+    local called, value = pcall(kernel32.GetCurrentProcessId)
+    local process_id = called and tonumber(value) or nil
+    if not process_id or process_id <= 0 then return nil end
+    local handle_called, handle = pcall(kernel32.GetCurrentProcess)
+    if not handle_called or handle == nil then return nil end
+    local creation = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local exit_time = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local kernel_time = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local user_time = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local times_called, times_result = pcall(kernel32.GetProcessTimes,
+        handle, creation, exit_time, kernel_time, user_time)
+    if not times_called or times_result == 0 then return nil end
+    return math.floor(process_id), tonumber(creation[0].low),
+        tonumber(creation[0].high)
+end
+
+local function now_ms()
+    if type(time_global) == "function" then
+        local called, value = pcall(time_global)
+        if called and tonumber(value) then return tonumber(value) end
+    end
+    return math.floor((os.clock() or 0) * 1000)
+end
+
+local function init_paths()
+    if state.path then return true end
+    if not getFS or not getFS() then return false end
+    local app_root = getFS():update_path("$app_data_root$", "")
+    state.user_dir = app_root .. USER_DIR_NAME
+    state.path = state.user_dir .. "\\" .. SESSION_FILE_NAME
+    return true
+end
+
+local function ensure_user_dir()
+    if not init_paths() or not lfs_ok then return false end
+    if lfs.attributes(state.user_dir, "mode") == "directory" then return true end
+    return lfs.mkdir(state.user_dir) == true
+end
+
+local function write_atomic(path, content)
+    if not ensure_user_dir() then return false, "user_directory_unavailable" end
+    local temp_path = path .. ".tmp"
+    local file = io.open(temp_path, "wb")
+    if not file then return false, "temporary_file_unavailable" end
+    local wrote, write_result = pcall(file.write, file, content)
+    local flushed, flush_result = pcall(file.flush, file)
+    local closed, close_result = pcall(file.close, file)
+    if not wrote or not write_result or not flushed or not flush_result or
+        not closed or not close_result then
+        return false, "write_failed"
+    end
+    if kernel32 then
+        local replace_existing, write_through = 0x1, 0x8
+        local moved, move_result = pcall(kernel32.MoveFileExA,
+            temp_path, path, replace_existing + write_through)
+        if moved and move_result ~= 0 then return true end
+    end
+    local existing = io.open(path, "rb")
+    if existing then
+        existing:close()
+        return false, "atomic_replace_unavailable"
+    end
+    if os.rename(temp_path, path) then return true end
+    return false, "replace_failed"
+end
+
+local function parse_file(path)
+    local parsed, section = {}, nil
+    local file = io.open(path, "rb")
+    if not file then
+        if lfs_ok and lfs.attributes(path, "mode") ~= nil then
+            return nil, "read_failed"
+        end
+        return parsed
+    end
+    for raw_line in file:lines() do
+        local line = trim(raw_line:gsub("^\239\187\191", ""):gsub("%s*[;].*$", ""))
+        local section_name = line:match("^%[([^%]]+)%]$")
+        if section_name then
+            section = trim(section_name)
+            parsed[section] = parsed[section] or {}
+        elseif section and line ~= "" then
+            local key, value = line:match("^([^=]+)=(.*)$")
+            if key then parsed[section][trim(key)] = trim(value) end
+        end
+    end
+    file:close()
+    return parsed
+end
+
+local function hex_encode(value)
+    return (tostring(value or ""):gsub(".", function(character)
+        return string.format("%02x", string.byte(character))
+    end))
+end
+
+local function hex_decode(value)
+    value = tostring(value or "")
+    if #value == 0 or #value % 2 ~= 0 or #value > MAX_BLOB_BYTES * 2 or
+        value:find("[^0-9a-fA-F]") then
+        return nil
+    end
+    local ok, decoded = pcall(function()
+        return (value:gsub("(%x%x)", function(pair)
+            return string.char(tonumber(pair, 16))
+        end))
+    end)
+    if not ok or #decoded * 2 ~= #value then return nil end
+    return decoded
+end
+
+local function valid_game(game_id)
+    game_id = tostring(game_id or ""):lower()
+    return GAMES[game_id] and game_id or nil
+end
+
+local function valid_difficulty(difficulty)
+    difficulty = tostring(difficulty or ""):lower()
+    return DIFFICULTIES[difficulty] and difficulty or nil
+end
+
+local function valid_ticket(ticket)
+    ticket = tostring(ticket or ""):lower()
+    if #ticket < 12 or #ticket > 96 or ticket:find("[^a-z0-9_%-]") then return nil end
+    return ticket
+end
+
+local function valid_attempt_id(value)
+    value = tonumber(value)
+    if not value or value <= 0 or value ~= math.floor(value) or value > 4294967295 then
+        return nil
+    end
+    return value
+end
+
+local function expected_reward_tier(difficulty, tier)
+    if difficulty == "easy" then return tier == nil or tier == "" end
+    return REWARD_TIERS[tier] == true
+end
+
+local function reward_roll(ticket, game_id, difficulty)
+    local source = tostring(ticket) .. ":" .. tostring(game_id) .. ":" ..
+        tostring(difficulty) .. ":pf-puzzles-reward-v1"
+    local value = 104729
+    for index = 1, #source do
+        value = (value * 131 + string.byte(source, index) + index) % 2147483647
+    end
+    return (value % 100) + 1
+end
+
+local function reward_tier_for(difficulty, roll)
+    if difficulty == "easy" then return nil end
+    if difficulty == "normal" then
+        if roll <= 85 then return "green" end
+        if roll <= 97 then return "cyan" end
+        return "purple"
+    end
+    if roll <= 70 then return "green" end
+    if roll <= 94 then return "cyan" end
+    return "purple"
+end
+
+local function clone_entry(entry)
+    if not entry then return nil end
+    return {
+        game_id = entry.game_id,
+        difficulty = entry.difficulty,
+        attempt_id = entry.attempt_id,
+        ticket = entry.ticket,
+        reward_roll = entry.reward_roll,
+        reward_tier = entry.reward_tier,
+        status = entry.status,
+        score = entry.score,
+        blob = entry.blob
+    }
+end
+
+local function clone_entries(entries)
+    local result = {}
+    for game_id, entry in pairs(entries or {}) do result[game_id] = clone_entry(entry) end
+    return result
+end
+
+local function entry_is_spoiled(entry)
+    local claim = entry and state.reward_claims[entry.ticket] or nil
+    return claim and claim.tier == "spoiled" or false
+end
+
+local function drop_spoiled_entries(entries)
+    for game_id, entry in pairs(entries or {}) do
+        if entry_is_spoiled(entry) then entries[game_id] = nil end
+    end
+    return entries
+end
+
+local function clone_reward_journal()
+    local claims, order = {}, {}
+    for ticket, claim in pairs(state.reward_claims or {}) do
+        claims[ticket] = { tier = claim.tier }
+    end
+    for _, ticket in ipairs(state.reward_claim_order or {}) do
+        table.insert(order, ticket)
+    end
+    return order, claims
+end
+
+local function append_reward_claim(order, claims, ticket, tier)
+    local existing = claims[ticket]
+    if existing then
+        if existing.tier ~= tier then return false, "reward_tier_conflict" end
+        return true
+    end
+    if #order >= 4096 then return false, "claim_journal_full" end
+    claims[ticket] = { tier = tier }
+    table.insert(order, ticket)
+    return true
+end
+
+local function serialize_session(entries, reward_claim_order, reward_claims, sequence)
+    local lines = {
+        "; Process-scoped runtime mirror; each savegame owns its checkpoint.",
+        "; Reward ticket and tier are fixed at attempt creation and never rerolled.",
+        "; Physical delivery is owned by the save timeline which records the victory.",
+        "[" .. SESSION_SECTION .. "]",
+        "version = " .. tostring(SESSION_VERSION),
+        "process_id = " .. tostring(state.process_id),
+        "process_started_low = " .. tostring(state.process_started_low),
+        "process_started_high = " .. tostring(state.process_started_high),
+        "sequence = " .. tostring(math.max(0, math.floor(tonumber(sequence) or 0))),
+        "reward_claim_count = " .. tostring(#(reward_claim_order or {})),
+        ""
+    }
+    for _, game_id in ipairs(GAME_ORDER) do
+        local entry = entries and entries[game_id] or nil
+        if entry then
+            table.insert(lines, "[game_" .. game_id .. "]")
+            table.insert(lines, "difficulty = " .. entry.difficulty)
+            table.insert(lines, "attempt_id = " .. tostring(entry.attempt_id))
+            table.insert(lines, "ticket = " .. entry.ticket)
+            table.insert(lines, "reward_roll = " .. tostring(entry.reward_roll))
+            table.insert(lines, "reward_tier = " .. tostring(entry.reward_tier or ""))
+            table.insert(lines, "status = " .. entry.status)
+            table.insert(lines, "score = " .. tostring(tonumber(entry.score) or 0))
+            table.insert(lines, "blob = " .. hex_encode(entry.blob))
+            table.insert(lines, "")
+        end
+    end
+    for index, ticket in ipairs(reward_claim_order or {}) do
+        local claim = reward_claims and reward_claims[ticket] or nil
+        if claim then
+            table.insert(lines, "[reward_claim_" .. tostring(index) .. "]")
+            table.insert(lines, "ticket = " .. ticket)
+            table.insert(lines, "tier = " .. claim.tier)
+            table.insert(lines, "")
+        end
+    end
+    return table.concat(lines, "\r\n")
+end
+
+local function save_state(entries, reward_claim_order, reward_claims, sequence)
+    local previous_claim_count = #(state.reward_claim_order or {})
+    local ok, error_code = write_atomic(state.path,
+        serialize_session(entries, reward_claim_order, reward_claims, sequence))
+    if not ok then return false, error_code end
+    state.entries = entries
+    state.reward_claim_order = reward_claim_order
+    state.reward_claims = reward_claims
+    state.sequence = sequence
+    if #(reward_claim_order or {}) > previous_claim_count then
+        state.reconcile_required = true
+        state.reconcile_after = 0
+    end
+    return true
+end
+
+local function new_ticket(game_id)
+    state.sequence = state.sequence + 1
+    return string.format("p%d-h%d-l%d-s%d-%s", state.process_id,
+        state.process_started_high, state.process_started_low,
+        state.sequence, game_id), state.sequence
+end
+
+local function load_entry(parsed, game_id)
+    local values = parsed["game_" .. game_id]
+    if not values then return nil end
+    local difficulty = valid_difficulty(values.difficulty)
+    local attempt_id = valid_attempt_id(values.attempt_id)
+    local ticket = valid_ticket(values.ticket)
+    local roll = tonumber(values.reward_roll)
+    local tier = trim(values.reward_tier):lower()
+    local status = trim(values.status):lower()
+    local blob = hex_decode(values.blob)
+    if not difficulty or not attempt_id or not ticket or not roll or
+        roll < 1 or roll > 100 or roll ~= math.floor(roll) or
+        not STATUSES[status] or not blob or
+        not expected_reward_tier(difficulty, tier) then
+        return nil
+    end
+    local calculated_tier = reward_tier_for(difficulty,
+        reward_roll(ticket, game_id, difficulty))
+    if roll ~= reward_roll(ticket, game_id, difficulty) or
+        tostring(calculated_tier or "") ~= tier then
+        return nil
+    end
+    return {
+        game_id = game_id,
+        difficulty = difficulty,
+        attempt_id = attempt_id,
+        ticket = ticket,
+        reward_roll = roll,
+        reward_tier = tier ~= "" and tier or nil,
+        status = status,
+        score = tonumber(values.score) or 0,
+        blob = blob
+    }
+end
+
+local function load_checkpoint_entry(values, game_id)
+    if type(values) ~= "table" then return nil end
+    local difficulty = valid_difficulty(values.difficulty)
+    local attempt_id = valid_attempt_id(values.attempt_id)
+    local ticket = valid_ticket(values.ticket)
+    local roll = tonumber(values.reward_roll)
+    local tier = tostring(values.reward_tier or ""):lower()
+    local status = tostring(values.status or ""):lower()
+    local blob = values.blob
+    if not difficulty or not attempt_id or not ticket or not roll or
+        roll < 1 or roll > 100 or roll ~= math.floor(roll) or
+        not STATUSES[status] or type(blob) ~= "string" or #blob == 0 or
+        #blob > MAX_BLOB_BYTES or not expected_reward_tier(difficulty, tier) then
+        return nil
+    end
+    local calculated_tier = reward_tier_for(difficulty,
+        reward_roll(ticket, game_id, difficulty))
+    if roll ~= reward_roll(ticket, game_id, difficulty) or
+        tostring(calculated_tier or "") ~= tier then
+        return nil
+    end
+    return {
+        game_id = game_id,
+        difficulty = difficulty,
+        attempt_id = attempt_id,
+        ticket = ticket,
+        reward_roll = roll,
+        reward_tier = tier ~= "" and tier or nil,
+        status = status,
+        score = tonumber(values.score) or 0,
+        blob = blob
+    }
+end
+
+function load()
+    if state.loaded then return true end
+    if not init_paths() then return false, "app_data_unavailable" end
+    local process_id, process_started_low, process_started_high =
+        current_process_identity()
+    if not process_id then return false, "process_id_unavailable" end
+    state.process_id = process_id
+    state.process_started_low = process_started_low
+    state.process_started_high = process_started_high
+    local parsed, parse_error = parse_file(state.path)
+    if not parsed then return false, parse_error end
+    local header = parsed[SESSION_SECTION] or {}
+    local current = tonumber(header.process_id) == process_id and
+        tonumber(header.process_started_low) == process_started_low and
+        tonumber(header.process_started_high) == process_started_high and
+        tonumber(header.version) == SESSION_VERSION
+    state.sequence = current and math.max(0,
+        math.floor(tonumber(header.sequence) or 0)) or 0
+    state.entries = {}
+    state.reward_claims = {}
+    state.reward_claim_order = {}
+    if current then
+        for _, game_id in ipairs(GAME_ORDER) do
+            state.entries[game_id] = load_entry(parsed, game_id)
+        end
+        local claim_count = math.min(4096, math.max(0,
+            math.floor(tonumber(header.reward_claim_count) or 0)))
+        for index = 1, claim_count do
+            local values = parsed["reward_claim_" .. tostring(index)] or {}
+            local ticket = valid_ticket(values.ticket)
+            local tier = trim(values.tier):lower()
+            if ticket and CONSUMED_TIERS[tier] and not state.reward_claims[ticket] then
+                state.reward_claims[ticket] = { tier = tier }
+                table.insert(state.reward_claim_order, ticket)
+            end
+        end
+        drop_spoiled_entries(state.entries)
+    end
+    state.reconcile_required = true
+    state.reconcile_after = 0
+    if not current then
+        local ok, detail = save_state({}, {}, {}, 0)
+        if not ok then return false, detail end
+    end
+    state.loaded = true
+    return true
+end
+
+local function checkpoint_for_current_state()
+    return {
+        version = CHECKPOINT_VERSION,
+        process_id = state.process_id,
+        process_started_low = state.process_started_low,
+        process_started_high = state.process_started_high,
+        sequence = state.sequence,
+        entries = drop_spoiled_entries(clone_entries(state.entries))
+    }
+end
+
+local function import_checkpoint(checkpoint)
+    if type(checkpoint) ~= "table" or
+        tonumber(checkpoint.version) ~= CHECKPOINT_VERSION or
+        tonumber(checkpoint.process_id) ~= state.process_id or
+        tonumber(checkpoint.process_started_low) ~= state.process_started_low or
+        tonumber(checkpoint.process_started_high) ~= state.process_started_high or
+        type(checkpoint.entries) ~= "table" then
+        return {}, false
+    end
+    local entries = {}
+    for _, game_id in ipairs(GAME_ORDER) do
+        local raw = checkpoint.entries[game_id]
+        if raw ~= nil then
+            local entry = load_checkpoint_entry(raw, game_id)
+            if not entry then return {}, false end
+            entries[game_id] = entry
+        end
+    end
+    return entries, true
+end
+
+local function native_for(game_id)
+    local definition = GAMES[game_id]
+    return definition and rawget(_G, definition.native) or nil
+end
+
+local function current_native_state(game_id, native)
+    native = native or native_for(game_id)
+    if not native or type(native.has_context) ~= "function" or
+        type(native.serialize) ~= "function" or type(native.snapshot) ~= "function" then
+        return nil, "native_session_api_unavailable"
+    end
+    local has_called, has_context = pcall(native.has_context)
+    if not has_called or has_context ~= true then return nil, "native_context_unavailable" end
+    local snapshot_called, snapshot, snapshot_error, snapshot_detail = pcall(native.snapshot)
+    if not snapshot_called or not snapshot then
+        return nil, snapshot_called and (snapshot_error or snapshot_detail) or snapshot
+    end
+    local difficulty = valid_difficulty(snapshot.difficulty or
+        (type(native.difficulty) == "function" and native.difficulty() or nil))
+    local attempt_id = valid_attempt_id(snapshot.attempt_id)
+    if not difficulty or not attempt_id then return nil, "native_snapshot_invalid" end
+    local serialized, blob, error_id, detail = pcall(native.serialize)
+    if not serialized or type(blob) ~= "string" or #blob == 0 or
+        #blob > MAX_BLOB_BYTES then
+        return nil, serialized and (error_id or detail or "serialize_failed") or blob
+    end
+    return { difficulty = difficulty, attempt_id = attempt_id, blob = blob,
+        score = tonumber(snapshot.score) or 0,
+        won = snapshot.won == true or snapshot.complete == true,
+        lost = snapshot.lost == true }
+end
+
+function has_active(game_id)
+    if not load() then return false end
+    if not state.timeline_ready then return false end
+    game_id = valid_game(game_id)
+    local entry = game_id and state.entries[game_id] or nil
+    return entry ~= nil and not entry_is_spoiled(entry)
+end
+
+function active_difficulty(game_id)
+    if not load() then return nil end
+    if not state.timeline_ready then return nil end
+    game_id = valid_game(game_id)
+    local entry = game_id and state.entries[game_id] or nil
+    return entry and not entry_is_spoiled(entry) and entry.difficulty or nil
+end
+
+function can_replace(game_id)
+    if not load() then return false, "session_unavailable" end
+    if not state.timeline_ready then return false, "timeline_not_loaded" end
+    game_id = valid_game(game_id)
+    if not game_id then return false, "invalid_game" end
+    local entry = state.entries[game_id]
+    if entry and entry.status == "won_pending" then
+        return false, "reward_pending"
+    end
+    return true
+end
+
+function discard_game(game_id)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    game_id = valid_game(game_id)
+    if not game_id then return false, "invalid_game" end
+    local replaceable, replace_error = can_replace(game_id)
+    if not replaceable then return false, replace_error end
+    if not state.entries[game_id] then return true end
+    local candidate = clone_entries(state.entries)
+    candidate[game_id] = nil
+    return save_state(candidate, state.reward_claim_order,
+        state.reward_claims, state.sequence)
+end
+
+function bind_new_attempt(game_id, native)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    if not state.timeline_ready then return false, "timeline_not_loaded" end
+    game_id = valid_game(game_id)
+    if not game_id then return false, "invalid_game" end
+    local replaceable, replace_error = can_replace(game_id)
+    if not replaceable then return false, replace_error end
+    local captured, capture_error = current_native_state(game_id, native)
+    if not captured then return false, capture_error end
+    local ticket, sequence = new_ticket(game_id)
+    local roll = reward_roll(ticket, game_id, captured.difficulty)
+    local candidate = clone_entries(state.entries)
+    candidate[game_id] = {
+        game_id = game_id,
+        difficulty = captured.difficulty,
+        attempt_id = captured.attempt_id,
+        ticket = ticket,
+        reward_roll = roll,
+        reward_tier = reward_tier_for(captured.difficulty, roll),
+        status = "playing",
+        score = captured.score,
+        blob = captured.blob
+    }
+    local ok, detail = save_state(candidate, state.reward_claim_order,
+        state.reward_claims, sequence)
+    if not ok then state.sequence = sequence - 1 end
+    return ok, detail
+end
+
+function capture_game(game_id, native)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    game_id = valid_game(game_id)
+    if not game_id then return false, "invalid_game" end
+    local captured, capture_error = current_native_state(game_id, native)
+    if not captured then return false, capture_error end
+    local entry = state.entries[game_id]
+    if not entry then return false, "unbound_native_attempt" end
+    if entry.attempt_id ~= captured.attempt_id or
+        entry.difficulty ~= captured.difficulty then
+        return false, "attempt_mismatch"
+    end
+    local candidate = clone_entries(state.entries)
+    candidate[game_id].blob = captured.blob
+    candidate[game_id].score = captured.score
+    if captured.won and candidate[game_id].status == "playing" then
+        candidate[game_id].status = "won_pending"
+    end
+    return save_state(candidate, state.reward_claim_order,
+        state.reward_claims, state.sequence)
+end
+
+function capture_all()
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    local candidate = clone_entries(state.entries)
+    local sequence = state.sequence
+    for _, game_id in ipairs(GAME_ORDER) do
+        local native = native_for(game_id)
+        local has_context = false
+        if native and type(native.has_context) == "function" then
+            local called, result = pcall(native.has_context)
+            has_context = called and result == true
+        end
+        if has_context then
+            local captured, capture_error = current_native_state(game_id, native)
+            if not captured then return false, game_id .. ":" .. tostring(capture_error) end
+            local entry = candidate[game_id]
+            if not entry then return false, game_id .. ":unbound_native_attempt" end
+            if entry.attempt_id ~= captured.attempt_id or
+                entry.difficulty ~= captured.difficulty then
+                return false, game_id .. ":attempt_mismatch"
+            end
+            entry.blob = captured.blob
+            entry.score = captured.score
+            if captured.won and entry.status == "playing" then
+                entry.status = "won_pending"
+            end
+        end
+    end
+    return save_state(candidate, state.reward_claim_order,
+        state.reward_claims, sequence)
+end
+
+function restore_game(game_id, native)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    if not state.timeline_ready then return false, "timeline_not_loaded" end
+    game_id = valid_game(game_id)
+    if not game_id then return false, "invalid_game" end
+    local entry = state.entries[game_id]
+    if not entry then return false, "no_active_game" end
+    if entry_is_spoiled(entry) then return false, "attempt_spoiled" end
+    native = native or native_for(game_id)
+    if not native or type(native.restore) ~= "function" then
+        return false, "native_session_api_unavailable"
+    end
+    local restored, result, error_id, detail = pcall(native.restore, entry.blob)
+    if not restored or result ~= true then
+        return false, restored and (error_id or detail or "restore_failed") or result
+    end
+    local verified, snapshot = pcall(native.snapshot)
+    local difficulty = verified and snapshot and valid_difficulty(snapshot.difficulty) or nil
+    local attempt_id = verified and snapshot and valid_attempt_id(snapshot.attempt_id) or nil
+    if difficulty ~= entry.difficulty or attempt_id ~= entry.attempt_id then
+        if type(native.destroy) == "function" then pcall(native.destroy) end
+        return false, "restored_state_mismatch"
+    end
+    return true
+end
+
+local function add_reward_claim(ticket, tier)
+    local order, claims = clone_reward_journal()
+    local appended, append_error = append_reward_claim(order, claims, ticket, tier)
+    if not appended then return nil, nil, append_error end
+    return order, claims
+end
+
+-- Wordle reveals its answer after a loss. The process-scoped claim journal is
+-- deliberately not rolled back by F9, so a checkpoint from before that reveal
+-- must never restore the same reward-bearing attempt.
+function spoil_attempt(game_id, native)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    if not state.timeline_ready then return false, "timeline_not_loaded" end
+    game_id = valid_game(game_id)
+    if game_id ~= "wordle" then return false, "unsupported_game" end
+    local entry = state.entries[game_id]
+    if not entry then return false, "no_active_game" end
+    local captured, capture_error = current_native_state(game_id, native)
+    if not captured then return false, capture_error end
+    if captured.attempt_id ~= entry.attempt_id or
+        captured.difficulty ~= entry.difficulty then
+        return false, "attempt_mismatch"
+    end
+    if captured.won or not captured.lost then return false, "not_a_loss" end
+
+    local order, claims = clone_reward_journal()
+    local existing = claims[entry.ticket]
+    if not existing then
+        local appended, append_error = append_reward_claim(order, claims,
+            entry.ticket, "spoiled")
+        if not appended then return false, append_error end
+    elseif existing.tier ~= "spoiled" then
+        -- This ticket was already won on another save timeline. Keep its
+        -- original deterministic reward-restoration semantics.
+        return true, "already_consumed"
+    end
+
+    local candidate = clone_entries(state.entries)
+    candidate[game_id].blob = captured.blob
+    candidate[game_id].score = captured.score
+    return save_state(candidate, order, claims, state.sequence)
+end
+
+function pending_completion(game_id, snapshot)
+    if not load() then return nil end
+    if not state.timeline_ready then return nil end
+    game_id = valid_game(game_id)
+    local entry = game_id and state.entries[game_id] or nil
+    if not entry or entry.status ~= "won_pending" then return nil end
+    local attempt_id = snapshot and valid_attempt_id(snapshot.attempt_id) or nil
+    if attempt_id ~= entry.attempt_id then return nil end
+    return {
+        type = 2,
+        attempt_id = entry.attempt_id,
+        revision = tonumber(snapshot.revision) or 0,
+        status_flags = 1,
+        score = tonumber(entry.score) or tonumber(snapshot.score) or 0,
+        synthetic = true
+    }
+end
+
+local function queue_reward(ticket, tier)
+    if not tier then return true end
+    local manager = rawget(_G, "pf_dynamic_stashes")
+    if not manager or type(manager.queue_puzzle_reward_once) ~= "function" then
+        return false, "stash_reward_api_unavailable"
+    end
+    local called, queued, detail = pcall(manager.queue_puzzle_reward_once,
+        ticket, tier)
+    if not called or queued ~= true then
+        return false, called and (detail or "stash_reward_unavailable") or queued
+    end
+    return true
+end
+
+local function deliver_queued_rewards(silent)
+    local manager = rawget(_G, "pf_dynamic_stashes")
+    if not manager or type(manager.deliver_pending_puzzle_rewards) ~= "function" then
+        return false, "stash_reward_api_unavailable"
+    end
+    local called, delivered, detail = pcall(manager.deliver_pending_puzzle_rewards,
+        silent == true)
+    if not called or delivered ~= true then
+        return false, called and (detail or "stash_reward_unavailable") or delivered
+    end
+    return true
+end
+
+local function record_win(entry, score)
+    local records = rawget(_G, "pf_puzzles_records")
+    if not records then return false, "records_module_unavailable" end
+    if entry.game_id == "samegame" then
+        if type(records.consider_completed) ~= "function" then
+            return false, "records_api_unavailable"
+        end
+        local called, ok, _, detail = pcall(records.consider_completed,
+            entry.difficulty, tonumber(score) or 0, entry.ticket)
+        if not called or ok ~= true then return false, called and detail or ok end
+        return true
+    end
+    if type(records.consider_won) ~= "function" then
+        return false, "records_api_unavailable"
+    end
+    local called, ok, detail = pcall(records.consider_won,
+        entry.game_id, entry.difficulty, entry.ticket)
+    if not called or ok ~= true then return false, called and detail or ok end
+    return true
+end
+
+-- A consumed ticket is a process-session record tombstone. Loading a pre-win
+-- save rolls the revealed stash back as well, so the same fixed ticket must be
+-- queued again and deterministically reveal the same stash. The tombstone only
+-- prevents a second win-counter increment or a new reward roll.
+local function prepare_victory(entry, score)
+    local consumed_tier = entry.reward_tier or "none"
+    local existing = state.reward_claims[entry.ticket]
+    if existing then
+        if existing.tier == "spoiled" then return false, "attempt_spoiled" end
+        if existing.tier ~= consumed_tier then return false, "reward_tier_conflict" end
+        local queued, queue_error = queue_reward(entry.ticket, entry.reward_tier)
+        if not queued then return false, queue_error end
+        return true, state.reward_claim_order, state.reward_claims, "reward_restored"
+    end
+    local queued, queue_error = queue_reward(entry.ticket, entry.reward_tier)
+    if not queued then return false, queue_error end
+    local recorded, record_error = record_win(entry, score)
+    if not recorded then return false, record_error end
+    local order, claims, claim_error = add_reward_claim(entry.ticket, consumed_tier)
+    if not order then return false, claim_error end
+    return true, order, claims, "consumed"
+end
+
+function complete_attempt(game_id, native, event, score)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    if not state.timeline_ready then return false, "timeline_not_loaded" end
+    game_id = valid_game(game_id)
+    if not game_id or type(event) ~= "table" then return false, "invalid_event" end
+    local entry = state.entries[game_id]
+    local attempt_id = valid_attempt_id(event.attempt_id)
+    if not entry or not attempt_id or entry.attempt_id ~= attempt_id then
+        return false, "attempt_mismatch"
+    end
+    local status_flags = tonumber(event.status_flags)
+    if not status_flags or status_flags < 1 or status_flags % 2 ~= 1 then
+        return false, "not_a_victory"
+    end
+    if entry.status == "claimed" then return true end
+    local current_time = now_ms()
+    if current_time < (state.retry_after[game_id] or 0) then
+        return false, "retry_later"
+    end
+
+    local captured, capture_error = current_native_state(game_id, native)
+    if not captured then
+        state.retry_after[game_id] = current_time + RETRY_INTERVAL_MS
+        return false, capture_error
+    end
+    if captured.attempt_id ~= entry.attempt_id or
+        captured.difficulty ~= entry.difficulty then
+        return false, "attempt_mismatch"
+    end
+    if not captured.won then return false, "not_a_victory" end
+
+    if entry.status ~= "won_pending" then
+        local candidate = clone_entries(state.entries)
+        candidate[game_id].status = "won_pending"
+        candidate[game_id].score = tonumber(score) or captured.score or 0
+        candidate[game_id].blob = captured.blob
+        local persisted, persist_error = save_state(candidate,
+            state.reward_claim_order, state.reward_claims, state.sequence)
+        if not persisted then
+            state.retry_after[game_id] = current_time + RETRY_INTERVAL_MS
+            return false, persist_error
+        end
+        entry = state.entries[game_id]
+    end
+
+    -- Replaying the same fixed ticket from a pre-win save restores its rolled
+    -- back stash hint. prepare_victory keeps the original tier and suppresses a
+    -- duplicate persistent win record.
+    local prepared, order, claims, prepare_error = prepare_victory(
+        entry, score or entry.score)
+    if not prepared then
+        state.retry_after[game_id] = current_time + RETRY_INTERVAL_MS
+        return false, prepare_error
+    end
+
+    local candidate = clone_entries(state.entries)
+    candidate[game_id].status = "claimed"
+    local persisted, persist_error = save_state(candidate,
+        order, claims, state.sequence)
+    if not persisted then
+        state.retry_after[game_id] = current_time + RETRY_INTERVAL_MS
+        return false, persist_error
+    end
+    state.retry_after[game_id] = nil
+
+    -- Delivery may be deferred, but only the queue serialized by this save may
+    -- be retried. The process-scoped puzzle session is never a grant source.
+    local granted, grant_error = deliver_queued_rewards(false)
+    if not granted then
+        state.reconcile_required = true
+        state.reconcile_after = current_time + RETRY_INTERVAL_MS
+        return true, "reward_deferred:" .. tostring(grant_error)
+    end
+    return true
+end
+
+function reconcile_rewards(force)
+    local loaded = load()
+    if not loaded then return false end
+    if not state.timeline_ready then return false, "timeline_not_loaded" end
+    if not force and not state.reconcile_required then return true end
+    local current_time = now_ms()
+    if not force and current_time < state.reconcile_after then return false end
+    -- A victory can be captured immediately before F9, after the native event
+    -- has already left the C queue. Its terminal snapshot is authoritative, so
+    -- finish both the persistent counter and the attempt lock without requiring
+    -- the player to reopen that particular game after loading. Do this before
+    -- stash delivery: outside the stash level the fixed reward remains queued,
+    -- but the completed game must never stay locked in won_pending.
+    for _, game_id in ipairs(GAME_ORDER) do
+        local entry = state.entries[game_id]
+        if entry and entry.status == "won_pending" then
+            local prepared, order, claims, prepare_error = prepare_victory(
+                entry, entry.score)
+            if not prepared then
+                state.reconcile_after = current_time + RETRY_INTERVAL_MS
+                return false, prepare_error
+            end
+            local candidate = clone_entries(state.entries)
+            candidate[game_id].status = "claimed"
+            local persisted, persist_error = save_state(candidate,
+                order, claims, state.sequence)
+            if not persisted then
+                state.reconcile_after = current_time + RETRY_INTERVAL_MS
+                return false, persist_error
+            end
+        end
+    end
+
+    local delivered, detail = deliver_queued_rewards(true)
+    if not delivered then
+        state.reconcile_required = true
+        state.reconcile_after = current_time + RETRY_INTERVAL_MS
+        return false, detail
+    end
+    state.reconcile_required = false
+    state.reconcile_after = 0
+    return true
+end
+
+function on_save_state(root)
+    if type(root) ~= "table" then return false, "invalid_save_root" end
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    if not state.timeline_ready then return false, "timeline_not_loaded" end
+    local captured, capture_error = capture_all()
+    if not captured then
+        root[CHECKPOINT_KEY] = nil
+        log_error("save checkpoint rejected", capture_error)
+        return false, capture_error
+    end
+    root[CHECKPOINT_KEY] = checkpoint_for_current_state()
+    return true
+end
+
+function on_load_state(root)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    local previous_sequence = state.sequence
+    local checkpoint = type(root) == "table" and root[CHECKPOINT_KEY] or nil
+    local entries, valid = import_checkpoint(checkpoint)
+    drop_spoiled_entries(entries)
+    local checkpoint_sequence = valid and math.max(0,
+        math.floor(tonumber(checkpoint.sequence) or 0)) or 0
+    local sequence = math.max(previous_sequence, checkpoint_sequence)
+    local persisted, persist_error = save_state(entries,
+        state.reward_claim_order, state.reward_claims, sequence)
+    if not persisted then
+        -- The decoded save is authoritative even if the external mirror cannot
+        -- be rewritten. Drop future entries in memory immediately instead of
+        -- ever exposing them through has_active/restore_game.
+        state.entries = {}
+        state.sequence = sequence
+        state.retry_after = {}
+        state.reconcile_required = false
+        state.reconcile_after = 0
+        state.timeline_ready = true
+        state.reload_pending = false
+        return false, persist_error
+    end
+    state.retry_after = {}
+    state.reconcile_required = true
+    state.reconcile_after = 0
+    state.timeline_ready = true
+    state.reload_pending = false
+    return true, valid and "checkpoint_loaded" or "checkpoint_cleared"
+end
+
+function prepare_for_reload()
+    if not load() then return false end
+    state.reload_pending = true
+    state.timeline_ready = false
+    state.reconcile_required = false
+    state.reconcile_after = 0
+    return true
+end
+
+function cancel_reload()
+    if not load() then return false end
+    state.reload_pending = false
+    state.timeline_ready = true
+    state.reconcile_required = true
+    state.reconcile_after = 0
+    return true
+end
+
+function on_game_load()
+    if not load() then return false end
+    if state.reload_pending and not state.timeline_ready then
+        -- A save load always reaches on_load_state, including the addon's
+        -- synthetic empty state for legacy saves without a marshal sidecar.
+        -- Reaching only the actor load callback therefore means a level rebind:
+        -- keep the captured Applications session instead of deleting it.
+        state.timeline_ready = true
+        state.reload_pending = false
+    end
+    state.retry_after = {}
+    state.reconcile_required = true
+    state.reconcile_after = 0
+    return true
+end
+
+function session_path()
+    init_paths()
+    return state.path
+end

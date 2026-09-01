@@ -1,0 +1,90 @@
+pf_puzzles_native.dll
+=====================
+
+This addon component contains the common midend and Same Game backend from
+Simon Tatham's Portable Puzzle Collection, release 20260720.3c36322, exact Git
+commit 3c3632259d298ab62aafa8a5858823569ab1af46.
+
+The upstream software is distributed under the MIT licence. See
+LICENSE-SGT-PUZZLES.txt in this directory.
+
+The Same Game catalog thumbnail is derived from the official samegame-web.png
+(https://www.chiark.greenend.org.uk/~sgtatham/puzzles/samegame-web.png); only
+its flat background was converted to transparency. It is covered by the same
+upstream attribution and MIT licence notice.
+
+The Chronicles of Pripyat adapter exposes a project-specific C ABI v2. It does
+not expose upstream structures, raw move strings, or cross-module allocations.
+Exact session serialisation remains inside the adapter and uses the pinned
+upstream midend state plus project-owned validation metadata.
+
+
+pf_puzzles_unequal_native.dll
+=============================
+
+This addon component contains the common midend, classic Unequal backend,
+Latin-square solver, matching, and tree234 support from Simon Tatham's Portable
+Puzzle Collection, release 20260720.3c36322, exact Git commit
+3c3632259d298ab62aafa8a5858823569ab1af46.
+
+Adjacent mode, custom parameters, Hint, mistake marking, and Solve are not
+exposed by this adapter. Only the fixed classic Unequal presets 4de, 5dk, and
+6dx are accepted.
+
+The upstream software is distributed under the MIT licence. See
+LICENSE-SGT-PUZZLES.txt in this directory.
+
+The Unequal catalog thumbnail comes from the official unequal-web.png at
+https://www.chiark.greenend.org.uk/~sgtatham/puzzles/unequal-web.png; only its
+flat background was converted to transparency. It remains covered by the same
+upstream attribution and MIT licence notice.
+
+The Chronicles of Pripyat adapter exposes the separate project-specific
+pf_unequal C ABI v2. It does not expose upstream structures, raw move strings,
+or cross-module allocations. Exact session serialisation remains inside the
+adapter and uses the pinned upstream midend state plus project-owned validation
+metadata.
+
+
+pf_puzzles_net_solo_native.dll
+================================
+
+This addon component contains the common midend and the Net and Solo backends
+from Simon Tatham's Portable Puzzle Collection, release 20260720.3c36322,
+exact Git commit 3c3632259d298ab62aafa8a5858823569ab1af46.
+
+The Net adapter accepts only non-wrapping 7x7, 9x9 and 11x11 games. The Solo
+backend, shown to players as Sudoku, accepts only classic 9x9 games based on
+the upstream 3x3 Basic, Advanced and Unreasonable generators. The adapter
+balances their immutable starting clues for the visible Easy, Normal and Hard
+levels. Solve, Hint, mistake marking and Redo are not exposed. Both adapters
+emit only a one-shot victory event; they do not emit a loss event.
+
+The upstream software is distributed under the MIT licence. See
+LICENSE-SGT-PUZZLES.txt in this directory.
+
+The Net and Solo catalog thumbnails come from the official net-web.png and
+solo-web.png files at https://www.chiark.greenend.org.uk/~sgtatham/puzzles/;
+only the border-connected page background was converted to transparency. They
+remain covered by the same upstream attribution and MIT licence notice.
+
+The single physical DLL exposes two separate project-specific C ABI v2
+prefixes, pf_net and pf_solo. It does not expose upstream structures, raw move
+strings, or cross-module allocations. Exact session serialisation remains
+inside the adapter and uses the pinned upstream midend state plus project-owned
+validation metadata.
+
+
+Wordle Russian dictionary
+==========================
+
+The files data/wordle_allowed_ru.txt and data/wordle_answers_ru.txt are derived
+from src/words.ts in the wordle-ru project by matrv, exact Git commit
+9e84a7f45532956a7cdc17e8bb75c00b7f2dd591. The complete source list is used
+for validating guesses; the answer file is a project-selected subset of that
+same list.
+
+The wordle-ru project is distributed under the GNU General Public License,
+version 3. See LICENSE-WORDLE-RU-GPL-3.0.txt in this directory. The Lua game
+logic, PDA controls and original catalog thumbnail were implemented for this
+addon; no NYT Wordle code, artwork or web interface is included.

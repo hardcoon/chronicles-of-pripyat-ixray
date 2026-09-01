@@ -1,0 +1,1505 @@
+local singleton = nil
+local shell_state = {
+    page = "catalog",
+    layout = "list",
+    active_game = "samegame",
+    difficulty = "normal",
+    completed_attempt_id = nil,
+    controller_completed_attempts = {},
+    rules_return = "catalog",
+    rules_open = false
+}
+local MAX_CELLS = 150
+local TILE_SLOT_COUNT = 6
+local TILE_COLUMNS = 2
+local TILE_ORIGIN_X = 4
+local TILE_ORIGIN_Y = 4
+local TILE_COLUMN_STEP = 453
+local TILE_ROW_STEP = 146
+local DIFFICULTIES = { "easy", "normal", "hard" }
+local CONTROLLER_GAME_IDS = { "unequal", "net", "solo", "wordle" }
+local RULE_BLOCKS = {
+    { "goal_heading", 6 },
+    { "goal_body", 10 },
+    { "move_heading", 6 },
+    { "move_body", 10 },
+    { "scoring_heading", 6 },
+    { "scoring_body", 10 },
+    { "controls_heading", 6 },
+    { "controls_body", 10 },
+    { "lifecycle", 8 }
+}
+local CATALOG_GAMES = {
+    {
+        id = "samegame",
+        name_id = "pf_puzzles_samegame_name",
+        description_id = "pf_puzzles_samegame_description_short",
+        preview_texture = "ui_pf_puzzles_samegame_preview",
+        native_module = "pf_puzzles_native",
+        supports_score = true
+    },
+    {
+        id = "unequal",
+        name_id = "pf_puzzles_unequal_name",
+        description_id = "pf_puzzles_unequal_description_short",
+        preview_texture = "ui_pf_puzzles_unequal_preview",
+        native_module = "pf_puzzles_unequal_native",
+        ui_module = "pf_puzzles_unequal_ui"
+    },
+    {
+        id = "net",
+        name_id = "pf_puzzles_net_name",
+        description_id = "pf_puzzles_net_description_short",
+        preview_texture = "ui_pf_puzzles_net_preview",
+        native_module = "pf_puzzles_net_native",
+        ui_module = "pf_puzzles_net_ui"
+    },
+    {
+        id = "solo",
+        name_id = "pf_puzzles_solo_name",
+        description_id = "pf_puzzles_solo_description_short",
+        preview_texture = "ui_pf_puzzles_solo_preview",
+        native_module = "pf_puzzles_solo_native",
+        ui_module = "pf_puzzles_solo_ui"
+    },
+    {
+        id = "wordle",
+        name_id = "pf_puzzles_wordle_name",
+        description_id = "pf_puzzles_wordle_description_short",
+        preview_texture = "ui_pf_puzzles_wordle_preview",
+        native_module = "pf_puzzles_wordle",
+        ui_module = "pf_puzzles_wordle_ui"
+    }
+}
+local DIFFICULTY_TEXT = {
+    easy = "pf_puzzles_difficulty_easy",
+    normal = "pf_puzzles_difficulty_normal",
+    hard = "pf_puzzles_difficulty_hard"
+}
+local CELL_COLORS = {
+    { 207, 78, 64 },
+    { 68, 135, 205 },
+    { 89, 173, 91 },
+    { 224, 177, 66 },
+    { 160, 92, 190 },
+    { 72, 183, 180 }
+}
+local PDA_TAB_LAYOUTS = {
+    -- Absolute XML baselines prevent repeat visibility refreshes from drifting.
+    standard = { width = 646, base_x = 297, base_y = 57, chat_offset_x = -24 },
+    widescreen = { width = 630, base_x = 330, base_y = 57, chat_offset_x = -22 }
+}
+local reload_detached = false
+local function tr(id)
+    return game.translate_string(id)
+end
+
+local function formatted(id, ...)
+    return string.format(tr(id), ...)
+end
+
+local function translated_error(error_id, detail)
+    local id = error_id or "pf_puzzles_error_native_call"
+    local text = tr(id)
+    if detail and tostring(detail) ~= "" then text = text .. " [" .. tostring(detail) .. "]" end
+    return text
+end
+
+local function report_reload_error(reason)
+    if type(printf) == "function" then
+        printf("! pf_puzzles: quick-load cleanup failed: [%s]", tostring(reason))
+    end
+end
+
+local function destroy_native_contexts()
+    local module_names = {
+        "pf_puzzles_native", "pf_puzzles_unequal_native",
+        "pf_puzzles_net_native", "pf_puzzles_solo_native",
+        "pf_puzzles_wordle"
+    }
+    for _, module_name in ipairs(module_names) do
+        local native = rawget(_G, module_name)
+        if native and type(native.destroy) == "function" then
+            local called, result, error_id, detail = pcall(native.destroy)
+            if not called or result == false then
+                return false, called and (detail or error_id) or result
+            end
+        end
+    end
+    return true
+end
+
+local function catalog_game(game_id)
+    for _, game_entry in ipairs(CATALOG_GAMES) do
+        if game_entry.id == game_id then return game_entry end
+    end
+    return nil
+end
+
+local function session_module()
+    return rawget(_G, "pf_puzzles_session")
+end
+
+local function reset_shell_after_reload()
+    shell_state.page = "catalog"
+    shell_state.active_game = "samegame"
+    shell_state.completed_attempt_id = nil
+    shell_state.controller_completed_attempts = {}
+    shell_state.rules_return = "catalog"
+    shell_state.rules_open = false
+end
+
+local function remember_difficulty(difficulty)
+    if not DIFFICULTY_TEXT[difficulty] then return false end
+    shell_state.difficulty = difficulty
+    local saved, detail = pf_puzzles_records.set_session_difficulty(difficulty)
+    if saved == false and type(printf) == "function" then
+        printf("! pf_puzzles: session difficulty write failed: [%s]", tostring(detail))
+    end
+    return true
+end
+
+local function layout_for_tabs(tabs)
+    local width_ok, width = pcall(function() return tonumber(tabs:GetWidth()) end)
+    if not width_ok or not width then return nil end
+    local standard = PDA_TAB_LAYOUTS.standard
+    local widescreen = PDA_TAB_LAYOUTS.widescreen
+    if math.abs(width - widescreen.width) < math.abs(width - standard.width) then
+        return widescreen
+    end
+    return standard
+end
+
+class "pf_puzzles_tab" (CUIScriptWnd)
+
+function pf_puzzles_tab:__init() super()
+    local restored = pf_puzzles_records.session_difficulty(shell_state.difficulty)
+    if DIFFICULTY_TEXT[restored] then shell_state.difficulty = restored end
+    self.cells = {}
+    self.tile_cards = {}
+    self.list_rows = {}
+    self.catalog_states = {}
+    self.last_revision = -1
+    self.snapshot = nil
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self.pending_ui_action = nil
+    self.record_retry_pending = false
+    self.shutting_down = false
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    self:InitControls()
+    self:InitCallbacks()
+    self:InitControllerViews()
+    self:SyncDifficultyButtons()
+    self:SetCatalogLayout(shell_state.layout)
+    self:SetPage(shell_state.page, true)
+end
+
+function pf_puzzles_tab:__finalize()
+end
+
+function pf_puzzles_tab:InitControllerViews()
+    self.controller_views = {}
+    self.controller_view_errors = {}
+    return true
+end
+
+function pf_puzzles_tab:EnsureControllerView(game_id)
+    if self.controller_views[game_id] then
+        return self.controller_views[game_id]
+    end
+    local game_entry = catalog_game(game_id)
+    local module = game_entry and rawget(_G, game_entry.ui_module) or nil
+    if not module or type(module.new) ~= "function" then
+        self.controller_view_errors[game_id] = game_entry and
+            game_entry.ui_module or game_id
+        return nil, self.controller_view_errors[game_id]
+    end
+    local created, view = pcall(module.new, self)
+    if not created or not view then
+        self.controller_view_errors[game_id] = view
+        return nil, view
+    end
+    self.controller_views[game_id] = view
+    self.controller_view_errors[game_id] = nil
+    return view
+end
+
+function pf_puzzles_tab:QueueUIAction(kind, game_id, return_page)
+    if self.shutting_down or not catalog_game(game_id) then return false end
+    if self.pending_ui_action then return true end
+    self.pending_ui_action = {
+        kind = kind,
+        game_id = game_id,
+        return_page = return_page
+    }
+    return true
+end
+
+function pf_puzzles_tab:ProcessPendingUIAction()
+    local pending = self.pending_ui_action
+    if not pending then return false end
+    self.pending_ui_action = nil
+    local game_entry = catalog_game(pending.game_id)
+    if not game_entry then return false end
+    if pending.kind == "play" then
+        if game_entry.id == "samegame" then
+            self:Play()
+        else
+            self:OpenControllerGame(game_entry)
+        end
+        return true
+    end
+    if pending.kind == "rules" then
+        if game_entry.id == "samegame" then
+            self:ShowRules()
+        else
+            self:OpenControllerRules(game_entry.id,
+                pending.return_page or shell_state.page)
+        end
+        return true
+    end
+    return false
+end
+
+function pf_puzzles_tab:InitControls()
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_puzzles.xml")
+    xml:InitFrame("frame1", self)
+    xml:InitFrame("frame2", self)
+    xml:InitFrame("border", self)
+    xml:InitStatic("frame1:caption", self)
+
+    self.catalog = xml:InitStatic("catalog", self)
+    self.tile_mode = xml:Init3tButton("catalog:tile_mode", self.catalog)
+    self.list_mode = xml:Init3tButton("catalog:list_mode", self.catalog)
+    self.catalog_status = xml:InitTextWnd("catalog:catalog_status", self.catalog)
+
+    self.tile_view = xml:InitStatic("catalog:tile_view", self.catalog)
+
+    self.list_view = xml:InitScrollView("catalog:list_view", self.catalog)
+    for index = 1, #CATALOG_GAMES do
+        local row = xml:InitStatic("catalog:list_view:row", nil)
+        local preview = xml:InitStatic("catalog:list_view:row:preview", row)
+        local name = xml:InitTextWnd("catalog:list_view:row:name", row)
+        local description = xml:InitTextWnd("catalog:list_view:row:description", row)
+        local best = xml:InitTextWnd("catalog:list_view:row:best", row)
+        local play = xml:Init3tButton("catalog:list_view:row:play", row)
+        local rules = xml:Init3tButton("catalog:list_view:row:rules", row)
+        self.list_view:AddWindow(row, true)
+        row:SetAutoDelete(false)
+        row:Show(false)
+        row:Enable(false)
+        play:Enable(false)
+        rules:Enable(false)
+        self.list_rows[index] = {
+            row = row,
+            preview = preview,
+            name = name,
+            description = description,
+            best = best,
+            play = play,
+            rules = rules
+        }
+    end
+
+    self.game = xml:InitStatic("game", self)
+    self.game_back = xml:Init3tButton("game:back", self.game)
+    xml:InitTextWnd("game:game_name", self.game)
+    self.difficulty_buttons = {
+        easy = xml:Init3tButton("game:difficulty_easy", self.game),
+        normal = xml:Init3tButton("game:difficulty_normal", self.game),
+        hard = xml:Init3tButton("game:difficulty_hard", self.game)
+    }
+    self.game_status = xml:InitTextWnd("game:game_status", self.game)
+    self.stats = xml:InitStatic("game:stats", self.game)
+    self.score = xml:InitTextWnd("game:stats:score", self.stats)
+    self.game_best = xml:InitTextWnd("game:stats:best", self.stats)
+    self.remaining = xml:InitTextWnd("game:stats:remaining", self.stats)
+    self.selected = xml:InitTextWnd("game:stats:selected", self.stats)
+    self.board_frame = xml:InitStatic("game:board_frame", self.game)
+    self.board_area = xml:InitStatic("game:board_area", self.game)
+    self.board_message = xml:InitTextWnd("game:board_message", self.game)
+
+    self.tools = xml:InitStatic("game:tools", self.game)
+    self.undo = xml:Init3tButton("game:tools:undo", self.tools)
+    self.clear_selection = xml:Init3tButton("game:tools:clear", self.tools)
+    self.restart = xml:Init3tButton("game:tools:restart", self.tools)
+    self.new_game = xml:Init3tButton("game:tools:new_game", self.tools)
+    self.game_rules = xml:Init3tButton("game:tools:rules", self.tools)
+    self.tools_help = xml:InitTextWnd("game:tools:help", self.tools)
+
+    self.rules_shade = xml:InitStatic("rules_shade", self)
+    self.rules = xml:InitStatic("rules", self)
+    xml:InitTextWnd("rules:caption", self.rules)
+    xml:InitFrameLine("rules:caption_line", self.rules)
+    self.rules_scroll = xml:InitScrollView("rules:scroll", self.rules)
+    self.rules_back = xml:Init3tButton("rules:back", self.rules)
+    self.rules_texts = {}
+    -- Keep every rules block as its own XML-localized CUITextWnd. The current
+    -- IX-Ray path corrupts a long Cyrillic buffer containing inline color tags.
+    for _, block in ipairs(RULE_BLOCKS) do
+        local text = xml:InitTextWnd("rules:" .. block[1], nil)
+        text:AdjustHeightToText()
+        text:SetWndSize(vector2():set(text:GetWidth(), text:GetHeight() + block[2]))
+        self.rules_scroll:AddWindow(text, true)
+        text:SetAutoDelete(false)
+        self.rules_texts[#self.rules_texts + 1] = text
+    end
+
+    self.confirm = CUIMessageBoxEx()
+    self:Register(self.confirm, "pf_puzzles_confirm")
+
+end
+
+function pf_puzzles_tab:EnsureTileCards()
+    if #self.tile_cards > 0 then return true end
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_puzzles.xml")
+    for index = 1, TILE_SLOT_COUNT do
+        local card = xml:InitStatic("catalog:tile_view:card", self.tile_view)
+        local column = (index - 1) % TILE_COLUMNS
+        local row = math.floor((index - 1) / TILE_COLUMNS)
+        card:SetWndPos(vector2():set(
+            TILE_ORIGIN_X + column * TILE_COLUMN_STEP,
+            TILE_ORIGIN_Y + row * TILE_ROW_STEP))
+        local preview = xml:InitStatic("catalog:tile_view:card:preview", card)
+        local name = xml:InitTextWnd("catalog:tile_view:card:name", card)
+        local best = xml:InitTextWnd("catalog:tile_view:card:best", card)
+        local play = xml:Init3tButton("catalog:tile_view:card:play", card)
+        card:Show(false)
+        card:Enable(false)
+        play:Enable(false)
+        self.tile_cards[index] = {
+            card = card,
+            preview = preview,
+            name = name,
+            best = best,
+            play = play
+        }
+        local card_index = index
+        local id = "pf_puzzles_tile_play_" .. tostring(index)
+        self:Register(play, id)
+        self:AddCallback(id, ui_events.BUTTON_CLICKED, function(owner)
+            owner:PlayCatalogGame(card_index)
+        end, self)
+    end
+    return true
+end
+
+function pf_puzzles_tab:EnsureSamegameCells()
+    if #self.cells > 0 then return true end
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_puzzles.xml")
+    for index = 1, MAX_CELLS do
+        local visual = xml:InitStatic("cell_visual", self.board_area)
+        local button = xml:Init3tButton("cell_hitbox", self.board_area)
+        visual:Show(false)
+        button:Show(false)
+        button:Enable(false)
+        self.cells[index] = { visual = visual, button = button }
+        local cell_index = index
+        local id = "pf_puzzles_cell_" .. tostring(index)
+        self:Register(button, id)
+        self:AddCallback(id, ui_events.BUTTON_CLICKED, function(owner)
+            owner:OnCell(cell_index)
+        end, self)
+    end
+    return true
+end
+
+function pf_puzzles_tab:InitCallbacks()
+    local controls = {
+        { self.tile_mode, "pf_puzzles_tiles", self.ShowTiles },
+        { self.list_mode, "pf_puzzles_list", self.ShowList },
+        { self.game_back, "pf_puzzles_game_back", self.BackToCatalog },
+        { self.game_rules, "pf_puzzles_game_rules", self.ShowRules },
+        { self.undo, "pf_puzzles_undo", self.Undo },
+        { self.clear_selection, "pf_puzzles_clear", self.ClearSelection },
+        { self.restart, "pf_puzzles_restart", self.Restart },
+        { self.new_game, "pf_puzzles_new", self.NewGame },
+        { self.rules_back, "pf_puzzles_rules_back", self.HideRules }
+    }
+    for _, entry in ipairs(controls) do
+        self:Register(entry[1], entry[2])
+        local event = entry[4] or ui_events.BUTTON_CLICKED
+        self:AddCallback(entry[2], event, entry[3], self)
+    end
+
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local requested = difficulty
+        local button = self.difficulty_buttons[difficulty]
+        local id = "pf_puzzles_difficulty_" .. difficulty
+        self:Register(button, id)
+        self:AddCallback(id, ui_events.BUTTON_CLICKED, function(owner)
+            owner:OnDifficulty(requested)
+        end, self)
+    end
+
+    for index, slot in ipairs(self.list_rows) do
+        local row_index = index
+        local play_id = "pf_puzzles_list_play_" .. tostring(index)
+        local rules_id = "pf_puzzles_list_rules_" .. tostring(index)
+        self:Register(slot.play, play_id)
+        self:AddCallback(play_id, ui_events.BUTTON_CLICKED, function(owner)
+            owner:PlayCatalogGame(row_index)
+        end, self)
+        self:Register(slot.rules, rules_id)
+        self:AddCallback(rules_id, ui_events.BUTTON_CLICKED, function(owner)
+            owner:ShowCatalogRules(row_index)
+        end, self)
+    end
+
+    self:AddCallback("pf_puzzles_confirm", ui_events.MESSAGE_BOX_YES_CLICKED,
+        self.ConfirmPendingAction, self)
+    self:AddCallback("pf_puzzles_confirm", ui_events.MESSAGE_BOX_NO_CLICKED,
+        self.CancelPendingAction, self)
+end
+
+function pf_puzzles_tab:SyncDifficultyButtons()
+    local active = shell_state.difficulty
+    if pf_puzzles_native.has_context() and pf_puzzles_native.difficulty() then
+        active = pf_puzzles_native.difficulty()
+    else
+        local session = session_module()
+        local restored = session and session.active_difficulty and
+            session.active_difficulty("samegame") or nil
+        if DIFFICULTY_TEXT[restored] then active = restored end
+    end
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local button = self.difficulty_buttons[difficulty]
+        if button then button:Enable(difficulty ~= active) end
+    end
+end
+
+function pf_puzzles_tab:OnDifficulty(requested)
+    if not DIFFICULTY_TEXT[requested] then return end
+    local active = pf_puzzles_native.has_context() and
+        pf_puzzles_native.difficulty() or shell_state.difficulty
+    if requested == active then return end
+    if self:NeedsReplacementConfirmation(requested) then
+        self:AskReplacement("difficulty", requested)
+        self:SyncDifficultyButtons()
+        return
+    end
+    self:StartDifficulty(requested)
+end
+
+function pf_puzzles_tab:CurrentGameUnfinished()
+    if not pf_puzzles_native.has_context() then return false end
+    local snapshot = pf_puzzles_native.snapshot()
+    if not snapshot then return true end
+    return snapshot.complete ~= true
+end
+
+function pf_puzzles_tab:NeedsReplacementConfirmation(requested)
+    return pf_puzzles_native.has_context() and
+        pf_puzzles_native.difficulty() ~= requested and
+        self:CurrentGameUnfinished()
+end
+
+function pf_puzzles_tab:AskReplacement(action, difficulty)
+    self.pending_action = action
+    self.pending_difficulty = difficulty
+    self.confirm:InitMessageBox("message_box_yes_no")
+    local prompt = action == "difficulty" and
+        "pf_puzzles_confirm_difficulty" or "pf_puzzles_confirm_replace"
+    self.confirm:SetText(tr(prompt))
+    self.confirm:ShowDialog(true)
+end
+
+function pf_puzzles_tab:CancelPendingAction()
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self:SyncDifficultyButtons()
+    if shell_state.page == "game" and pf_puzzles_native.has_context() then
+        self:RefreshGame(true)
+    else
+        self:RefreshCatalog()
+    end
+end
+
+function pf_puzzles_tab:ConfirmPendingAction()
+    local action, difficulty = self.pending_action, self.pending_difficulty
+    self.pending_action, self.pending_difficulty = nil, nil
+    if action == "new_game" then
+        self:PerformNewGame()
+        return
+    end
+    if action == "difficulty" then
+        self:StartDifficulty(difficulty or shell_state.difficulty)
+        return
+    end
+    if action == "play" then
+        self:StartDifficulty(difficulty or shell_state.difficulty)
+    end
+end
+
+function pf_puzzles_tab:SetCatalogLayout(layout)
+    -- Keep the tile implementation available for a possible future apps
+    -- catalog, but expose only the compact list in the current Puzzles UI.
+    shell_state.layout = "list"
+    self.tile_view:Show(false)
+    self.tile_view:Enable(false)
+    self.list_view:Show(true)
+    self.list_view:Enable(true)
+    self.tile_mode:Show(false)
+    self.tile_mode:Enable(false)
+    self.list_mode:Show(false)
+    self.list_mode:Enable(false)
+end
+
+function pf_puzzles_tab:ShowTiles()
+    self:SetCatalogLayout("tiles")
+end
+
+function pf_puzzles_tab:ShowList()
+    self:SetCatalogLayout("list")
+end
+
+function pf_puzzles_tab:SetPage(page, preserve_rules)
+    page = page == "game" and "game" or "catalog"
+    shell_state.page = page
+    local active_entry = catalog_game(shell_state.active_game)
+    local controller_active = page == "game" and active_entry and
+        active_entry.ui_module ~= nil
+    local active_view = controller_active and
+        self.controller_views[shell_state.active_game] or nil
+    self.catalog:Show(page == "catalog")
+    self.catalog:Enable(page == "catalog")
+    self.game:Show(page == "game" and not controller_active)
+    self.game:Enable(page == "game" and not controller_active)
+    for game_id, view in pairs(self.controller_views) do
+        if controller_active and game_id == shell_state.active_game then
+            local preserve_controller_rules = preserve_rules and
+                view:is_rules_open()
+            local difficulty = pf_puzzles_records.session_game_difficulty(
+                game_id, "normal")
+            view:enter(difficulty)
+            if preserve_controller_rules then
+                view:show_rules("game")
+            end
+        elseif not view:is_rules_open() then
+            view:leave()
+        end
+    end
+    if not controller_active and preserve_rules and shell_state.rules_open then
+        self:SetRulesVisible(true)
+    else
+        self:HideRules()
+    end
+    if page == "catalog" then
+        self:RefreshCatalog()
+        for game_id, view in pairs(self.controller_views) do
+            if view:is_rules_open() then
+                self:OnControllerCatalogRulesVisible(game_id, true)
+            end
+        end
+    elseif controller_active then
+        if active_view then active_view:update(true) end
+    else
+        self:RefreshGame(true)
+    end
+end
+
+function pf_puzzles_tab:BackToCatalog()
+    self:SetPage("catalog")
+end
+
+function pf_puzzles_tab:ShowRules()
+    shell_state.rules_return = shell_state.page
+    self.rules_scroll:ScrollToBegin()
+    shell_state.rules_open = true
+    self:SetRulesVisible(true)
+end
+
+function pf_puzzles_tab:HideRules()
+    shell_state.rules_open = false
+    self:SetRulesVisible(false)
+end
+
+function pf_puzzles_tab:SetRulesVisible(visible)
+    self.rules:Show(visible)
+    self.rules:Enable(visible)
+    self.rules_shade:Show(visible)
+    self.rules_shade:Enable(visible)
+    self.catalog:Enable(not visible and shell_state.page == "catalog")
+    self.game:Enable(not visible and shell_state.page == "game" and
+        shell_state.active_game == "samegame")
+end
+
+function pf_puzzles_tab:IsRulesShown()
+    for _, view in pairs(self.controller_views) do
+        if view:is_rules_open() then return true end
+    end
+    return self.rules and self.rules:IsShown()
+end
+
+function pf_puzzles_tab:ActiveControllerView()
+    if shell_state.page ~= "game" then return nil end
+    return self.controller_views[shell_state.active_game]
+end
+
+function pf_puzzles_tab:RulesControllerView()
+    for _, game_id in ipairs(CONTROLLER_GAME_IDS) do
+        local view = self.controller_views[game_id]
+        if view and view:is_rules_open() then return view end
+    end
+    return nil
+end
+
+function pf_puzzles_tab:SetCatalogStatus(text)
+    self.catalog_status:SetText(text or "")
+end
+
+function pf_puzzles_tab:SetBoardMessage(text)
+    text = text or ""
+    self.board_message:SetText(text)
+    self.board_message:Show(text ~= "")
+end
+
+function pf_puzzles_tab:BestText(difficulty)
+    local record = pf_puzzles_records.get(difficulty)
+    if record and record.has_best then return formatted("pf_puzzles_best_format", record.best_score) end
+    return tr("pf_puzzles_best_none")
+end
+
+function pf_puzzles_tab:BestOverallText()
+    local best = nil
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local record = pf_puzzles_records.get(difficulty)
+        if record and record.has_best then
+            local score = tonumber(record.best_score) or 0
+            if best == nil or score > best then best = score end
+        end
+    end
+    return best ~= nil and formatted("pf_puzzles_best_format", best) or
+        tr("pf_puzzles_best_none")
+end
+
+function pf_puzzles_tab:QualifiedWinsText(game_id)
+    local count = pf_puzzles_records.qualified_wins and
+        pf_puzzles_records.qualified_wins(game_id) or 0
+    return tr("pf_puzzles_wins_label") .. ": " .. tostring(count or 0)
+end
+
+function pf_puzzles_tab:CatalogStatText(game_entry)
+    local wins = self:QualifiedWinsText(game_entry.id)
+    if game_entry.supports_score then
+        return self:BestOverallText() .. " | " .. wins
+    end
+    return wins
+end
+
+function pf_puzzles_tab:CatalogGameState(game_entry)
+    local module_name = game_entry.native_module
+    local native = rawget(_G, module_name)
+    local view_module = game_entry.ui_module and
+        rawget(_G, game_entry.ui_module) or nil
+    local view_module_missing = game_entry.ui_module and
+        (not view_module or type(view_module.new) ~= "function")
+    if not native or type(native.available) ~= "function" or view_module_missing then
+        return {
+            available = false,
+            has_context = false,
+            play_text = tr("pf_puzzles_play"),
+            best_text = self:CatalogStatText(game_entry),
+            error_id = "pf_puzzles_error_dll_load",
+            detail = view_module_missing and game_entry.ui_module or module_name
+        }
+    end
+    local has_context = false
+    if type(native.has_context) == "function" then
+        local context_called, context_result = pcall(native.has_context)
+        has_context = context_called and context_result == true
+    end
+    local session = session_module()
+    if not has_context and session and session.has_active then
+        local active_called, active_result = pcall(session.has_active, game_entry.id)
+        has_context = active_called and active_result == true
+    end
+    return {
+        -- Loading and ABI validation are deliberately deferred until Play.
+        -- The catalog must stay cheap after every save/load cycle.
+        available = true,
+        has_context = has_context,
+        play_text = tr(has_context and "pf_puzzles_continue" or "pf_puzzles_play"),
+        best_text = self:CatalogStatText(game_entry),
+        error_id = nil,
+        detail = nil
+    }
+end
+
+function pf_puzzles_tab:SetCatalogPreview(control, state, texture)
+    if state.preview_texture == texture then
+        control:Show(true)
+        return
+    end
+    local loaded = pcall(function() control:InitTexture(texture) end)
+    state.preview_texture = loaded and texture or nil
+    control:Show(loaded)
+end
+
+function pf_puzzles_tab:RefreshTileCards()
+    if #self.tile_cards == 0 then return end
+    for index, slot in ipairs(self.tile_cards) do
+        local game_entry = CATALOG_GAMES[index]
+        local state = self.catalog_states[index]
+        local visible = game_entry ~= nil
+        slot.card:Show(visible)
+        slot.card:Enable(visible)
+        slot.play:Enable(visible and state and state.available)
+        if visible then
+            slot.name:SetText(tr(game_entry.name_id))
+            slot.best:SetText(state.best_text)
+            slot.play:TextControl():SetText(state.play_text)
+            self:SetCatalogPreview(slot.preview, slot, game_entry.preview_texture)
+        else
+            slot.preview:Show(false)
+        end
+    end
+end
+
+function pf_puzzles_tab:RefreshListRows()
+    for index, slot in ipairs(self.list_rows) do
+        local game_entry = CATALOG_GAMES[index]
+        local state = self.catalog_states[index]
+        local visible = game_entry ~= nil
+        slot.row:Show(visible)
+        slot.row:Enable(visible)
+        slot.play:Enable(visible and state and state.available)
+        slot.rules:Enable(visible)
+        if visible then
+            slot.name:SetText(tr(game_entry.name_id))
+            slot.description:SetText(tr(game_entry.description_id))
+            slot.best:SetText(state.best_text)
+            slot.play:TextControl():SetText(state.play_text)
+            self:SetCatalogPreview(slot.preview, slot, game_entry.preview_texture)
+        else
+            slot.preview:Show(false)
+        end
+    end
+end
+
+function pf_puzzles_tab:RefreshCatalog()
+    local first_error_id, first_error_detail = nil, nil
+    for index, game_entry in ipairs(CATALOG_GAMES) do
+        local state = self:CatalogGameState(game_entry)
+        self.catalog_states[index] = state
+        if not state.available and not first_error_id then
+            first_error_id, first_error_detail = state.error_id, state.detail
+        end
+    end
+    self:RefreshTileCards()
+    self:RefreshListRows()
+    self:SetCatalogStatus(first_error_id and
+        translated_error(first_error_id, first_error_detail) or
+        tr("pf_puzzles_catalog_ready"))
+end
+
+function pf_puzzles_tab:StartDifficulty(requested)
+    requested = DIFFICULTY_TEXT[requested] and requested or shell_state.difficulty
+    local available, error_id, detail = pf_puzzles_native.available()
+    if not available then
+        local message = translated_error(error_id, detail)
+        if shell_state.page == "game" then self:SetBoardMessage(message)
+        else self:SetCatalogStatus(message) end
+        return false
+    end
+    self:EnsureSamegameCells()
+    self:RetryPendingRecord()
+    local session = session_module()
+    if session and session.can_replace then
+        local replaceable, replace_error = session.can_replace("samegame")
+        if not replaceable then
+            local message = translated_error("pf_puzzles_error_native_call", replace_error)
+            if shell_state.page == "game" then self:SetBoardMessage(message)
+            else self:SetCatalogStatus(message) end
+            return false
+        end
+    end
+    local ok, action_error, action_detail = pf_puzzles_native.start(requested)
+    if not ok then
+        local message = translated_error(action_error, action_detail)
+        if shell_state.page == "game" then self:SetBoardMessage(message)
+        else self:SetCatalogStatus(message) end
+        self:SyncDifficultyButtons()
+        return false
+    end
+    local bound, bind_error = false, "session unavailable"
+    if session and session.bind_new_attempt then
+        bound, bind_error = session.bind_new_attempt("samegame", pf_puzzles_native)
+    end
+    if bound ~= true then
+        pcall(pf_puzzles_native.destroy)
+        if session and session.has_active and session.has_active("samegame") then
+            pcall(session.restore_game, "samegame", pf_puzzles_native)
+        end
+        local message = translated_error("pf_puzzles_error_native_call",
+            bind_error or "session write failed")
+        if shell_state.page == "game" then self:SetBoardMessage(message)
+        else self:SetCatalogStatus(message) end
+        return false
+    end
+    remember_difficulty(requested)
+    shell_state.active_game = "samegame"
+    shell_state.completed_attempt_id = nil
+    self.last_revision = -1
+    self.snapshot = nil
+    self.record_retry_pending = false
+    self:SyncDifficultyButtons()
+    self:SetPage("game")
+    return true
+end
+
+function pf_puzzles_tab:Play()
+    local available, error_id, detail = pf_puzzles_native.available()
+    if not available then
+        self:SetCatalogStatus(translated_error(error_id, detail))
+        return
+    end
+    if pf_puzzles_native.has_context() then
+        self:EnsureSamegameCells()
+        shell_state.active_game = "samegame"
+        self:SetPage("game")
+        return
+    end
+    local session = session_module()
+    if session and session.has_active and session.has_active("samegame") then
+        local restored, restore_error = session.restore_game(
+            "samegame", pf_puzzles_native)
+        if restored then
+            self:EnsureSamegameCells()
+            remember_difficulty(pf_puzzles_native.difficulty() or shell_state.difficulty)
+            shell_state.active_game = "samegame"
+            self:SetPage("game")
+            return
+        end
+        session.discard_game("samegame")
+        if type(printf) == "function" then
+            printf("! pf_puzzles: Same Game session restore failed: [%s]",
+                tostring(restore_error))
+        end
+    end
+    self:StartDifficulty(shell_state.difficulty)
+end
+
+function pf_puzzles_tab:PlayCatalogGame(index)
+    local game_entry = CATALOG_GAMES[tonumber(index) or 0]
+    if not game_entry then return end
+    -- Creating controls or registering callbacks from BUTTON_CLICKED corrupts
+    -- the xrUI iterators which are still dispatching this mouse event.
+    return self:QueueUIAction("play", game_entry.id)
+end
+
+function pf_puzzles_tab:PlayControllerGame(game_entry)
+    if not game_entry or not game_entry.ui_module then return false end
+    return self:QueueUIAction("play", game_entry.id)
+end
+
+function pf_puzzles_tab:OpenControllerGame(game_entry)
+    if not game_entry or not game_entry.ui_module then return false end
+    local native = rawget(_G, game_entry.native_module)
+    if not native or type(native.available) ~= "function" then
+        self:SetCatalogStatus(translated_error(
+            "pf_puzzles_error_dll_load", game_entry.native_module))
+        return false
+    end
+    local called, available, error_id, detail = pcall(native.available)
+    if not called or available ~= true then
+        self:SetCatalogStatus(translated_error(
+            called and error_id or "pf_puzzles_error_native_call",
+            called and detail or available))
+        return false
+    end
+    local view, view_error = self:EnsureControllerView(game_entry.id)
+    if not view then
+        self:SetCatalogStatus(translated_error(
+            "pf_puzzles_error_native_call", view_error))
+        return false
+    end
+    shell_state.active_game = game_entry.id
+    self:SetPage("game")
+    return true
+end
+
+function pf_puzzles_tab:PlayUnequal()
+    return self:PlayControllerGame(catalog_game("unequal"))
+end
+
+function pf_puzzles_tab:PlayNet()
+    return self:PlayControllerGame(catalog_game("net"))
+end
+
+function pf_puzzles_tab:PlaySolo()
+    return self:PlayControllerGame(catalog_game("solo"))
+end
+
+function pf_puzzles_tab:PlayWordle()
+    return self:PlayControllerGame(catalog_game("wordle"))
+end
+
+function pf_puzzles_tab:ShowControllerRules(game_id, return_page)
+    local game_entry = catalog_game(game_id)
+    if not game_entry or not game_entry.ui_module then return false end
+    return self:QueueUIAction("rules", game_id, return_page)
+end
+
+function pf_puzzles_tab:OpenControllerRules(game_id, return_page)
+    local view, view_error = self:EnsureControllerView(game_id)
+    if not view then
+        self:SetCatalogStatus(translated_error(
+            "pf_puzzles_error_native_call", view_error))
+        return false
+    end
+    shell_state.rules_open = false
+    self:SetRulesVisible(false)
+    view:show_rules(return_page or shell_state.page)
+    return view:is_rules_open()
+end
+
+function pf_puzzles_tab:ShowUnequalRules(return_page)
+    return self:ShowControllerRules("unequal", return_page)
+end
+
+function pf_puzzles_tab:ShowCatalogRules(index)
+    local game_entry = CATALOG_GAMES[tonumber(index) or 0]
+    if not game_entry then return end
+    return self:QueueUIAction("rules", game_entry.id, "catalog")
+end
+
+function pf_puzzles_tab:OnControllerCompletion(game_id, event)
+    if not self.controller_views[game_id] then return false end
+    if not event or tonumber(event.attempt_id) == nil then return false end
+    local attempt_id = tonumber(event.attempt_id)
+    if shell_state.controller_completed_attempts[game_id] == attempt_id then
+        return true
+    end
+    local game_entry = catalog_game(game_id)
+    local native = game_entry and rawget(_G, game_entry.native_module) or nil
+    local session = session_module()
+    if not native or not session or not session.complete_attempt then return false end
+    local completed, completion_error = session.complete_attempt(
+        game_id, native, event, nil)
+    if completed ~= true then
+        if completion_error ~= "retry_later" and type(printf) == "function" then
+            printf("! pf_puzzles: victory finalization pending: [%s]",
+                tostring(completion_error))
+        end
+        return false
+    end
+    shell_state.controller_completed_attempts[game_id] = attempt_id
+    self:RefreshCatalog()
+    return true
+end
+
+function pf_puzzles_tab:OnUnequalCompletion(event)
+    return self:OnControllerCompletion("unequal", event)
+end
+
+function pf_puzzles_tab:OnNetCompletion(event)
+    return self:OnControllerCompletion("net", event)
+end
+
+function pf_puzzles_tab:OnSoloCompletion(event)
+    return self:OnControllerCompletion("solo", event)
+end
+
+function pf_puzzles_tab:OnWordleCompletion(event)
+    return self:OnControllerCompletion("wordle", event)
+end
+
+function pf_puzzles_tab:OnControllerCatalogRulesVisible(game_id, visible)
+    if not self.controller_views[game_id] then return false end
+    if shell_state.page == "catalog" then
+        self.catalog:Enable(visible ~= true)
+    end
+    return true
+end
+
+function pf_puzzles_tab:OnUnequalCatalogRulesVisible(visible)
+    return self:OnControllerCatalogRulesVisible("unequal", visible)
+end
+
+function pf_puzzles_tab:OnNetCatalogRulesVisible(visible)
+    return self:OnControllerCatalogRulesVisible("net", visible)
+end
+
+function pf_puzzles_tab:OnSoloCatalogRulesVisible(visible)
+    return self:OnControllerCatalogRulesVisible("solo", visible)
+end
+
+function pf_puzzles_tab:OnWordleCatalogRulesVisible(visible)
+    return self:OnControllerCatalogRulesVisible("wordle", visible)
+end
+
+function pf_puzzles_tab:RunAction(name, ...)
+    self:RetryPendingRecord()
+    local action = pf_puzzles_native[name]
+    if type(action) ~= "function" then
+        self:SetBoardMessage(tr("pf_puzzles_error_native_call"))
+        return false
+    end
+    local ok, error_id, detail = action(...)
+    if not ok then
+        self:SetBoardMessage(translated_error(error_id, detail))
+        return false
+    end
+    self:RefreshGame(self.record_retry_pending == true)
+    return true
+end
+
+function pf_puzzles_tab:Undo() self:RunAction("undo") end
+function pf_puzzles_tab:ClearSelection() self:RunAction("clear_selection") end
+
+function pf_puzzles_tab:Restart()
+    if self.snapshot and shell_state.completed_attempt_id == self.snapshot.attempt_id then return end
+    if self:RunAction("restart") then
+        self.last_revision = -1
+        self:RefreshGame(true)
+    end
+end
+
+function pf_puzzles_tab:PerformNewGame()
+    local session = session_module()
+    if session and session.can_replace then
+        local replaceable, replace_error = session.can_replace("samegame")
+        if not replaceable then
+            self:SetBoardMessage(translated_error(
+                "pf_puzzles_error_native_call", replace_error))
+            return false
+        end
+    end
+    if self:RunAction("new_game") then
+        local bound, bind_error = false, "session unavailable"
+        if session and session.bind_new_attempt then
+            bound, bind_error = session.bind_new_attempt("samegame", pf_puzzles_native)
+        end
+        if bound ~= true then
+            pcall(pf_puzzles_native.destroy)
+            if session and session.has_active and session.has_active("samegame") then
+                pcall(session.restore_game, "samegame", pf_puzzles_native)
+            end
+            self:SetBoardMessage(translated_error(
+                "pf_puzzles_error_native_call", bind_error or "session write failed"))
+            self:RefreshGame(true)
+            return false
+        end
+        self.record_retry_pending = false
+        self.last_revision = -1
+        self:RefreshGame(true)
+        return true
+    end
+    return false
+end
+
+function pf_puzzles_tab:NewGame()
+    if self:CurrentGameUnfinished() then
+        self:AskReplacement("new_game", pf_puzzles_native.difficulty())
+        return
+    end
+    self:PerformNewGame()
+end
+
+function pf_puzzles_tab:OnCell(index)
+    local snapshot = self.snapshot
+    local cell = snapshot and snapshot.cells and snapshot.cells[index] or nil
+    if not cell or snapshot.complete or snapshot.dead_end or tonumber(cell.color or 0) <= 0 then return end
+    self:RunAction("select_cell", cell.x or 1, cell.y or 1)
+end
+
+function pf_puzzles_tab:InputKey(key)
+    return self:RunAction("input_key", key)
+end
+
+function pf_puzzles_tab:CellColor(cell, cursor)
+    local source = CELL_COLORS[tonumber(cell.color) or 1] or CELL_COLORS[1]
+    local r, g, b = source[1], source[2], source[3]
+    if cell.selected then
+        r, g, b = math.min(255, r + 38), math.min(255, g + 38), math.min(255, b + 38)
+    end
+    if cursor then
+        r, g, b = math.min(255, r + 22), math.min(255, g + 22), math.min(255, b + 22)
+    end
+    return GetARGB(255, r, g, b)
+end
+
+function pf_puzzles_tab:RefreshBoard(snapshot)
+    self:EnsureSamegameCells()
+    local width, height = tonumber(snapshot.width) or 0, tonumber(snapshot.height) or 0
+    if width < 1 or height < 1 or width * height > MAX_CELLS then
+        self:SetBoardMessage(tr("pf_puzzles_error_native_call"))
+        for _, pooled in ipairs(self.cells) do
+            pooled.visual:Show(false)
+            pooled.button:Show(false)
+            pooled.button:Enable(false)
+        end
+        return
+    end
+
+    local gap = 2
+    local cell_size = math.floor(math.min(
+        (self.board_area:GetWidth() - gap * (width - 1)) / width,
+        (self.board_area:GetHeight() - gap * (height - 1)) / height,
+        40
+    ))
+    local board_width = width * cell_size + (width - 1) * gap
+    local board_height = height * cell_size + (height - 1) * gap
+    local origin_x = math.floor((self.board_area:GetWidth() - board_width) / 2)
+    local origin_y = math.floor((self.board_area:GetHeight() - board_height) / 2)
+
+    for index, pooled in ipairs(self.cells) do
+        local cell = snapshot.cells and snapshot.cells[index] or nil
+        local visible = cell and index <= width * height and tonumber(cell.color or 0) > 0
+        pooled.visual:Show(visible)
+        pooled.button:Show(visible)
+        pooled.button:Enable(visible and not snapshot.complete and not snapshot.dead_end)
+        if visible then
+            local x = tonumber(cell.x) or (((index - 1) % width) + 1)
+            local y = tonumber(cell.y) or (math.floor((index - 1) / width) + 1)
+            local position = vector2():set(
+                origin_x + (x - 1) * (cell_size + gap),
+                origin_y + (y - 1) * (cell_size + gap)
+            )
+            local size = vector2():set(cell_size, cell_size)
+            pooled.visual:SetWndPos(position)
+            pooled.visual:SetWndSize(size)
+            local cursor = snapshot.cursor_visible and
+                x == snapshot.cursor_x and y == snapshot.cursor_y
+            pooled.visual:SetTextureColor(self:CellColor(cell, cursor))
+            pooled.button:SetWndPos(position)
+            pooled.button:SetWndSize(size)
+        end
+    end
+end
+
+function pf_puzzles_tab:RecordCompletion(snapshot)
+    local session = session_module()
+    local event = pf_puzzles_native.peek_completion(
+        snapshot.revision, snapshot.attempt_id)
+    if not event and session and session.pending_completion then
+        event = session.pending_completion("samegame", snapshot)
+    end
+    if not event or event.attempt_id ~= snapshot.attempt_id or
+        event.status_flags % 2 ~= 1 then return end
+    local ok, detail = false, "session unavailable"
+    if session and session.complete_attempt then
+        ok, detail = session.complete_attempt(
+            "samegame", pf_puzzles_native, event, event.score)
+    end
+    if ok then
+        local acknowledged = event.synthetic == true or
+            pf_puzzles_native.ack_completion(event.attempt_id, event.revision)
+        self.record_retry_pending = not acknowledged
+    else
+        self.record_retry_pending = true
+        if detail ~= "retry_later" and type(printf) == "function" then
+            printf("! pf_puzzles: Same Game finalization pending: [%s]",
+                tostring(detail))
+        end
+    end
+end
+
+function pf_puzzles_tab:RetryPendingRecord()
+    if self.record_retry_pending and self.snapshot then
+        self:RecordCompletion(self.snapshot)
+    end
+end
+
+function pf_puzzles_tab:LayoutToolButtons(snapshot)
+    local function set_visible(button, visible)
+        button:Show(visible)
+        button:Enable(visible)
+    end
+    local ongoing = not snapshot.complete
+    set_visible(self.undo, ongoing and snapshot.can_undo == true)
+    set_visible(self.clear_selection, ongoing and not snapshot.dead_end and
+        (snapshot.selected_count or 0) > 0)
+    set_visible(self.restart, ongoing and snapshot.can_undo == true and
+        shell_state.completed_attempt_id ~= snapshot.attempt_id)
+    set_visible(self.new_game, true)
+    set_visible(self.game_rules, true)
+end
+
+function pf_puzzles_tab:RefreshStats(snapshot)
+    if snapshot.complete then shell_state.completed_attempt_id = snapshot.attempt_id end
+    self.score:SetText(formatted("pf_puzzles_score_format", snapshot.score or 0))
+    self.game_best:SetText(self:BestText(snapshot.difficulty or pf_puzzles_native.difficulty()))
+    self.remaining:SetText(formatted("pf_puzzles_remaining_format", snapshot.remaining or 0))
+    self.selected:SetText(formatted("pf_puzzles_selected_format",
+        snapshot.selected_count or 0, snapshot.selected_points or 0))
+    local status_id = snapshot.complete and "pf_puzzles_status_complete" or
+        (snapshot.dead_end and "pf_puzzles_status_dead_end" or "pf_puzzles_status_playing")
+    self.game_status:SetText(tr(status_id))
+    self:SyncDifficultyButtons()
+    self:LayoutToolButtons(snapshot)
+end
+
+function pf_puzzles_tab:RefreshGame(force)
+    if self.shutting_down then return end
+    local available, error_id, detail = pf_puzzles_native.available()
+    if not available then
+        self:SetBoardMessage(translated_error(error_id, detail))
+        return
+    end
+    if not pf_puzzles_native.has_context() then
+        self:SetBoardMessage(tr("pf_puzzles_error_context"))
+        return
+    end
+
+    local revision, revision_error = pf_puzzles_native.revision()
+    if revision == nil then
+        self:SetBoardMessage(translated_error(revision_error))
+        return
+    end
+    if not force and revision == self.last_revision then
+        self:RetryPendingRecord()
+        return
+    end
+
+    local snapshot, snapshot_error, snapshot_detail = pf_puzzles_native.snapshot()
+    if not snapshot then
+        self:SetBoardMessage(translated_error(snapshot_error, snapshot_detail))
+        return
+    end
+    self.snapshot = snapshot
+    self.last_revision = snapshot.revision or revision
+    local board_status = snapshot.complete and "pf_puzzles_status_complete" or
+        (snapshot.dead_end and "pf_puzzles_status_dead_end" or nil)
+    self:SetBoardMessage(board_status and tr(board_status) or "")
+    self:RefreshBoard(snapshot)
+    self:RefreshStats(snapshot)
+    self:RecordCompletion(snapshot)
+    self.game_best:SetText(self:BestText(snapshot.difficulty or pf_puzzles_native.difficulty()))
+end
+
+function pf_puzzles_tab:RefreshOnOpen()
+    self.shutting_down = false
+    self.pending_ui_action = nil
+    self:SetCatalogLayout(shell_state.layout)
+    self:SetPage(shell_state.page, true)
+end
+
+function pf_puzzles_tab:PrepareForReload()
+    self.shutting_down = true
+    self.pending_ui_action = nil
+end
+
+function pf_puzzles_tab:Update()
+    if self.shutting_down then return end
+    CUIScriptWnd.Update(self)
+    -- The deferred request runs only after mouse dispatch has finished, so
+    -- InitStatic/Register/AddCallback cannot invalidate xrUI's live iterators.
+    self:ProcessPendingUIAction()
+    if shell_state.page == "game" and not self:IsRulesShown() then
+        local controller = self:ActiveControllerView()
+        if controller then
+            controller:update(false)
+        else
+            self:RefreshGame(false)
+        end
+    end
+end
+
+function pf_puzzles_tab:OnKeyboard(dik, keyboard_action)
+    if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+        local binding = type(dik_to_bind) == "function" and dik_to_bind(dik) or nil
+        if key_bindings and binding == key_bindings.kQUICK_LOAD then
+            local lifecycle = rawget(_G, "pf_puzzles_lifecycle")
+            local safe = lifecycle and lifecycle.before_game_reload and
+                lifecycle.before_game_reload(dik) ~= false
+            return not safe
+        end
+        local controller = self:RulesControllerView() or self:ActiveControllerView()
+        if controller and controller:on_keyboard(dik, keyboard_action) then
+            return true
+        end
+        if self:IsRulesShown() and key_bindings and binding == key_bindings.kQUIT then
+            self:HideRules()
+            return true
+        end
+        if shell_state.page == "game" and shell_state.active_game == "samegame" and
+            not self:IsRulesShown() and
+            self.snapshot and not self.snapshot.complete and not self.snapshot.dead_end then
+            local keys = rawget(_G, "DIK_keys")
+            if keys and dik == keys.DIK_LEFT then return self:InputKey("left") end
+            if keys and dik == keys.DIK_RIGHT then return self:InputKey("right") end
+            if keys and dik == keys.DIK_UP then return self:InputKey("up") end
+            if keys and dik == keys.DIK_DOWN then return self:InputKey("down") end
+            if keys and dik == keys.DIK_RETURN then return self:InputKey("select") end
+            if keys and dik == keys.DIK_SPACE then return self:InputKey("cancel") end
+        end
+    else
+        local controller = self:RulesControllerView() or self:ActiveControllerView()
+        if controller and controller:on_keyboard(dik, keyboard_action) then
+            return true
+        end
+    end
+    return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action) == true
+end
+
+function get_ui()
+    local created = singleton == nil
+    singleton = singleton or pf_puzzles_tab()
+    if not created then singleton:RefreshOnOpen() end
+    return singleton
+end
+
+function before_game_reload()
+    local session = session_module()
+    if not session or not session.capture_all then
+        report_reload_error("session module unavailable")
+        return false
+    end
+    local captured, capture_error = session.capture_all()
+    if captured ~= true then
+        report_reload_error(capture_error or "session capture")
+        return false
+    end
+    local window = singleton
+    if not window then
+        local destroyed, destroy_error = destroy_native_contexts()
+        if destroyed then
+            reload_detached = true
+            reset_shell_after_reload()
+            return true
+        end
+        report_reload_error(destroy_error)
+        return false
+    end
+
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    window:PrepareForReload()
+    if not pda_menu then
+        local destroyed, destroy_error = destroy_native_contexts()
+        if not destroyed then
+            window.shutting_down = false
+            report_reload_error(destroy_error)
+            return false
+        end
+        singleton = nil
+        reload_detached = true
+        reset_shell_after_reload()
+        return true
+    end
+    local detached, detach_error = pcall(function()
+        pda_menu:SetActiveDialog(window)
+        pda_menu:SetActiveSubdialog("eptTasks")
+        if pda_menu.GetActiveSection and pda_menu:GetActiveSection() ~= "eptTasks" then
+            error("native PDA tab was not activated")
+        end
+        -- Luabind CUI userdata has no __eq operator. The active-section check
+        -- is the binding-safe proof that SetActiveSubdialog left the script tab.
+    end)
+    if not detached then
+        window.shutting_down = false
+        report_reload_error(detach_error or "PDA detach")
+        return false
+    end
+
+    local destroyed, destroy_error = destroy_native_contexts()
+    if not destroyed then
+        window.shutting_down = false
+        report_reload_error(destroy_error)
+        return false
+    end
+    singleton = nil
+    reload_detached = true
+    reset_shell_after_reload()
+    return true
+end
+
+function on_game_load()
+    if singleton and singleton.controller_views then
+        for _, view in pairs(singleton.controller_views) do
+            pcall(view.on_game_load, view)
+        end
+    end
+    destroy_native_contexts()
+    local session = session_module()
+    if session and session.on_game_load then pcall(session.on_game_load) end
+    singleton = nil
+    reload_detached = false
+    reset_shell_after_reload()
+end
+
+function refresh_after_load_selection()
+    -- Do not undo the deliberate native-tab detach while the old Lua VM is
+    -- still alive between the quick-load key press and the actual reload.
+    if reload_detached then return true end
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if not pda_menu then return false end
+    local shown_ok, shown = pcall(function() return pda_menu:IsShown() end)
+    if not shown_ok or not shown then return false end
+
+    local tabs_ok, tabs = pcall(function() return pda_menu:GetTabControl() end)
+    if not tabs_ok or not tabs then return false end
+    local id_ok, active_id = pcall(function() return tabs:GetActiveId() end)
+    if not id_ok then return false end
+    local section_ok, active_section = pcall(function() return pda_menu:GetActiveSection() end)
+    if not section_ok then return false end
+
+    if active_id == "eptPuzzles" and active_section == "eptPuzzles" and singleton then
+        return true
+    end
+
+    -- In callback mode SetActiveSubdialog does not synchronize CUITabControl.
+    -- Reload cleanup deliberately detaches the old script window through Tasks,
+    -- so the preserved Puzzles button can point at the native map afterwards.
+    -- Repair that observable mismatch even if Lua globals were recreated by F9
+    -- and the transient rebind flag no longer exists.
+    if active_id ~= "eptPuzzles" then return true end
+
+    local rebound = pcall(function()
+        pda_menu:SetActiveSubdialog("eptPuzzles")
+    end)
+    if not rebound then return false end
+
+    local verified, synchronized = pcall(function()
+        return tabs:GetActiveId() == "eptPuzzles" and
+            pda_menu:GetActiveSection() == "eptPuzzles"
+    end)
+    if verified and synchronized and singleton then
+        return true
+    end
+    return false
+end
+
+function refresh_tab_layout()
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if not pda_menu then return false end
+    local tabs_ok, tabs = pcall(function() return pda_menu:GetTabControl() end)
+    if not tabs_ok or not tabs then return false end
+    local button_ok, chat_button = pcall(function() return tabs:GetButtonById("eptChat") end)
+    if not button_ok or not chat_button then return false end
+    local visible_ok, chat_visible = pcall(function() return chat_button:IsShown() end)
+    if not visible_ok then return false end
+    local layout = layout_for_tabs(tabs)
+    if not layout then return false end
+    local target_x = layout.base_x + (chat_visible and layout.chat_offset_x or 0)
+    local moved = pcall(function()
+        tabs:SetWndPos(vector2():set(target_x, layout.base_y))
+    end)
+    return moved
+end
+
+function set_active_subdialog(section)
+    if section == "eptPuzzles" then
+        if pf_irc_chat_pda and pf_irc_chat_pda.refresh_visibility then
+            pcall(pf_irc_chat_pda.refresh_visibility)
+        end
+        pcall(refresh_tab_layout)
+        if pf_irc_chat and pf_irc_chat.set_presence then pcall(pf_irc_chat.set_presence, "away") end
+        return get_ui()
+    end
+    if pf_irc_chat_pda and pf_irc_chat_pda.set_active_subdialog then
+        local result = pf_irc_chat_pda.set_active_subdialog(section)
+        pcall(refresh_tab_layout)
+        return result
+    end
+    pcall(refresh_tab_layout)
+    if lz_new_mechanics_pda and lz_new_mechanics_pda.set_active_subdialog then
+        return lz_new_mechanics_pda.set_active_subdialog(section)
+    end
+    return pda.set_active_subdialog(section)
+end

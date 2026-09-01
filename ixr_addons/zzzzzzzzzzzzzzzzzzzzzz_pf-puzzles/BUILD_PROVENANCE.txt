@@ -1,0 +1,281 @@
+COP-BUILD-006
+=============
+
+Artifact
+--------
+Path: bin/pf_puzzles_native.dll
+Size: 253952 bytes
+SHA-256: 759ACD3E8790C989C2E8FAE76F4E32E69EB40E816E383A8DB36D15F80E7EC336
+C ABI: pf_puzzles ABI v1
+Architecture: Windows AMD64 (x64)
+
+Upstream
+--------
+Project: Simon Tatham's Portable Puzzle Collection
+Official release: 20260720.3c36322
+Official Git commit: 3c3632259d298ab62aafa8a5858823569ab1af46
+Official Git origin: https://git.tartarus.org/simon/puzzles.git
+Release archive: puzzles-20260720.3c36322.tar.gz
+Release archive size: 2477023 bytes
+Release archive SHA-256: CF43AE303F085C4A7B4C0711E3129755A9C689EBFBF3EA55BF273D9602223806
+License: MIT; see LICENSE-SGT-PUZZLES.txt
+
+Pinned toolchain and configuration
+----------------------------------
+Configuration: Release x64
+MSVC compiler: 19.44.35228
+MSVC tools: 14.44.35207
+Windows SDK: 10.0.26100.0
+CMake: 3.31.6
+Ninja: 1.11.1.git.kitware.jobserver-1
+CRT: static /MT
+SLOW_SYSTEM: not defined
+Assertions: enabled in Release
+Compiler reproducibility: /Brepro /experimental:deterministic with path mapping
+Linker: /Brepro /INCREMENTAL:NO /OPT:REF /OPT:ICF
+
+Verification
+------------
+Native tests: 2/2 passed
+Coverage: all three approved presets; deterministic field; scoring; selected
+score; no full-clear bonus; completion; dead-end; gravity and column collapse;
+undo/redo/restart; 150-cell snapshot; one-shot events; keyboard select/cancel
+and cursor wrap; process-wide unique nonzero attempt IDs across concurrent
+contexts and destroy/create; dynamic DLL ABI smoke test.
+PE machine: AMD64
+Export allowlist: 19/19 exact symbols
+Runtime dependencies: KERNEL32.dll only
+External Visual C++ runtime dependency: none
+Repeated clean build SHA-256 #1: 759ACD3E8790C989C2E8FAE76F4E32E69EB40E816E383A8DB36D15F80E7EC336
+Repeated clean build SHA-256 #2: 759ACD3E8790C989C2E8FAE76F4E32E69EB40E816E383A8DB36D15F80E7EC336
+Byte-for-byte reproducible: yes
+
+Scope
+-----
+The DLL statically embeds the pinned common midend and Same Game backend.
+No IX-Ray engine executable or engine DLL was modified or rebuilt.
+
+
+COP-BUILD-008
+=============
+
+Artifact
+--------
+Path: bin/pf_puzzles_unequal_native.dll
+Size: 278016 bytes
+SHA-256: 827FE877D75606EF5A87ADC0987D73531534727A603D2C1DEE4A6743456DCE09
+C ABI: pf_unequal ABI v1
+Adapter build ID: pf-puzzles-unequal-native-v1-3c36322-msvc-x64-mt
+Architecture: Windows AMD64 (x64)
+
+Upstream
+--------
+Project: Simon Tatham's Portable Puzzle Collection
+Included backend: classic Unequal only
+Official release: 20260720.3c36322
+Official Git commit: 3c3632259d298ab62aafa8a5858823569ab1af46
+Official Git origin: https://git.tartarus.org/simon/puzzles.git
+Release archive: puzzles-20260720.3c36322.tar.gz
+Release archive SHA-256: CF43AE303F085C4A7B4C0711E3129755A9C689EBFBF3EA55BF273D9602223806
+License: MIT; see LICENSE-SGT-PUZZLES.txt
+
+Pinned build
+------------
+Configuration: Release x64, MSVC 19.44.35228, tools 14.44.35207
+Windows SDK: 10.0.26100.0; CMake 3.31.6; Ninja 1.11.1
+CRT: static /MT; SLOW_SYSTEM: not defined; assertions enabled
+Reproducibility: compiler and linker /Brepro; /INCREMENTAL:NO /OPT:REF /OPT:ICF
+
+Approved adapter scope
+----------------------
+Accepted presets: 4de, 5dk, 6dx
+Adjacent mode: explicitly rejected
+Hint (H), mistake marking (M), and Solve: not exported
+Success event: one-shot WON only
+Post-WON: input, undo, redo, and restart locked for the won attempt
+
+Verification
+------------
+Native tests: 2/2 passed
+LuaJIT FFI smoke: passed against the product wrapper, including all presets,
+typed snapshot/input, a solved 4de board, one-shot WON acknowledgement,
+post-WON lock, new-attempt reset, and idempotent destroy.
+PE machine: AMD64
+Export allowlist: 17/17 exact pf_unequal_* symbols
+Runtime dependencies: KERNEL32.dll only; no external Visual C++ runtime
+Repeated clean builds were byte-for-byte identical to the SHA-256 above.
+
+Scope
+-----
+The DLL statically embeds the pinned common midend, classic Unequal backend,
+Latin-square solver, matching, and tree234 support. No IX-Ray executable or
+engine DLL was modified or rebuilt. The existing Same Game DLL was unchanged.
+
+
+COP-BUILD-009
+=============
+
+Artifact
+--------
+Path: bin/pf_puzzles_net_solo_native.dll
+Size: 356352 bytes
+SHA-256: 5F9BEBB5B27B3DB8722FDA47558DB5221DF1EB4B2E87E858A65501AE4908DA92
+C ABI: pf_net ABI v1 and pf_solo ABI v1 (32 exact exports)
+Adapter build ID: pf-puzzles-net-solo-native-v1-2games-3c36322-msvc-x64-mt
+Architecture: Windows AMD64 (x64)
+
+Upstream
+--------
+Project: Simon Tatham's Portable Puzzle Collection
+Included backends: Net and Solo
+Official release: 20260720.3c36322
+Official Git commit: 3c3632259d298ab62aafa8a5858823569ab1af46
+Release archive SHA-256: CF43AE303F085C4A7B4C0711E3129755A9C689EBFBF3EA55BF273D9602223806
+License: MIT; see LICENSE-SGT-PUZZLES.txt
+
+Pinned build
+------------
+Configuration: Release x64, MSVC 19.44.35228, tools 14.44.35207
+Windows SDK: 10.0.26100.0; CMake 3.31.6; Ninja generator
+CRT: static /MT; SLOW_SYSTEM: not defined; assertions enabled
+Reproducibility: compiler and linker /Brepro; /INCREMENTAL:NO /OPT:REF /OPT:ICF
+
+Approved adapter scope
+----------------------
+Net: 7x7, 9x9, 11x11; non-wrapping only
+Solo: 3x3 Basic, 3x3 Advanced, 3x3 Unreasonable
+Solve, Hint, mistake marking and Redo: not exported
+Success event: one-shot WON only; no loss event
+Post-WON: input, undo and restart locked for the won attempt
+
+Verification
+------------
+Native tests: 3/3 passed (Net, Solo and combined dynamic ABI smoke)
+PE machine: AMD64
+Export allowlist: 32/32 exact symbols
+Runtime dependencies: KERNEL32.dll only; no external Visual C++ runtime
+Two clean builds were byte-for-byte identical to the SHA-256 above.
+
+Scope
+-----
+One DLL shares the pinned common support while keeping independent Net and Solo
+contexts and ABI prefixes. No IX-Ray executable or engine DLL was modified or
+rebuilt. Existing Same Game and Unequal DLLs were unchanged.
+
+
+COP-BUILD-010
+=============
+
+Artifact
+--------
+Path: bin/pf_puzzles_net_solo_native.dll
+Size: 358912 bytes
+SHA-256: B590B08848319B0E4EE510B55D31BBCC19B6EC6EF6EAE06B464B7CB9B47FBB69
+C ABI: pf_net ABI v1 and pf_solo ABI v1 (32 exact exports)
+Adapter build ID: pf-puzzles-net-solo-native-v1-clues-3c36322-msvc-x64-mt
+Adapter source commit: 9b810df2996b1cdf3188cd29a7c06570cbf7ccbb
+Architecture: Windows AMD64 (x64)
+
+Upstream
+--------
+Project: Simon Tatham's Portable Puzzle Collection
+Included backends: Net and Solo (shown to players as Sudoku)
+Official release: 20260720.3c36322
+Official Git commit: 3c3632259d298ab62aafa8a5858823569ab1af46
+Release archive SHA-256: CF43AE303F085C4A7B4C0711E3129755A9C689EBFBF3EA55BF273D9602223806
+License: MIT; see LICENSE-SGT-PUZZLES.txt
+
+Pinned build
+------------
+Configuration: Release x64, MSVC 19.44.35228, tools 14.44.35207
+Windows SDK: 10.0.26100.0; CMake 3.31.6; Ninja generator
+CRT: static /MT; SLOW_SYSTEM: not defined; assertions enabled
+Reproducibility: compiler and linker /Brepro; /INCREMENTAL:NO /OPT:REF /OPT:ICF
+
+Approved adapter scope
+----------------------
+Net: 7x7, 9x9, 11x11; non-wrapping only; unchanged from COP-BUILD-009
+Sudoku Easy: upstream 3x3 Basic, augmented to exactly 45 immutable clues
+Sudoku Normal: upstream 3x3 Advanced, augmented to exactly 36 immutable clues
+Sudoku Hard: unmodified upstream 3x3 Unreasonable with at most 28 clues;
+bounded deterministic generation retry limit: 64 attempts
+Solve, Hint, mistake marking and Redo: not exported
+Success event: one-shot WON only; no loss event
+Post-WON: input, undo and restart locked for the won attempt
+
+Verification
+------------
+Native tests: 3/3 passed in both clean builds (Net, Sudoku and combined ABI)
+Sudoku seed regressions cover exact clue counts, Hard bounds, deterministic
+generation, Restart persistence, completion events and post-WON lock. Upstream
+generation remains the source of unique solvable puzzles; added clues always
+come from the solver-confirmed solution and cannot introduce ambiguity.
+PE machine: AMD64
+Export allowlist: 32/32 exact symbols
+Runtime dependencies: KERNEL32.dll only; no external Visual C++ runtime
+Two clean builds were byte-for-byte identical to the SHA-256 above.
+
+Scope
+-----
+This follow-up rebuild changes only the addon's Net+Solo native module and its
+strict metadata. No IX-Ray executable or engine DLL was modified or rebuilt.
+Existing Same Game and Unequal DLLs remain unchanged.
+
+
+COP-BUILD-011
+=============
+
+Purpose
+-------
+Adds validated exact session serialisation for F5/F9 persistence. The native
+blobs contain the pinned upstream midend state, undo history, project UI state,
+attempt/revision identity, terminal lock and unconsumed one-shot events. Restore
+is transactional: a malformed or incompatible blob cannot replace the active
+context.
+
+Common upstream and build
+-------------------------
+Project: Simon Tatham's Portable Puzzle Collection
+Official release: 20260720.3c36322
+Official Git commit: 3c3632259d298ab62aafa8a5858823569ab1af46
+Release archive SHA-256: CF43AE303F085C4A7B4C0711E3129755A9C689EBFBF3EA55BF273D9602223806
+Configuration: Release x64, MSVC 19.44.35228, tools 14.44.35207
+Windows SDK: 10.0.26100.0; CMake 3.31.6; Ninja generator
+CRT: static /MT; SLOW_SYSTEM: not defined; assertions enabled
+Reproducibility: compiler and linker /Brepro; /INCREMENTAL:NO /OPT:REF /OPT:ICF
+Runtime dependencies: KERNEL32.dll only
+
+Same Game artifact
+------------------
+Path: bin/pf_puzzles_native.dll
+Size: 262144 bytes
+SHA-256: 395244C7B5DC92A8733B0DA527714C57F912FC43A47CE169F5EFE4229EAE5297
+C ABI: pf_samegame ABI v2 (21 exact exports)
+Adapter build ID: COP-BUILD-011-pf-puzzles-samegame-v2-session-3c36322-x64-mt
+Native tests: 2/2 passed; two clean builds were byte-for-byte identical
+
+Unequal artifact
+----------------
+Path: bin/pf_puzzles_unequal_native.dll
+Size: 287232 bytes
+SHA-256: B412CDE5DF7F23F8D3B5E9EB9D4047520F56DDB469EBF728E3514BACC105049D
+C ABI: pf_unequal ABI v2 (19 exact exports)
+Adapter build ID: COP-BUILD-011-pf-puzzles-unequal-v2-session-3c36322-x64-mt
+Native tests: 2/2 passed; two clean builds were byte-for-byte identical
+
+Net and Sudoku artifact
+-----------------------
+Path: bin/pf_puzzles_net_solo_native.dll
+Size: 368640 bytes
+SHA-256: 14AFB2B14D0C7B0F050C91F7C24F0283438437EF37480A8981259C5FD980226C
+C ABI: pf_net ABI v2 and pf_solo ABI v2 (36 exact exports)
+Adapter build ID: COP-BUILD-011-pf-puzzles-net-solo-v2-session-3c36322-x64-mt
+Adapter source commit: a31e8302dbd2dc6f1d72917990568ebc36713911
+Native tests: Net, Sudoku and combined dynamic ABI smoke passed; two clean
+builds were byte-for-byte identical
+
+Scope
+-----
+No IX-Ray executable or engine DLL was modified or rebuilt. The three physical
+addon DLLs remain separate for this review build; consolidation is intentionally
+deferred until the gameplay and reward changes have been reported and accepted.

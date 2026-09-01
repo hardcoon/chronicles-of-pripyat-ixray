@@ -1,0 +1,1079 @@
+local ABI_VERSION = 2
+local ADDON_DIR = "zzzzzzzzzzzzzzzzzzzzzz_pf-puzzles"
+local DLL_BASENAME = "pf_puzzles_unequal_native.dll"
+local BUILD_ID = "COP-BUILD-011-pf-puzzles-unequal-v2-session-3c36322-x64-mt"
+local ADAPTER_VERSION = "2.0.0"
+local MAX_SESSION_BLOB_BYTES = 4 * 1024 * 1024
+local MAX_CELLS = 49
+local MAX_EDGES = 84
+
+local BUILD_INFO_SIZE = 192
+local GAME_INFO_SIZE = 128
+local PRESET_INFO_SIZE = 128
+local INPUT_SIZE = 32
+local CELL_SIZE = 8
+local EDGE_SIZE = 4
+local SNAPSHOT_SIZE = 808
+local EVENT_SIZE = 32
+
+local UPSTREAM_VERSION = "20260720.3c36322"
+local UPSTREAM_COMMIT = "3c3632259d298ab62aafa8a5858823569ab1af46"
+
+local DIFFICULTY_PRESETS = { easy = 0, normal = 1, hard = 2 }
+local PRESET_DIFFICULTIES = { [0] = "easy", [1] = "normal", [2] = "hard" }
+local PRESET_DEFINITIONS = {
+    [0] = { id = "4de", order = 4, difficulty = 0, max_edges = 24 },
+    [1] = { id = "5dk", order = 5, difficulty = 1, max_edges = 40 },
+    [2] = { id = "6dx", order = 6, difficulty = 2, max_edges = 60 }
+}
+
+local INPUT_TYPES = {
+    select_ink = 1,
+    select_pencil = 2,
+    digit = 3,
+    clear = 4,
+    up = 5,
+    down = 6,
+    left = 7,
+    right = 8,
+    enter = 9,
+    toggle_edge = 10,
+    clear_selection = 11
+}
+local MODIFIER_SHIFT = 1
+local MODIFIER_CONTROL = 2
+local STATUS_WON = 1
+local STATUS_LOCKED = 2
+local CELL_IMMUTABLE = 1
+local CELL_ERROR = 2
+local EDGE_SPENT = 1
+local EDGE_ERROR = 2
+local EVENT_WON = 1
+
+local REQUIRED_EXPORTS = {
+    "pf_unequal_abi_version",
+    "pf_unequal_get_build_info",
+    "pf_unequal_game_count",
+    "pf_unequal_get_game_info",
+    "pf_unequal_preset_count",
+    "pf_unequal_get_preset_info",
+    "pf_unequal_create",
+    "pf_unequal_destroy",
+    "pf_unequal_new_game",
+    "pf_unequal_restart",
+    "pf_unequal_undo",
+    "pf_unequal_redo",
+    "pf_unequal_apply_input",
+    "pf_unequal_get_snapshot",
+    "pf_unequal_poll_event",
+    "pf_unequal_serialize",
+    "pf_unequal_restore",
+    "pf_unequal_last_error_code",
+    "pf_unequal_last_error_message"
+}
+
+local ffi_ok, ffi = pcall(require, "ffi")
+local runtime = {
+    library = nil,
+    api = nil,
+    context = nil,
+    difficulty = nil,
+    preset = nil,
+    raw_snapshot = nil,
+    pending_won = nil,
+    current_attempt = nil,
+    load_attempted = false,
+    error_id = nil,
+    error_detail = nil,
+    game_info = nil,
+    presets = nil
+}
+
+local CDEF = [[
+    typedef struct pf_unequal_context pf_unequal_context;
+
+    typedef struct pf_unequal_build_info_v1 {
+        unsigned int struct_size;
+        unsigned int abi_version;
+        unsigned int architecture_bits;
+        unsigned int static_runtime;
+        char adapter_version[16];
+        char build_id[64];
+        char upstream_version[32];
+        char upstream_commit[41];
+        char reserved[23];
+    } pf_unequal_build_info_v1;
+
+    typedef struct pf_unequal_game_info_v1 {
+        unsigned int struct_size;
+        unsigned int game_index;
+        unsigned int preset_count;
+        unsigned int max_cells;
+        unsigned int max_edges;
+        unsigned int supports_score;
+        unsigned int supports_keyboard;
+        unsigned int reserved0;
+        char id[32];
+        char title[64];
+    } pf_unequal_game_info_v1;
+
+    typedef struct pf_unequal_preset_info_v1 {
+        unsigned int struct_size;
+        unsigned int preset_index;
+        unsigned int order;
+        unsigned int difficulty;
+        unsigned int max_cells;
+        unsigned int max_edges;
+        unsigned int reserved0;
+        unsigned int reserved1;
+        char id[16];
+        char params[16];
+        char title[64];
+    } pf_unequal_preset_info_v1;
+
+    typedef struct pf_unequal_input_v1 {
+        unsigned int struct_size;
+        unsigned int type;
+        int x;
+        int y;
+        int value;
+        unsigned int modifiers;
+        unsigned int reserved0;
+        unsigned int reserved1;
+    } pf_unequal_input_v1;
+
+    typedef struct pf_unequal_cell_v1 {
+        unsigned char value;
+        unsigned char flags;
+        unsigned short reserved;
+        unsigned int pencil_mask;
+    } pf_unequal_cell_v1;
+
+    typedef struct pf_unequal_edge_v1 {
+        unsigned char x;
+        unsigned char y;
+        unsigned char relation;
+        unsigned char flags;
+    } pf_unequal_edge_v1;
+
+    typedef struct pf_unequal_snapshot_v1 {
+        unsigned int struct_size;
+        unsigned int abi_version;
+        unsigned int attempt_id;
+        unsigned int revision;
+        unsigned int preset_index;
+        unsigned int order;
+        unsigned int cell_count;
+        unsigned int edge_count;
+        unsigned int status_flags;
+        unsigned int can_undo;
+        unsigned int can_redo;
+        unsigned int cursor_visible;
+        int cursor_x;
+        int cursor_y;
+        unsigned int cursor_pencil;
+        unsigned int reserved[5];
+        pf_unequal_cell_v1 cells[49];
+        pf_unequal_edge_v1 edges[84];
+    } pf_unequal_snapshot_v1;
+
+    typedef struct pf_unequal_event_v1 {
+        unsigned int struct_size;
+        unsigned int type;
+        unsigned int attempt_id;
+        unsigned int revision;
+        unsigned int preset_index;
+        unsigned int status_flags;
+        unsigned int reserved0;
+        unsigned int reserved1;
+    } pf_unequal_event_v1;
+
+    unsigned int pf_unequal_abi_version(void);
+    int pf_unequal_get_build_info(pf_unequal_build_info_v1 *out_info);
+    unsigned int pf_unequal_game_count(void);
+    int pf_unequal_get_game_info(unsigned int game_index,
+        pf_unequal_game_info_v1 *out_info);
+    unsigned int pf_unequal_preset_count(void);
+    int pf_unequal_get_preset_info(unsigned int preset_index,
+        pf_unequal_preset_info_v1 *out_info);
+    int pf_unequal_create(unsigned int preset_index,
+        pf_unequal_context **out_context);
+    void pf_unequal_destroy(pf_unequal_context *context);
+    int pf_unequal_new_game(pf_unequal_context *context,
+        unsigned int preset_index, const char *seed_ascii);
+    int pf_unequal_restart(pf_unequal_context *context);
+    int pf_unequal_undo(pf_unequal_context *context);
+    int pf_unequal_redo(pf_unequal_context *context);
+    int pf_unequal_apply_input(pf_unequal_context *context,
+        const pf_unequal_input_v1 *input);
+    int pf_unequal_get_snapshot(pf_unequal_context *context,
+        pf_unequal_snapshot_v1 *out_snapshot);
+    int pf_unequal_poll_event(pf_unequal_context *context,
+        pf_unequal_event_v1 *out_event);
+    int pf_unequal_serialize(pf_unequal_context *context,
+        unsigned char *buffer, unsigned int capacity,
+        unsigned int *out_size);
+    int pf_unequal_restore(const unsigned char *buffer, unsigned int size,
+        pf_unequal_context **out_context);
+    int pf_unequal_last_error_code(const pf_unequal_context *context);
+    unsigned int pf_unequal_last_error_message(
+        const pf_unequal_context *context, char *buffer,
+        unsigned int capacity);
+]]
+
+local function has_flag(value, flag)
+    value = tonumber(value) or 0
+    return math.floor(value / flag) % 2 == 1
+end
+
+local function c_string(value, capacity)
+    local raw = ffi.string(value, capacity)
+    local terminator = raw:find("\0", 1, true)
+    if not terminator then return nil end
+    return raw:sub(1, terminator - 1)
+end
+
+local function remember_error(error_id, detail)
+    runtime.error_id = error_id
+    runtime.error_detail = detail and tostring(detail) or nil
+    return false, error_id, runtime.error_detail
+end
+
+local function clear_error()
+    runtime.error_id = nil
+    runtime.error_detail = nil
+end
+
+local function native_detail(context)
+    if not runtime.api or not context then return runtime.error_detail end
+    local buffer = ffi.new("char[512]")
+    local called, required = pcall(runtime.api.pf_unequal_last_error_message,
+        context, buffer, 512)
+    if not called or tonumber(required) == 0 then return runtime.error_detail end
+    return ffi.string(buffer)
+end
+
+local function error_for_result(result, context)
+    result = tonumber(result) or -6
+    if result == -2 then
+        return "pf_puzzles_error_abi_mismatch", native_detail(context)
+    end
+    if result == -4 or result == -5 then
+        return "pf_puzzles_error_invalid_state", native_detail(context)
+    end
+    return "pf_puzzles_error_native_call", native_detail(context)
+end
+
+local function addon_library_path()
+    if not getFS or not getFS() then return nil, "filesystem_unavailable" end
+    local relative = ADDON_DIR .. "\\bin\\" .. DLL_BASENAME
+    local ok, path = pcall(function()
+        return getFS():update_path("$arch_dir_addons$", relative)
+    end)
+    if not ok or not path or path == "" then return nil, path end
+    return path
+end
+
+local function verify_sizes()
+    local sizes = {
+        { "pf_unequal_build_info_v1", BUILD_INFO_SIZE },
+        { "pf_unequal_game_info_v1", GAME_INFO_SIZE },
+        { "pf_unequal_preset_info_v1", PRESET_INFO_SIZE },
+        { "pf_unequal_input_v1", INPUT_SIZE },
+        { "pf_unequal_cell_v1", CELL_SIZE },
+        { "pf_unequal_edge_v1", EDGE_SIZE },
+        { "pf_unequal_snapshot_v1", SNAPSHOT_SIZE },
+        { "pf_unequal_event_v1", EVENT_SIZE }
+    }
+    for _, entry in ipairs(sizes) do
+        if ffi.sizeof(entry[1]) ~= entry[2] then
+            return false, entry[1] .. " size"
+        end
+    end
+    return true
+end
+
+local function verify_catalog(api)
+    local called, game_count = pcall(api.pf_unequal_game_count)
+    if not called or tonumber(game_count) ~= 1 then
+        return false, "game catalog"
+    end
+    local preset_called, preset_count = pcall(api.pf_unequal_preset_count)
+    if not preset_called or tonumber(preset_count) ~= 3 then
+        return false, "preset catalog"
+    end
+
+    local game = ffi.new("pf_unequal_game_info_v1[1]")
+    game[0].struct_size = GAME_INFO_SIZE
+    local game_called, game_result = pcall(api.pf_unequal_get_game_info, 0, game)
+    local game_id = c_string(game[0].id, 32)
+    local game_title = c_string(game[0].title, 64)
+    if not game_called or tonumber(game_result) < 0 or
+        tonumber(game[0].struct_size) ~= GAME_INFO_SIZE or
+        tonumber(game[0].game_index) ~= 0 or
+        tonumber(game[0].preset_count) ~= 3 or
+        tonumber(game[0].max_cells) ~= MAX_CELLS or
+        tonumber(game[0].max_edges) ~= MAX_EDGES or
+        tonumber(game[0].supports_score) ~= 0 or
+        tonumber(game[0].supports_keyboard) ~= 1 or
+        tonumber(game[0].reserved0) ~= 0 or
+        game_id ~= "unequal" or not game_title or game_title == "" then
+        return false, "game info"
+    end
+
+    local presets = {}
+    for preset_index = 0, 2 do
+        local expected = PRESET_DEFINITIONS[preset_index]
+        local preset = ffi.new("pf_unequal_preset_info_v1[1]")
+        preset[0].struct_size = PRESET_INFO_SIZE
+        local info_called, info_result = pcall(
+            api.pf_unequal_get_preset_info, preset_index, preset)
+        local max_edges = tonumber(preset[0].max_edges) or 0
+        local preset_id = c_string(preset[0].id, 16)
+        local preset_params = c_string(preset[0].params, 16)
+        local preset_title = c_string(preset[0].title, 64)
+        if not info_called or tonumber(info_result) < 0 or
+            tonumber(preset[0].struct_size) ~= PRESET_INFO_SIZE or
+            tonumber(preset[0].preset_index) ~= preset_index or
+            tonumber(preset[0].order) ~= expected.order or
+            tonumber(preset[0].difficulty) ~= expected.difficulty or
+            tonumber(preset[0].max_cells) ~= expected.order * expected.order or
+            max_edges ~= expected.max_edges or
+            tonumber(preset[0].reserved0) ~= 0 or
+            tonumber(preset[0].reserved1) ~= 0 or
+            preset_id ~= expected.id or preset_params ~= expected.id or
+            not preset_title or preset_title == "" then
+            return false, "preset info " .. tostring(preset_index)
+        end
+        presets[preset_index] = {
+            index = preset_index,
+            id = expected.id,
+            params = expected.id,
+            order = expected.order,
+            difficulty = PRESET_DIFFICULTIES[preset_index],
+            title = preset_title,
+            max_cells = tonumber(preset[0].max_cells),
+            max_edges = max_edges
+        }
+    end
+
+    runtime.game_info = {
+        index = 0,
+        id = "unequal",
+        title = game_title,
+        preset_count = 3,
+        max_cells = MAX_CELLS,
+        max_edges = MAX_EDGES,
+        supports_score = false,
+        supports_keyboard = true
+    }
+    runtime.presets = presets
+    return true
+end
+
+local function define_c_api()
+    if rawget(_G, "__pf_unequal_ffi_cdef_v2") == true then
+        return verify_sizes()
+    end
+    local cdef_ok, cdef_error = pcall(ffi.cdef, CDEF)
+    if not cdef_ok then return false, cdef_error end
+    rawset(_G, "__pf_unequal_ffi_cdef_v2", true)
+    return verify_sizes()
+end
+
+local function load_library()
+    if runtime.library then return true end
+    if runtime.load_attempted then
+        return false, runtime.error_id, runtime.error_detail
+    end
+    runtime.load_attempted = true
+    if not ffi_ok then
+        return remember_error("pf_puzzles_error_ffi_unavailable")
+    end
+
+    local defined, define_error = define_c_api()
+    if not defined then
+        return remember_error("pf_puzzles_error_abi_mismatch", define_error)
+    end
+
+    local path, path_error = addon_library_path()
+    if not path then
+        return remember_error("pf_puzzles_error_dll_load", path_error)
+    end
+    local loaded, library = pcall(ffi.load, path)
+    if not loaded then
+        return remember_error("pf_puzzles_error_dll_load", library)
+    end
+
+    local api = {}
+    for _, export_name in ipairs(REQUIRED_EXPORTS) do
+        local resolved, symbol = pcall(function() return library[export_name] end)
+        if not resolved or symbol == nil then
+            return remember_error("pf_puzzles_error_abi_mismatch",
+                export_name .. ": " .. tostring(symbol))
+        end
+        api[export_name] = symbol
+    end
+
+    local abi_called, abi = pcall(api.pf_unequal_abi_version)
+    if not abi_called or tonumber(abi) ~= ABI_VERSION then
+        return remember_error("pf_puzzles_error_abi_mismatch", "ABI version")
+    end
+
+    local build = ffi.new("pf_unequal_build_info_v1[1]")
+    build[0].struct_size = BUILD_INFO_SIZE
+    local build_called, build_result = pcall(api.pf_unequal_get_build_info, build)
+    local adapter_version = c_string(build[0].adapter_version, 16)
+    local build_id = c_string(build[0].build_id, 64)
+    local upstream_version = c_string(build[0].upstream_version, 32)
+    local upstream_commit = c_string(build[0].upstream_commit, 41)
+    if not build_called or tonumber(build_result) < 0 or
+        tonumber(build[0].struct_size) ~= BUILD_INFO_SIZE or
+        tonumber(build[0].abi_version) ~= ABI_VERSION or
+        tonumber(build[0].architecture_bits) ~= 64 or
+        tonumber(build[0].static_runtime) ~= 1 or
+        adapter_version ~= ADAPTER_VERSION or build_id ~= BUILD_ID or
+        upstream_version ~= UPSTREAM_VERSION or
+        upstream_commit ~= UPSTREAM_COMMIT then
+        return remember_error("pf_puzzles_error_abi_mismatch", "build info")
+    end
+
+    local catalog_ok, catalog_error = verify_catalog(api)
+    if not catalog_ok then
+        return remember_error("pf_puzzles_error_abi_mismatch", catalog_error)
+    end
+
+    runtime.library = library
+    runtime.api = api
+    clear_error()
+    return true
+end
+
+local function require_context()
+    local ok, error_id, detail = load_library()
+    if not ok then return false, error_id, detail end
+    if runtime.context == nil then
+        return false, "pf_puzzles_error_context"
+    end
+    return true
+end
+
+local function destroy_context(context)
+    if context == nil or not runtime.api then return true end
+    ffi.gc(context, nil)
+    local destroyed, destroy_error = pcall(runtime.api.pf_unequal_destroy, context)
+    if not destroyed then
+        ffi.gc(context, runtime.api.pf_unequal_destroy)
+        return false, "pf_puzzles_error_native_call", destroy_error
+    end
+    return true
+end
+
+local function fetch_raw_snapshot()
+    local ok, error_id, detail = require_context()
+    if not ok then return nil, error_id, detail end
+    local raw = ffi.new("pf_unequal_snapshot_v1[1]")
+    raw[0].struct_size = SNAPSHOT_SIZE
+    local called, result = pcall(runtime.api.pf_unequal_get_snapshot,
+        runtime.context, raw)
+    if not called then
+        return nil, "pf_puzzles_error_native_call", result
+    end
+    if tonumber(result) < 0 then
+        local native_id, native_message = error_for_result(result, runtime.context)
+        return nil, native_id, native_message
+    end
+    if tonumber(raw[0].struct_size) ~= SNAPSHOT_SIZE or
+        tonumber(raw[0].abi_version) ~= ABI_VERSION then
+        return nil, "pf_puzzles_error_abi_mismatch", "snapshot header"
+    end
+    runtime.raw_snapshot = raw
+    return raw
+end
+
+local function drain_events()
+    if not runtime.context or not runtime.api then return true end
+    for _ = 1, 8 do
+        local event = ffi.new("pf_unequal_event_v1[1]")
+        event[0].struct_size = EVENT_SIZE
+        local called, result = pcall(runtime.api.pf_unequal_poll_event,
+            runtime.context, event)
+        if not called then
+            return false, "pf_puzzles_error_native_call", result
+        end
+        result = tonumber(result)
+        if result < 0 then
+            local error_id, detail = error_for_result(result, runtime.context)
+            return false, error_id, detail
+        end
+        if result == 0 then return true end
+
+        local event_type = tonumber(event[0].type)
+        local attempt_id = tonumber(event[0].attempt_id)
+        local revision = tonumber(event[0].revision)
+        local preset_index = tonumber(event[0].preset_index)
+        local status_flags = tonumber(event[0].status_flags)
+        if tonumber(event[0].struct_size) ~= EVENT_SIZE or
+            event_type ~= EVENT_WON or attempt_id <= 0 or revision <= 0 or
+            not PRESET_DEFINITIONS[preset_index] or
+            status_flags ~= STATUS_WON + STATUS_LOCKED or
+            tonumber(event[0].reserved0) ~= 0 or
+            tonumber(event[0].reserved1) ~= 0 then
+            return false, "pf_puzzles_error_abi_mismatch", "event"
+        end
+        runtime.pending_won = {
+            type = EVENT_WON,
+            attempt_id = attempt_id,
+            revision = revision,
+            preset_index = preset_index,
+            difficulty = PRESET_DIFFICULTIES[preset_index],
+            status_flags = status_flags,
+            consumed = false
+        }
+    end
+    return true
+end
+
+local function run_action(native_function, ...)
+    local ok, error_id, detail = require_context()
+    if not ok then return false, error_id, detail end
+    if native_function == nil then
+        return false, "pf_puzzles_error_native_call", "missing export"
+    end
+    local called, result = pcall(native_function, runtime.context, ...)
+    if not called then
+        return false, "pf_puzzles_error_native_call", result
+    end
+    if tonumber(result) < 0 then
+        local native_id, native_message = error_for_result(result, runtime.context)
+        return false, native_id, native_message
+    end
+    runtime.raw_snapshot = nil
+    clear_error()
+    return true, tonumber(result) == 1
+end
+
+local function current_order()
+    local preset = PRESET_DEFINITIONS[runtime.preset]
+    return preset and preset.order or nil
+end
+
+local function normalize_modifiers(modifiers)
+    if modifiers == nil then return 0 end
+    if type(modifiers) == "table" then
+        local result = 0
+        if modifiers.shift == true then result = result + MODIFIER_SHIFT end
+        if modifiers.control == true or modifiers.ctrl == true then
+            result = result + MODIFIER_CONTROL
+        end
+        return result
+    end
+    modifiers = tonumber(modifiers)
+    if modifiers == 0 or modifiers == MODIFIER_SHIFT or
+        modifiers == MODIFIER_CONTROL or
+        modifiers == MODIFIER_SHIFT + MODIFIER_CONTROL then
+        return modifiers
+    end
+    return nil
+end
+
+local function apply_input(input_type, x, y, value, modifiers)
+    local normalized_modifiers = normalize_modifiers(modifiers)
+    if not normalized_modifiers then
+        return false, "pf_puzzles_error_invalid_state", "modifiers"
+    end
+    local input = ffi.new("pf_unequal_input_v1[1]")
+    input[0].struct_size = INPUT_SIZE
+    input[0].type = input_type
+    input[0].x = tonumber(x) or 0
+    input[0].y = tonumber(y) or 0
+    input[0].value = tonumber(value) or 0
+    input[0].modifiers = normalized_modifiers
+    return run_action(runtime.api and runtime.api.pf_unequal_apply_input, input)
+end
+
+function available()
+    local ok, error_id, detail = load_library()
+    return ok == true, error_id, detail
+end
+
+function has_context()
+    return runtime.context ~= nil
+end
+
+function difficulty()
+    return runtime.difficulty
+end
+
+function game_info()
+    local ok, error_id, detail = load_library()
+    if not ok then return nil, error_id, detail end
+    local source = runtime.game_info
+    return {
+        index = source.index,
+        id = source.id,
+        title = source.title,
+        preset_count = source.preset_count,
+        max_cells = source.max_cells,
+        max_edges = source.max_edges,
+        supports_score = source.supports_score,
+        supports_keyboard = source.supports_keyboard
+    }
+end
+
+function presets()
+    local ok, error_id, detail = load_library()
+    if not ok then return nil, error_id, detail end
+    local result = {}
+    for preset_index = 0, 2 do
+        local source = runtime.presets[preset_index]
+        result[preset_index + 1] = {
+            index = source.index,
+            id = source.id,
+            params = source.params,
+            order = source.order,
+            difficulty = source.difficulty,
+            title = source.title,
+            max_cells = source.max_cells,
+            max_edges = source.max_edges
+        }
+    end
+    return result
+end
+
+function destroy()
+    local context = runtime.context
+    if context ~= nil then
+        local ok, error_id, detail = destroy_context(context)
+        if not ok then return false, error_id, detail end
+    end
+    runtime.context = nil
+    runtime.difficulty = nil
+    runtime.preset = nil
+    runtime.raw_snapshot = nil
+    runtime.pending_won = nil
+    runtime.current_attempt = nil
+    clear_error()
+    return true
+end
+
+function serialize()
+    local ok, error_id, detail = require_context()
+    if not ok then return nil, error_id, detail end
+    local out_size = ffi.new("unsigned int[1]")
+    local queried, query_result = pcall(runtime.api.pf_unequal_serialize,
+        runtime.context, nil, 0, out_size)
+    if not queried then
+        return nil, "pf_puzzles_error_native_call", query_result
+    end
+    query_result = tonumber(query_result)
+    if query_result ~= 0 then
+        local native_id, native_message = error_for_result(
+            query_result, runtime.context)
+        return nil, native_id, native_message
+    end
+    local required = tonumber(out_size[0]) or 0
+    if required <= 0 or required > MAX_SESSION_BLOB_BYTES then
+        return nil, "pf_puzzles_error_abi_mismatch", "session blob size"
+    end
+
+    local buffer = ffi.new("unsigned char[?]", required)
+    out_size[0] = 0
+    local written, write_result = pcall(runtime.api.pf_unequal_serialize,
+        runtime.context, buffer, required, out_size)
+    if not written then
+        return nil, "pf_puzzles_error_native_call", write_result
+    end
+    write_result = tonumber(write_result)
+    if write_result ~= 0 then
+        local native_id, native_message = error_for_result(
+            write_result, runtime.context)
+        return nil, native_id, native_message
+    end
+    if tonumber(out_size[0]) ~= required then
+        return nil, "pf_puzzles_error_abi_mismatch", "session blob write"
+    end
+    return ffi.string(buffer, required)
+end
+
+function restore(blob)
+    local ok, error_id, detail = load_library()
+    if not ok then return false, error_id, detail end
+    if type(blob) ~= "string" or #blob <= 0 or
+        #blob > MAX_SESSION_BLOB_BYTES then
+        return false, "pf_puzzles_error_invalid_state", "session blob"
+    end
+
+    local buffer = ffi.new("unsigned char[?]", #blob)
+    ffi.copy(buffer, blob, #blob)
+    local out_context = ffi.new("pf_unequal_context *[1]")
+    local called, result = pcall(runtime.api.pf_unequal_restore,
+        buffer, #blob, out_context)
+    if not called then
+        return false, "pf_puzzles_error_native_call", result
+    end
+    result = tonumber(result)
+    if result ~= 0 or out_context[0] == nil then
+        if out_context[0] ~= nil then destroy_context(out_context[0]) end
+        if result and result < 0 then
+            local native_id, native_message = error_for_result(result, nil)
+            return false, native_id, native_message
+        end
+        return false, "pf_puzzles_error_abi_mismatch",
+            "unexpected restore result " .. tostring(result)
+    end
+
+    local replacement = ffi.gc(out_context[0], runtime.api.pf_unequal_destroy)
+    local raw = ffi.new("pf_unequal_snapshot_v1[1]")
+    raw[0].struct_size = SNAPSHOT_SIZE
+    local checked, snapshot_result = pcall(runtime.api.pf_unequal_get_snapshot,
+        replacement, raw)
+    local snapshot_detail = snapshot_result
+    snapshot_result = checked and tonumber(snapshot_result) or nil
+    local preset = snapshot_result == 0 and
+        tonumber(raw[0].preset_index) or nil
+    local definition = preset and PRESET_DEFINITIONS[preset] or nil
+    if not definition or tonumber(raw[0].struct_size) ~= SNAPSHOT_SIZE or
+        tonumber(raw[0].abi_version) ~= ABI_VERSION or
+        tonumber(raw[0].attempt_id) <= 0 or tonumber(raw[0].revision) <= 0 or
+        tonumber(raw[0].order) ~= definition.order or
+        tonumber(raw[0].cell_count) ~= definition.order * definition.order or
+        tonumber(raw[0].edge_count) > definition.max_edges then
+        destroy_context(replacement)
+        return false, checked and "pf_puzzles_error_invalid_state" or
+            "pf_puzzles_error_native_call",
+            checked and "restored snapshot" or snapshot_detail
+    end
+
+    if runtime.context ~= nil then
+        local destroyed, destroy_error, destroy_detail =
+            destroy_context(runtime.context)
+        if not destroyed then
+            destroy_context(replacement)
+            return false, destroy_error, destroy_detail
+        end
+    end
+    runtime.context = replacement
+    runtime.difficulty = PRESET_DIFFICULTIES[preset]
+    runtime.preset = preset
+    runtime.raw_snapshot = nil
+    runtime.pending_won = nil
+    runtime.current_attempt = tonumber(raw[0].attempt_id)
+    clear_error()
+    local events_ok, event_error, event_detail = drain_events()
+    if not events_ok then return false, event_error, event_detail end
+    return true
+end
+
+function start(difficulty_id)
+    local ok, error_id, detail = load_library()
+    if not ok then return false, error_id, detail end
+    local preset = DIFFICULTY_PRESETS[tostring(difficulty_id or "")]
+    if preset == nil then
+        return false, "pf_puzzles_error_invalid_state", "preset"
+    end
+
+    local out_context = ffi.new("pf_unequal_context *[1]")
+    local called, result = pcall(runtime.api.pf_unequal_create,
+        preset, out_context)
+    if not called then
+        return false, "pf_puzzles_error_native_call", result
+    end
+    if tonumber(result) < 0 or out_context[0] == nil then
+        local native_id, native_message = error_for_result(result, nil)
+        return false, native_id, native_message
+    end
+
+    local replacement = ffi.gc(out_context[0], runtime.api.pf_unequal_destroy)
+    if runtime.context ~= nil then
+        local destroyed, destroy_error, destroy_detail =
+            destroy_context(runtime.context)
+        if not destroyed then
+            destroy_context(replacement)
+            return false, destroy_error, destroy_detail
+        end
+    end
+
+    runtime.context = replacement
+    runtime.difficulty = PRESET_DIFFICULTIES[preset]
+    runtime.preset = preset
+    runtime.raw_snapshot = nil
+    runtime.pending_won = nil
+    runtime.current_attempt = nil
+    clear_error()
+    return true
+end
+
+function revision()
+    local raw, error_id, detail = fetch_raw_snapshot()
+    if not raw then return nil, error_id, detail end
+    return tonumber(raw[0].revision)
+end
+
+function snapshot()
+    local raw = runtime.raw_snapshot
+    local error_id, detail
+    if not raw then raw, error_id, detail = fetch_raw_snapshot() end
+    if not raw then return nil, error_id, detail end
+
+    local source = raw[0]
+    local preset_index = tonumber(source.preset_index)
+    local preset = PRESET_DEFINITIONS[preset_index]
+    local order = tonumber(source.order)
+    local cell_count = tonumber(source.cell_count)
+    local edge_count = tonumber(source.edge_count)
+    local status_flags = tonumber(source.status_flags)
+    local can_undo = tonumber(source.can_undo)
+    local can_redo = tonumber(source.can_redo)
+    local cursor_visible_value = tonumber(source.cursor_visible)
+    local cursor_pencil_value = tonumber(source.cursor_pencil)
+    local reserved_clear = true
+    for index = 0, 4 do
+        if tonumber(source.reserved[index]) ~= 0 then reserved_clear = false end
+    end
+    if not preset or preset_index ~= runtime.preset or
+        order ~= preset.order or cell_count ~= order * order or
+        cell_count < 1 or cell_count > MAX_CELLS or
+        edge_count < 0 or edge_count > preset.max_edges or
+        status_flags < 0 or status_flags > STATUS_WON + STATUS_LOCKED or
+        tonumber(source.attempt_id) <= 0 or tonumber(source.revision) <= 0 or
+        (can_undo ~= 0 and can_undo ~= 1) or
+        (can_redo ~= 0 and can_redo ~= 1) or
+        (cursor_visible_value ~= 0 and cursor_visible_value ~= 1) or
+        (cursor_pencil_value ~= 0 and cursor_pencil_value ~= 1) or
+        not reserved_clear then
+        return nil, "pf_puzzles_error_native_call", "snapshot bounds"
+    end
+
+    local cells = {}
+    local filled, error_count = 0, 0
+    local allowed_pencils = math.pow(2, order) - 1
+    for index = 0, cell_count - 1 do
+        local cell = source.cells[index]
+        local value = tonumber(cell.value)
+        local flags = tonumber(cell.flags)
+        local pencil_mask = tonumber(cell.pencil_mask)
+        if value < 0 or value > order or flags < 0 or flags > 3 or
+            tonumber(cell.reserved) ~= 0 or
+            pencil_mask < 0 or pencil_mask > allowed_pencils then
+            return nil, "pf_puzzles_error_native_call", "cell bounds"
+        end
+        local pencils = {}
+        for candidate = 1, order do
+            if has_flag(pencil_mask, math.pow(2, candidate - 1)) then
+                pencils[#pencils + 1] = candidate
+            end
+        end
+        if value > 0 then filled = filled + 1 end
+        if has_flag(flags, CELL_ERROR) then error_count = error_count + 1 end
+        cells[index + 1] = {
+            x = (index % order) + 1,
+            y = math.floor(index / order) + 1,
+            value = value,
+            immutable = has_flag(flags, CELL_IMMUTABLE),
+            error = has_flag(flags, CELL_ERROR),
+            pencil_mask = pencil_mask,
+            pencils = pencils
+        }
+    end
+
+    local edges = {}
+    for index = 0, edge_count - 1 do
+        local edge = source.edges[index]
+        local x, y = tonumber(edge.x), tonumber(edge.y)
+        local relation, flags = tonumber(edge.relation), tonumber(edge.flags)
+        local horizontal = relation == 1 or relation == 2
+        local vertical = relation == 3 or relation == 4
+        if (not horizontal and not vertical) or x < 0 or y < 0 or
+            (horizontal and (x >= order - 1 or y >= order)) or
+            (vertical and (x >= order or y >= order - 1)) or
+            flags < 0 or flags > 3 then
+            return nil, "pf_puzzles_error_native_call", "edge bounds"
+        end
+        edges[index + 1] = {
+            index = index + 1,
+            x = x + 1,
+            y = y + 1,
+            relation = relation,
+            spent = has_flag(flags, EDGE_SPENT),
+            error = has_flag(flags, EDGE_ERROR)
+        }
+    end
+
+    local cursor_visible = cursor_visible_value == 1
+    local cursor_x, cursor_y = tonumber(source.cursor_x), tonumber(source.cursor_y)
+    if cursor_visible and
+        (cursor_x < 0 or cursor_x >= order or cursor_y < 0 or cursor_y >= order) then
+        return nil, "pf_puzzles_error_native_call", "cursor bounds"
+    end
+    local won = has_flag(status_flags, STATUS_WON)
+    local locked = has_flag(status_flags, STATUS_LOCKED)
+    if won and not locked then
+        return nil, "pf_puzzles_error_native_call", "won state is not locked"
+    end
+
+    local result = {
+        revision = tonumber(source.revision),
+        attempt_id = tonumber(source.attempt_id),
+        preset_index = preset_index,
+        difficulty = PRESET_DIFFICULTIES[preset_index],
+        order = order,
+        width = order,
+        height = order,
+        cell_count = cell_count,
+        edge_count = edge_count,
+        cells = cells,
+        edges = edges,
+        filled = filled,
+        remaining = cell_count - filled,
+        error_count = error_count,
+        won = won,
+        complete = won,
+        locked = locked,
+        can_undo = can_undo == 1,
+        can_redo = can_redo == 1,
+        cursor_visible = cursor_visible,
+        cursor_x = cursor_visible and cursor_x + 1 or 0,
+        cursor_y = cursor_visible and cursor_y + 1 or 0,
+        cursor_pencil = cursor_pencil_value == 1
+    }
+    runtime.current_attempt = result.attempt_id
+    local events_ok, event_error, event_detail = drain_events()
+    if not events_ok then return nil, event_error, event_detail end
+    return result
+end
+
+function peek_won(revision_id, attempt_id)
+    local events_ok, error_id, detail = drain_events()
+    if not events_ok then return nil, error_id, detail end
+    local event = runtime.pending_won
+    if not event or event.consumed or
+        event.attempt_id ~= runtime.current_attempt or
+        event.attempt_id ~= tonumber(attempt_id) or
+        event.revision > (tonumber(revision_id) or -1) or
+        not has_flag(event.status_flags, STATUS_WON) then
+        return nil
+    end
+    return {
+        type = event.type,
+        attempt_id = event.attempt_id,
+        revision = event.revision,
+        preset_index = event.preset_index,
+        difficulty = event.difficulty,
+        status_flags = event.status_flags
+    }
+end
+
+function ack_won(attempt_id, revision_id)
+    local event = runtime.pending_won
+    if not event or event.consumed or
+        event.attempt_id ~= tonumber(attempt_id) or
+        event.revision ~= tonumber(revision_id) then
+        return false
+    end
+    event.consumed = true
+    return true
+end
+
+function consume_won(revision_id, attempt_id)
+    local event = peek_won(revision_id, attempt_id)
+    if event then ack_won(event.attempt_id, event.revision) end
+    return event
+end
+
+-- The catalog controller can use the same completion handshake as Same Game.
+-- Unequal still produces only PF_UNEQUAL_EVENT_WON; no loss event is mapped.
+function peek_completion(revision_id, attempt_id)
+    return peek_won(revision_id, attempt_id)
+end
+
+function ack_completion(attempt_id, revision_id)
+    return ack_won(attempt_id, revision_id)
+end
+
+function consume_completion(revision_id, attempt_id)
+    return consume_won(revision_id, attempt_id)
+end
+
+function new_game(difficulty_id)
+    local preset = runtime.preset
+    if difficulty_id ~= nil then
+        preset = DIFFICULTY_PRESETS[tostring(difficulty_id)]
+    end
+    if preset == nil then
+        return false, "pf_puzzles_error_invalid_state", "preset"
+    end
+    local ok, changed_or_error, detail = run_action(
+        runtime.api and runtime.api.pf_unequal_new_game, preset, nil)
+    if not ok then return false, changed_or_error, detail end
+    runtime.preset = preset
+    runtime.difficulty = PRESET_DIFFICULTIES[preset]
+    runtime.pending_won = nil
+    runtime.current_attempt = nil
+    return true, changed_or_error
+end
+
+function restart()
+    return run_action(runtime.api and runtime.api.pf_unequal_restart)
+end
+
+function undo()
+    return run_action(runtime.api and runtime.api.pf_unequal_undo)
+end
+
+function redo()
+    return run_action(runtime.api and runtime.api.pf_unequal_redo)
+end
+
+function select_cell(x, y, pencil)
+    x, y = tonumber(x), tonumber(y)
+    local order = current_order()
+    if not order or not x or not y or x < 1 or x > order or
+        y < 1 or y > order or x ~= math.floor(x) or y ~= math.floor(y) then
+        return false, "pf_puzzles_error_invalid_state", "cell"
+    end
+    local input_type = pencil == true and INPUT_TYPES.select_pencil or
+        INPUT_TYPES.select_ink
+    return apply_input(input_type, x - 1, y - 1, 0, 0)
+end
+
+function input_digit(value)
+    value = tonumber(value)
+    local order = current_order()
+    if not order or not value or value < 1 or value > order or
+        value ~= math.floor(value) then
+        return false, "pf_puzzles_error_invalid_state", "digit"
+    end
+    return apply_input(INPUT_TYPES.digit, 0, 0, value, 0)
+end
+
+function clear_value()
+    return apply_input(INPUT_TYPES.clear, 0, 0, 0, 0)
+end
+
+function input_key(key, modifiers)
+    key = tostring(key or ""):lower()
+    local input_type = INPUT_TYPES[key]
+    if input_type ~= INPUT_TYPES.up and input_type ~= INPUT_TYPES.down and
+        input_type ~= INPUT_TYPES.left and input_type ~= INPUT_TYPES.right and
+        input_type ~= INPUT_TYPES.enter then
+        return false, "pf_puzzles_error_invalid_state", "key"
+    end
+    return apply_input(input_type, 0, 0, 0, modifiers)
+end
+
+function toggle_edge(edge_index)
+    edge_index = tonumber(edge_index)
+    local raw, error_id, detail = fetch_raw_snapshot()
+    if not raw then return false, error_id, detail end
+    local edge_count = tonumber(raw[0].edge_count)
+    if not edge_index or edge_index < 1 or edge_index > edge_count or
+        edge_index ~= math.floor(edge_index) then
+        return false, "pf_puzzles_error_invalid_state", "edge"
+    end
+    return apply_input(INPUT_TYPES.toggle_edge, 0, 0, edge_index - 1, 0)
+end
+
+function clear_selection()
+    return apply_input(INPUT_TYPES.clear_selection, 0, 0, 0, 0)
+end

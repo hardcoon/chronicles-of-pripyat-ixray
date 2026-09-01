@@ -1,0 +1,960 @@
+local Controller = {}
+Controller.__index = Controller
+
+local ROOT_XML_TAG = "unequal"
+local MAX_CELLS = 36
+local MAX_EDGES = 60
+local DIFFICULTIES = { "easy", "normal", "hard" }
+local DIFFICULTY_VALID = { easy = true, normal = true, hard = true }
+local GEOMETRY = {
+    [4] = { tile = 60, gap = 30 },
+    [5] = { tile = 50, gap = 25 },
+    [6] = { tile = 42, gap = 21 }
+}
+local RULE_BLOCKS = {
+    { "goal_heading", 6 },
+    { "goal_body", 10 },
+    { "clues_heading", 6 },
+    { "clues_body", 10 },
+    { "pencil_heading", 6 },
+    { "pencil_body", 10 },
+    { "controls_heading", 6 },
+    { "controls_body", 10 },
+    { "lifecycle", 8 }
+}
+local COLORS = {
+    board = GetARGB(255, 29, 36, 36),
+    immutable_board = GetARGB(255, 43, 48, 46),
+    error_board = GetARGB(255, 70, 34, 31),
+    selection = GetARGB(118, 226, 171, 58),
+    immutable = GetARGB(255, 222, 218, 199),
+    player = GetARGB(255, 86, 213, 103),
+    pencil = GetARGB(255, 157, 164, 159),
+    clue = GetARGB(255, 218, 215, 198),
+    spent = GetARGB(255, 102, 108, 106),
+    error = GetARGB(255, 239, 87, 70),
+    active = GetARGB(255, 226, 171, 58),
+    normal = GetARGB(255, 205, 205, 195)
+}
+
+local function tr(id)
+    return game.translate_string(id)
+end
+
+local function formatted(id, ...)
+    return string.format(tr(id), ...)
+end
+
+local function set_visible(control, visible)
+    if not control then return end
+    control:Show(visible == true)
+    control:Enable(visible == true)
+end
+
+local function native_module()
+    return rawget(_G, "pf_puzzles_unequal_native")
+end
+
+local function records_module()
+    return rawget(_G, "pf_puzzles_records")
+end
+
+local function session_module()
+    return rawget(_G, "pf_puzzles_session")
+end
+
+local function safe_owner_call(owner, name, ...)
+    local callback = owner and owner[name]
+    if type(callback) ~= "function" then return false, nil end
+    local ok, result = pcall(callback, owner, ...)
+    return ok, result
+end
+
+local function translated_error(error_id, detail)
+    local id = type(error_id) == "string" and error_id or
+        "pf_puzzles_error_native_call"
+    local text = tr(id)
+    if detail ~= nil and tostring(detail) ~= "" then
+        text = text .. " [" .. tostring(detail) .. "]"
+    end
+    return text
+end
+
+local function register_button(self, control, id, callback)
+    self.owner:Register(control, id)
+    self.owner:AddCallback(id, ui_events.BUTTON_CLICKED, callback, self)
+end
+
+local function same_cell(snapshot, x, y)
+    if not snapshot or not snapshot.cursor_visible then return false end
+    return snapshot.cursor_x == x and snapshot.cursor_y == y
+end
+
+local function selected_cell(snapshot)
+    if not snapshot or not snapshot.cursor_visible then return nil end
+    local index = (snapshot.cursor_y - 1) * snapshot.order + snapshot.cursor_x
+    return snapshot.cells[index]
+end
+
+local function relation_glyph(relation)
+    if relation == 1 then return ">" end
+    if relation == 2 then return "<" end
+    if relation == 3 then return "v" end
+    if relation == 4 then return "^" end
+    return ""
+end
+
+local function modifier_key(keys, dik)
+    if not keys then return nil end
+    if dik == keys.DIK_LSHIFT or dik == keys.DIK_RSHIFT then return "shift" end
+    if dik == keys.DIK_LCONTROL or dik == keys.DIK_RCONTROL then return "control" end
+    return nil
+end
+
+local function digit_for_key(keys, dik)
+    if not keys then return nil end
+    local digit_keys = {
+        keys.DIK_1, keys.DIK_2, keys.DIK_3,
+        keys.DIK_4, keys.DIK_5, keys.DIK_6
+    }
+    for digit, key in ipairs(digit_keys) do
+        if key ~= nil and dik == key then return digit end
+    end
+    return nil
+end
+
+function Controller:initialize(owner)
+    self.owner = owner
+    self.active = false
+    self.shutting_down = false
+    self.rules_open = false
+    self.catalog_rules = false
+    self.snapshot = nil
+    self.last_revision = -1
+    self.last_error = nil
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.pencil_mode = false
+    self.modifiers = { shift = false, control = false }
+    self.cells = {}
+    self.edges = {}
+    self.digit_buttons = {}
+    self:initialize_controls()
+    self:initialize_callbacks()
+    self.root:Show(false)
+    self.root:Enable(false)
+    return self
+end
+
+function Controller:initialize_controls()
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_puzzles_unequal.xml")
+    self.root = xml:InitStatic(ROOT_XML_TAG, self.owner)
+    self.content = xml:InitStatic("unequal:content", self.root)
+    self.backdrop = xml:InitStatic("unequal:content:backdrop", self.content)
+    self.back = xml:Init3tButton("unequal:content:back", self.content)
+    self.game_name = xml:InitTextWnd("unequal:content:game_name", self.content)
+    self.difficulty_buttons = {
+        easy = xml:Init3tButton("unequal:content:difficulty_easy", self.content),
+        normal = xml:Init3tButton("unequal:content:difficulty_normal", self.content),
+        hard = xml:Init3tButton("unequal:content:difficulty_hard", self.content)
+    }
+    self.status = xml:InitTextWnd("unequal:content:status", self.content)
+    self.stats = xml:InitStatic("unequal:content:stats", self.content)
+    self.remaining = xml:InitTextWnd("unequal:content:stats:remaining", self.stats)
+    self.errors = xml:InitTextWnd("unequal:content:stats:errors", self.stats)
+    self.mode = xml:InitTextWnd("unequal:content:stats:mode", self.stats)
+    self.progress = xml:InitTextWnd("unequal:content:stats:progress", self.stats)
+    self.board_frame = xml:InitStatic("unequal:content:board_frame", self.content)
+    self.board_area = xml:InitStatic("unequal:content:board_area", self.content)
+    self.board_message = xml:InitTextWnd("unequal:content:board_message", self.content)
+    self.tools = xml:InitStatic("unequal:content:tools", self.content)
+    for digit = 1, 6 do
+        local button = xml:Init3tButton("unequal:content:tools:digit", self.tools)
+        button:TextControl():SetText(tostring(digit))
+        local column = (digit - 1) % 3
+        local row = math.floor((digit - 1) / 3)
+        button:SetWndPos(vector2():set(14 + column * 54, 18 + row * 40))
+        self.digit_buttons[digit] = button
+    end
+    self.pencil = xml:Init3tButton("unequal:content:tools:pencil", self.tools)
+    self.erase = xml:Init3tButton("unequal:content:tools:erase", self.tools)
+    self.undo = xml:Init3tButton("unequal:content:tools:undo", self.tools)
+    self.restart = xml:Init3tButton("unequal:content:tools:restart", self.tools)
+    self.new_game = xml:Init3tButton("unequal:content:tools:new_game", self.tools)
+    self.rules_button = xml:Init3tButton("unequal:content:tools:rules", self.tools)
+    self.help = xml:InitTextWnd("unequal:content:tools:help", self.tools)
+
+    for index = 1, MAX_CELLS do
+        local root = xml:InitStatic("cell", self.board_area)
+        local visual = {
+            root = root,
+            bg = xml:InitStatic("cell:bg", root),
+            marker = xml:InitStatic("cell:marker", root),
+            value = xml:InitTextWnd("cell:value", root),
+            pencils = {},
+            hit = xml:Init3tButton("cell:hit", root)
+        }
+        for pencil = 1, 6 do
+            visual.pencils[pencil] = xml:InitTextWnd(
+                "cell:pencil_" .. tostring(pencil), root)
+        end
+        set_visible(root, false)
+        self.cells[index] = visual
+    end
+
+    for index = 1, MAX_EDGES do
+        local root = xml:InitStatic("edge", self.board_area)
+        local visual = {
+            root = root,
+            glyph = xml:InitTextWnd("edge:glyph", root),
+            hit = xml:Init3tButton("edge:hit", root)
+        }
+        set_visible(root, false)
+        self.edges[index] = visual
+    end
+
+    self.rules_shade = xml:InitStatic("unequal:rules_shade", self.root)
+    self.rules = xml:InitStatic("unequal:rules", self.root)
+    self.rules_caption = xml:InitTextWnd("unequal:rules:caption", self.rules)
+    self.rules_caption_line = xml:InitFrameLine(
+        "unequal:rules:caption_line", self.rules)
+    self.rules_scroll = xml:InitScrollView("unequal:rules:scroll", self.rules)
+    self.rules_back = xml:Init3tButton("unequal:rules:back", self.rules)
+    self.rules_texts = {}
+    for _, block in ipairs(RULE_BLOCKS) do
+        local text = xml:InitTextWnd("unequal:rules:" .. block[1], nil)
+        text:AdjustHeightToText()
+        text:SetWndSize(vector2():set(text:GetWidth(), text:GetHeight() + block[2]))
+        self.rules_scroll:AddWindow(text, true)
+        text:SetAutoDelete(false)
+        self.rules_texts[#self.rules_texts + 1] = text
+    end
+    self.confirm = CUIMessageBoxEx()
+    self.owner:Register(self.confirm, "pf_puzzles_unequal_confirm")
+    self:hide_rules()
+end
+
+function Controller:initialize_callbacks()
+    register_button(self, self.back, "pf_puzzles_unequal_back",
+        self.back_to_catalog)
+    register_button(self, self.pencil, "pf_puzzles_unequal_pencil",
+        self.toggle_pencil)
+    register_button(self, self.erase, "pf_puzzles_unequal_erase",
+        self.erase_value)
+    register_button(self, self.undo, "pf_puzzles_unequal_undo", self.undo_move)
+    register_button(self, self.restart, "pf_puzzles_unequal_restart",
+        self.restart_game)
+    register_button(self, self.new_game, "pf_puzzles_unequal_new",
+        self.request_new_game)
+    register_button(self, self.rules_button, "pf_puzzles_unequal_rules",
+        self.show_rules)
+    register_button(self, self.rules_back, "pf_puzzles_unequal_rules_back",
+        self.hide_rules)
+
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local requested = difficulty
+        register_button(self, self.difficulty_buttons[difficulty],
+            "pf_puzzles_unequal_difficulty_" .. difficulty,
+            function(controller) controller:request_difficulty(requested) end)
+    end
+    for digit, button in ipairs(self.digit_buttons) do
+        local value = digit
+        register_button(self, button, "pf_puzzles_unequal_digit_" .. digit,
+            function(controller) controller:input_digit(value) end)
+    end
+    for index, visual in ipairs(self.cells) do
+        local cell_index = index
+        register_button(self, visual.hit, "pf_puzzles_unequal_cell_" .. index,
+            function(controller) controller:select_cell(cell_index) end)
+    end
+    for index, visual in ipairs(self.edges) do
+        local edge_index = index
+        register_button(self, visual.hit, "pf_puzzles_unequal_edge_" .. index,
+            function(controller) controller:toggle_edge(edge_index) end)
+    end
+    self.owner:AddCallback("pf_puzzles_unequal_confirm",
+        ui_events.MESSAGE_BOX_YES_CLICKED, self.confirm_pending, self)
+    self.owner:AddCallback("pf_puzzles_unequal_confirm",
+        ui_events.MESSAGE_BOX_NO_CLICKED, self.cancel_pending, self)
+end
+
+function Controller:saved_difficulty(fallback)
+    local value = DIFFICULTY_VALID[fallback] and fallback or "normal"
+    local records = records_module()
+    if records and type(records.session_game_difficulty) == "function" then
+        local ok, restored = pcall(records.session_game_difficulty,
+            "unequal", value)
+        if ok and DIFFICULTY_VALID[restored] then value = restored end
+    end
+    return value
+end
+
+function Controller:remember_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] then return false end
+    local records = records_module()
+    if not records or type(records.set_session_game_difficulty) ~= "function" then
+        return false
+    end
+    local called, result, detail = pcall(records.set_session_game_difficulty,
+        "unequal", difficulty)
+    if (not called or result == false) and type(printf) == "function" then
+        printf("! pf_puzzles: Unequal difficulty write failed: [%s]",
+            tostring(called and detail or result))
+    end
+    return called and result ~= false
+end
+
+function Controller:refresh_catalog()
+    safe_owner_call(self.owner, "RefreshCatalog")
+end
+
+function Controller:show_error(error_id, detail)
+    self.last_error = translated_error(error_id, detail)
+    self.status:SetText(tr("pf_puzzles_unequal_status_unavailable"))
+    self.status:SetTextColor(COLORS.error)
+    self.board_message:SetText(self.last_error)
+    self.board_message:Show(true)
+    self.board_message:Enable(true)
+    self:hide_board()
+    self:refresh_actions(nil)
+    return false
+end
+
+function Controller:run_native(callback, ...)
+    if type(callback) ~= "function" then
+        return self:show_error("pf_puzzles_error_native_call", "missing wrapper")
+    end
+    local called, result, error_id, detail = pcall(callback, ...)
+    if not called then
+        return self:show_error("pf_puzzles_error_native_call", result)
+    end
+    if result == false or result == nil then
+        return self:show_error(error_id, detail)
+    end
+    self.last_error = nil
+    self:update(true)
+    return true
+end
+
+function Controller:start_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] then return false end
+    local native = native_module()
+    if not native then return self:show_error(nil, "wrapper unavailable") end
+    local session = session_module()
+    if session and session.can_replace then
+        local replaceable, replace_error = session.can_replace("unequal")
+        if not replaceable then
+            return self:show_error("pf_puzzles_error_native_call", replace_error)
+        end
+    end
+    local called, result, error_id, detail = pcall(native.start, difficulty)
+    if not called or result == false then
+        return self:show_error(called and error_id or nil,
+            called and detail or result)
+    end
+    local bound, bind_error = false, "session unavailable"
+    if session and session.bind_new_attempt then
+        bound, bind_error = session.bind_new_attempt("unequal", native)
+    end
+    if bound ~= true then
+        pcall(native.destroy)
+        if session and session.has_active and session.has_active("unequal") then
+            pcall(session.restore_game, "unequal", native)
+        end
+        return self:show_error("pf_puzzles_error_native_call",
+            bind_error or "session write failed")
+    end
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.pencil_mode = false
+    self.last_error = nil
+    self:remember_difficulty(difficulty)
+    self:update(true)
+    self:refresh_catalog()
+    return true
+end
+
+function Controller:enter(difficulty)
+    self:hide_rules()
+    self.active = true
+    self.shutting_down = false
+    self.root:Show(true)
+    self.root:Enable(true)
+    self.content:Show(true)
+    self.content:Enable(true)
+    local native = native_module()
+    if not native then return self:show_error(nil, "wrapper unavailable") end
+    local available_called, available, error_id, detail = pcall(native.available)
+    if not available_called or available ~= true then
+        return self:show_error(available_called and error_id or nil,
+            available_called and detail or available)
+    end
+    if native.has_context() then
+        self:remember_difficulty(native.difficulty() or
+            self:saved_difficulty(difficulty))
+        self:update(true)
+        return true
+    end
+    local session = session_module()
+    if session and session.has_active and session.has_active("unequal") then
+        local restored, restore_error = session.restore_game("unequal", native)
+        if restored then
+            self:remember_difficulty(native.difficulty() or
+                self:saved_difficulty(difficulty))
+            self:update(true)
+            return true
+        end
+        session.discard_game("unequal")
+        if type(printf) == "function" then
+            printf("! pf_puzzles: Unequal session restore failed: [%s]",
+                tostring(restore_error))
+        end
+    end
+    return self:start_difficulty(self:saved_difficulty(difficulty))
+end
+
+function Controller:leave()
+    self:hide_rules()
+    self.active = false
+    self.root:Show(false)
+    self.root:Enable(false)
+end
+
+function Controller:back_to_catalog()
+    self:leave()
+    safe_owner_call(self.owner, "BackToCatalog")
+    self:refresh_catalog()
+end
+
+function Controller:is_active()
+    return self.active == true
+end
+
+function Controller:get_root()
+    return self.root
+end
+
+function Controller:current_snapshot()
+    return self.snapshot
+end
+
+function Controller:current_difficulty()
+    local native = native_module()
+    if native and native.has_context() then return native.difficulty() end
+    local session = session_module()
+    if session and session.active_difficulty then
+        local restored = session.active_difficulty("unequal")
+        if DIFFICULTY_VALID[restored] then return restored end
+    end
+    return self:saved_difficulty("normal")
+end
+
+function Controller:show_rules(return_page)
+    self.catalog_rules = return_page == "catalog" and not self.active
+    if not self.active and not self.catalog_rules then return end
+    if self.catalog_rules then
+        safe_owner_call(self.owner, "OnUnequalCatalogRulesVisible", true)
+        self.root:Show(true)
+        self.root:Enable(true)
+        self.content:Show(false)
+    end
+    self.rules_open = true
+    self.modifiers.shift = false
+    self.modifiers.control = false
+    self.rules_scroll:ScrollToBegin()
+    self.content:Enable(false)
+    set_visible(self.rules_shade, true)
+    set_visible(self.rules, true)
+end
+
+function Controller:hide_rules()
+    local catalog_rules = self.catalog_rules
+    self.rules_open = false
+    self.catalog_rules = false
+    self.modifiers.shift = false
+    self.modifiers.control = false
+    set_visible(self.rules_shade, false)
+    set_visible(self.rules, false)
+    if self.content then
+        self.content:Show(self.active == true)
+        self.content:Enable(self.active == true)
+    end
+    if catalog_rules and not self.active then
+        safe_owner_call(self.owner, "OnUnequalCatalogRulesVisible", false)
+        self.root:Show(false)
+        self.root:Enable(false)
+        self:refresh_catalog()
+    end
+end
+
+function Controller:is_rules_open()
+    return self.rules_open == true
+end
+
+function Controller:ask(action, difficulty)
+    self.pending_action = action
+    self.pending_difficulty = difficulty
+    self.confirm:InitMessageBox("message_box_yes_no")
+    local prompt = action == "difficulty" and
+        "pf_puzzles_unequal_confirm_difficulty" or
+        "pf_puzzles_unequal_confirm_new"
+    self.confirm:SetText(tr(prompt))
+    self.confirm:ShowDialog(true)
+end
+
+function Controller:cancel_pending()
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self:sync_difficulty_buttons()
+end
+
+function Controller:confirm_pending()
+    local action, difficulty = self.pending_action, self.pending_difficulty
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    if action == "difficulty" then self:start_difficulty(difficulty) end
+    if action == "new_game" then self:perform_new_game() end
+end
+
+function Controller:request_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] or
+        difficulty == self:current_difficulty() then return end
+    local native = native_module()
+    if native and native.has_context() and
+        (not self.snapshot or not self.snapshot.won) then
+        self:ask("difficulty", difficulty)
+        self:sync_difficulty_buttons()
+        return
+    end
+    self:start_difficulty(difficulty)
+end
+
+function Controller:request_new_game()
+    local native = native_module()
+    if native and native.has_context() and
+        (not self.snapshot or not self.snapshot.won) then
+        self:ask("new_game", self:current_difficulty())
+        return
+    end
+    self:perform_new_game()
+end
+
+function Controller:perform_new_game()
+    local native = native_module()
+    local difficulty = self:current_difficulty()
+    local session = session_module()
+    if session and session.can_replace then
+        local replaceable, replace_error = session.can_replace("unequal")
+        if not replaceable then
+            return self:show_error("pf_puzzles_error_native_call", replace_error)
+        end
+    end
+    if not native or not native.has_context() then
+        self:start_difficulty(difficulty)
+        return
+    end
+    if self:run_native(native.new_game, difficulty) then
+        local bound, bind_error = false, "session unavailable"
+        if session and session.bind_new_attempt then
+            bound, bind_error = session.bind_new_attempt("unequal", native)
+        end
+        if bound ~= true then
+            pcall(native.destroy)
+            if session and session.has_active and session.has_active("unequal") then
+                pcall(session.restore_game, "unequal", native)
+            end
+            return self:show_error("pf_puzzles_error_native_call",
+                bind_error or "session write failed")
+        end
+        self.pending_event = nil
+        self.notified_won_key = nil
+        self.pencil_mode = false
+        self:remember_difficulty(difficulty)
+        self:refresh_catalog()
+    end
+end
+
+function Controller:restart_game()
+    local native = native_module()
+    if native then self:run_native(native.restart) end
+end
+
+function Controller:undo_move()
+    local native = native_module()
+    if native then self:run_native(native.undo) end
+end
+
+function Controller:erase_value()
+    local native = native_module()
+    if native then self:run_native(native.clear_value) end
+end
+
+function Controller:input_digit(digit)
+    if not self.snapshot or digit > self.snapshot.order then return end
+    local native = native_module()
+    if native then self:run_native(native.input_digit, digit) end
+end
+
+function Controller:select_cell(index)
+    local snapshot = self.snapshot
+    local cell = snapshot and snapshot.cells[index]
+    if not cell or snapshot.locked then return end
+    local native = native_module()
+    if native then
+        self:run_native(native.select_cell, cell.x, cell.y, self.pencil_mode)
+    end
+end
+
+function Controller:toggle_edge(index)
+    local snapshot = self.snapshot
+    if not snapshot or snapshot.locked or not snapshot.edges[index] then return end
+    local native = native_module()
+    if native then self:run_native(native.toggle_edge, index) end
+end
+
+function Controller:toggle_pencil()
+    if not self.snapshot or self.snapshot.locked then return end
+    self.pencil_mode = not self.pencil_mode
+    local native = native_module()
+    if self.snapshot.cursor_visible and native then
+        self:run_native(native.select_cell, self.snapshot.cursor_x,
+            self.snapshot.cursor_y, self.pencil_mode)
+    else
+        self:refresh_actions(self.snapshot)
+        self:refresh_stats(self.snapshot)
+    end
+end
+
+function Controller:sync_difficulty_buttons()
+    local active = self:current_difficulty()
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local button = self.difficulty_buttons[difficulty]
+        button:Enable(difficulty ~= active)
+        button:TextControl():SetTextColor(difficulty == active and
+            COLORS.active or COLORS.normal)
+    end
+end
+
+function Controller:hide_board()
+    for _, visual in ipairs(self.cells) do set_visible(visual.root, false) end
+    for _, visual in ipairs(self.edges) do set_visible(visual.root, false) end
+end
+
+function Controller:layout_cell(visual, x, y, geometry, origin_x, origin_y)
+    local tile = geometry.tile
+    local step = tile + geometry.gap
+    visual.root:SetWndPos(vector2():set(
+        origin_x + (x - 1) * step, origin_y + (y - 1) * step))
+    visual.root:SetWndSize(vector2():set(tile, tile))
+    visual.bg:SetWndPos(vector2():set(1, 1))
+    visual.bg:SetWndSize(vector2():set(tile - 2, tile - 2))
+    visual.value:SetWndPos(vector2():set(0, 0))
+    visual.value:SetWndSize(vector2():set(tile, tile))
+    visual.hit:SetWndPos(vector2():set(0, 0))
+    visual.hit:SetWndSize(vector2():set(tile, tile))
+end
+
+function Controller:refresh_pencils(visual, cell, tile, order)
+    local width = math.floor(tile / 3)
+    local height = math.floor(tile / 2)
+    local mask = tonumber(cell.pencil_mask) or 0
+    for slot, label in ipairs(visual.pencils) do
+        local active = slot <= order and
+            math.floor(mask / math.pow(2, slot - 1)) % 2 == 1
+        label:SetWndPos(vector2():set(
+            ((slot - 1) % 3) * width, math.floor((slot - 1) / 3) * height))
+        label:SetWndSize(vector2():set(width, height))
+        label:SetText(active and tostring(slot) or "")
+        label:SetTextColor(cell.error and COLORS.error or COLORS.pencil)
+    end
+end
+
+function Controller:refresh_cell(visual, cell, snapshot, geometry,
+    origin_x, origin_y)
+    self:layout_cell(visual, cell.x, cell.y, geometry, origin_x, origin_y)
+    local selected = same_cell(snapshot, cell.x, cell.y)
+    local pencil_selected = selected and snapshot.cursor_pencil
+    visual.bg:SetTextureColor(cell.error and COLORS.error_board or
+        (cell.immutable and COLORS.immutable_board or COLORS.board))
+    visual.value:SetText(cell.value > 0 and tostring(cell.value) or "")
+    visual.value:SetTextColor(cell.error and COLORS.error or
+        (cell.immutable and COLORS.immutable or COLORS.player))
+    self:refresh_pencils(visual, cell, geometry.tile, snapshot.order)
+    visual.marker:Show(selected)
+    if selected then
+        local marker_size = pencil_selected and
+            math.max(8, math.floor(geometry.tile / 4)) or geometry.tile - 4
+        visual.marker:SetWndPos(vector2():set(pencil_selected and 3 or 2,
+            pencil_selected and 3 or 2))
+        visual.marker:SetWndSize(vector2():set(marker_size, marker_size))
+        visual.marker:SetTextureColor(COLORS.selection)
+    end
+    set_visible(visual.root, true)
+    visual.hit:Enable(not snapshot.locked)
+end
+
+function Controller:refresh_edge(visual, edge, snapshot, geometry,
+    origin_x, origin_y)
+    local tile, gap = geometry.tile, geometry.gap
+    local step = tile + gap
+    local horizontal = edge.relation == 1 or edge.relation == 2
+    local x = origin_x + (edge.x - 1) * step + (horizontal and tile or 0)
+    local y = origin_y + (edge.y - 1) * step + (horizontal and 0 or tile)
+    local width, height = horizontal and gap or tile, horizontal and tile or gap
+    visual.root:SetWndPos(vector2():set(x, y))
+    visual.root:SetWndSize(vector2():set(width, height))
+    visual.glyph:SetWndPos(vector2():set(0, 0))
+    visual.glyph:SetWndSize(vector2():set(width, height))
+    visual.glyph:SetText(relation_glyph(edge.relation))
+    visual.glyph:SetTextColor(edge.error and COLORS.error or
+        (edge.spent and COLORS.spent or COLORS.clue))
+    visual.hit:SetWndPos(vector2():set(0, 0))
+    visual.hit:SetWndSize(vector2():set(width, height))
+    set_visible(visual.root, true)
+    visual.hit:Enable(not snapshot.locked)
+end
+
+function Controller:refresh_board(snapshot)
+    local geometry = snapshot and GEOMETRY[snapshot.order]
+    if not geometry then self:hide_board() return end
+    local span = snapshot.order * geometry.tile +
+        (snapshot.order - 1) * geometry.gap
+    local origin_x = math.floor((self.board_area:GetWidth() - span) / 2)
+    local origin_y = math.floor((self.board_area:GetHeight() - span) / 2)
+    for index, visual in ipairs(self.cells) do
+        local cell = snapshot.cells[index]
+        if cell then
+            self:refresh_cell(visual, cell, snapshot, geometry, origin_x, origin_y)
+        else
+            set_visible(visual.root, false)
+        end
+    end
+    for index, visual in ipairs(self.edges) do
+        local edge = snapshot.edges[index]
+        if edge then
+            self:refresh_edge(visual, edge, snapshot, geometry, origin_x, origin_y)
+        else
+            set_visible(visual.root, false)
+        end
+    end
+end
+
+function Controller:refresh_stats(snapshot)
+    if not snapshot then
+        self.remaining:SetText("")
+        self.errors:SetText("")
+        self.mode:SetText("")
+        self.progress:SetText("")
+        return
+    end
+    self.remaining:SetText(formatted("pf_puzzles_unequal_remaining_format",
+        snapshot.remaining or 0))
+    self.errors:SetText(formatted("pf_puzzles_unequal_errors_format",
+        snapshot.error_count or 0))
+    self.errors:SetTextColor((snapshot.error_count or 0) > 0 and
+        COLORS.error or COLORS.normal)
+    local pencil = snapshot.cursor_visible and snapshot.cursor_pencil or
+        self.pencil_mode
+    self.mode:SetText(tr(pencil and "pf_puzzles_unequal_mode_pencil" or
+        "pf_puzzles_unequal_mode_ink"))
+    self.progress:SetText(formatted("pf_puzzles_unequal_progress_format",
+        snapshot.filled or 0, snapshot.cell_count or 0))
+end
+
+function Controller:refresh_actions(snapshot)
+    local playing = snapshot ~= nil and not snapshot.locked and not snapshot.won
+    local cell = selected_cell(snapshot)
+    local input_ready = playing and snapshot.cursor_visible and cell and
+        not cell.immutable
+    for digit, button in ipairs(self.digit_buttons) do
+        set_visible(button, input_ready and digit <= snapshot.order)
+    end
+    set_visible(self.pencil, playing)
+    if playing then
+        self.pencil:TextControl():SetText(tr(self.pencil_mode and
+            "pf_puzzles_unequal_pencil_on" or "pf_puzzles_unequal_pencil_off"))
+        self.pencil:TextControl():SetTextColor(self.pencil_mode and
+            COLORS.active or COLORS.normal)
+    end
+    local erasable = playing and cell and not cell.immutable and
+        (cell.value > 0 or (cell.pencil_mask or 0) > 0)
+    set_visible(self.erase, erasable == true)
+    set_visible(self.undo, playing and snapshot.can_undo)
+    set_visible(self.restart, playing and snapshot.can_undo)
+    set_visible(self.new_game, snapshot ~= nil)
+    set_visible(self.rules_button, true)
+end
+
+function Controller:refresh_status(snapshot)
+    local id = snapshot and snapshot.won and
+        "pf_puzzles_unequal_status_won" or "pf_puzzles_unequal_status_playing"
+    self.status:SetText(tr(id))
+    self.status:SetTextColor(snapshot and snapshot.won and
+        COLORS.active or COLORS.normal)
+    self.board_message:SetText(snapshot and snapshot.won and
+        tr("pf_puzzles_unequal_won_message") or "")
+    self.board_message:Show(snapshot ~= nil and snapshot.won)
+end
+
+function Controller:process_won(snapshot)
+    if not snapshot or not snapshot.won then return end
+    local native = native_module()
+    if not native then return end
+    local event, error_id, detail = native.peek_won(
+        snapshot.revision, snapshot.attempt_id)
+    if error_id then self:show_error(error_id, detail) return end
+    if not event then
+        local session = session_module()
+        if session and session.pending_completion then
+            event = session.pending_completion("unequal", snapshot)
+        end
+    end
+    if not event then return end
+    self.pending_event = event
+    local key = tostring(event.attempt_id) .. ":" .. tostring(event.revision)
+    if self.notified_won_key == key then return end
+    local called, handled = safe_owner_call(self.owner,
+        "OnUnequalCompletion", event)
+    if called and handled ~= false then
+        if event.synthetic == true or
+            self:ack_won(event.attempt_id, event.revision) then
+            self.notified_won_key = key
+            self:refresh_catalog()
+        end
+    end
+end
+
+function Controller:pending_won()
+    return self.pending_event
+end
+
+function Controller:ack_won(attempt_id, revision)
+    local native = native_module()
+    if not native or not native.ack_won(attempt_id, revision) then return false end
+    if self.pending_event and self.pending_event.attempt_id == attempt_id and
+        self.pending_event.revision == revision then self.pending_event = nil end
+    return true
+end
+
+function Controller:update(force)
+    if self.shutting_down or not self.active then return false end
+    local native = native_module()
+    if not native or not native.has_context() then
+        return self:show_error("pf_puzzles_error_context")
+    end
+    local revision, error_id, detail = native.revision()
+    if not revision then return self:show_error(error_id, detail) end
+    if not force and revision == self.last_revision then
+        if self.snapshot and self.snapshot.won and not self.notified_won_key then
+            self:process_won(self.snapshot)
+        end
+        return true
+    end
+    local snapshot
+    snapshot, error_id, detail = native.snapshot()
+    if not snapshot then return self:show_error(error_id, detail) end
+    self.snapshot = snapshot
+    self.last_revision = snapshot.revision or revision
+    self.last_error = nil
+    if snapshot.cursor_visible then self.pencil_mode = snapshot.cursor_pencil end
+    self:sync_difficulty_buttons()
+    self:refresh_board(snapshot)
+    self:refresh_stats(snapshot)
+    self:refresh_actions(snapshot)
+    self:refresh_status(snapshot)
+    self:process_won(snapshot)
+    return true
+end
+
+function Controller:input_key(name)
+    local native = native_module()
+    if not native then return false end
+    local modifiers = name == "enter" and {} or {
+        shift = self.modifiers.shift,
+        control = self.modifiers.control
+    }
+    return self:run_native(native.input_key, name, modifiers)
+end
+
+function Controller:on_keyboard(dik, keyboard_action)
+    local keys = rawget(_G, "DIK_keys")
+    local binding = type(dik_to_bind) == "function" and dik_to_bind(dik) or nil
+    local escape = (keys and dik == keys.DIK_ESCAPE) or
+        (key_bindings and binding == key_bindings.kQUIT)
+    if self.rules_open then
+        if keyboard_action == ui_events.WINDOW_KEY_PRESSED and escape then
+            self:hide_rules()
+        end
+        return true
+    end
+    if not self.active then return false end
+    local modifier = modifier_key(keys, dik)
+    if modifier then
+        if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+            self.modifiers[modifier] = true
+        elseif keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+            self.modifiers[modifier] = false
+        end
+        return true
+    end
+    if keyboard_action ~= ui_events.WINDOW_KEY_PRESSED then return false end
+    if escape then return false end
+    if not self.snapshot or self.snapshot.locked then return false end
+    if keys and dik == keys.DIK_LEFT then return self:input_key("left") end
+    if keys and dik == keys.DIK_RIGHT then return self:input_key("right") end
+    if keys and dik == keys.DIK_UP then return self:input_key("up") end
+    if keys and dik == keys.DIK_DOWN then return self:input_key("down") end
+    if keys and dik == keys.DIK_RETURN then return self:input_key("enter") end
+    local digit = digit_for_key(keys, dik)
+    if digit and digit <= self.snapshot.order then self:input_digit(digit) return true end
+    if keys and (dik == keys.DIK_SPACE or dik == keys.DIK_BACK or
+        dik == keys.DIK_DELETE or dik == keys.DIK_0) then
+        self:erase_value()
+        return true
+    end
+    return false
+end
+
+function Controller:destroy_context()
+    self.shutting_down = true
+    local native = native_module()
+    local ok, error_id, detail = true, nil, nil
+    if native and type(native.destroy) == "function" then
+        ok, error_id, detail = native.destroy()
+    end
+    self.snapshot = nil
+    self.last_revision = -1
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.pencil_mode = false
+    self:hide_board()
+    if ok == false then return self:show_error(error_id, detail) end
+    return true
+end
+
+function Controller:on_game_load()
+    self:destroy_context()
+    self:leave()
+    self.shutting_down = false
+end
+
+function Controller:destroy()
+    self.shutting_down = true
+    self:leave()
+end
+
+function new(owner)
+    if not owner then return nil end
+    return setmetatable({}, Controller):initialize(owner)
+end
+
+function root_xml_tag()
+    return ROOT_XML_TAG
+end
+
+function root_ui_type()
+    return "CUIStatic"
+end

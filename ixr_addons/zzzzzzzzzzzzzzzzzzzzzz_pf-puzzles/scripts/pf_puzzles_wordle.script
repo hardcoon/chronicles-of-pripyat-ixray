@@ -1,0 +1,567 @@
+local ADDON_DIR = "zzzzzzzzzzzzzzzzzzzzzz_pf-puzzles"
+local ALLOWED_FILE = "wordle_allowed_ru.txt"
+local ANSWERS_FILE = "wordle_answers_ru.txt"
+local SERIAL_VERSION = "PF_PUZZLES_WORDLE_SESSION_V1"
+local MAX_BLOB_BYTES = 8192
+
+local DIFFICULTIES = {
+    [1] = { id = "easy", rows = 8 },
+    [2] = { id = "normal", rows = 6 },
+    [3] = { id = "hard", rows = 4 },
+    easy = { id = "easy", rows = 8, index = 1 },
+    normal = { id = "normal", rows = 6, index = 2 },
+    hard = { id = "hard", rows = 4, index = 3 }
+}
+
+local LETTER_ORDER = {
+    "й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х", "ъ",
+    "ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э",
+    "я", "ч", "с", "м", "и", "т", "ь", "б", "ю"
+}
+
+local LOWER_BY_INPUT = {
+    ["а"] = "а", ["б"] = "б", ["в"] = "в", ["г"] = "г",
+    ["д"] = "д", ["е"] = "е", ["ё"] = "е", ["ж"] = "ж",
+    ["з"] = "з", ["и"] = "и", ["й"] = "й", ["к"] = "к",
+    ["л"] = "л", ["м"] = "м", ["н"] = "н", ["о"] = "о",
+    ["п"] = "п", ["р"] = "р", ["с"] = "с", ["т"] = "т",
+    ["у"] = "у", ["ф"] = "ф", ["х"] = "х", ["ц"] = "ц",
+    ["ч"] = "ч", ["ш"] = "ш", ["щ"] = "щ", ["ъ"] = "ъ",
+    ["ы"] = "ы", ["ь"] = "ь", ["э"] = "э", ["ю"] = "ю",
+    ["я"] = "я",
+    ["А"] = "а", ["Б"] = "б", ["В"] = "в", ["Г"] = "г",
+    ["Д"] = "д", ["Е"] = "е", ["Ё"] = "е", ["Ж"] = "ж",
+    ["З"] = "з", ["И"] = "и", ["Й"] = "й", ["К"] = "к",
+    ["Л"] = "л", ["М"] = "м", ["Н"] = "н", ["О"] = "о",
+    ["П"] = "п", ["Р"] = "р", ["С"] = "с", ["Т"] = "т",
+    ["У"] = "у", ["Ф"] = "ф", ["Х"] = "х", ["Ц"] = "ц",
+    ["Ч"] = "ч", ["Ш"] = "ш", ["Щ"] = "щ", ["Ъ"] = "ъ",
+    ["Ы"] = "ы", ["Ь"] = "ь", ["Э"] = "э", ["Ю"] = "ю",
+    ["Я"] = "я"
+}
+
+local runtime = {
+    context = nil,
+    selected_difficulty = "normal",
+    dictionaries_loaded = false,
+    load_attempted = false,
+    load_error = nil,
+    load_detail = nil,
+    allowed = nil,
+    answers = nil,
+    answer_set = nil,
+    sequence = 0
+}
+
+local function fail(error_id, detail)
+    return false, error_id, detail and tostring(detail) or nil
+end
+
+local function difficulty_definition(value)
+    if type(value) == "number" then
+        value = math.floor(value)
+        local definition = DIFFICULTIES[value]
+        if definition then
+            return DIFFICULTIES[definition.id]
+        end
+    end
+    return DIFFICULTIES[tostring(value or "")]
+end
+
+local function utf8_piece_length(first_byte)
+    if not first_byte then return nil end
+    if first_byte < 0x80 then return 1 end
+    if first_byte >= 0xC2 and first_byte <= 0xDF then return 2 end
+    if first_byte >= 0xE0 and first_byte <= 0xEF then return 3 end
+    if first_byte >= 0xF0 and first_byte <= 0xF4 then return 4 end
+    return nil
+end
+
+local function split_letters(value, normalize)
+    if type(value) ~= "string" then return nil end
+    local result, index = {}, 1
+    while index <= #value do
+        local length = utf8_piece_length(string.byte(value, index))
+        if not length or index + length - 1 > #value then return nil end
+        for continuation = index + 1, index + length - 1 do
+            local byte = string.byte(value, continuation)
+            if not byte or byte < 0x80 or byte > 0xBF then return nil end
+        end
+        local letter = string.sub(value, index, index + length - 1)
+        if normalize then letter = LOWER_BY_INPUT[letter] end
+        if not letter then return nil end
+        result[#result + 1] = letter
+        index = index + length
+    end
+    return result
+end
+
+local function normalize_word(value)
+    local letters = split_letters(value, true)
+    if not letters then return nil end
+    return table.concat(letters), letters
+end
+
+local function data_path(file_name)
+    if not getFS or not getFS() then return nil, "filesystem_unavailable" end
+    local relative = ADDON_DIR .. "\\data\\" .. tostring(file_name)
+    local called, path = pcall(function()
+        return getFS():update_path("$arch_dir_addons$", relative)
+    end)
+    if not called or not path or path == "" then
+        return nil, called and "data_path_unavailable" or path
+    end
+    return path
+end
+
+local function read_word_file(file_name)
+    local path, path_error = data_path(file_name)
+    if not path then return nil, path_error end
+    local file = io.open(path, "rb")
+    if not file then return nil, "open_failed:" .. tostring(file_name) end
+    local result, seen, line_number = {}, {}, 0
+    local ok, detail = pcall(function()
+        for raw_line in file:lines() do
+            line_number = line_number + 1
+            local line = raw_line:gsub("\r$", "")
+            if line_number == 1 then line = line:gsub("^\239\187\191", "") end
+            if line ~= "" then
+                local word, letters = normalize_word(line)
+                if not word or #letters ~= 5 or seen[word] then
+                    error("invalid_word:" .. tostring(line_number))
+                end
+                seen[word] = true
+                result[#result + 1] = word
+            end
+        end
+    end)
+    file:close()
+    if not ok then return nil, detail end
+    if #result == 0 then return nil, "empty:" .. tostring(file_name) end
+    return result, seen
+end
+
+local function ensure_dictionaries()
+    if runtime.dictionaries_loaded then return true end
+    if runtime.load_attempted then
+        return fail(runtime.load_error or "pf_puzzles_wordle_error_dictionary",
+            runtime.load_detail)
+    end
+    runtime.load_attempted = true
+    local allowed_words, allowed_or_error = read_word_file(ALLOWED_FILE)
+    if not allowed_words then
+        runtime.load_error = "pf_puzzles_wordle_error_dictionary"
+        runtime.load_detail = allowed_or_error
+        return fail(runtime.load_error, runtime.load_detail)
+    end
+    local answers, answer_or_error = read_word_file(ANSWERS_FILE)
+    if not answers then
+        runtime.load_error = "pf_puzzles_wordle_error_dictionary"
+        runtime.load_detail = answer_or_error
+        return fail(runtime.load_error, runtime.load_detail)
+    end
+    for _, answer in ipairs(answers) do
+        if not allowed_or_error[answer] then
+            runtime.load_error = "pf_puzzles_wordle_error_dictionary"
+            runtime.load_detail = "answer_not_allowed:" .. tostring(answer)
+            return fail(runtime.load_error, runtime.load_detail)
+        end
+    end
+    runtime.allowed = allowed_or_error
+    runtime.answers = answers
+    runtime.answer_set = answer_or_error
+    runtime.dictionaries_loaded = true
+    runtime.load_error = nil
+    runtime.load_detail = nil
+    return true
+end
+
+local function next_attempt_id()
+    runtime.sequence = (runtime.sequence % 65535) + 1
+    local epoch = type(os.time) == "function" and tonumber(os.time()) or 1
+    local ticks = 0
+    if type(time_global) == "function" then
+        local called, value = pcall(time_global)
+        if called then ticks = tonumber(value) or 0 end
+    end
+    local value = ((epoch % 1048576) * 4096 +
+        (math.floor(ticks) % 2048) * 2 + runtime.sequence) % 4294967295
+    if value <= 0 then value = runtime.sequence end
+    return math.floor(value)
+end
+
+local function increase_revision(context)
+    context.revision = (context.revision % 4294967295) + 1
+end
+
+local function mark_guess(answer, guess)
+    local answer_letters = split_letters(answer, false)
+    local guess_letters = split_letters(guess, false)
+    local marks, remaining = {}, {}
+    for index = 1, 5 do
+        if guess_letters[index] == answer_letters[index] then
+            marks[index] = 3
+        else
+            local letter = answer_letters[index]
+            remaining[letter] = (remaining[letter] or 0) + 1
+        end
+    end
+    for index = 1, 5 do
+        if not marks[index] then
+            local letter = guess_letters[index]
+            if (remaining[letter] or 0) > 0 then
+                marks[index] = 2
+                remaining[letter] = remaining[letter] - 1
+            else
+                marks[index] = 1
+            end
+        end
+    end
+    return marks, guess_letters
+end
+
+local function keyboard_state(context)
+    local result = {}
+    for _, letter in ipairs(LETTER_ORDER) do result[letter] = 0 end
+    for _, word in ipairs(context.guesses) do
+        local marks, letters = mark_guess(context.answer, word)
+        for index = 1, 5 do
+            local previous = result[letters[index]] or 0
+            if marks[index] > previous then result[letters[index]] = marks[index] end
+        end
+    end
+    return result
+end
+
+local function valid_u32(value)
+    value = tonumber(value)
+    if not value or value <= 0 or value > 4294967295 or
+        value ~= math.floor(value) then return nil end
+    return value
+end
+
+local function status_for(guesses, answer, max_rows)
+    for index, word in ipairs(guesses) do
+        if word == answer then
+            if index ~= #guesses then return nil end
+            return "won"
+        end
+    end
+    if #guesses >= max_rows then return "lost" end
+    return "playing"
+end
+
+local function context_from_values(values)
+    local definition = difficulty_definition(values.difficulty)
+    local attempt_id = valid_u32(values.attempt_id)
+    local revision = valid_u32(values.revision)
+    if not definition or not attempt_id or not revision or
+        values.max_rows ~= definition.rows or
+        not runtime.answer_set[values.answer] then return nil end
+    local current, current_letters = normalize_word(values.current or "")
+    if not current or #current_letters > 5 then return nil end
+    local guesses = {}
+    if type(values.guesses) ~= "table" or #values.guesses > definition.rows then
+        return nil
+    end
+    for index, raw_word in ipairs(values.guesses) do
+        local word, letters = normalize_word(raw_word)
+        if not word or #letters ~= 5 or not runtime.allowed[word] then return nil end
+        guesses[index] = word
+    end
+    local expected_status = status_for(guesses, values.answer, definition.rows)
+    if expected_status ~= values.status then return nil end
+    local pending = values.event_pending == true
+    local acknowledged = values.event_acked == true
+    if expected_status == "won" then
+        if pending == acknowledged then return nil end
+    elseif pending or acknowledged then
+        return nil
+    end
+    if expected_status ~= "playing" and current ~= "" then return nil end
+    return {
+        difficulty = definition.id,
+        max_rows = definition.rows,
+        attempt_id = attempt_id,
+        revision = revision,
+        answer = values.answer,
+        guesses = guesses,
+        current = current,
+        status = expected_status,
+        event_pending = pending,
+        event_acked = acknowledged
+    }
+end
+
+local function parse_blob(blob)
+    if type(blob) ~= "string" or #blob == 0 or #blob > MAX_BLOB_BYTES then
+        return nil
+    end
+    local lines = {}
+    for line in (blob .. "\n"):gmatch("(.-)\n") do
+        lines[#lines + 1] = line:gsub("\r$", "")
+    end
+    if lines[1] ~= SERIAL_VERSION then return nil end
+    local fields = {}
+    for index = 2, #lines do
+        local line = lines[index]
+        if line ~= "" then
+            local key, value = line:match("^([a-z0-9_]+)=(.*)$")
+            if not key or fields[key] ~= nil then return nil end
+            fields[key] = value
+        end
+    end
+    local count = tonumber(fields.guess_count)
+    if not count or count < 0 or count > 8 or count ~= math.floor(count) then
+        return nil
+    end
+    local guesses = {}
+    for index = 1, count do
+        local key = "guess_" .. tostring(index)
+        if fields[key] == nil then return nil end
+        guesses[index] = fields[key]
+        fields[key] = nil
+    end
+    local expected = {
+        difficulty = true, max_rows = true, attempt_id = true, revision = true,
+        status = true, answer = true, current = true, guess_count = true,
+        event_pending = true, event_acked = true
+    }
+    for key in pairs(fields) do
+        if not expected[key] then return nil end
+    end
+    local pending = fields.event_pending == "1"
+    local acknowledged = fields.event_acked == "1"
+    if (fields.event_pending ~= "0" and not pending) or
+        (fields.event_acked ~= "0" and not acknowledged) then return nil end
+    return context_from_values({
+        difficulty = fields.difficulty,
+        max_rows = tonumber(fields.max_rows),
+        attempt_id = tonumber(fields.attempt_id),
+        revision = tonumber(fields.revision),
+        status = fields.status,
+        answer = fields.answer,
+        current = fields.current,
+        guesses = guesses,
+        event_pending = pending,
+        event_acked = acknowledged
+    })
+end
+
+function available()
+    return ensure_dictionaries()
+end
+
+function has_context()
+    return runtime.context ~= nil
+end
+
+function difficulty()
+    return runtime.context and runtime.context.difficulty or
+        runtime.selected_difficulty
+end
+
+function destroy()
+    runtime.context = nil
+    return true
+end
+
+function new_game(difficulty_id)
+    local loaded, error_id, detail = ensure_dictionaries()
+    if not loaded then return false, error_id, detail end
+    local definition = difficulty_definition(difficulty_id or
+        runtime.selected_difficulty)
+    if not definition then
+        return fail("pf_puzzles_error_invalid_state", "difficulty")
+    end
+    local answer = runtime.answers[math.random(1, #runtime.answers)]
+    local context = {
+        difficulty = definition.id,
+        max_rows = definition.rows,
+        attempt_id = next_attempt_id(),
+        revision = 1,
+        answer = answer,
+        guesses = {},
+        current = "",
+        status = "playing",
+        event_pending = false,
+        event_acked = false
+    }
+    runtime.context = context
+    runtime.selected_difficulty = definition.id
+    return true, true
+end
+
+function revision()
+    if not runtime.context then
+        return nil, "pf_puzzles_error_invalid_state", "context"
+    end
+    return runtime.context.revision
+end
+
+function snapshot()
+    local context = runtime.context
+    if not context then
+        return nil, "pf_puzzles_error_invalid_state", "context"
+    end
+    local rows = {}
+    for index, word in ipairs(context.guesses) do
+        local marks, letters = mark_guess(context.answer, word)
+        rows[index] = { word = word, letters = letters, marks = marks }
+    end
+    local current_letters = split_letters(context.current, false) or {}
+    local terminal = context.status ~= "playing"
+    return {
+        revision = context.revision,
+        attempt_id = context.attempt_id,
+        difficulty = context.difficulty,
+        max_rows = context.max_rows,
+        width = 5,
+        height = context.max_rows,
+        cell_count = context.max_rows * 5,
+        rows = rows,
+        accepted_rows = #rows,
+        current = context.current,
+        current_letters = current_letters,
+        active_row = math.min(#rows + 1, context.max_rows),
+        remaining_rows = math.max(0, context.max_rows - #rows),
+        keyboard = keyboard_state(context),
+        status = context.status,
+        playing = context.status == "playing",
+        won = context.status == "won",
+        lost = context.status == "lost",
+        finished = terminal,
+        locked = terminal,
+        complete = false,
+        score = 0,
+        answer = terminal and context.answer or nil
+    }
+end
+
+function input_letter(value)
+    local context = runtime.context
+    if not context then return fail("pf_puzzles_error_invalid_state", "context") end
+    if context.status ~= "playing" then
+        return fail("pf_puzzles_wordle_error_locked", context.status)
+    end
+    local word, letters = normalize_word(value)
+    if not word or #letters ~= 1 then
+        return fail("pf_puzzles_error_invalid_state", "letter")
+    end
+    local current_letters = split_letters(context.current, false) or {}
+    if #current_letters >= 5 then
+        return fail("pf_puzzles_error_invalid_state", "row_full")
+    end
+    context.current = context.current .. word
+    increase_revision(context)
+    return true, true
+end
+
+function backspace()
+    local context = runtime.context
+    if not context then return fail("pf_puzzles_error_invalid_state", "context") end
+    if context.status ~= "playing" then
+        return fail("pf_puzzles_wordle_error_locked", context.status)
+    end
+    local letters = split_letters(context.current, false) or {}
+    if #letters == 0 then return true, false end
+    letters[#letters] = nil
+    context.current = table.concat(letters)
+    increase_revision(context)
+    return true, true
+end
+
+function submit()
+    local context = runtime.context
+    if not context then return fail("pf_puzzles_error_invalid_state", "context") end
+    if context.status ~= "playing" then
+        return fail("pf_puzzles_wordle_error_locked", context.status)
+    end
+    local word, letters = normalize_word(context.current)
+    if not word or #letters ~= 5 then
+        return fail("pf_puzzles_wordle_error_incomplete", "five_letters_required")
+    end
+    if not runtime.allowed[word] then
+        return fail("pf_puzzles_wordle_error_unknown", word)
+    end
+    context.guesses[#context.guesses + 1] = word
+    context.current = ""
+    if word == context.answer then
+        context.status = "won"
+        context.event_pending = true
+        context.event_acked = false
+    elseif #context.guesses >= context.max_rows then
+        context.status = "lost"
+    end
+    increase_revision(context)
+    return true, true
+end
+
+function serialize()
+    local context = runtime.context
+    if not context then
+        return nil, "pf_puzzles_error_invalid_state", "context"
+    end
+    local lines = {
+        SERIAL_VERSION,
+        "difficulty=" .. context.difficulty,
+        "max_rows=" .. tostring(context.max_rows),
+        "attempt_id=" .. tostring(context.attempt_id),
+        "revision=" .. tostring(context.revision),
+        "status=" .. context.status,
+        "answer=" .. context.answer,
+        "current=" .. context.current,
+        "guess_count=" .. tostring(#context.guesses)
+    }
+    for index, word in ipairs(context.guesses) do
+        lines[#lines + 1] = "guess_" .. tostring(index) .. "=" .. word
+    end
+    lines[#lines + 1] = "event_pending=" ..
+        (context.event_pending and "1" or "0")
+    lines[#lines + 1] = "event_acked=" ..
+        (context.event_acked and "1" or "0")
+    local blob = table.concat(lines, "\n") .. "\n"
+    if #blob > MAX_BLOB_BYTES then
+        return nil, "pf_puzzles_error_invalid_state", "session_blob"
+    end
+    return blob
+end
+
+function restore(blob)
+    local loaded, error_id, detail = ensure_dictionaries()
+    if not loaded then return false, error_id, detail end
+    local replacement = parse_blob(blob)
+    if not replacement then
+        return fail("pf_puzzles_error_invalid_state", "wordle_session_blob")
+    end
+    runtime.context = replacement
+    runtime.selected_difficulty = replacement.difficulty
+    return true
+end
+
+function peek_won(revision_id, attempt_id)
+    local context = runtime.context
+    if not context or context.status ~= "won" or
+        not context.event_pending or context.event_acked or
+        context.attempt_id ~= tonumber(attempt_id) or
+        context.revision > (tonumber(revision_id) or -1) then return nil end
+    return {
+        type = 2,
+        attempt_id = context.attempt_id,
+        revision = context.revision,
+        difficulty = context.difficulty,
+        status_flags = 1,
+        score = 0
+    }
+end
+
+function ack_won(attempt_id, revision_id)
+    local context = runtime.context
+    if not context or context.status ~= "won" or
+        not context.event_pending or context.event_acked or
+        context.attempt_id ~= tonumber(attempt_id) or
+        context.revision ~= tonumber(revision_id) then return false end
+    context.event_pending = false
+    context.event_acked = true
+    return true
+end

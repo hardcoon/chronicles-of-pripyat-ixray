@@ -1,0 +1,564 @@
+local ABI_VERSION = 2
+local BUILD_ID = "COP-BUILD-011-pf-puzzles-samegame-v2-session-3c36322-x64-mt"
+local MAX_SESSION_BLOB_BYTES = 4 * 1024 * 1024
+local SNAPSHOT_SIZE = 384
+local EVENT_SIZE = 40
+local ADDON_DIR = "zzzzzzzzzzzzzzzzzzzzzz_pf-puzzles"
+local DIFFICULTY_PRESETS = { easy = 0, normal = 1, hard = 2 }
+local PRESET_DIFFICULTIES = { [0] = "easy", [1] = "normal", [2] = "hard" }
+local KEY_CODES = { up = 1, down = 2, left = 3, right = 4, select = 5, cancel = 6 }
+local REQUIRED_EXPORTS = {
+    "pf_puzzles_abi_version",
+    "pf_puzzles_get_build_info",
+    "pf_puzzles_game_count",
+    "pf_puzzles_get_game_info",
+    "pf_puzzles_preset_count",
+    "pf_puzzles_get_preset_info",
+    "pf_puzzles_create",
+    "pf_puzzles_destroy",
+    "pf_puzzles_new_game",
+    "pf_puzzles_restart",
+    "pf_puzzles_undo",
+    "pf_puzzles_redo",
+    "pf_puzzles_select_cell",
+    "pf_puzzles_key",
+    "pf_puzzles_clear_selection",
+    "pf_puzzles_get_snapshot",
+    "pf_puzzles_poll_event",
+    "pf_samegame_serialize",
+    "pf_samegame_restore",
+    "pf_puzzles_last_error_code",
+    "pf_puzzles_last_error_message"
+}
+local ffi_ok, ffi = pcall(require, "ffi")
+local runtime = {
+    library = nil,
+    api = nil,
+    context = nil,
+    difficulty = nil,
+    preset = nil,
+    raw_snapshot = nil,
+    pending_completion = nil,
+    current_attempt = nil,
+    load_attempted = false,
+    error_id = nil,
+    error_detail = nil
+}
+
+local CDEF = [[
+    typedef struct pf_puzzles_context pf_puzzles_context;
+
+    typedef struct pf_puzzles_build_info_v1 {
+        unsigned int struct_size;
+        unsigned int abi_version;
+        unsigned int architecture_bits;
+        unsigned int static_runtime;
+        char adapter_version[16];
+        char build_id[64];
+        char upstream_version[32];
+        char upstream_commit[41];
+    } pf_puzzles_build_info_v1;
+
+    typedef struct pf_puzzles_game_info_v1 {
+        unsigned int struct_size;
+        unsigned int game_index;
+        unsigned int preset_count;
+        unsigned int max_cells;
+        unsigned int supports_score;
+        unsigned int supports_keyboard;
+        char id[32];
+        char title[64];
+    } pf_puzzles_game_info_v1;
+
+    typedef struct pf_puzzles_preset_info_v1 {
+        unsigned int struct_size;
+        unsigned int game_index;
+        unsigned int preset_index;
+        unsigned int width;
+        unsigned int height;
+        unsigned int colour_count;
+        unsigned int score_subtract;
+        unsigned int max_cells;
+        char id[32];
+        char params[32];
+        char title[64];
+    } pf_puzzles_preset_info_v1;
+
+    typedef struct pf_puzzles_snapshot_v1 {
+        unsigned int struct_size;
+        unsigned int abi_version;
+        unsigned int attempt_id;
+        unsigned int revision;
+        unsigned int game_index;
+        unsigned int preset_index;
+        unsigned int width;
+        unsigned int height;
+        unsigned int cell_count;
+        unsigned int colour_count;
+        unsigned int score_subtract;
+        unsigned int status_flags;
+        unsigned int can_undo;
+        unsigned int can_redo;
+        unsigned int cursor_visible;
+        int cursor_x;
+        int cursor_y;
+        unsigned int selected_count;
+        int selected_score;
+        unsigned int remaining_cells;
+        int score;
+        unsigned char cells[150];
+        unsigned char selected[150];
+    } pf_puzzles_snapshot_v1;
+
+    typedef struct pf_puzzles_event_v1 {
+        unsigned int struct_size;
+        unsigned int type;
+        unsigned int attempt_id;
+        unsigned int revision;
+        unsigned int preset_index;
+        unsigned int status_flags;
+        int score;
+        unsigned int remaining_cells;
+        unsigned int reserved0;
+        unsigned int reserved1;
+    } pf_puzzles_event_v1;
+
+    unsigned int pf_puzzles_abi_version(void);
+    int pf_puzzles_get_build_info(pf_puzzles_build_info_v1 *out_info);
+    unsigned int pf_puzzles_game_count(void);
+    int pf_puzzles_get_game_info(unsigned int game_index,
+        pf_puzzles_game_info_v1 *out_info);
+    unsigned int pf_puzzles_preset_count(unsigned int game_index);
+    int pf_puzzles_get_preset_info(unsigned int game_index,
+        unsigned int preset_index, pf_puzzles_preset_info_v1 *out_info);
+    int pf_puzzles_create(unsigned int game_index, unsigned int preset_index,
+        pf_puzzles_context **out_context);
+    void pf_puzzles_destroy(pf_puzzles_context *context);
+    int pf_puzzles_new_game(pf_puzzles_context *context,
+        unsigned int preset_index, const char *seed_ascii);
+    int pf_puzzles_restart(pf_puzzles_context *context);
+    int pf_puzzles_undo(pf_puzzles_context *context);
+    int pf_puzzles_redo(pf_puzzles_context *context);
+    int pf_puzzles_select_cell(pf_puzzles_context *context,
+        unsigned int x, unsigned int y);
+    int pf_puzzles_key(pf_puzzles_context *context, unsigned int key);
+    int pf_puzzles_clear_selection(pf_puzzles_context *context);
+    int pf_puzzles_get_snapshot(pf_puzzles_context *context,
+        pf_puzzles_snapshot_v1 *out_snapshot);
+    int pf_puzzles_poll_event(pf_puzzles_context *context,
+        pf_puzzles_event_v1 *out_event);
+    int pf_samegame_serialize(pf_puzzles_context *context,
+        unsigned char *buffer, unsigned int capacity, unsigned int *out_size);
+    int pf_samegame_restore(const unsigned char *buffer, unsigned int size,
+        pf_puzzles_context **out_context);
+    int pf_puzzles_last_error_code(const pf_puzzles_context *context);
+    unsigned int pf_puzzles_last_error_message(const pf_puzzles_context *context,
+        char *buffer, unsigned int capacity);
+]]
+
+local function remember_error(error_id, detail)
+    runtime.error_id = error_id
+    runtime.error_detail = detail and tostring(detail) or nil
+    return false, error_id, runtime.error_detail
+end
+
+local function native_detail()
+    if not runtime.api then return runtime.error_detail end
+    local buffer = ffi.new("char[512]")
+    local ok, required = pcall(runtime.api.pf_puzzles_last_error_message,
+        runtime.context, buffer, 512)
+    if not ok or tonumber(required) == 0 then return runtime.error_detail end
+    return ffi.string(buffer)
+end
+
+local function error_for_result(result)
+    result = tonumber(result) or -6
+    if result == -2 then return "pf_puzzles_error_abi_mismatch", native_detail() end
+    if result == -5 then return "pf_puzzles_error_invalid_state", native_detail() end
+    return "pf_puzzles_error_native_call", native_detail()
+end
+
+local function addon_library_path()
+    if not getFS or not getFS() then return nil, "filesystem_unavailable" end
+    local relative = ADDON_DIR .. "\\bin\\pf_puzzles_native.dll"
+    local ok, path = pcall(function()
+        return getFS():update_path("$arch_dir_addons$", relative)
+    end)
+    if not ok or not path or path == "" then return nil, path end
+    return path
+end
+
+local function load_library()
+    if runtime.library then return true end
+    if runtime.load_attempted then
+        return false, runtime.error_id, runtime.error_detail
+    end
+    runtime.load_attempted = true
+    if not ffi_ok then return remember_error("pf_puzzles_error_ffi_unavailable") end
+
+    local cdef_ok, cdef_error = pcall(ffi.cdef, CDEF)
+    if not cdef_ok then
+        return remember_error("pf_puzzles_error_abi_mismatch", cdef_error)
+    end
+    if ffi.sizeof("pf_puzzles_snapshot_v1") ~= SNAPSHOT_SIZE or
+        ffi.sizeof("pf_puzzles_event_v1") ~= EVENT_SIZE then
+        return remember_error("pf_puzzles_error_abi_mismatch", "POD size")
+    end
+
+    local path, path_error = addon_library_path()
+    if not path then return remember_error("pf_puzzles_error_dll_load", path_error) end
+    local loaded, library = pcall(ffi.load, path)
+    if not loaded then return remember_error("pf_puzzles_error_dll_load", library) end
+
+    local api = {}
+    for _, export_name in ipairs(REQUIRED_EXPORTS) do
+        local resolved, symbol = pcall(function() return library[export_name] end)
+        if not resolved or symbol == nil then
+            return remember_error("pf_puzzles_error_abi_mismatch",
+                export_name .. ": " .. tostring(symbol))
+        end
+        api[export_name] = symbol
+    end
+
+    local checked, abi = pcall(api.pf_puzzles_abi_version)
+    if not checked or tonumber(abi) ~= ABI_VERSION then
+        return remember_error("pf_puzzles_error_abi_mismatch", checked and abi or abi)
+    end
+    local count_ok, game_count = pcall(api.pf_puzzles_game_count)
+    local preset_ok, preset_count = pcall(api.pf_puzzles_preset_count, 0)
+    if not count_ok or not preset_ok or tonumber(game_count) ~= 1 or
+        tonumber(preset_count) ~= 3 then
+        return remember_error("pf_puzzles_error_abi_mismatch", "catalog")
+    end
+
+    local info = ffi.new("pf_puzzles_build_info_v1[1]")
+    info[0].struct_size = ffi.sizeof("pf_puzzles_build_info_v1")
+    local info_ok, info_result = pcall(api.pf_puzzles_get_build_info, info)
+    if not info_ok or tonumber(info_result) < 0 or tonumber(info[0].abi_version) ~= ABI_VERSION then
+        return remember_error("pf_puzzles_error_abi_mismatch", info_result)
+    end
+    if ffi.string(info[0].build_id) ~= BUILD_ID then
+        return remember_error("pf_puzzles_error_abi_mismatch", "build id")
+    end
+    runtime.library = library
+    runtime.api = api
+    runtime.error_id, runtime.error_detail = nil, nil
+    return true
+end
+
+local function require_context()
+    local ok, error_id, detail = load_library()
+    if not ok then return false, error_id, detail end
+    if runtime.context == nil then return false, "pf_puzzles_error_context" end
+    return true
+end
+
+local function fetch_raw_snapshot()
+    local ok, error_id, detail = require_context()
+    if not ok then return nil, error_id, detail end
+    local raw = ffi.new("pf_puzzles_snapshot_v1[1]")
+    raw[0].struct_size = ffi.sizeof("pf_puzzles_snapshot_v1")
+    local called, result = pcall(runtime.api.pf_puzzles_get_snapshot,
+        runtime.context, raw)
+    if not called then return nil, "pf_puzzles_error_native_call", result end
+    if tonumber(result) < 0 then
+        local native_id, native_message = error_for_result(result)
+        return nil, native_id, native_message
+    end
+    if tonumber(raw[0].abi_version) ~= ABI_VERSION or
+        tonumber(raw[0].struct_size) ~= SNAPSHOT_SIZE then
+        return nil, "pf_puzzles_error_abi_mismatch", "snapshot"
+    end
+    runtime.raw_snapshot = raw
+    return raw
+end
+
+local function drain_events()
+    if not runtime.context then return end
+    for _ = 1, 16 do
+        local event = ffi.new("pf_puzzles_event_v1[1]")
+        event[0].struct_size = ffi.sizeof("pf_puzzles_event_v1")
+        local called, result = pcall(runtime.api.pf_puzzles_poll_event,
+            runtime.context, event)
+        if not called or tonumber(result) <= 0 then return end
+        if tonumber(event[0].type) == 2 then
+            runtime.pending_completion = {
+                type = tonumber(event[0].type),
+                attempt_id = tonumber(event[0].attempt_id),
+                revision = tonumber(event[0].revision),
+                preset_index = tonumber(event[0].preset_index),
+                status_flags = tonumber(event[0].status_flags),
+                score = tonumber(event[0].score),
+                remaining_cells = tonumber(event[0].remaining_cells),
+                consumed = false
+            }
+        end
+    end
+end
+
+local function run_action(native_function, ...)
+    local ok, error_id, detail = require_context()
+    if not ok then return false, error_id, detail end
+    local called, result = pcall(native_function, runtime.context, ...)
+    if not called then return false, "pf_puzzles_error_native_call", result end
+    if tonumber(result) < 0 then
+        local native_id, native_message = error_for_result(result)
+        return false, native_id, native_message
+    end
+    runtime.raw_snapshot = nil
+    return true
+end
+
+function available()
+    local ok, error_id, detail = load_library()
+    return ok == true, error_id, detail
+end
+
+function has_context()
+    return runtime.context ~= nil
+end
+
+function difficulty()
+    return runtime.difficulty
+end
+
+function destroy()
+    local context = runtime.context
+    if context ~= nil and runtime.api then
+        ffi.gc(context, nil)
+        local destroyed, destroy_error = pcall(runtime.api.pf_puzzles_destroy, context)
+        if not destroyed then
+            runtime.context = ffi.gc(context, runtime.api.pf_puzzles_destroy)
+            return false, "pf_puzzles_error_native_call", destroy_error
+        end
+    end
+    runtime.context = nil
+    runtime.difficulty = nil
+    runtime.preset = nil
+    runtime.raw_snapshot = nil
+    runtime.pending_completion = nil
+    runtime.current_attempt = nil
+    return true
+end
+
+function serialize()
+    local ok, error_id, detail = require_context()
+    if not ok then return nil, error_id, detail end
+    local out_size = ffi.new("unsigned int[1]")
+    local queried, query_result = pcall(runtime.api.pf_samegame_serialize,
+        runtime.context, nil, 0, out_size)
+    local required = tonumber(out_size[0]) or 0
+    if not queried or tonumber(query_result) ~= 0 or required <= 0 or
+        required > MAX_SESSION_BLOB_BYTES then
+        local native_id, native_message = error_for_result(query_result)
+        return nil, queried and native_id or "pf_puzzles_error_native_call",
+            queried and (native_message or "session blob size") or query_result
+    end
+    local buffer = ffi.new("unsigned char[?]", required)
+    out_size[0] = 0
+    local written, write_result = pcall(runtime.api.pf_samegame_serialize,
+        runtime.context, buffer, required, out_size)
+    if not written or tonumber(write_result) ~= 0 or
+        tonumber(out_size[0]) ~= required then
+        local native_id, native_message = error_for_result(write_result)
+        return nil, written and native_id or "pf_puzzles_error_native_call",
+            written and (native_message or "session blob write") or write_result
+    end
+    return ffi.string(buffer, required)
+end
+
+function restore(blob)
+    local ok, error_id, detail = load_library()
+    if not ok then return false, error_id, detail end
+    if type(blob) ~= "string" or #blob <= 0 or
+        #blob > MAX_SESSION_BLOB_BYTES then
+        return false, "pf_puzzles_error_invalid_state", "session blob"
+    end
+    local buffer = ffi.new("unsigned char[?]", #blob)
+    ffi.copy(buffer, blob, #blob)
+    local out_context = ffi.new("pf_puzzles_context *[1]")
+    local called, result = pcall(runtime.api.pf_samegame_restore,
+        buffer, #blob, out_context)
+    if not called or tonumber(result) ~= 0 or out_context[0] == nil then
+        local native_id, native_message = error_for_result(result)
+        return false, called and native_id or "pf_puzzles_error_native_call",
+            called and native_message or result
+    end
+    local replacement = ffi.gc(out_context[0], runtime.api.pf_puzzles_destroy)
+    local raw = ffi.new("pf_puzzles_snapshot_v1[1]")
+    raw[0].struct_size = SNAPSHOT_SIZE
+    local checked, snapshot_result = pcall(runtime.api.pf_puzzles_get_snapshot,
+        replacement, raw)
+    local preset = checked and tonumber(snapshot_result) >= 0 and
+        tonumber(raw[0].preset_index) or nil
+    if not preset or not PRESET_DIFFICULTIES[preset] or
+        tonumber(raw[0].abi_version) ~= ABI_VERSION or
+        tonumber(raw[0].struct_size) ~= SNAPSHOT_SIZE then
+        ffi.gc(replacement, nil)
+        pcall(runtime.api.pf_puzzles_destroy, replacement)
+        return false, "pf_puzzles_error_invalid_state", "restored snapshot"
+    end
+    local previous = runtime.context
+    if previous ~= nil then
+        ffi.gc(previous, nil)
+        local destroyed, destroy_error = pcall(runtime.api.pf_puzzles_destroy, previous)
+        if not destroyed then
+            ffi.gc(previous, runtime.api.pf_puzzles_destroy)
+            ffi.gc(replacement, nil)
+            pcall(runtime.api.pf_puzzles_destroy, replacement)
+            return false, "pf_puzzles_error_native_call", destroy_error
+        end
+    end
+    runtime.context = replacement
+    runtime.difficulty = PRESET_DIFFICULTIES[preset]
+    runtime.preset = preset
+    runtime.raw_snapshot = raw
+    runtime.pending_completion = nil
+    runtime.current_attempt = tonumber(raw[0].attempt_id)
+    drain_events()
+    return true
+end
+
+function start(difficulty_id)
+    local ok, error_id, detail = load_library()
+    if not ok then return false, error_id, detail end
+    local preset = DIFFICULTY_PRESETS[tostring(difficulty_id or "")]
+    if preset == nil then return false, "pf_puzzles_error_invalid_state", "preset" end
+    local destroyed, destroy_error, destroy_detail = destroy()
+    if not destroyed then return false, destroy_error, destroy_detail end
+    local out_context = ffi.new("pf_puzzles_context *[1]")
+    local called, result = pcall(runtime.api.pf_puzzles_create, 0, preset, out_context)
+    if not called then return false, "pf_puzzles_error_native_call", result end
+    if tonumber(result) < 0 or out_context[0] == nil then
+        local native_id, native_message = error_for_result(result)
+        return false, native_id, native_message
+    end
+    runtime.context = ffi.gc(out_context[0], runtime.api.pf_puzzles_destroy)
+    runtime.difficulty = PRESET_DIFFICULTIES[preset]
+    runtime.preset = preset
+    runtime.pending_completion = nil
+    runtime.current_attempt = nil
+    return true
+end
+
+function revision()
+    local raw, error_id, detail = fetch_raw_snapshot()
+    if not raw then return nil, error_id, detail end
+    return tonumber(raw[0].revision)
+end
+
+function snapshot()
+    local raw = runtime.raw_snapshot
+    local error_id, detail
+    if not raw then raw, error_id, detail = fetch_raw_snapshot() end
+    if not raw then return nil, error_id, detail end
+    local source = raw[0]
+    local width, height = tonumber(source.width), tonumber(source.height)
+    local cell_count = tonumber(source.cell_count)
+    if width < 1 or height < 1 or cell_count ~= width * height or cell_count > 150 then
+        return nil, "pf_puzzles_error_native_call", "board dimensions"
+    end
+    local cells = {}
+    for index = 0, cell_count - 1 do
+        cells[index + 1] = {
+            x = (index % width) + 1,
+            y = math.floor(index / width) + 1,
+            color = tonumber(source.cells[index]),
+            selected = tonumber(source.selected[index]) == 1
+        }
+    end
+    local flags = tonumber(source.status_flags)
+    local result = {
+        revision = tonumber(source.revision),
+        attempt_id = tonumber(source.attempt_id),
+        difficulty = PRESET_DIFFICULTIES[tonumber(source.preset_index)] or runtime.difficulty,
+        width = width,
+        height = height,
+        cells = cells,
+        score = tonumber(source.score),
+        selected_count = tonumber(source.selected_count),
+        selected_points = tonumber(source.selected_score),
+        remaining = tonumber(source.remaining_cells),
+        complete = flags % 2 == 1,
+        dead_end = math.floor(flags / 2) % 2 == 1,
+        can_undo = tonumber(source.can_undo) == 1,
+        can_redo = tonumber(source.can_redo) == 1,
+        cursor_visible = tonumber(source.cursor_visible) == 1,
+        cursor_x = tonumber(source.cursor_x) + 1,
+        cursor_y = tonumber(source.cursor_y) + 1
+    }
+    runtime.current_attempt = result.attempt_id
+    drain_events()
+    return result
+end
+
+function peek_completion(revision_id, attempt_id)
+    drain_events()
+    local event = runtime.pending_completion
+    if not event or event.consumed or event.attempt_id ~= runtime.current_attempt or
+        event.attempt_id ~= tonumber(attempt_id) or
+        event.revision > (tonumber(revision_id) or -1) then
+        return nil
+    end
+    return {
+        type = event.type,
+        attempt_id = event.attempt_id,
+        revision = event.revision,
+        preset_index = event.preset_index,
+        status_flags = event.status_flags,
+        score = event.score,
+        remaining_cells = event.remaining_cells
+    }
+end
+
+function ack_completion(attempt_id, revision_id)
+    local event = runtime.pending_completion
+    if not event or event.consumed or event.attempt_id ~= tonumber(attempt_id) or
+        event.revision ~= tonumber(revision_id) then return false end
+    event.consumed = true
+    return true
+end
+
+function consume_completion(revision_id, attempt_id)
+    local event = peek_completion(revision_id, attempt_id)
+    if event then ack_completion(event.attempt_id, event.revision) end
+    return event
+end
+
+function new_game()
+    local ok, error_id, detail = run_action(runtime.api and
+        runtime.api.pf_puzzles_new_game, runtime.preset, nil)
+    if ok then runtime.pending_completion = nil end
+    return ok, error_id, detail
+end
+
+function restart()
+    return run_action(runtime.api and runtime.api.pf_puzzles_restart)
+end
+
+function undo()
+    return run_action(runtime.api and runtime.api.pf_puzzles_undo)
+end
+
+function redo()
+    return run_action(runtime.api and runtime.api.pf_puzzles_redo)
+end
+
+function clear_selection()
+    return run_action(runtime.api and runtime.api.pf_puzzles_clear_selection)
+end
+
+function select_cell(x, y)
+    x, y = tonumber(x), tonumber(y)
+    if not x or not y or x < 1 or y < 1 then
+        return false, "pf_puzzles_error_invalid_state", "cell"
+    end
+    return run_action(runtime.api and runtime.api.pf_puzzles_select_cell,
+        x - 1, y - 1)
+end
+
+function input_key(key)
+    local code = KEY_CODES[tostring(key or "")]
+    if not code then return false, "pf_puzzles_error_invalid_state", "key" end
+    return run_action(runtime.api and runtime.api.pf_puzzles_key, code)
+end

@@ -1,4 +1,7 @@
 local chat_singleton = nil
+local reload_detaching = false
+local first_show_restore_pending = false
+local section_restore_in_progress = false
 
 local STATUS_TEXT = {
     stopped = "pf_irc_status_offline",
@@ -533,6 +536,9 @@ function pf_irc_chat_tab:__finalize()
 end
 
 function pf_irc_chat_tab:Update()
+    if self.pf_restore_active_section then
+        finish_active_section_restore(self)
+    end
     CUIScriptWnd.Update(self)
     self:Pulse()
 end
@@ -1119,6 +1125,84 @@ function refresh_visibility()
     return true
 end
 
+local function bridge_first_show(section)
+    -- F9 cleanup must leave the old script window detached. In the new Lua VM,
+    -- intercept only the first native Tasks callback if its preserved button
+    -- still points at Chat or Orders. Returning that page here prevents a map
+    -- frame; its first UI Update then fixes CUIPdaWnd's section identifier.
+    if not first_show_restore_pending or reload_detaching or section_restore_in_progress then
+        return nil
+    end
+
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if not pda_menu then return nil end
+    local state_ok, tabs, active_id, shown = pcall(function()
+        local control = pda_menu:GetTabControl()
+        return control, control and control:GetActiveId() or nil, pda_menu:IsShown()
+    end)
+    if not state_ok or not tabs or not shown then return nil end
+
+    if active_id == section then
+        first_show_restore_pending = false
+        return nil
+    end
+    if section ~= "eptTasks" or
+        (active_id ~= "eptChat" and active_id ~= "eptWeather") then
+        first_show_restore_pending = false
+        return nil
+    end
+
+    first_show_restore_pending = false
+    if active_id == "eptChat" and not pf_irc_chat.is_enabled() then
+        pcall(function() tabs:SetActiveTab("eptTasks") end)
+        return nil
+    end
+
+    local window = nil
+    if active_id == "eptChat" then
+        window = get_ui()
+    elseif lz_new_mechanics_pda and lz_new_mechanics_pda.set_active_subdialog then
+        window = lz_new_mechanics_pda.set_active_subdialog(active_id)
+    end
+    if window then
+        window.pf_restore_active_section = active_id
+        window.pf_restore_update_pass = 0
+    end
+    return window
+end
+
+function finish_active_section_restore(window)
+    local target = window and window.pf_restore_active_section or nil
+    if not target then return true end
+
+    -- CUIPdaWnd updates the active page once through its child hierarchy and
+    -- once directly. Detaching during the first pass would mutate the parent's
+    -- child iterator, so synchronize only on the direct second call.
+    window.pf_restore_update_pass = (window.pf_restore_update_pass or 0) + 1
+    if window.pf_restore_update_pass < 2 then return true end
+
+    local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if not pda_menu then
+        window.pf_restore_active_section = nil
+        window.pf_restore_update_pass = nil
+        return false
+    end
+    local state_ok, active_id, active_section = pcall(function()
+        local tabs = pda_menu:GetTabControl()
+        return tabs and tabs:GetActiveId() or nil, pda_menu:GetActiveSection()
+    end)
+    window.pf_restore_active_section = nil
+    window.pf_restore_update_pass = nil
+    if not state_ok or active_id ~= target or active_section == target then
+        return state_ok
+    end
+
+    section_restore_in_progress = true
+    local restored = pcall(function() pda_menu:SetActiveSubdialog(target) end)
+    section_restore_in_progress = false
+    return restored
+end
+
 function pulse()
     local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
     if pda_menu then
@@ -1136,22 +1220,40 @@ end
 
 function before_game_reload()
     local window = chat_singleton
-    if not window then return true end
 
     -- CUIPdaWnd::Show(false) hides a script tab but leaves it attached to the
     -- native PDA frame. The Lua VM is then destroyed during load, so the
-    -- parallel UI update can walk a freed CUIScriptWnd. Make the old tab the
-    -- active dialog once more and switch to a native tab: SetActiveSubdialog
-    -- detaches the script window while both sides are still alive.
-    if window.input_fields then
+    -- parallel UI update can walk a freed CUIScriptWnd. For a selected Chat or
+    -- Orders page, point at its existing wrapper and switch to a native tab
+    -- while both sides are still alive.
+    if window and window.input_fields then
         pcall(function() window.input_fields:shutdown() end)
     end
     local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
     if pda_menu then
+        reload_detaching = true
         local ok = pcall(function()
-            pda_menu:SetActiveDialog(window)
-            pda_menu:SetActiveSubdialog("eptTasks")
+            local tabs = pda_menu:GetTabControl()
+            local selected_id = tabs and tabs:GetActiveId() or nil
+            local selected_window = nil
+            if selected_id == "eptChat" then
+                selected_window = window
+            elseif selected_id == "eptWeather" and lz_new_mechanics_pda and
+                lz_new_mechanics_pda.get_existing_weather_ui then
+                selected_window = lz_new_mechanics_pda.get_existing_weather_ui()
+            end
+            if selected_window then
+                -- Point CUIPdaWnd at the already-existing wrapper directly.
+                -- Calling the tab callback here would refresh IRC or construct
+                -- an off-screen page solely for teardown.
+                pda_menu:SetActiveDialog(selected_window)
+                pda_menu:SetActiveSubdialog("eptTasks")
+                if pda_menu:GetActiveSection() ~= "eptTasks" then
+                    error("selected PDA wrapper was not detached")
+                end
+            end
         end)
+        reload_detaching = false
         if not ok then return false end
     end
     chat_singleton = nil
@@ -1166,18 +1268,24 @@ function on_game_load()
         pcall(function() chat_singleton.input_fields:shutdown() end)
     end
     chat_singleton = nil
+    reload_detaching = false
+    first_show_restore_pending = true
 end
 
 function get_ui()
     chat_singleton = chat_singleton or pf_irc_chat_tab()
     chat_singleton:Refresh(true)
     local state = pf_irc_chat.get_state()
-    if state.chat_open and state.ready then pcall(pf_irc_chat.request_user_sync) end
+    if not section_restore_in_progress and state.chat_open and state.ready then
+        pcall(pf_irc_chat.request_user_sync)
+    end
     return chat_singleton
 end
 
 function set_active_subdialog(section)
     refresh_visibility()
+    local bridged = bridge_first_show(section)
+    if bridged then return bridged end
     if section == "eptChat" then
         if pf_irc_chat.is_enabled() then
             return get_ui()

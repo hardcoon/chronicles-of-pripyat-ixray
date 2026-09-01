@@ -1,0 +1,5 @@
+; Puzzles is the final PDA callback owner. Its Lua facade delegates every
+; non-Puzzles section to the IRC owner, which preserves the mechanics chain.
+![callbacks]
+OnSetActiveSubdialog = pf_puzzles_pda.set_active_subdialog
+OnKeyPress = pf_puzzles_lifecycle.on_key_press

@@ -1,0 +1,448 @@
+local USER_DIR_NAME = "pf_puzzles"
+local RECORDS_FILE_NAME = "records.ltx"
+local SESSION_FILE_NAME = "session.ltx"
+local SESSION_SECTION = "puzzles_ui_session_v1"
+local SESSION_GAMES = {
+    samegame = true, unequal = true, net = true, solo = true, wordle = true
+}
+local SESSION_GAME_ORDER = { "samegame", "unequal", "net", "solo", "wordle" }
+local SECTIONS = {
+    easy = "samegame_5x5c3s2_score_v1",
+    normal = "samegame_15x10c3s2_score_v1",
+    hard = "samegame_15x10c4s2_score_v1"
+}
+local VICTORY_GAME_ORDER = { "unequal", "net", "solo", "wordle" }
+local VICTORY_SECTIONS = {
+    unequal = {
+        easy = "unequal_4de_wins_v1",
+        normal = "unequal_5dk_wins_v1",
+        hard = "unequal_6dx_wins_v1"
+    },
+    net = {
+        easy = "net_7x7_wins_v1",
+        normal = "net_9x9_wins_v1",
+        hard = "net_11x11_wins_v1"
+    },
+    solo = {
+        easy = "solo_3x3_basic_wins_v1",
+        normal = "solo_3x3_advanced_wins_v1",
+        hard = "solo_3x3_unreasonable_wins_v1"
+    },
+    wordle = {
+        easy = "wordle_5x8_wins_v1",
+        normal = "wordle_5x6_wins_v1",
+        hard = "wordle_5x4_wins_v1"
+    }
+}
+local ffi_ok, ffi = pcall(require, "ffi")
+local lfs_ok, lfs = pcall(require, "lfs")
+local kernel32 = nil
+local state = {
+    loaded = false,
+    user_dir = nil,
+    path = nil,
+    session_path = nil,
+    session_process_id = nil,
+    session_process_started_low = nil,
+    session_process_started_high = nil,
+    session_difficulties = nil,
+    records = {},
+    victories = {}
+}
+
+if ffi_ok then
+    if rawget(_G, "__pf_puzzles_process_identity_cdef_v1") ~= true then
+        local cdef_ok = pcall(ffi.cdef, [[
+        typedef struct pf_puzzles_process_filetime_v1 {
+            unsigned long low;
+            unsigned long high;
+        } pf_puzzles_process_filetime_v1;
+        int __stdcall MoveFileExA(const char* existing_name, const char* new_name, unsigned long flags);
+        unsigned long __stdcall GetCurrentProcessId(void);
+        void* __stdcall GetCurrentProcess(void);
+        int __stdcall GetProcessTimes(void* process,
+            pf_puzzles_process_filetime_v1* creation,
+            pf_puzzles_process_filetime_v1* exit_time,
+            pf_puzzles_process_filetime_v1* kernel_time,
+            pf_puzzles_process_filetime_v1* user_time);
+        ]])
+        if cdef_ok then
+            rawset(_G, "__pf_puzzles_process_identity_cdef_v1", true)
+        end
+    end
+    local ok, library = pcall(ffi.load, "kernel32")
+    if ok then kernel32 = library end
+end
+
+local function trim(value)
+    return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function blank_record()
+    return { has_best = false, best_score = 0, completed_games = 0,
+        last_ticket = "" }
+end
+
+local function copy_record(source)
+    source = source or blank_record()
+    return {
+        has_best = source.has_best == true,
+        best_score = tonumber(source.best_score) or 0,
+        completed_games = tonumber(source.completed_games) or 0,
+        last_ticket = tostring(source.last_ticket or "")
+    }
+end
+
+local function normalize_difficulty(difficulty)
+    difficulty = tostring(difficulty or ""):lower()
+    if SECTIONS[difficulty] then return difficulty end
+    return "normal"
+end
+
+local function strict_difficulty(difficulty)
+    difficulty = tostring(difficulty or ""):lower()
+    return SECTIONS[difficulty] and difficulty or nil
+end
+
+local function valid_ticket(ticket)
+    ticket = tostring(ticket or ""):lower()
+    if #ticket < 12 or #ticket > 96 or ticket:find("[^a-z0-9_%-]") then return nil end
+    return ticket
+end
+
+local function init_paths()
+    if state.path then return true end
+    if not getFS or not getFS() then return false end
+    local app_root = getFS():update_path("$app_data_root$", "")
+    state.user_dir = app_root .. USER_DIR_NAME
+    state.path = state.user_dir .. "\\" .. RECORDS_FILE_NAME
+    state.session_path = state.user_dir .. "\\" .. SESSION_FILE_NAME
+    return true
+end
+
+local function ensure_user_dir()
+    if not init_paths() or not lfs_ok then return false end
+    if lfs.attributes(state.user_dir, "mode") == "directory" then return true end
+    return lfs.mkdir(state.user_dir) == true
+end
+
+local function parse_records(path)
+    local parsed, section = {}, nil
+    local file = io.open(path, "rb")
+    if not file then
+        if lfs_ok and lfs.attributes(path, "mode") ~= nil then
+            return nil, "read_failed"
+        end
+        return parsed
+    end
+    for raw_line in file:lines() do
+        local line = trim(raw_line:gsub("^\239\187\191", ""):gsub("%s*[;].*$", ""))
+        local section_name = line:match("^%[([^%]]+)%]$")
+        if section_name then
+            section = trim(section_name)
+            parsed[section] = parsed[section] or {}
+        elseif section and line ~= "" then
+            local key, value = line:match("^([^=]+)=(.*)$")
+            if key then parsed[section][trim(key)] = trim(value) end
+        end
+    end
+    file:close()
+    return parsed
+end
+
+local function read_section(parsed, name)
+    local values = parsed[name] or {}
+    local record = blank_record()
+    record.has_best = values.has_best == "true" or values.has_best == "1"
+    record.best_score = tonumber(values.best_score) or 0
+    record.completed_games = tonumber(values.completed_games) or 0
+    record.last_ticket = valid_ticket(values.last_ticket) or ""
+    return record
+end
+
+local function serialize_records(records, victories)
+    victories = victories or {}
+    local lines = {
+        "; User-owned puzzle records. Written atomically outside game saves.",
+        "; Values are updated only after a native one-shot victory event.",
+        ""
+    }
+    for _, difficulty in ipairs({ "easy", "normal", "hard" }) do
+        local record = records[difficulty] or blank_record()
+        table.insert(lines, "[" .. SECTIONS[difficulty] .. "]")
+        table.insert(lines, "has_best = " .. tostring(record.has_best == true))
+        table.insert(lines, "best_score = " .. tostring(tonumber(record.best_score) or 0))
+        table.insert(lines, "completed_games = " .. tostring(tonumber(record.completed_games) or 0))
+        table.insert(lines, "last_ticket = " .. tostring(record.last_ticket or ""))
+        table.insert(lines, "")
+    end
+    for _, game_id in ipairs(VICTORY_GAME_ORDER) do
+        local game_records = victories[game_id] or {}
+        for _, difficulty in ipairs({ "easy", "normal", "hard" }) do
+            local record = game_records[difficulty] or blank_record()
+            table.insert(lines, "[" .. VICTORY_SECTIONS[game_id][difficulty] .. "]")
+            table.insert(lines, "completed_games = " .. tostring(
+                tonumber(record.completed_games) or 0))
+            table.insert(lines, "last_ticket = " .. tostring(record.last_ticket or ""))
+            table.insert(lines, "")
+        end
+    end
+    return table.concat(lines, "\r\n")
+end
+
+local function write_atomic(path, content)
+    if not ensure_user_dir() then return false, "user_directory_unavailable" end
+    local temp_path = path .. ".tmp"
+    local file = io.open(temp_path, "wb")
+    if not file then return false, "temporary_file_unavailable" end
+    local wrote, write_result = pcall(file.write, file, content)
+    local flushed, flush_result = pcall(file.flush, file)
+    local closed, close_result = pcall(file.close, file)
+    if not wrote or not write_result or not flushed or not flush_result or
+        not closed or not close_result then
+        return false, "write_failed"
+    end
+
+    if ffi_ok and kernel32 then
+        local replace_existing, write_through = 0x1, 0x8
+        local moved, move_result = pcall(kernel32.MoveFileExA,
+            temp_path, path, replace_existing + write_through)
+        if moved and move_result ~= 0 then
+            return true
+        end
+    end
+    local existing = io.open(path, "rb")
+    if existing then
+        existing:close()
+        return false, "atomic_replace_unavailable"
+    end
+    if os.rename(temp_path, path) then return true end
+    return false, "replace_failed"
+end
+
+local function current_process_identity()
+    if not kernel32 then return nil end
+    local called, value = pcall(kernel32.GetCurrentProcessId)
+    local process_id = called and tonumber(value) or nil
+    if not process_id or process_id <= 0 then return nil end
+    local handle_called, handle = pcall(kernel32.GetCurrentProcess)
+    if not handle_called or handle == nil then return nil end
+    local creation = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local exit_time = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local kernel_time = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local user_time = ffi.new("pf_puzzles_process_filetime_v1[1]")
+    local times_called, times_result = pcall(kernel32.GetProcessTimes,
+        handle, creation, exit_time, kernel_time, user_time)
+    if not times_called or times_result == 0 then return nil end
+    return math.floor(process_id), tonumber(creation[0].low),
+        tonumber(creation[0].high)
+end
+
+local function normalize_game(game_id)
+    game_id = tostring(game_id or ""):lower()
+    return SESSION_GAMES[game_id] and game_id or "samegame"
+end
+
+local function serialize_session(process_id, process_started_low,
+    process_started_high, difficulties)
+    difficulties = difficulties or {}
+    local samegame = normalize_difficulty(difficulties.samegame)
+    local lines = {
+        "; Process-scoped Puzzles UI state. Never stored in a savegame.",
+        "[" .. SESSION_SECTION .. "]",
+        "process_id = " .. tostring(process_id),
+        "process_started_low = " .. tostring(process_started_low),
+        "process_started_high = " .. tostring(process_started_high),
+        -- Keep the legacy key so an older Same Game-only addon can still
+        -- recover its session setting after a temporary rollback.
+        "difficulty = " .. samegame
+    }
+    for _, game_id in ipairs(SESSION_GAME_ORDER) do
+        table.insert(lines, game_id .. "_difficulty = " ..
+            normalize_difficulty(difficulties[game_id]))
+    end
+    table.insert(lines, "")
+    return table.concat(lines, "\r\n")
+end
+
+local function read_session(default_game, default_difficulty)
+    default_game = normalize_game(default_game)
+    default_difficulty = normalize_difficulty(default_difficulty)
+    if not init_paths() then return nil, nil, false end
+    local process_id, process_started_low, process_started_high =
+        current_process_identity()
+    if not process_id then return nil, nil, false end
+
+    local parsed, parse_error = parse_records(state.session_path)
+    if not parsed then return nil, nil, false, parse_error end
+    local values = parsed[SESSION_SECTION] or {}
+    local current = tonumber(values.process_id) == process_id and
+        tonumber(values.process_started_low) == process_started_low and
+        tonumber(values.process_started_high) == process_started_high
+    local difficulties = {}
+    for _, game_id in ipairs(SESSION_GAME_ORDER) do
+        local legacy = game_id == "samegame" and values.difficulty or nil
+        local requested = game_id == default_game and default_difficulty or nil
+        difficulties[game_id] = current and normalize_difficulty(
+            values[game_id .. "_difficulty"] or legacy or requested) or
+            normalize_difficulty(requested)
+    end
+    if not current then
+        local written = write_atomic(state.session_path, serialize_session(process_id,
+            process_started_low, process_started_high, difficulties))
+        if not written then return nil, nil, false, "session_write_failed" end
+    end
+    state.session_process_id = process_id
+    state.session_process_started_low = process_started_low
+    state.session_process_started_high = process_started_high
+    state.session_difficulties = difficulties
+    return process_id, difficulties, true
+end
+
+function load()
+    if state.loaded then return true end
+    if not init_paths() then return false, "app_data_unavailable" end
+    local parsed, parse_error = parse_records(state.path)
+    if not parsed then return false, parse_error end
+    for difficulty, section in pairs(SECTIONS) do
+        state.records[difficulty] = read_section(parsed, section)
+    end
+    for _, game_id in ipairs(VICTORY_GAME_ORDER) do
+        state.victories[game_id] = {}
+        for difficulty, section in pairs(VICTORY_SECTIONS[game_id]) do
+            local values = parsed[section] or {}
+            state.victories[game_id][difficulty] = {
+                completed_games = math.max(0, tonumber(values.completed_games) or 0),
+                last_ticket = valid_ticket(values.last_ticket) or ""
+            }
+        end
+    end
+    state.loaded = true
+    return true
+end
+
+function get(difficulty)
+    if not load() then return blank_record() end
+    return copy_record(state.records[normalize_difficulty(difficulty)])
+end
+
+function consider_completed(difficulty, score, ticket)
+    local loaded, load_error = load()
+    if not loaded then return false, false, load_error end
+    difficulty = strict_difficulty(difficulty)
+    ticket = valid_ticket(ticket)
+    if not difficulty then return false, false, "invalid_difficulty" end
+    if not ticket then return false, false, "invalid_ticket" end
+    score = tonumber(score) or 0
+    local previous = copy_record(state.records[difficulty])
+    if previous.last_ticket == ticket then return true, false end
+    local candidate = copy_record(previous)
+    candidate.completed_games = candidate.completed_games + 1
+    candidate.last_ticket = ticket
+
+    local better = not candidate.has_best or score > candidate.best_score
+    if better then
+        candidate.has_best = true
+        candidate.best_score = score
+    end
+
+    state.records[difficulty] = candidate
+    local ok, error_code = write_atomic(state.path,
+        serialize_records(state.records, state.victories))
+    if not ok then
+        state.records[difficulty] = previous
+        return false, false, error_code
+    end
+    return true, better
+end
+
+function consider_won(game_id, difficulty, ticket)
+    local loaded, load_error = load()
+    if not loaded then return false, load_error end
+    game_id = tostring(game_id or ""):lower()
+    difficulty = strict_difficulty(difficulty)
+    ticket = valid_ticket(ticket)
+    if not VICTORY_SECTIONS[game_id] then return false, "invalid_game" end
+    if not difficulty then return false, "invalid_difficulty" end
+    if not ticket then return false, "invalid_ticket" end
+    local game_records = state.victories[game_id]
+    local previous = copy_record(game_records[difficulty])
+    if previous.last_ticket == ticket then return true end
+    local candidate = copy_record(previous)
+    candidate.completed_games = candidate.completed_games + 1
+    candidate.last_ticket = ticket
+    game_records[difficulty] = candidate
+    local ok, error_code = write_atomic(state.path,
+        serialize_records(state.records, state.victories))
+    if not ok then
+        game_records[difficulty] = previous
+        return false, error_code
+    end
+    return true
+end
+
+function completed_games(game_id, difficulty)
+    if not load() then return 0 end
+    game_id = tostring(game_id or ""):lower()
+    difficulty = normalize_difficulty(difficulty)
+    if game_id == "samegame" then
+        local record = state.records[difficulty] or blank_record()
+        return math.max(0, tonumber(record.completed_games) or 0)
+    end
+    local game_records = state.victories[game_id]
+    return game_records and math.max(0,
+        tonumber(game_records[difficulty] and
+            game_records[difficulty].completed_games) or 0) or 0
+end
+
+function qualified_wins(game_id)
+    return completed_games(game_id, "normal") +
+        completed_games(game_id, "hard")
+end
+
+function session_difficulty(default)
+    return session_game_difficulty("samegame", default)
+end
+
+function set_session_difficulty(difficulty)
+    return set_session_game_difficulty("samegame", difficulty)
+end
+
+function session_game_difficulty(game_id, default)
+    game_id = normalize_game(game_id)
+    default = normalize_difficulty(default)
+    local process_id, process_started_low, process_started_high =
+        current_process_identity()
+    if state.session_difficulties and process_id and
+        state.session_process_id == process_id and
+        state.session_process_started_low == process_started_low and
+        state.session_process_started_high == process_started_high then
+        return state.session_difficulties[game_id] or default
+    end
+    local _, difficulties, ok = read_session(game_id, default)
+    return ok and difficulties[game_id] or default
+end
+
+function set_session_game_difficulty(game_id, difficulty)
+    game_id = normalize_game(game_id)
+    difficulty = normalize_difficulty(difficulty)
+    if not init_paths() then return false, "app_data_unavailable" end
+    local process_id, process_started_low, process_started_high =
+        current_process_identity()
+    if not process_id then return false, "process_id_unavailable" end
+    if not state.session_difficulties or state.session_process_id ~= process_id or
+        state.session_process_started_low ~= process_started_low or
+        state.session_process_started_high ~= process_started_high then
+        local _, _, loaded = read_session(game_id, difficulty)
+        if not loaded then return false, "session_unavailable" end
+    end
+    state.session_difficulties[game_id] = difficulty
+    return write_atomic(state.session_path,
+        serialize_session(process_id, process_started_low,
+            process_started_high, state.session_difficulties))
+end
+
+function records_path()
+    init_paths()
+    return state.path
+end

@@ -285,6 +285,9 @@ end
 
 -- Preserve the former monolithic callback order, including load-time migrations.
 function impl.on_game_load_ordered()
+	if lz_new_mechanics_pda and lz_new_mechanics_pda.on_game_load then
+		lz_new_mechanics_pda.on_game_load()
+	end
 	lz_nm_surge_cover.reset()
 	lz_nm_beacons.reset_runtime_on_load()
 	lz_nm_equipment.on_game_load()

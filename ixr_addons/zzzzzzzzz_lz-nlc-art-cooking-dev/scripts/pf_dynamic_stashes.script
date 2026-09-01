@@ -6,7 +6,7 @@
 local LEVEL_NAME = "pripyat_full"
 local EXTERNAL_STATE_KEY = "pf_dynamic_stashes"
 local FIXED_PDA_STATE_KEY = "pf_fixed_pda_rewards_v1"
-local STATE_VERSION = 18
+local STATE_VERSION = 20
 local PURPLE_DISCOVERY_REWARD_VERSION = 1
 local DETERMINISTIC_MODULUS = 2147483647
 local SYSTEM_ENABLED = true
@@ -16,6 +16,7 @@ local CHECK_INTERVAL_MS = 2000
 local MAX_PHYSICAL_STASHES = 32
 local MAX_MATERIALIZATIONS_PER_UPDATE = 1
 local MAX_RETIREMENTS_PER_UPDATE = 12
+local MAX_PUZZLE_REWARD_CLAIMS = 4096
 local MATERIALIZE_DISTANCE_SQR = 60 * 60
 local DEMATERIALIZE_DISTANCE_SQR = 90 * 90
 local RETIRE_DISTANCE_SQR = 120 * 120
@@ -123,6 +124,15 @@ local tier_data = {
 	orange = { marker = "pf_stash_orange", hint_required = true, provision_chance = 100 },
 	red = { marker = "pf_stash_red", hint_required = true, provision_chance = 100 }
 }
+local puzzle_reward_tiers = { green = true, cyan = true, purple = true }
+
+local function valid_puzzle_reward_id(reward_id)
+	reward_id = tostring(reward_id or ""):lower()
+	if #reward_id < 12 or #reward_id > 96 or reward_id:find("[^a-z0-9_%-]") then
+		return nil
+	end
+	return reward_id
+end
 
 local hacking_usb_tier_ceiling = {
 	purple = 1,
@@ -1192,6 +1202,10 @@ function impl.get_persistent_state()
 			searched_counts = {},
 			purple_discovery_reward_version = PURPLE_DISCOVERY_REWARD_VERSION,
 			purple_discovery_reward_stage = 0,
+			puzzle_reward_claims = {},
+			puzzle_reward_claim_order = {},
+			puzzle_reward_pending = {},
+			puzzle_reward_pending_order = {},
 			loot_seed = math.random(1, DETERMINISTIC_MODULUS - 1)
 		}
 		root[EXTERNAL_STATE_KEY] = state
@@ -1329,6 +1343,46 @@ function impl.get_persistent_state()
 	for tier in pairs(tier_data) do
 		state.searched_counts[tier] = math.max(0, tonumber(state.searched_counts[tier]) or 0)
 	end
+	state.puzzle_reward_claims = type(state.puzzle_reward_claims) == "table" and
+		state.puzzle_reward_claims or {}
+	state.puzzle_reward_claim_order = type(state.puzzle_reward_claim_order) == "table" and
+		state.puzzle_reward_claim_order or {}
+	local normalized_claims, normalized_order = {}, {}
+	for _, reward_id in ipairs(state.puzzle_reward_claim_order) do
+		reward_id = valid_puzzle_reward_id(reward_id)
+		local claim = reward_id and state.puzzle_reward_claims[reward_id] or nil
+		local claim_tier = type(claim) == "table" and tostring(claim.tier or ""):lower() or nil
+		if reward_id and puzzle_reward_tiers[claim_tier] and
+			#normalized_order < MAX_PUZZLE_REWARD_CLAIMS and
+			not normalized_claims[reward_id] then
+			normalized_claims[reward_id] = {
+				tier = claim_tier,
+				slot_index = math.max(0, math.floor(tonumber(claim.slot_index) or 0))
+			}
+			table.insert(normalized_order, reward_id)
+		end
+	end
+	state.puzzle_reward_claims = normalized_claims
+	state.puzzle_reward_claim_order = normalized_order
+	state.puzzle_reward_pending = type(state.puzzle_reward_pending) == "table" and
+		state.puzzle_reward_pending or {}
+	state.puzzle_reward_pending_order = type(state.puzzle_reward_pending_order) == "table" and
+		state.puzzle_reward_pending_order or {}
+	local normalized_pending, normalized_pending_order = {}, {}
+	for _, reward_id in ipairs(state.puzzle_reward_pending_order) do
+		reward_id = valid_puzzle_reward_id(reward_id)
+		local pending = reward_id and state.puzzle_reward_pending[reward_id] or nil
+		local pending_tier = type(pending) == "table" and
+			tostring(pending.tier or ""):lower() or nil
+		if reward_id and puzzle_reward_tiers[pending_tier] and
+			#normalized_pending_order < MAX_PUZZLE_REWARD_CLAIMS and
+			not normalized_claims[reward_id] and not normalized_pending[reward_id] then
+			normalized_pending[reward_id] = { tier = pending_tier }
+			table.insert(normalized_pending_order, reward_id)
+		end
+	end
+	state.puzzle_reward_pending = normalized_pending
+	state.puzzle_reward_pending_order = normalized_pending_order
 	state.loot_seed = math.floor(math.abs(tonumber(state.loot_seed) or 0)) %
 		DETERMINISTIC_MODULUS
 	if state.loot_seed <= 0 then
@@ -1385,11 +1439,17 @@ function impl.point_respects_spacing(point, tier, tier_points, all_points)
 			point, tier_points, TIER_MIN_SPACING_SQR[tier] or 0)
 end
 
-function impl.choose_point(reserved, require_far, excluded, tier, tier_points, all_points)
+function impl.choose_point(reserved, require_far, excluded, tier, tier_points, all_points,
+	point_roll)
 	local pool = candidates
 	if #pool == 0 then return nil end
 	local actor_position = db.actor:position()
-	local start = math.random(1, #pool)
+	local start
+	if point_roll ~= nil then
+		start = math.floor(math.abs(tonumber(point_roll) or 0)) % #pool + 1
+	else
+		start = math.random(1, #pool)
+	end
 	for offset = 0, #pool - 1 do
 		local point = pool[(start + offset - 1) % #pool + 1]
 		if not reserved[point.id] and (not excluded or not excluded[point.id]) and
@@ -3190,12 +3250,12 @@ function impl.has_free_hint_point(tier)
 	return false
 end
 
-function impl.allocate_hint_slot(tier)
+function impl.allocate_hint_slot(tier, point_roll)
 	if not tier_data[tier] then return nil end
 	local reserved, tier_points, all_points = impl.hint_point_context(tier)
 	local point = impl.choose_point(
-		reserved, true, nil, tier, tier_points, all_points) or
-		impl.choose_point(reserved, false, nil, tier, tier_points, all_points)
+		reserved, true, nil, tier, tier_points, all_points, point_roll) or
+		impl.choose_point(reserved, false, nil, tier, tier_points, all_points, point_roll)
 	if not point then return nil end
 
 	local saved_state = impl.get_persistent_state()
@@ -3227,10 +3287,10 @@ function impl.allocate_hint_slot(tier)
 	return slot
 end
 
-function impl.collect_or_allocate_hint_slots(tier, reserved)
+function impl.collect_or_allocate_hint_slots(tier, reserved, point_roll)
 	local eligible = impl.collect_eligible_hint_slots(tier, reserved)
 	if #eligible > 0 then return eligible end
-	local slot = impl.allocate_hint_slot(tier)
+	local slot = impl.allocate_hint_slot(tier, point_roll)
 	if slot and (not reserved or not reserved[slot]) then table.insert(eligible, slot) end
 	return eligible
 end
@@ -3290,6 +3350,110 @@ function grant_hint(tier, message, silent)
 	if #eligible == 0 then return false end
 	local slot = eligible[math.random(1, #eligible)]
 	return impl.reveal_hint_slot(slot, message, silent)
+end
+
+-- Idempotent public reward hook for native PDA puzzles. The caller fixes the
+-- tier when the attempt starts; this manager owns only the logical stash and
+-- records the reward id after a successful reveal. Replaying the same id after
+-- a save load repairs the same save timeline without creating a second hint.
+function grant_puzzle_reward_once(reward_id, tier, message, silent)
+	if not SYSTEM_ENABLED then return false, "system_disabled" end
+	reward_id = valid_puzzle_reward_id(reward_id)
+	tier = tostring(tier or ""):lower()
+	if not reward_id then return false, "invalid_reward_id" end
+	if not puzzle_reward_tiers[tier] then return false, "invalid_tier" end
+	if not db.actor or level.name() ~= LEVEL_NAME then return false, "actor_unavailable" end
+
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local saved_state = impl.get_persistent_state()
+	local claims = saved_state.puzzle_reward_claims
+	local order = saved_state.puzzle_reward_claim_order
+	local existing = claims[reward_id]
+	if type(existing) == "table" then
+		if existing.tier ~= tier then return false, "tier_conflict" end
+		return true, "already_granted"
+	end
+	if #order >= MAX_PUZZLE_REWARD_CLAIMS then return false, "claim_journal_full" end
+
+	local roll = impl.deterministic_pda_roll(saved_state.loot_seed,
+		reward_id, tier, "pf_puzzle_reward_v1")
+	local point_roll = impl.deterministic_pda_roll(saved_state.loot_seed,
+		reward_id, tier, "pf_puzzle_reward_point_v1")
+	local eligible = impl.collect_or_allocate_hint_slots(tier, nil, point_roll)
+	if #eligible == 0 then return false, "no_hint_slot" end
+	local slot = impl.deterministic_slot(eligible, roll)
+	local revealed_call, revealed = false, false
+	if slot then
+		revealed_call, revealed = pcall(impl.reveal_hint_slot,
+			slot, message, silent)
+	end
+	if not revealed_call and slot and slot.state and slot.state.hinted and
+		slot.state.discovered and not slot.state.depleted then
+		revealed = true
+	end
+	if not slot or revealed ~= true then
+		return false, "reveal_failed"
+	end
+	claims[reward_id] = { tier = tier, slot_index = slot.index }
+	table.insert(order, reward_id)
+	return true, "granted"
+end
+
+-- The pending queue belongs to the concrete save timeline which won the puzzle.
+-- Loading a pre-win save removes it; winning that same fixed ticket again may
+-- explicitly recreate it so the deterministic hint lost to F9 is restored.
+function queue_puzzle_reward_once(reward_id, tier)
+	if not SYSTEM_ENABLED then return false, "system_disabled" end
+	reward_id = valid_puzzle_reward_id(reward_id)
+	tier = tostring(tier or ""):lower()
+	if not reward_id then return false, "invalid_reward_id" end
+	if not puzzle_reward_tiers[tier] then return false, "invalid_tier" end
+
+	local saved_state = impl.get_persistent_state()
+	local claim = saved_state.puzzle_reward_claims[reward_id]
+	if type(claim) == "table" then
+		if claim.tier ~= tier then return false, "tier_conflict" end
+		return true, "already_granted"
+	end
+	local pending = saved_state.puzzle_reward_pending
+	local order = saved_state.puzzle_reward_pending_order
+	local existing = pending[reward_id]
+	if type(existing) == "table" then
+		if existing.tier ~= tier then return false, "tier_conflict" end
+		return true, "already_queued"
+	end
+	if #order >= MAX_PUZZLE_REWARD_CLAIMS then return false, "pending_journal_full" end
+	pending[reward_id] = { tier = tier }
+	table.insert(order, reward_id)
+	return true, "queued"
+end
+
+-- Deliver only obligations already present in the currently loaded save.
+-- Absence is intentional: it means this timeline predates the victory.
+function deliver_pending_puzzle_rewards(silent)
+	if not SYSTEM_ENABLED then return false, "system_disabled" end
+	local saved_state = impl.get_persistent_state()
+	local pending = saved_state.puzzle_reward_pending
+	local order = saved_state.puzzle_reward_pending_order
+	if #order == 0 then return true, "nothing_pending" end
+	if not db.actor or level.name() ~= LEVEL_NAME then return false, "actor_unavailable" end
+	local index = 1
+	while index <= #order do
+		local reward_id = order[index]
+		local entry = pending[reward_id]
+		if type(entry) ~= "table" or not puzzle_reward_tiers[entry.tier] then
+			pending[reward_id] = nil
+			table.remove(order, index)
+		else
+			local granted, detail = grant_puzzle_reward_once(reward_id, entry.tier,
+				"pf_dynamic_stash_hint_received", silent == true)
+			if granted ~= true then return false, detail end
+			pending[reward_id] = nil
+			table.remove(order, index)
+		end
+	end
+	return true, "delivered"
 end
 
 -- Guaranteed post-#10 chain. These are ordinary cyan locations, but their

@@ -1,0 +1,915 @@
+local Controller = {}
+Controller.__index = Controller
+
+local ROOT_XML_TAG = "wordle"
+local GAME_ID = "wordle"
+local MAX_ROWS = 8
+local WORD_LENGTH = 5
+local MAX_CELLS = MAX_ROWS * WORD_LENGTH
+local DIFFICULTIES = { "easy", "normal", "hard" }
+local DIFFICULTY_VALID = { easy = true, normal = true, hard = true }
+local CELL = { size = 36, gap = 4, keyboard_y = 334 }
+local RULE_BLOCKS = {
+    { "goal_heading", 6 }, { "goal_body", 10 },
+    { "colors_heading", 6 }, { "colors_body", 10 },
+    { "input_heading", 6 }, { "input_body", 10 },
+    { "difficulty_heading", 6 }, { "difficulty_body", 10 },
+    { "controls_heading", 6 }, { "controls_body", 10 },
+    { "lifecycle", 8 }
+}
+
+local KEY_ROWS = {
+    { "й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х", "ъ" },
+    { "ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э" },
+    { "enter", "я", "ч", "с", "м", "и", "т", "ь", "б", "ю", "backspace" }
+}
+
+-- Lua source and the model use UTF-8, while the current PDA font renderer
+-- expects one-byte CP1251 in dynamic SetText calls. Values in this table are
+-- deliberately assembled as bytes so letters never depend on another addon.
+local DISPLAY_UPPER = {
+    ["а"] = string.char(0xC0), ["б"] = string.char(0xC1),
+    ["в"] = string.char(0xC2), ["г"] = string.char(0xC3),
+    ["д"] = string.char(0xC4), ["е"] = string.char(0xC5),
+    ["ж"] = string.char(0xC6), ["з"] = string.char(0xC7),
+    ["и"] = string.char(0xC8), ["й"] = string.char(0xC9),
+    ["к"] = string.char(0xCA), ["л"] = string.char(0xCB),
+    ["м"] = string.char(0xCC), ["н"] = string.char(0xCD),
+    ["о"] = string.char(0xCE), ["п"] = string.char(0xCF),
+    ["р"] = string.char(0xD0), ["с"] = string.char(0xD1),
+    ["т"] = string.char(0xD2), ["у"] = string.char(0xD3),
+    ["ф"] = string.char(0xD4), ["х"] = string.char(0xD5),
+    ["ц"] = string.char(0xD6), ["ч"] = string.char(0xD7),
+    ["ш"] = string.char(0xD8), ["щ"] = string.char(0xD9),
+    ["ъ"] = string.char(0xDA), ["ы"] = string.char(0xDB),
+    ["ь"] = string.char(0xDC), ["э"] = string.char(0xDD),
+    ["ю"] = string.char(0xDE), ["я"] = string.char(0xDF),
+    ["ё"] = string.char(0xA8)
+}
+
+local PHYSICAL_LETTERS = {
+    "ф", "и", "с", "в", "у", "а", "п", "р", "ш", "о", "л", "д", "ь",
+    "т", "щ", "з", "й", "к", "ы", "е", "г", "м", "ц", "ч", "н", "я"
+}
+local PHYSICAL_PUNCTUATION = {
+    [47] = "х", [48] = "ъ", [51] = "ж", [52] = "э",
+    [53] = "е", [54] = "б", [55] = "ю"
+}
+
+local COLORS = {
+    cell_empty = GetARGB(255, 31, 38, 38),
+    cell_active = GetARGB(255, 47, 57, 56),
+    absent = GetARGB(255, 20, 24, 24),
+    present = GetARGB(255, 187, 148, 38),
+    exact = GetARGB(255, 65, 145, 78),
+    text = GetARGB(255, 226, 222, 205),
+    muted = GetARGB(255, 156, 162, 158),
+    active = GetARGB(255, 226, 171, 58),
+    normal = GetARGB(255, 205, 205, 195),
+    error = GetARGB(255, 239, 87, 70)
+}
+
+local function tr(id)
+    return game.translate_string(id)
+end
+
+local function formatted(id, ...)
+    return string.format(tr(id), ...)
+end
+
+local function set_visible(control, visible)
+    if not control then return end
+    control:Show(visible == true)
+    control:Enable(visible == true)
+end
+
+local function native_module()
+    return rawget(_G, "pf_puzzles_wordle")
+end
+
+local function records_module()
+    return rawget(_G, "pf_puzzles_records")
+end
+
+local function session_module()
+    return rawget(_G, "pf_puzzles_session")
+end
+
+local function safe_owner_call(owner, name, ...)
+    local callback = owner and owner[name]
+    if type(callback) ~= "function" then return false, nil end
+    local ok, result = pcall(callback, owner, ...)
+    return ok, result
+end
+
+local function translated_error(error_id, detail)
+    local id = type(error_id) == "string" and error_id or
+        "pf_puzzles_error_native_call"
+    local text = tr(id)
+    if detail ~= nil and tostring(detail) ~= "" then
+        text = text .. " [" .. tostring(detail) .. "]"
+    end
+    return text
+end
+
+local function register_button(self, control, id, callback)
+    self.owner:Register(control, id)
+    self.owner:AddCallback(id, ui_events.BUTTON_CLICKED, callback, self)
+end
+
+local function utf8_letters(text)
+    local result = {}
+    text = type(text) == "string" and text or ""
+    local index = 1
+    while index <= #text do
+        local byte = string.byte(text, index)
+        local length = byte and byte >= 240 and 4 or
+            (byte and byte >= 224 and 3 or (byte and byte >= 192 and 2 or 1))
+        result[#result + 1] = string.sub(text, index, index + length - 1)
+        index = index + length
+    end
+    return result
+end
+
+local function display_letter(letter)
+    return DISPLAY_UPPER[letter] or ""
+end
+
+local function display_word(word)
+    local result = {}
+    for _, letter in ipairs(utf8_letters(word)) do
+        result[#result + 1] = display_letter(letter)
+    end
+    return table.concat(result)
+end
+
+local function mark_color(mark, active)
+    mark = tonumber(mark) or 0
+    if mark == 3 then return COLORS.exact end
+    if mark == 2 then return COLORS.present end
+    if mark == 1 then return COLORS.absent end
+    return active and COLORS.cell_active or COLORS.cell_empty
+end
+
+function Controller:initialize(owner)
+    self.owner = owner
+    self.active = false
+    self.shutting_down = false
+    self.rules_open = false
+    self.catalog_rules = false
+    self.snapshot = nil
+    self.last_revision = -1
+    self.last_error = nil
+    self.transient_notice = nil
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.defer_completion = false
+    self.defer_loss = false
+    self.revealed_lost_attempt_id = nil
+    self.cells = {}
+    self.keys = {}
+    self:initialize_controls()
+    self:initialize_callbacks()
+    self.root:Show(false)
+    self.root:Enable(false)
+    return self
+end
+
+function Controller:initialize_controls()
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_puzzles_wordle.xml")
+    self.root = xml:InitStatic(ROOT_XML_TAG, self.owner)
+    self.content = xml:InitStatic("wordle:content", self.root)
+    self.backdrop = xml:InitStatic("wordle:content:backdrop", self.content)
+    self.back = xml:Init3tButton("wordle:content:back", self.content)
+    self.status = xml:InitTextWnd("wordle:content:status", self.content)
+    self.difficulty_buttons = {
+        easy = xml:Init3tButton("wordle:content:difficulty_easy", self.content),
+        normal = xml:Init3tButton("wordle:content:difficulty_normal", self.content),
+        hard = xml:Init3tButton("wordle:content:difficulty_hard", self.content)
+    }
+    self.notice_bar = xml:InitStatic("wordle:content:notice_bar", self.content)
+    self.notice = xml:InitTextWnd(
+        "wordle:content:notice_bar:notice", self.notice_bar)
+    self.board_frame = xml:InitStatic("wordle:content:board_frame", self.content)
+    self.board_area = xml:InitStatic("wordle:content:board_area", self.content)
+    self.board_message = xml:InitTextWnd(
+        "wordle:content:board_message", self.content)
+    self.tools = xml:InitStatic("wordle:content:tools", self.content)
+    self.new_game = xml:Init3tButton(
+        "wordle:content:tools:new_game", self.tools)
+    self.rules_button = xml:Init3tButton(
+        "wordle:content:tools:rules", self.tools)
+    self.help = xml:InitTextWnd("wordle:content:tools:help", self.tools)
+
+    for index = 1, MAX_CELLS do
+        local root = xml:InitStatic("cell", self.board_area)
+        self.cells[index] = {
+            root = root,
+            bg = xml:InitStatic("cell:bg", root),
+            value = xml:InitTextWnd("cell:value", root)
+        }
+        set_visible(root, false)
+    end
+
+    local key_index = 0
+    for row, specs in ipairs(KEY_ROWS) do
+        for column, value in ipairs(specs) do
+            key_index = key_index + 1
+            local root = xml:InitStatic("key", self.board_area)
+            local visual = {
+                root = root,
+                bg = xml:InitStatic("key:bg", root),
+                hit = xml:Init3tButton("key:hit", root),
+                value = value,
+                row = row,
+                column = column
+            }
+            self.keys[key_index] = visual
+            set_visible(root, false)
+        end
+    end
+    self:layout_keyboard()
+
+    self.rules_shade = xml:InitStatic("wordle:rules_shade", self.root)
+    self.rules = xml:InitStatic("wordle:rules", self.root)
+    self.rules_caption = xml:InitTextWnd("wordle:rules:caption", self.rules)
+    self.rules_caption_line = xml:InitFrameLine(
+        "wordle:rules:caption_line", self.rules)
+    self.rules_scroll = xml:InitScrollView("wordle:rules:scroll", self.rules)
+    self.rules_back = xml:Init3tButton("wordle:rules:back", self.rules)
+    self.rules_texts = {}
+    for _, block in ipairs(RULE_BLOCKS) do
+        local text = xml:InitTextWnd("wordle:rules:" .. block[1], nil)
+        text:AdjustHeightToText()
+        text:SetWndSize(vector2():set(text:GetWidth(), text:GetHeight() + block[2]))
+        self.rules_scroll:AddWindow(text, true)
+        text:SetAutoDelete(false)
+        self.rules_texts[#self.rules_texts + 1] = text
+    end
+    self.confirm = CUIMessageBoxEx()
+    self.owner:Register(self.confirm, "pf_puzzles_wordle_confirm")
+    self:hide_rules()
+end
+
+function Controller:layout_keyboard()
+    local row_widths = { 0, 0, 0 }
+    for _, visual in ipairs(self.keys) do
+        local width = (visual.value == "enter" or
+            visual.value == "backspace") and 63 or 47
+        row_widths[visual.row] = row_widths[visual.row] + width
+    end
+    for row, specs in ipairs(KEY_ROWS) do
+        row_widths[row] = row_widths[row] + (#specs - 1) * 3
+    end
+    local offsets = { 0, 0, 0 }
+    for row = 1, 3 do
+        offsets[row] = math.floor((self.board_area:GetWidth() - row_widths[row]) / 2)
+    end
+    for _, visual in ipairs(self.keys) do
+        local width = (visual.value == "enter" or
+            visual.value == "backspace") and 63 or 47
+        visual.root:SetWndPos(vector2():set(
+            offsets[visual.row], CELL.keyboard_y + (visual.row - 1) * 32))
+        visual.root:SetWndSize(vector2():set(width, 28))
+        visual.bg:SetWndSize(vector2():set(width - 2, 26))
+        visual.hit:SetWndSize(vector2():set(width, 28))
+        offsets[visual.row] = offsets[visual.row] + width + 3
+        local label = visual.value == "enter" and "ENTER" or
+            (visual.value == "backspace" and "<" or
+                display_letter(visual.value))
+        visual.hit:TextControl():SetText(label)
+    end
+end
+
+function Controller:initialize_callbacks()
+    register_button(self, self.back, "pf_puzzles_wordle_back",
+        self.back_to_catalog)
+    register_button(self, self.new_game, "pf_puzzles_wordle_new",
+        self.request_new_game)
+    register_button(self, self.rules_button, "pf_puzzles_wordle_rules",
+        self.show_rules)
+    register_button(self, self.rules_back, "pf_puzzles_wordle_rules_back",
+        self.hide_rules)
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local requested = difficulty
+        register_button(self, self.difficulty_buttons[difficulty],
+            "pf_puzzles_wordle_difficulty_" .. difficulty,
+            function(controller) controller:request_difficulty(requested) end)
+    end
+    for index, visual in ipairs(self.keys) do
+        local value = visual.value
+        register_button(self, visual.hit, "pf_puzzles_wordle_key_" .. index,
+            function(controller) controller:press_key(value) end)
+    end
+    self.owner:AddCallback("pf_puzzles_wordle_confirm",
+        ui_events.MESSAGE_BOX_YES_CLICKED, self.confirm_pending, self)
+    self.owner:AddCallback("pf_puzzles_wordle_confirm",
+        ui_events.MESSAGE_BOX_NO_CLICKED, self.cancel_pending, self)
+end
+
+function Controller:saved_difficulty(fallback)
+    local value = DIFFICULTY_VALID[fallback] and fallback or "normal"
+    local records = records_module()
+    if records and type(records.session_game_difficulty) == "function" then
+        local ok, restored = pcall(records.session_game_difficulty,
+            GAME_ID, value)
+        if ok and DIFFICULTY_VALID[restored] then value = restored end
+    end
+    return value
+end
+
+function Controller:remember_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] then return false end
+    local records = records_module()
+    if not records or type(records.set_session_game_difficulty) ~= "function" then
+        return false
+    end
+    local called, result, detail = pcall(records.set_session_game_difficulty,
+        GAME_ID, difficulty)
+    if (not called or result == false) and type(printf) == "function" then
+        printf("! pf_puzzles: Wordle difficulty write failed: [%s]",
+            tostring(called and detail or result))
+    end
+    return called and result ~= false
+end
+
+function Controller:refresh_catalog()
+    safe_owner_call(self.owner, "RefreshCatalog")
+end
+
+function Controller:show_error(error_id, detail)
+    self.last_error = translated_error(error_id, detail)
+    self.status:SetText(tr("pf_puzzles_wordle_status_unavailable"))
+    self.status:SetTextColor(COLORS.error)
+    self.board_message:SetText(self.last_error)
+    set_visible(self.board_message, true)
+    self:hide_board()
+    self:refresh_actions(nil)
+    return false
+end
+
+function Controller:show_notice(error_id, detail)
+    local id = type(error_id) == "string" and error_id or
+        "pf_puzzles_error_native_call"
+    self.transient_notice = tr(id)
+    if id ~= "pf_puzzles_wordle_error_incomplete" and
+        id ~= "pf_puzzles_wordle_error_unknown" and detail and
+        tostring(detail) ~= "" then
+        self.transient_notice = self.transient_notice .. " [" ..
+            tostring(detail) .. "]"
+    end
+    self:refresh_notice(self.snapshot)
+    return false
+end
+
+function Controller:start_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] then return false end
+    local native = native_module()
+    if not native then return self:show_error(nil, "module unavailable") end
+    local session = session_module()
+    if session and session.can_replace then
+        local replaceable, replace_error = session.can_replace(GAME_ID)
+        if not replaceable then
+            return self:show_error("pf_puzzles_error_native_call", replace_error)
+        end
+    end
+    local called, result, error_id, detail = pcall(native.new_game, difficulty)
+    if not called or result ~= true then
+        return self:show_error(called and error_id or nil,
+            called and detail or result)
+    end
+    local bound, bind_error = false, "session unavailable"
+    if session and session.bind_new_attempt then
+        bound, bind_error = session.bind_new_attempt(GAME_ID, native)
+    end
+    if bound ~= true then
+        pcall(native.destroy)
+        if session and session.has_active and session.has_active(GAME_ID) then
+            pcall(session.restore_game, GAME_ID, native)
+        end
+        return self:show_error("pf_puzzles_error_native_call",
+            bind_error or "session write failed")
+    end
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.defer_completion = false
+    self.defer_loss = false
+    self.revealed_lost_attempt_id = nil
+    self.transient_notice = nil
+    self.last_error = nil
+    self:remember_difficulty(difficulty)
+    self:update(true, false)
+    self:refresh_catalog()
+    return true
+end
+
+function Controller:enter(difficulty)
+    self:hide_rules()
+    self.active = true
+    self.shutting_down = false
+    self.root:Show(true)
+    self.root:Enable(true)
+    self.content:Show(true)
+    self.content:Enable(true)
+    local native = native_module()
+    if not native then return self:show_error(nil, "module unavailable") end
+    local called, available, error_id, detail = pcall(native.available)
+    if not called or available ~= true then
+        return self:show_error(called and error_id or nil,
+            called and detail or available)
+    end
+    if native.has_context() then
+        self:remember_difficulty(native.difficulty() or
+            self:saved_difficulty(difficulty))
+        self:update(true, false)
+        return true
+    end
+    local session = session_module()
+    if session and session.has_active and session.has_active(GAME_ID) then
+        local restored, restore_error = session.restore_game(GAME_ID, native)
+        if restored then
+            self:remember_difficulty(native.difficulty() or
+                self:saved_difficulty(difficulty))
+            self:update(true, false)
+            return true
+        end
+        session.discard_game(GAME_ID)
+        if type(printf) == "function" then
+            printf("! pf_puzzles: Wordle session restore failed: [%s]",
+                tostring(restore_error))
+        end
+    end
+    return self:start_difficulty(self:saved_difficulty(difficulty))
+end
+
+function Controller:leave()
+    self:hide_rules()
+    self.active = false
+    self.root:Show(false)
+    self.root:Enable(false)
+end
+
+function Controller:back_to_catalog()
+    self:leave()
+    safe_owner_call(self.owner, "BackToCatalog")
+    self:refresh_catalog()
+end
+
+function Controller:is_active()
+    return self.active == true
+end
+
+function Controller:get_root()
+    return self.root
+end
+
+function Controller:current_snapshot()
+    return self.snapshot
+end
+
+function Controller:current_difficulty()
+    local native = native_module()
+    if native and native.has_context() then return native.difficulty() end
+    local session = session_module()
+    if session and session.active_difficulty then
+        local restored = session.active_difficulty(GAME_ID)
+        if DIFFICULTY_VALID[restored] then return restored end
+    end
+    return self:saved_difficulty("normal")
+end
+
+function Controller:show_rules(return_page)
+    self.catalog_rules = return_page == "catalog" and not self.active
+    if not self.active and not self.catalog_rules then return end
+    if self.catalog_rules then
+        safe_owner_call(self.owner, "OnWordleCatalogRulesVisible", true)
+        self.root:Show(true)
+        self.root:Enable(true)
+        self.content:Show(false)
+    end
+    self.rules_open = true
+    self.rules_scroll:ScrollToBegin()
+    self.content:Enable(false)
+    set_visible(self.rules_shade, true)
+    set_visible(self.rules, true)
+end
+
+function Controller:hide_rules()
+    local catalog_rules = self.catalog_rules
+    self.rules_open = false
+    self.catalog_rules = false
+    set_visible(self.rules_shade, false)
+    set_visible(self.rules, false)
+    if self.content then
+        self.content:Show(self.active == true)
+        self.content:Enable(self.active == true)
+    end
+    if catalog_rules and not self.active then
+        safe_owner_call(self.owner, "OnWordleCatalogRulesVisible", false)
+        self.root:Show(false)
+        self.root:Enable(false)
+        self:refresh_catalog()
+    end
+end
+
+function Controller:is_rules_open()
+    return self.rules_open == true
+end
+
+function Controller:ask_difficulty(difficulty)
+    self.pending_action = "difficulty"
+    self.pending_difficulty = difficulty
+    self.confirm:InitMessageBox("message_box_yes_no")
+    self.confirm:SetText(tr("pf_puzzles_wordle_confirm_difficulty"))
+    self.confirm:ShowDialog(true)
+end
+
+function Controller:cancel_pending()
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    self:sync_difficulty_buttons()
+end
+
+function Controller:confirm_pending()
+    local action, difficulty = self.pending_action, self.pending_difficulty
+    self.pending_action = nil
+    self.pending_difficulty = nil
+    if action == "difficulty" then self:start_difficulty(difficulty) end
+end
+
+function Controller:request_difficulty(difficulty)
+    if not DIFFICULTY_VALID[difficulty] or
+        difficulty == self:current_difficulty() then return end
+    if self.snapshot and self.snapshot.playing == true and
+        not self.snapshot.finished then
+        self:ask_difficulty(difficulty)
+        self:sync_difficulty_buttons()
+        return
+    end
+    self:start_difficulty(difficulty)
+end
+
+function Controller:request_new_game()
+    if self.snapshot and self.snapshot.playing == true and
+        not self.snapshot.finished then return false end
+    return self:start_difficulty(self:current_difficulty())
+end
+
+function Controller:sync_difficulty_buttons()
+    local active = self:current_difficulty()
+    local terminal = self.snapshot and self.snapshot.finished == true
+    for _, difficulty in ipairs(DIFFICULTIES) do
+        local button = self.difficulty_buttons[difficulty]
+        set_visible(button, not terminal)
+        if not terminal then
+            button:Enable(difficulty ~= active)
+            button:TextControl():SetTextColor(difficulty == active and
+                COLORS.active or COLORS.normal)
+        end
+    end
+end
+
+function Controller:hide_board()
+    for _, visual in ipairs(self.cells) do set_visible(visual.root, false) end
+    for _, visual in ipairs(self.keys) do set_visible(visual.root, false) end
+end
+
+function Controller:row_state(snapshot, row_index)
+    local submitted = snapshot.rows and snapshot.rows[row_index] or nil
+    if submitted then return submitted.letters or {}, submitted.marks or {}, false end
+    if snapshot.playing and row_index == tonumber(snapshot.active_row) then
+        return snapshot.current_letters or {}, {}, true
+    end
+    return {}, {}, false
+end
+
+function Controller:refresh_board(snapshot)
+    if not snapshot then self:hide_board() return end
+    local max_rows = math.max(1, math.min(MAX_ROWS,
+        tonumber(snapshot.max_rows) or 6))
+    local span_x = WORD_LENGTH * CELL.size + (WORD_LENGTH - 1) * CELL.gap
+    local row_step = CELL.size + CELL.gap
+    local origin_x = math.floor((self.board_area:GetWidth() - span_x) / 2)
+    local origin_y = 4 + math.floor((MAX_ROWS - max_rows) * row_step / 2)
+    for index, visual in ipairs(self.cells) do
+        local row = math.floor((index - 1) / WORD_LENGTH) + 1
+        local column = (index - 1) % WORD_LENGTH + 1
+        if row <= max_rows then
+            local letters, marks, current = self:row_state(snapshot, row)
+            local letter = letters[column]
+            visual.root:SetWndPos(vector2():set(
+                origin_x + (column - 1) * row_step,
+                origin_y + (row - 1) * row_step))
+            visual.bg:SetTextureColor(mark_color(marks[column], current))
+            visual.value:SetText(display_letter(letter))
+            visual.value:SetTextColor(COLORS.text)
+            set_visible(visual.root, true)
+        else
+            set_visible(visual.root, false)
+        end
+    end
+    self:refresh_keyboard(snapshot)
+end
+
+function Controller:refresh_keyboard(snapshot)
+    local playing = snapshot and snapshot.playing == true and
+        not snapshot.locked and not snapshot.finished
+    local keyboard = snapshot and snapshot.keyboard or {}
+    for _, visual in ipairs(self.keys) do
+        set_visible(visual.root, playing)
+        if playing then
+            local rank = keyboard[visual.value] or 0
+            if visual.value == "enter" or visual.value == "backspace" then
+                rank = 0
+            end
+            visual.bg:SetTextureColor(mark_color(rank, true))
+            visual.hit:Enable(true)
+            visual.hit:TextControl():SetTextColor(COLORS.text)
+        end
+    end
+end
+
+function Controller:refresh_notice(snapshot)
+    local text, color = "", COLORS.normal
+    if self.transient_notice and snapshot and snapshot.playing then
+        text, color = self.transient_notice, COLORS.error
+    elseif snapshot and snapshot.won then
+        text, color = tr("pf_puzzles_wordle_notice_won"), COLORS.active
+    elseif snapshot and snapshot.lost and
+        self.revealed_lost_attempt_id == tonumber(snapshot.attempt_id) then
+        text = formatted("pf_puzzles_wordle_notice_answer",
+            display_word(snapshot.answer or ""))
+        color = COLORS.active
+    elseif snapshot then
+        text = formatted("pf_puzzles_wordle_attempt_format",
+            tonumber(snapshot.active_row) or 1,
+            tonumber(snapshot.max_rows) or 6)
+    end
+    self.notice:SetText(text)
+    self.notice:SetTextColor(color)
+end
+
+function Controller:refresh_status(snapshot)
+    local id = "pf_puzzles_wordle_status_playing"
+    local color = COLORS.normal
+    if snapshot and snapshot.won then
+        id, color = "pf_puzzles_wordle_status_won", COLORS.active
+    elseif snapshot and snapshot.lost then
+        id, color = "pf_puzzles_wordle_status_lost", COLORS.error
+    end
+    self.status:SetText(tr(id))
+    self.status:SetTextColor(color)
+    if not self.last_error then set_visible(self.board_message, false) end
+end
+
+function Controller:refresh_actions(snapshot)
+    local terminal = snapshot and snapshot.finished == true
+    set_visible(self.new_game, terminal)
+    set_visible(self.rules_button, true)
+    set_visible(self.help, snapshot ~= nil and not terminal)
+    self:sync_difficulty_buttons()
+end
+
+function Controller:process_lost(snapshot)
+    if not snapshot or not snapshot.lost then return false end
+    local attempt_id = tonumber(snapshot.attempt_id)
+    if not attempt_id then return false end
+    if self.revealed_lost_attempt_id == attempt_id then return true end
+    local session = session_module()
+    local native = native_module()
+    if not session or type(session.spoil_attempt) ~= "function" or not native then
+        self.notice:SetText(tr("pf_puzzles_error_native_call"))
+        self.notice:SetTextColor(COLORS.error)
+        return false
+    end
+    local called, spoiled, detail = pcall(session.spoil_attempt, GAME_ID, native)
+    if not called or spoiled ~= true then
+        self.notice:SetText(translated_error("pf_puzzles_error_native_call",
+            called and detail or spoiled))
+        self.notice:SetTextColor(COLORS.error)
+        return false
+    end
+    self.revealed_lost_attempt_id = attempt_id
+    self:refresh_notice(snapshot)
+    self:refresh_catalog()
+    return true
+end
+
+function Controller:process_won(snapshot)
+    if not snapshot or not snapshot.won then return end
+    local native = native_module()
+    if not native then return end
+    local event, error_id, detail = native.peek_won(
+        snapshot.revision, snapshot.attempt_id)
+    if error_id then self:show_error(error_id, detail) return end
+    if not event then
+        local session = session_module()
+        if session and session.pending_completion then
+            event = session.pending_completion(GAME_ID, snapshot)
+        end
+    end
+    if not event then return end
+    self.pending_event = event
+    local key = tostring(event.attempt_id) .. ":" .. tostring(event.revision)
+    if self.notified_won_key == key then return end
+    local called, handled = safe_owner_call(self.owner,
+        "OnWordleCompletion", event)
+    if called and handled ~= false then
+        if event.synthetic == true or
+            self:ack_won(event.attempt_id, event.revision) then
+            self.notified_won_key = key
+            self:refresh_catalog()
+        end
+    end
+end
+
+function Controller:pending_won()
+    return self.pending_event
+end
+
+function Controller:ack_won(attempt_id, revision)
+    local native = native_module()
+    if not native or not native.ack_won(attempt_id, revision) then return false end
+    if self.pending_event and self.pending_event.attempt_id == attempt_id and
+        self.pending_event.revision == revision then self.pending_event = nil end
+    return true
+end
+
+function Controller:update(force, suppress_completion)
+    if self.shutting_down or not self.active then return false end
+    local native = native_module()
+    if not native or not native.has_context() then
+        return self:show_error("pf_puzzles_error_context")
+    end
+    local revision, error_id, detail = native.revision()
+    if not revision then return self:show_error(error_id, detail) end
+    if not force and revision == self.last_revision then
+        if self.snapshot and self.snapshot.lost and self.defer_loss then
+            if self:process_lost(self.snapshot) then self.defer_loss = false end
+        end
+        if self.snapshot and self.snapshot.won then
+            if self.defer_completion then
+                self.defer_completion = false
+                self:process_won(self.snapshot)
+            elseif not self.notified_won_key then
+                self:process_won(self.snapshot)
+            end
+        end
+        return true
+    end
+    local snapshot
+    snapshot, error_id, detail = native.snapshot()
+    if not snapshot then return self:show_error(error_id, detail) end
+    self.snapshot = snapshot
+    self.last_revision = snapshot.revision or revision
+    self.last_error = nil
+    if snapshot.lost and
+        self.revealed_lost_attempt_id ~= tonumber(snapshot.attempt_id) then
+        self.defer_loss = true
+    end
+    self:refresh_board(snapshot)
+    self:refresh_notice(snapshot)
+    self:refresh_status(snapshot)
+    self:refresh_actions(snapshot)
+    if snapshot.won and suppress_completion then
+        self.defer_completion = true
+    elseif snapshot.won then
+        self:process_won(snapshot)
+    end
+    return true
+end
+
+function Controller:call_input(callback, ...)
+    if type(callback) ~= "function" then
+        return self:show_notice("pf_puzzles_error_native_call")
+    end
+    local called, result, error_id, detail = pcall(callback, ...)
+    if not called then
+        return self:show_error("pf_puzzles_error_native_call", result)
+    end
+    if result ~= true then return self:show_notice(error_id, detail) end
+    self.transient_notice = nil
+    return self:update(true, false)
+end
+
+function Controller:input_letter(letter)
+    if not self.snapshot or not self.snapshot.playing or self.snapshot.locked then
+        return false
+    end
+    local native = native_module()
+    return native and self:call_input(native.input_letter, letter) or false
+end
+
+function Controller:backspace()
+    if not self.snapshot or not self.snapshot.playing or self.snapshot.locked then
+        return false
+    end
+    local native = native_module()
+    return native and self:call_input(native.backspace) or false
+end
+
+function Controller:submit()
+    if not self.snapshot or not self.snapshot.playing or self.snapshot.locked then
+        return false
+    end
+    local native = native_module()
+    if not native or type(native.submit) ~= "function" then return false end
+    local called, result, error_id, detail = pcall(native.submit)
+    if not called then
+        return self:show_error("pf_puzzles_error_native_call", result)
+    end
+    if result ~= true then return self:show_notice(error_id, detail) end
+    self.transient_notice = nil
+    -- Refresh visual state now, but let the PDA's next ordinary Update finalize
+    -- a victory. This keeps reward/session work outside BUTTON_CLICKED dispatch.
+    return self:update(true, true)
+end
+
+function Controller:press_key(value)
+    if value == "enter" then return self:submit() end
+    if value == "backspace" then return self:backspace() end
+    return self:input_letter(value)
+end
+
+function Controller:on_keyboard(dik, keyboard_action)
+    local keys = rawget(_G, "DIK_keys")
+    local binding = type(dik_to_bind) == "function" and dik_to_bind(dik) or nil
+    local escape = dik == 41 or (keys and dik == keys.DIK_ESCAPE) or
+        (key_bindings and binding == key_bindings.kQUIT)
+    if self.rules_open then
+        if keyboard_action == ui_events.WINDOW_KEY_PRESSED and escape then
+            self:hide_rules()
+        end
+        return true
+    end
+    if not self.active or keyboard_action ~= ui_events.WINDOW_KEY_PRESSED then
+        return false
+    end
+    if escape then return false end
+    if not self.snapshot or not self.snapshot.playing or
+        self.snapshot.locked or self.snapshot.finished then return false end
+    if dik == 40 or dik == 88 or (keys and dik == keys.DIK_RETURN) then
+        self:submit()
+        return true
+    end
+    if dik == 42 or dik == 76 or
+        (keys and (dik == keys.DIK_BACK or dik == keys.DIK_DELETE)) then
+        self:backspace()
+        return true
+    end
+    local letter = nil
+    if dik >= 4 and dik <= 29 then letter = PHYSICAL_LETTERS[dik - 3] end
+    letter = letter or PHYSICAL_PUNCTUATION[dik]
+    if letter then
+        self:input_letter(letter)
+        return true
+    end
+    return false
+end
+
+function Controller:destroy_context()
+    self.shutting_down = true
+    local native = native_module()
+    local ok, error_id, detail = true, nil, nil
+    if native and type(native.destroy) == "function" then
+        ok, error_id, detail = native.destroy()
+    end
+    self.snapshot = nil
+    self.last_revision = -1
+    self.pending_event = nil
+    self.notified_won_key = nil
+    self.defer_completion = false
+    self.defer_loss = false
+    self.revealed_lost_attempt_id = nil
+    self.transient_notice = nil
+    self:hide_board()
+    if ok == false then return self:show_error(error_id, detail) end
+    return true
+end
+
+function Controller:on_game_load()
+    self:destroy_context()
+    self:leave()
+    self.shutting_down = false
+end
+
+function Controller:destroy()
+    self.shutting_down = true
+    self:leave()
+end
+
+function new(owner)
+    if not owner then return nil end
+    return setmetatable({}, Controller):initialize(owner)
+end
+
+function root_xml_tag()
+    return ROOT_XML_TAG
+end
+
+function root_ui_type()
+    return "CUIStatic"
+end

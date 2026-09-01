@@ -1,0 +1,89 @@
+<w>
+    <frame1 x="28" y="41" width="969" height="90" stretch="1">
+        <texture>ui_inGame2_pda_buttons_background</texture>
+        <caption x="28" y="100" width="969" height="30"><text font="letterica18" align="c" r="205" g="205" b="205">pf_puzzles_title</text></caption>
+    </frame1>
+    <frame2 x="28" y="137" width="969" height="571" stretch="1"><texture>ui_inGame2_pda_buttons_background</texture></frame2>
+    <border x="46" y="162" width="937" height="520" stretch="1">
+        <auto_frameline x="0" y="0" width="937" height="1" vertical="0"><texture>ui_inGame2_pda_line_horizontal</texture></auto_frameline>
+        <auto_frameline x="0" y="519" width="937" height="1" vertical="0"><texture>ui_inGame2_pda_line_horizontal</texture></auto_frameline>
+        <auto_frameline x="0" y="1" width="1" height="518" vertical="1"><texture>ui_inGame2_pda_line_vertical</texture></auto_frameline>
+        <auto_frameline x="936" y="1" width="1" height="518" vertical="1"><texture>ui_inGame2_pda_line_vertical</texture></auto_frameline>
+    </border>
+
+    <catalog x="0" y="0" width="1024" height="768">
+        <tile_mode x="55" y="169" width="112" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_view_tiles</text><texture_e>ui\lz_order_tab_e</texture_e><texture_d>ui\lz_order_tab_a</texture_d><texture_t>ui\lz_order_tab_t</texture_t><texture_h>ui\lz_order_tab_h</texture_h></tile_mode>
+        <list_mode x="171" y="169" width="112" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_view_list</text><texture_e>ui\lz_order_tab_e</texture_e><texture_d>ui\lz_order_tab_a</texture_d><texture_t>ui\lz_order_tab_t</texture_t><texture_h>ui\lz_order_tab_h</texture_h></list_mode>
+        <catalog_status x="55" y="169" width="909" height="30"><text font="letterica16" align="c" vert_align="c" complex_mode="1" r="190" g="190" b="180"/></catalog_status>
+
+        <tile_view x="55" y="207" width="909" height="454">
+            <!-- Lua clones this template into a 2x3 pool. Unused slots stay hidden. -->
+            <card x="0" y="0" width="445" height="138" stretch="1"><texture a="145" r="14" g="20" b="20">ui\ui_noise</texture>
+                <preview x="8" y="8" width="122" height="122" stretch="1"/>
+                <name x="142" y="8" width="295" height="34"><text font="letterica18" align="c" vert_align="c" complex_mode="1" r="225" g="185" b="92"/></name>
+                <best x="142" y="46" width="295" height="36"><text font="letterica16" align="c" vert_align="c" complex_mode="1" r="220" g="180" b="85"/></best>
+                <play x="142" y="94" width="295" height="36" stretch="1"><text font="letterica16" align="c" vert_align="c"/><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></play>
+            </card>
+        </tile_view>
+
+        <list_view x="55" y="207" width="909" height="454" right_ident="4" vert_interval="6" always_show_scroll="0" scroll_profile="pf_irc_compact">
+            <row x="0" y="0" width="893" height="78" stretch="1"><texture a="150" r="14" g="20" b="20">ui\ui_noise</texture>
+                <preview x="7" y="5" width="68" height="68" stretch="1"/>
+                <name x="112" y="6" width="108" height="66"><text font="letterica18" align="l" vert_align="c" complex_mode="1" r="225" g="185" b="92"/></name>
+                <description x="226" y="6" width="443" height="66"><text font="letterica16" align="l" vert_align="c" complex_mode="1" r="180" g="180" b="175"/></description>
+                <best x="681" y="5" width="204" height="30"><text font="letterica16" align="c" vert_align="c" r="220" g="180" b="85"/></best>
+                <play x="681" y="39" width="160" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c"/><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></play>
+                <rules x="845" y="39" width="40" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c">?</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></rules>
+            </row>
+        </list_view>
+    </catalog>
+
+    <game x="0" y="0" width="1024" height="768">
+        <back x="55" y="169" width="125" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_back</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></back>
+        <game_name x="190" y="169" width="210" height="30"><text font="letterica18" align="c" vert_align="c" r="225" g="185" b="92"/></game_name>
+        <game_status x="410" y="169" width="223" height="30"><text font="letterica16" align="c" vert_align="c" r="210" g="165" b="70"/></game_status>
+        <difficulty_easy x="641" y="169" width="105" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_difficulty_easy</text><texture_e>ui\lz_order_tab_e</texture_e><texture_d>ui\lz_order_tab_a</texture_d><texture_t>ui\lz_order_tab_t</texture_t><texture_h>ui\lz_order_tab_h</texture_h></difficulty_easy>
+        <difficulty_normal x="750" y="169" width="105" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_difficulty_normal</text><texture_e>ui\lz_order_tab_e</texture_e><texture_d>ui\lz_order_tab_a</texture_d><texture_t>ui\lz_order_tab_t</texture_t><texture_h>ui\lz_order_tab_h</texture_h></difficulty_normal>
+        <difficulty_hard x="859" y="169" width="105" height="30" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_difficulty_hard</text><texture_e>ui\lz_order_tab_e</texture_e><texture_d>ui\lz_order_tab_a</texture_d><texture_t>ui\lz_order_tab_t</texture_t><texture_h>ui\lz_order_tab_h</texture_h></difficulty_hard>
+
+        <stats x="55" y="206" width="909" height="29" stretch="1"><texture a="100" r="12" g="17" b="17">ui\ui_noise</texture>
+            <score x="0" y="0" width="227" height="29"><text font="letterica16" align="c" vert_align="c"/></score>
+            <best x="227" y="0" width="227" height="29"><text font="letterica16" align="c" vert_align="c"/></best>
+            <remaining x="454" y="0" width="227" height="29"><text font="letterica16" align="c" vert_align="c"/></remaining>
+            <selected x="681" y="0" width="228" height="29"><text font="letterica16" align="c" vert_align="c"/></selected>
+        </stats>
+
+        <board_frame x="55" y="242" width="704" height="425" stretch="1"><texture a="125" r="10" g="15" b="15">ui\ui_noise</texture></board_frame>
+        <board_area x="63" y="250" width="688" height="409"/>
+        <board_message x="93" y="413" width="628" height="70"><text font="letterica18" align="c" vert_align="c" complex_mode="1" r="220" g="150" b="65"/></board_message>
+
+        <tools x="775" y="242" width="189" height="425" stretch="1"><texture a="105" r="12" g="17" b="17">ui\ui_noise</texture>
+            <undo x="14" y="18" width="161" height="34" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_undo</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></undo>
+            <clear x="14" y="112" width="161" height="34" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_clear_selection</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></clear>
+            <restart x="14" y="174" width="161" height="34" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_restart</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></restart>
+            <new_game x="14" y="216" width="161" height="34" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_new_game</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></new_game>
+            <rules x="14" y="268" width="161" height="34" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_rules</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></rules>
+            <help x="14" y="316" width="161" height="94"><text font="letterica16" align="c" vert_align="c" complex_mode="1" r="145" g="150" b="148">pf_puzzles_keyboard_hint</text></help>
+        </tools>
+    </game>
+
+    <rules_shade x="28" y="137" width="969" height="571" stretch="1"><texture a="165" r="0" g="0" b="0">ui\ui_noise</texture></rules_shade>
+    <rules x="136" y="143" width="752" height="549" stretch="1"><texture a="242" r="16" g="22" b="23">ui\ui_noise</texture>
+        <caption x="20" y="12" width="712" height="34"><text font="letterica18" align="c" vert_align="c" r="225" g="185" b="92">pf_puzzles_rules_title</text></caption>
+        <caption_line x="20" y="48" width="712" height="1" vertical="0"><texture a="110">ui_inGame2_pda_line_horizontal</texture></caption_line>
+        <scroll x="28" y="62" width="696" height="417" right_ident="2" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="0" always_show_scroll="0"/>
+        <goal_heading width="668" height="1"><text x="6" y="2" font="letterica18" complex_mode="1" align="l" vert_align="t" r="225" g="185" b="92">pf_puzzles_rules_goal_heading</text></goal_heading>
+        <goal_body width="668" height="1"><text x="6" y="2" font="letterica16" color="ui_6" complex_mode="1" align="l" vert_align="t">pf_puzzles_rules_goal_body</text></goal_body>
+        <move_heading width="668" height="1"><text x="6" y="2" font="letterica18" complex_mode="1" align="l" vert_align="t" r="225" g="185" b="92">pf_puzzles_rules_move_heading</text></move_heading>
+        <move_body width="668" height="1"><text x="6" y="2" font="letterica16" color="ui_6" complex_mode="1" align="l" vert_align="t">pf_puzzles_rules_move_body</text></move_body>
+        <scoring_heading width="668" height="1"><text x="6" y="2" font="letterica18" complex_mode="1" align="l" vert_align="t" r="225" g="185" b="92">pf_puzzles_rules_scoring_heading</text></scoring_heading>
+        <scoring_body width="668" height="1"><text x="6" y="2" font="letterica16" color="ui_6" complex_mode="1" align="l" vert_align="t">pf_puzzles_rules_scoring_body</text></scoring_body>
+        <controls_heading width="668" height="1"><text x="6" y="2" font="letterica18" complex_mode="1" align="l" vert_align="t" r="225" g="185" b="92">pf_puzzles_rules_controls_heading</text></controls_heading>
+        <controls_body width="668" height="1"><text x="6" y="2" font="letterica16" color="ui_6" complex_mode="1" align="l" vert_align="t">pf_puzzles_rules_controls_body</text></controls_body>
+        <lifecycle width="668" height="1"><text x="6" y="2" font="letterica16" color="ui_6" complex_mode="1" align="l" vert_align="t">pf_puzzles_rules_session</text></lifecycle>
+        <back x="286" y="495" width="180" height="36" stretch="1"><text font="letterica16" align="c" vert_align="c">pf_puzzles_back</text><texture_e>ui\ui_pf_irc_pda_button_e</texture_e><texture_h>ui\ui_pf_irc_pda_button_h</texture_h><texture_t>ui\ui_pf_irc_pda_button_t</texture_t><texture_d>ui\ui_pf_irc_pda_button_d</texture_d></back>
+    </rules>
+
+    <cell_visual x="0" y="0" width="30" height="30" stretch="1"><texture>ui_pf_puzzles_cell</texture></cell_visual>
+    <cell_hitbox x="0" y="0" width="30" height="30"/>
+</w>

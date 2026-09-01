@@ -1,0 +1,254 @@
+local runtime = {
+    cleaning = false,
+    last_detach_ok = true,
+    net_destroy_wrapped = false,
+    storage_load_wrapped = false,
+    storage_load_in_progress = false,
+    storage_state_received = false,
+    callbacks_registered = false
+}
+
+local install_storage_load_wrapper
+
+local function destroy_native_contexts()
+    local module_names = {
+        "pf_puzzles_native", "pf_puzzles_unequal_native",
+        "pf_puzzles_net_native", "pf_puzzles_solo_native",
+        "pf_puzzles_wordle"
+    }
+    local all_ok = true
+    for _, module_name in ipairs(module_names) do
+        local native = rawget(_G, module_name)
+        if native and type(native.destroy) == "function" then
+            local ok, result = pcall(native.destroy)
+            all_ok = all_ok and ok and result ~= false
+        end
+    end
+    return all_ok
+end
+
+local function prepare_session_reload()
+    local session = rawget(_G, "pf_puzzles_session")
+    if not session or type(session.prepare_for_reload) ~= "function" then return false end
+    local ok, prepared = pcall(session.prepare_for_reload)
+    return ok and prepared ~= false
+end
+
+local function cancel_session_reload()
+    local session = rawget(_G, "pf_puzzles_session")
+    if not session or type(session.cancel_reload) ~= "function" then return false end
+    local ok, cancelled = pcall(session.cancel_reload)
+    return ok and cancelled ~= false
+end
+
+local function detach_puzzles()
+    if not runtime.callbacks_registered or
+        type(install_storage_load_wrapper) ~= "function" or
+        not install_storage_load_wrapper() then
+        return false
+    end
+    -- Menu loads may ignore a failed net_destroy callback. Mark the timeline
+    -- unavailable before any fallible capture/detach work so stale future state
+    -- can never be reopened while a load is already in flight.
+    if not prepare_session_reload() then return false end
+    local pda_ui = rawget(_G, "pf_puzzles_pda")
+    if not pda_ui or not pda_ui.before_game_reload then
+        local session = rawget(_G, "pf_puzzles_session")
+        if not session or type(session.capture_all) ~= "function" then return false end
+        local captured, capture_error = pcall(session.capture_all)
+        if not captured or capture_error ~= true then return false end
+        return destroy_native_contexts()
+    end
+    local ok, detached = pcall(pda_ui.before_game_reload)
+    return ok and detached ~= false
+end
+
+local function detach_irc(dik)
+    local pda_ui = rawget(_G, "pf_irc_chat_pda")
+    if pda_ui and pda_ui.before_game_reload then
+        local ok, detached = pcall(pda_ui.before_game_reload)
+        return ok and detached ~= false
+    end
+    local chat = rawget(_G, "pf_irc_chat")
+    if not dik or not chat or not chat.on_key_press then return true end
+    local ok = pcall(chat.on_key_press, dik)
+    return ok
+end
+
+function before_game_reload(dik)
+    if runtime.cleaning then return runtime.last_detach_ok end
+    runtime.cleaning = true
+    local puzzles_ok = detach_puzzles()
+    local irc_ok = detach_irc(dik)
+    runtime.last_detach_ok = puzzles_ok and irc_ok
+    if not runtime.last_detach_ok then cancel_session_reload() end
+    runtime.cleaning = false
+    return runtime.last_detach_ok
+end
+
+function on_key_press(dik, bind)
+    if not key_bindings then return false end
+    local resolved = bind
+    if resolved == nil and type(dik_to_bind) == "function" then
+        resolved = dik_to_bind(dik)
+    end
+    if resolved ~= key_bindings.kQUICK_LOAD then
+        return false
+    end
+    return before_game_reload(dik) == false
+end
+
+local function install_net_destroy_wrapper()
+    if runtime.net_destroy_wrapped then return true end
+    local chat = rawget(_G, "pf_irc_chat")
+    if not chat then return false end
+    if chat._pf_puzzles_net_destroy_wrapper and
+        chat.on_actor_net_destroy == chat._pf_puzzles_net_destroy_wrapper then
+        runtime.net_destroy_wrapped = true
+        return true
+    end
+
+    local previous = chat.on_actor_net_destroy
+    local wrapper = function(...)
+        local puzzles_ok = detach_puzzles()
+        local previous_ok, previous_result = true, true
+        if type(previous) == "function" then
+            previous_ok, previous_result = pcall(previous, ...)
+        end
+        if not puzzles_ok and type(printf) == "function" then
+            printf("! pf_puzzles: PDA detach failed during actor net_destroy")
+        end
+        if not previous_ok and type(printf) == "function" then
+            printf("! pf_puzzles: delegated IRC net_destroy failed: [%s]",
+                tostring(previous_result))
+        end
+        return puzzles_ok and previous_ok and previous_result ~= false
+    end
+    chat._pf_puzzles_net_destroy_previous = previous
+    chat._pf_puzzles_net_destroy_wrapper = wrapper
+    chat.on_actor_net_destroy = wrapper
+    runtime.net_destroy_wrapped = true
+    return true
+end
+
+local function update()
+    if not runtime.net_destroy_wrapped then install_net_destroy_wrapper() end
+    if not runtime.storage_load_wrapped then install_storage_load_wrapper() end
+    local session = rawget(_G, "pf_puzzles_session")
+    if session and type(session.reconcile_rewards) == "function" then
+        pcall(session.reconcile_rewards, false)
+    end
+    local pda_ui = rawget(_G, "pf_puzzles_pda")
+    if pda_ui and pda_ui.refresh_after_load_selection then
+        pcall(pda_ui.refresh_after_load_selection)
+    end
+end
+
+local function on_save_state(root)
+    local session = rawget(_G, "pf_puzzles_session")
+    if not session or type(session.on_save_state) ~= "function" then return end
+    local ok, saved, detail = pcall(session.on_save_state, root)
+    if (not ok or saved == false) and type(printf) == "function" then
+        printf("! pf_puzzles: save checkpoint failed: [%s]",
+            tostring(ok and detail or saved))
+    end
+end
+
+local function on_load_state(root)
+    if runtime.storage_load_in_progress then
+        runtime.storage_state_received = true
+    end
+    local session = rawget(_G, "pf_puzzles_session")
+    if not session or type(session.on_load_state) ~= "function" then return end
+    local ok, loaded, detail = pcall(session.on_load_state, root)
+    if (not ok or loaded == false) and type(printf) == "function" then
+        printf("! pf_puzzles: load checkpoint failed: [%s]",
+            tostring(ok and detail or loaded))
+    end
+end
+
+install_storage_load_wrapper = function()
+    if runtime.storage_load_wrapped then return true end
+    local manager = rawget(_G, "alife_storage_manager")
+    if not manager or type(manager.CALifeStorageManager_load) ~= "function" or
+        type(manager.get_state) ~= "function" then
+        return false
+    end
+    if manager._pf_puzzles_storage_load_wrapper and
+        manager.CALifeStorageManager_load ==
+            manager._pf_puzzles_storage_load_wrapper then
+        runtime.storage_load_wrapped = true
+        return true
+    end
+
+    local previous = manager.CALifeStorageManager_load
+    local wrapper = function(...)
+        runtime.storage_load_in_progress = true
+        runtime.storage_state_received = false
+        local called, result = pcall(previous, ...)
+        if not called then
+            runtime.storage_load_in_progress = false
+            error(result, 0)
+        end
+
+        -- The stock manager leaves m_data from the future timeline untouched
+        -- when a legacy save has no marshal sidecar. This wrapper lives entirely
+        -- in the addon and can distinguish that case from an ordinary level
+        -- rebind: CALifeStorageManager_load was called, but load_state was not.
+        if not runtime.storage_state_received and rawget(_G, "isMarshal") ~= false then
+            local state_called, root = pcall(manager.get_state)
+            if state_called and type(root) == "table" then
+                for key in pairs(root) do root[key] = nil end
+                root.se_object = {}
+                root.game_object = {}
+                if type(SendScriptCallback) == "function" then
+                    local sent, send_error = pcall(SendScriptCallback,
+                        "load_state", root)
+                    if not sent and type(printf) == "function" then
+                        printf("! pf_puzzles: empty save state callback failed: [%s]",
+                            tostring(send_error))
+                    end
+                end
+            elseif type(printf) == "function" then
+                printf("! pf_puzzles: unable to clear missing save sidecar")
+            end
+        end
+        runtime.storage_load_in_progress = false
+        return result
+    end
+    manager._pf_puzzles_storage_load_previous = previous
+    manager._pf_puzzles_storage_load_wrapper = wrapper
+    manager.CALifeStorageManager_load = wrapper
+    runtime.storage_load_wrapped = true
+    return true
+end
+
+function on_game_load()
+    local pda_ui = rawget(_G, "pf_puzzles_pda")
+    if pda_ui and pda_ui.on_game_load then pcall(pda_ui.on_game_load) end
+    destroy_native_contexts()
+    local session = rawget(_G, "pf_puzzles_session")
+    if session and type(session.on_game_load) == "function" then
+        pcall(session.on_game_load)
+    end
+    runtime.cleaning = false
+    runtime.last_detach_ok = true
+    install_net_destroy_wrapper()
+    install_storage_load_wrapper()
+end
+
+local function register_callbacks()
+    if runtime.callbacks_registered or type(RegisterScriptCallback) ~= "function" then
+        return false
+    end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("save_state", on_save_state)
+    RegisterScriptCallback("load_state", on_load_state)
+    RegisterScriptCallback("load", on_game_load)
+    runtime.callbacks_registered = true
+    return true
+end
+
+register_callbacks()
+install_storage_load_wrapper()
+install_net_destroy_wrapper()
