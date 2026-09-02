@@ -1181,15 +1181,18 @@ function pf_irc_chat_tab:ConfirmResetSettings()
 end
 
 function pf_irc_chat_tab:OnKeyboard(dik, keyboard_action)
+    if keyboard_action == ui_events.WINDOW_KEY_PRESSED and dik_to_bind(dik) == key_bindings.kQUIT then
+        -- Let CLevel's kQUIT path close the whole PDA on this same press.
+        -- Blur keeps the current draft (including empty); cancel would restore
+        -- the stale snapshot taken when the field received focus.
+        self:ReleaseInlineInput()
+        return false
+    end
     if self.input_fields and self.input_fields:is_active() then
         -- The add-on editor polls the physical keyboard in Pulse. Never route
         -- the event through CUIWindow: there is intentionally no native
         -- keyboard capturer that could survive a save/load cycle.
         return self.input_fields:on_keyboard(dik, keyboard_action)
-    end
-    if keyboard_action == ui_events.WINDOW_KEY_PRESSED and dik_to_bind(dik) == key_bindings.kQUIT then
-        if self.settings:IsShown() then self:HideSettings() return true end
-        if self.command_menu:IsShown() then self:HideCommandMenu() return true end
     end
     return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action) == true
 end

@@ -211,10 +211,10 @@ end
 
 local POLLED_KEYS = {}
 
--- Controls are first so Enter/Escape win over any simultaneous printable key.
+-- Controls are first so Enter wins over any simultaneous printable key.
+-- Escape is not polled here: the owning PDA handles it as a native close.
 add_key(POLLED_KEYS, 40, VK_RETURN, false, false)
 add_key(POLLED_KEYS, 88, VK_RETURN, false, false)
-add_key(POLLED_KEYS, 41, VK_ESCAPE, false, false)
 add_key(POLLED_KEYS, 42, VK_BACK, false, true)
 add_key(POLLED_KEYS, 43, VK_TAB, false, false)
 add_key(POLLED_KEYS, 74, VK_HOME, false, true)
@@ -340,6 +340,34 @@ end
 
 local MOVEMENT_ACTIONS = movement_actions()
 
+local function captured_actions()
+    local result, seen = {}, {}
+    for _, action in ipairs(MOVEMENT_ACTIONS) do
+        seen[action] = true
+        result[#result + 1] = action
+    end
+    if not key_bindings or type(dik_to_bind) ~= "function" then return result end
+
+    -- Console, PDA and use can run before the dialog receives OnKeyboard.
+    -- Resolve the editor's physical keys on focus, so current primary and
+    -- secondary bindings work in either layout. No unexported action IDs.
+    -- SDL_SCANCODE_UNKNOWN is not bindable; its result is kNOTBINDED.
+    local ok, unbound = pcall(dik_to_bind, 0)
+    if not ok or type(unbound) ~= "number" or unbound <= 0 then return result end
+    for _, key in ipairs(POLLED_KEYS) do
+        if key.vk ~= VK_ESCAPE then
+            local bound_ok, action = pcall(dik_to_bind, key.dik)
+            if bound_ok and type(action) == "number" and action >= 0
+                and action % 1 == 0 and action < unbound
+                and action ~= key_bindings.kQUIT and not seen[action] then
+                seen[action] = true
+                result[#result + 1] = action
+            end
+        end
+    end
+    return result
+end
+
 local coordinator = {}
 coordinator.__index = coordinator
 
@@ -444,13 +472,13 @@ function coordinator:active_field()
 end
 
 function coordinator:block_movement()
-    for _, action in ipairs(MOVEMENT_ACTIONS) do
+    for _, action in ipairs(captured_actions()) do
         if not self.owned_action_blocks[action] then
-            local ok, blocked = pcall(level.is_block_action, action)
-            if ok and not blocked then
-                local did_block = pcall(level.block_action, action)
-                if did_block then self.owned_action_blocks[action] = true end
-            end
+            -- The native API is reference-counted. Own exactly one reference
+            -- even if another system already blocks the action; blur/shutdown
+            -- releases ours without removing theirs or depending on its life.
+            local did_block = pcall(level.block_action, action)
+            if did_block then self.owned_action_blocks[action] = true end
         end
     end
 end
@@ -598,7 +626,8 @@ end
 function coordinator:process_key(field, key, state)
     if not self:check_foreground() or self.active_name ~= field.name then return nil end
     if key.vk == VK_RETURN then return "commit", field.name end
-    if key.vk == VK_ESCAPE then return "cancel", field.name end
+    -- Escape belongs to the native PDA close path, never editor Undo/cancel.
+    if key.vk == VK_ESCAPE then return nil end
     if key.vk == VK_TAB or key.vk == VK_UP or key.vk == VK_DOWN then return nil end
 
     local control = key_down(state, VK_CONTROL)
@@ -739,7 +768,7 @@ end
 
 function coordinator:on_keyboard()
     -- Press/release events that reach the nested tab are consumed here. Keys
-    -- bound to movement are stopped earlier by level.block_action and are read
-    -- by update_keyboard through the Windows state, so WASD still types text.
+    -- bound to game actions are stopped earlier by level.block_action and are
+    -- read by update_keyboard through the Windows state, so letters still type.
     return self:check_foreground() and self.active_name ~= nil
 end
