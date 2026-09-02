@@ -10,6 +10,7 @@
 
 local ffi_ok, ffi = pcall(require, "ffi")
 local user32 = nil
+local foreground = { kernel32 = nil, process_id = nil, layout = 0x0409 }
 
 if ffi_ok then
     pcall(ffi.cdef, [[
@@ -25,6 +26,9 @@ if ffi_ok then
     ]])
     local loaded, library = pcall(ffi.load, "user32")
     if loaded then user32 = library end
+    pcall(ffi.cdef, [[unsigned long __stdcall GetCurrentProcessId(void);]])
+    loaded, library = pcall(ffi.load, "kernel32")
+    if loaded then foreground.kernel32 = library end
 end
 
 local VK_LBUTTON = 0x01
@@ -53,6 +57,25 @@ local CARET = "|"
 
 local function now_ms()
     return time_global and time_global() or 0
+end
+
+local function foreground_thread()
+    if not ffi_ok or not user32 or not foreground.kernel32 then return nil end
+    local ok, thread_id = pcall(function()
+        local window = user32.GetForegroundWindow()
+        if window == nil or tonumber(ffi.cast("uintptr_t", window)) == 0 then return nil end
+        if not foreground.process_id then foreground.process_id = ffi.new("unsigned long[1]") end
+        foreground.process_id[0] = 0
+        local owner_thread = tonumber(user32.GetWindowThreadProcessId(window, foreground.process_id)) or 0
+        local owner_process = tonumber(foreground.process_id[0]) or 0
+        local current_process = tonumber(foreground.kernel32.GetCurrentProcessId()) or 0
+        if owner_thread == 0 or owner_process == 0 or current_process == 0 or
+            owner_process ~= current_process then return nil end
+        return owner_thread
+    end)
+    -- GetAsyncKeyState is global even in a borderless window. An unknown or
+    -- foreign foreground owner must never fall back to accepting its input.
+    return ok and thread_id or nil
 end
 
 local function key_down(state, virtual_key)
@@ -99,22 +122,18 @@ local function point_inside(rect, point)
 end
 
 local function layout_identifier()
-    if not ffi_ok or not user32 then return 0x0409 end
+    local thread_id = foreground_thread()
+    if not thread_id then return foreground.layout end
     local ok, result = pcall(function()
         -- Lua callbacks may run on a different thread from the Win32/SDL
         -- window procedure. Alt+Shift and Win+Space change the layout of the
         -- foreground window thread, while GetKeyboardLayout(0) would keep
         -- returning the stale layout attached to the Lua update thread.
-        local window = user32.GetForegroundWindow()
-        local thread_id = 0
-        if window ~= nil and tonumber(ffi.cast("uintptr_t", window)) ~= 0 then
-            thread_id = tonumber(user32.GetWindowThreadProcessId(window, nil)) or 0
-        end
-
         local keyboard_layout_handle = user32.GetKeyboardLayout(thread_id)
         return tonumber(ffi.cast("uintptr_t", keyboard_layout_handle)) % 0x10000
     end)
-    return ok and result or 0x0409
+    if ok and result then foreground.layout = result end
+    return foreground.layout
 end
 
 function keyboard_layout()
@@ -132,6 +151,11 @@ end
 
 local function utf8_offsets(text)
     text = tostring(text or "")
+    -- Known emoji sequences (including VS16/ZWJ) are one editing unit. The
+    -- fallback keeps ordinary fields usable if this optional leaf is absent.
+    if pf_irc_emoji and pf_irc_emoji.offsets then
+        return pf_irc_emoji.offsets(text)
+    end
     local offsets = {}
     local index = 1
     while index <= #text do
@@ -323,8 +347,10 @@ function create()
     return setmetatable({
         fields = {},
         field_order = {},
+        focus_regions = {},
         active_name = nil,
         mouse_was_down = false,
+        require_focus_click = false,
         key_was_down = {},
         repeat_at = {},
         owned_action_blocks = {},
@@ -347,6 +373,66 @@ function coordinator:bind(name, scope, display, hitbox, max_characters, visible_
     }
     self.fields[name] = field
     self.field_order[#self.field_order + 1] = field
+end
+
+function coordinator:set_renderer(name, callback)
+    if self.disposed then return false end
+    local field = self.fields[name]
+    if not field or not field.display or (callback ~= nil and type(callback) ~= "function") then
+        return false
+    end
+    -- A custom field owns the raw value. Its display remains a raw-text
+    -- carrier while a separate view draws the text, emoji and caret.
+    if not field.renderer and self.active_name ~= name then
+        field.text = tostring(field.display:GetText() or "")
+        field.caret = utf8_count(field.text)
+        field.original = field.text
+    end
+    field.renderer = callback
+    self:render(field)
+    return true
+end
+
+function coordinator:add_focus_region(name, window)
+    if self.disposed or not self.fields[name] or not window then return false end
+    for _, region in ipairs(self.focus_regions) do
+        -- Compare the stored Lua wrapper, not luabind's unavailable CUIWindow
+        -- equality operator (different UI objects would abort PDA creation).
+        if region.name == name and rawequal(region.window, window) then return true end
+    end
+    self.focus_regions[#self.focus_regions + 1] = { name = name, window = window }
+    return true
+end
+
+function coordinator:set_text(name, value)
+    if self.disposed then return false end
+    local field = self.fields[name]
+    if not field or not field.display then return false end
+    field.text = tostring(value or "")
+    field.caret = utf8_count(field.text)
+    field.original = field.text
+    field.select_all = false
+    self:render(field)
+    return true
+end
+
+function coordinator:insert(name, addition)
+    if self.disposed or not self:check_foreground() then return false end
+    local field = self.fields[name]
+    if not field or not field.display then return false end
+    addition = tostring(addition or "")
+    if addition == "" then return true end
+    -- Picker clicks may arrive after a blur. Custom fields retain their
+    -- insertion point and selection; native fields keep their old focus rules.
+    if not self:focus(name) then return false end
+    local available = field.max_characters - (field.select_all and 0 or utf8_count(field.text))
+    if available <= 0 then return false end
+    addition = utf8_slice(addition, 0, available)
+    if addition == "" then return false end
+    self:replace_selection(field)
+    field.text, field.caret = insert_at(field.text, field.caret, addition)
+    self:render(field)
+    return true
 end
 
 function coordinator:is_active()
@@ -378,6 +464,14 @@ end
 
 function coordinator:render(field)
     if not field or not field.display then return end
+    if field.renderer then
+        local active = self.active_name == field.name
+        field.caret = math.max(0, math.min(utf8_count(field.text), field.caret or 0))
+        field.display:SetText(field.text or "")
+        field.renderer(field.text or "", active and field.caret or nil,
+            active and field.select_all == true)
+        return
+    end
     if self.active_name ~= field.name then
         field.display:SetText(field.text or "")
         return
@@ -401,15 +495,17 @@ end
 function coordinator:snapshot_keys()
     self.key_was_down = {}
     self.repeat_at = {}
+    if not self:check_foreground() then return false end
     local state = read_keyboard_state()
-    if not state then return end
+    if not state then return false end
     for _, key in ipairs(POLLED_KEYS) do
         self.key_was_down[key.dik] = async_key_down(key.vk, state)
     end
+    return true
 end
 
 function coordinator:focus(name)
-    if self.disposed then return false end
+    if self.disposed or not self:check_foreground() or self.require_focus_click then return false end
     local field = self.fields[name]
     if not field or not field.display then return false end
     if self.active_name == name then return true end
@@ -420,12 +516,16 @@ function coordinator:focus(name)
     end
 
     self.active_name = name
-    field.text = tostring(field.display:GetText() or "")
+    if not field.renderer then
+        field.text = tostring(field.display:GetText() or "")
+        field.caret = utf8_count(field.text)
+        field.select_all = false
+    else
+        field.caret = math.max(0, math.min(utf8_count(field.text), field.caret or 0))
+    end
     field.original = field.text
-    field.caret = utf8_count(field.text)
-    field.select_all = false
     self:block_movement()
-    self:snapshot_keys()
+    if not self:snapshot_keys() then self:blur(); return false end
     self:render(field)
     return true
 end
@@ -433,6 +533,7 @@ end
 function coordinator:render_inactive(field)
     if not field or not field.display then return end
     field.display:SetText(field.text or "")
+    if field.renderer then field.renderer(field.text or "", nil, false) end
 end
 
 function coordinator:blur()
@@ -443,6 +544,17 @@ function coordinator:blur()
     self.repeat_at = {}
     self:release_movement()
     return true
+end
+
+function coordinator:check_foreground()
+    if self.disposed then return false end
+    if foreground_thread() then return true end
+    if not self.require_focus_click or self.active_name then self:blur() end
+    self.require_focus_click = true
+    -- Do not sample the mouse outside the game. A held button on return must
+    -- first be released, then pressed again inside an actual input field.
+    self.mouse_was_down = true
+    return false
 end
 
 function coordinator:commit(name)
@@ -469,6 +581,7 @@ function coordinator:shutdown()
     self.active_name = nil
     self.fields = {}
     self.field_order = {}
+    self.focus_regions = {}
     self.key_was_down = {}
     self.repeat_at = {}
     self:release_movement()
@@ -483,6 +596,7 @@ function coordinator:replace_selection(field)
 end
 
 function coordinator:process_key(field, key, state)
+    if not self:check_foreground() or self.active_name ~= field.name then return nil end
     if key.vk == VK_RETURN then return "commit", field.name end
     if key.vk == VK_ESCAPE then return "cancel", field.name end
     if key.vk == VK_TAB or key.vk == VK_UP or key.vk == VK_DOWN then return nil end
@@ -531,6 +645,7 @@ function coordinator:process_key(field, key, state)
 end
 
 function coordinator:update_keyboard(field)
+    if not self:check_foreground() then return nil end
     local state = read_keyboard_state()
     if not state then return nil end
     synchronize_key_state(state, VK_SHIFT)
@@ -569,7 +684,7 @@ function coordinator:update_keyboard(field)
 end
 
 function coordinator:update(scope)
-    if self.disposed then return nil end
+    if self.disposed or not self:check_foreground() then return nil end
     local active = self.active_name and self.fields[self.active_name] or nil
     if active and active.scope ~= scope then
         self:blur()
@@ -593,8 +708,27 @@ function coordinator:update(scope)
                 end
             end
         end
-        if selected then self:focus(selected)
-        elseif self.active_name then self:blur() end
+        local keep_focus = false
+        if not selected and self.active_name and ok and cursor and scope then
+            local field = self.fields[self.active_name]
+            if field and field.scope == scope then
+                for _, region in ipairs(self.focus_regions) do
+                    local window = region.window
+                    if region.name == field.name and window and window:IsShown() and window:IsEnabled() then
+                        local rect = Frect()
+                        local rect_ok = pcall(function() window:GetAbsoluteRect(rect) end)
+                        if rect_ok and point_inside(rect, cursor) then
+                            keep_focus = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if selected then
+            self.require_focus_click = false
+            self:focus(selected)
+        elseif self.active_name and not keep_focus then self:blur() end
     end
     self.mouse_was_down = mouse_down
 
@@ -607,5 +741,5 @@ function coordinator:on_keyboard()
     -- Press/release events that reach the nested tab are consumed here. Keys
     -- bound to movement are stopped earlier by level.block_action and are read
     -- by update_keyboard through the Windows state, so WASD still types text.
-    return self.active_name ~= nil
+    return self:check_foreground() and self.active_name ~= nil
 end

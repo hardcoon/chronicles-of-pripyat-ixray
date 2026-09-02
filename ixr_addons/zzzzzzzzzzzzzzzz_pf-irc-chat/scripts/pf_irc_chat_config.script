@@ -38,6 +38,7 @@ local function trim(value)
 end
 
 local function bool_value(value, fallback)
+    if type(value) == "boolean" then return value end
     local normalized = trim(value):lower()
     if normalized == "true" or normalized == "1" or normalized == "yes" then return true end
     if normalized == "false" or normalized == "0" or normalized == "no" then return false end
@@ -122,7 +123,11 @@ local PROFILE_FIELDS = {
 local function copy_profile(source)
     local result = {}
     source = source or {}
-    for _, key in ipairs(PROFILE_FIELDS) do result[key] = tostring(source[key] or "") end
+    for _, key in ipairs(PROFILE_FIELDS) do
+        -- Only nil is absent; false is an explicitly unchecked checkbox.
+        local value = source[key]
+        result[key] = value ~= nil and tostring(value) or ""
+    end
     result.port = tonumber(result.port) or 0
     result.tls = bool_value(result.tls, true)
     result.require_registered_channel = bool_value(result.require_registered_channel, true)
@@ -168,7 +173,8 @@ local function serialize_settings(settings)
         local profile = settings.profiles[name]
         table.insert(lines, "[profile_" .. name .. "]")
         for _, key in ipairs(PROFILE_FIELDS) do
-            table.insert(lines, key .. " = " .. tostring(profile[key] or ""))
+            local value = profile[key]
+            table.insert(lines, key .. " = " .. (value ~= nil and tostring(value) or ""))
         end
         table.insert(lines, "")
     end

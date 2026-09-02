@@ -144,7 +144,7 @@ local function notify_chat_message(nick, text, mentioned)
             local title = string.format(game.translate_string(title_key), trim(nick))
             local icon = mentioned and "pf_irc_private_notification" or
                 "pf_irc_message_notification"
-            db.actor:give_game_news(title, text, icon, 0, 7000, 0)
+            db.actor:give_game_news(title, pf_irc_emoji.plain_text(text), icon, 0, 7000, 0)
         end)
     end
 end
@@ -1047,7 +1047,18 @@ function send_message(text)
         end
         return false, "command_unsupported"
     end
-    if #text > 500 then return false, "message_too_long" end
+    text = pf_irc_emoji.to_wire(text)
+    local profile = get_active_profile()
+    local encoding = tostring(profile and profile.encoding or "utf-8"):lower()
+    local utf8_profile = encoding == "utf-8" or encoding == "utf8"
+    if not utf8_profile and pf_irc_emoji.plain_text(text) ~= text then
+        return false, "emoji_utf8_required"
+    end
+    -- Match the existing bridge's payload cap before it can silently truncate
+    -- a UTF-8 emoji sequence. No protocol or extra IRC requests are introduced.
+    -- Legacy single-byte profiles retain their previous guard: their encoded
+    -- byte count differs from Lua's UTF-8 representation of Cyrillic text.
+    if #text > (utf8_profile and 340 or 500) then return false, "message_too_long" end
     if not runtime.ready then return false, "channel_not_ready" end
     if runtime.active_conversation ~= "channel" then
         local dialog = runtime.private_dialogs[runtime.active_conversation]

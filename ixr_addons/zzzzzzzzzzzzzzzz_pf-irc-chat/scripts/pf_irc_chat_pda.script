@@ -37,6 +37,7 @@ local ERROR_TEXT = {
     command_unsupported = "pf_irc_error_command",
     channel_not_ready = "pf_irc_error_not_ready",
     message_too_long = "pf_irc_error_too_long",
+    emoji_utf8_required = "pf_irc_emoji_utf8_required",
     helper_missing = "pf_irc_error_helper_missing",
     chat_disabled = "pf_irc_error_disabled",
     private_target_self = "pf_irc_error_private_self",
@@ -135,7 +136,7 @@ local function same_message_group(previous, current)
     return previous_identity == "" or current_identity == "" or previous_identity == current_identity
 end
 
-function pf_irc_message_row:__init(message, grouped) super()
+function pf_irc_message_row:__init(message, grouped, emoji_width, emoji_height) super()
     local xml = CScriptXmlInit()
     xml:ParseFile("pda_irc_chat.xml")
     xml:InitWindow("message_row", 0, self)
@@ -158,7 +159,10 @@ function pf_irc_message_row:__init(message, grouped) super()
     self.nick:SetWndSize(vector2():set(body_width, 18))
     self.body:SetWndPos(vector2():set(body_x, body_y))
     self.body:SetWndSize(vector2():set(body_width, 20))
-    self.body:SetText(message.text or "")
+    local raw_text = tostring(message.text or "")
+    local needs_icons = pf_irc_emoji.plain_text(raw_text) ~= raw_text
+    -- Do not send unsupported Unicode to the engine font, even for one frame.
+    self.body:SetText(needs_icons and "" or raw_text)
     self.body:AdjustHeightToText()
     local body_height = math.max(20, math.ceil(self.body:GetHeight()))
     local row_height = body_y + body_height
@@ -171,6 +175,24 @@ function pf_irc_message_row:__init(message, grouped) super()
     if message.mentioned == true then
         self.nick:SetTextColor(MENTION_COLOR)
         self.body:SetTextColor(MENTION_COLOR)
+    end
+    if needs_icons then
+        local color = GetARGB(255, 210, 210, 210)
+        if message.kind == "error" then color = GetARGB(255, 235, 90, 70)
+        elseif message.kind == "warning" then color = GetARGB(255, 235, 180, 70)
+        elseif is_system then color = GetARGB(255, 190, 195, 192) end
+        if message.mentioned == true then color = MENTION_COLOR end
+        self.rich_body = CUIStatic()
+        self.rich_body:SetAutoDelete(true)
+        self:AttachChild(self.rich_body)
+        self.rich_body:SetWndPos(vector2():set(body_x, body_y))
+        self.rich_body:SetWndSize(vector2():set(body_width, 20))
+        self.rich_body:Enable(false)
+        self.rich_renderer = pf_irc_emoji_view.create(self.rich_body, self.body:GetFont(),
+            emoji_width or 14, emoji_height or 14, 20)
+        body_height = self.rich_renderer:render(raw_text, body_width, color, { center = is_system })
+        self.rich_body:SetWndSize(vector2():set(body_width, body_height))
+        self:SetWndSize(vector2():set(row_width, body_y + body_height))
     end
     self:SetAutoDelete(false)
     self:Show(true)
@@ -208,7 +230,7 @@ function pf_irc_dialog_row:__init(owner, conversation) super()
         -- Match the participant list's stable colour for this nickname.
         self.title:SetTextColor(nick_color(conversation.nick))
     end
-    self.preview:SetText(truncate_utf8(conversation.last_message, 20))
+    self.preview:SetText(truncate_utf8(pf_irc_emoji.plain_text(conversation.last_message), 20))
     self.preview:SetTextColor(unread > 0 and GetARGB(255, 215, 218, 212) or
         GetARGB(255, 165, 172, 170))
     self.selection:Show(self.active)
@@ -380,6 +402,47 @@ function pf_irc_chat_tab:__init() super()
     self:AddCallback("chat_send", ui_events.BUTTON_CLICKED, self.SendFromButton, self)
     self:AddCallback("chat_commands", ui_events.BUTTON_CLICKED, self.ShowCommandsFromButton, self)
 
+    self.emoji_toggle = xml:Init3tButton("chat:emoji_toggle", self.chat)
+    self.emoji_panel = xml:InitStatic("chat:emoji_panel", self.chat)
+    self.emoji_metrics = xml:InitStatic("emoji_inline", self.chat)
+    self.emoji_width, self.emoji_height = self.emoji_metrics:GetWidth(), self.emoji_metrics:GetHeight()
+    self.emoji_metrics:Show(false)
+    self.emoji_metrics:Enable(false)
+    self.emoji_items = {}
+    for index, entry in ipairs(pf_irc_emoji.entries()) do
+        local definition = entry
+        local icon = xml:InitStatic("emoji_icon", self.emoji_panel)
+        icon:InitTexture(definition.texture)
+        icon:SetStretchTexture(true)
+        icon:Enable(false)
+        local button = xml:Init3tButton("emoji_item", self.emoji_panel)
+        local x = (index - 1) * button:GetWidth()
+        button:SetWndPos(vector2():set(x, 0))
+        icon:SetWndPos(vector2():set(x + 1, 1))
+        local name = "emoji_pick_" .. tostring(index)
+        self:Register(button, name)
+        self:AddCallback(name, ui_events.BUTTON_CLICKED, function() self:InsertEmoji(definition.unicode) end, self)
+        self.emoji_items[index] = { icon = icon, button = button }
+    end
+    self:Register(self.emoji_toggle, "emoji_toggle")
+    self:AddCallback("emoji_toggle", ui_events.BUTTON_CLICKED, self.ToggleEmojiPanel, self)
+    self.emoji_panel:Show(false)
+    self.emoji_panel:Enable(false)
+
+    -- Raw text remains in the original CUIStatic for the editor/Send API.
+    -- Transparent native text hides unsupported font glyphs; sibling
+    -- text/image fragments provide the visible composer instead.
+    local composer_font = self.input:GetFont()
+    self.input:SetTextColor(GetARGB(0, 0, 0, 0))
+    self.composer = CUIStatic()
+    self.composer:SetAutoDelete(true)
+    self.input:AttachChild(self.composer)
+    self.composer:SetWndPos(vector2():set(2, 6))
+    self.composer:SetWndSize(vector2():set(self.input:GetWidth() - 4, 21))
+    self.composer:Enable(false)
+    self.composer_renderer = pf_irc_emoji_view.create(self.composer, composer_font,
+        self.emoji_width, self.emoji_height, 21)
+
     -- The gear is attached after both page containers so it remains clickable
     -- on the login and chat pages alike.
     self.settings_button = xml:Init3tButton("settings_button", self)
@@ -522,6 +585,12 @@ function pf_irc_chat_tab:__init() super()
     self.input_fields = pf_irc_input_field.create()
     self.input_fields:bind("login", "login", self.login_input, self.login_input_hitbox, 30, 30)
     self.input_fields:bind("chat", "chat", self.input, self.chat_input_hitbox, 500, 68)
+    self.input_fields:set_renderer("chat", function(text, caret, select_all)
+        self.composer_renderer:render(text, self.composer:GetWidth(), GetARGB(255, 185, 185, 185),
+            { single_line = true, caret = caret, select_all = select_all })
+    end)
+    self.input_fields:add_focus_region("chat", self.emoji_panel)
+    self.input_fields:add_focus_region("chat", self.emoji_toggle)
     for _, item in ipairs(setting_fields) do
         self.input_fields:bind(item[1], "settings", item[2], item[3], item[4], item[5])
     end
@@ -583,6 +652,19 @@ end
 function pf_irc_chat_tab:BeginChatInput()
     if self.settings:IsShown() or self.chat:IsShown() ~= true then return end
     self.input_fields:focus("chat")
+end
+
+function pf_irc_chat_tab:ToggleEmojiPanel()
+    if self:InputScope() ~= "chat" then return end
+    local shown = not self.emoji_panel:IsShown()
+    self.emoji_panel:Show(shown)
+    self.emoji_panel:Enable(shown)
+    -- Only this toggle changes panel visibility, never an emoji pick or Send.
+end
+
+function pf_irc_chat_tab:InsertEmoji(text)
+    if self:InputScope() ~= "chat" then return end
+    self.input_fields:insert("chat", text)
 end
 
 function pf_irc_chat_tab:FocusSettingsProfile() self.input_fields:focus("settings_profile") end
@@ -709,7 +791,7 @@ function pf_irc_chat_tab:RefreshChat(state)
     local shown_nick = state.effective_nick ~= "" and state.effective_nick or state.requested_nick
     self.actual_nick:SetText(translated("pf_irc_actual_nick") .. ": " .. tostring(shown_nick or ""))
     self.topic:SetText((state.topic and state.topic ~= "") and
-        (translated("pf_irc_topic") .. ": " .. state.topic) or "")
+        (translated("pf_irc_topic") .. ": " .. pf_irc_emoji.plain_text(state.topic)) or "")
     -- A state revision can rebuild the rows while the player is browsing the
     -- lower part of either side list. Preserve both native scroll positions so
     -- selecting a dialog or receiving an IRC update does not jump to the top.
@@ -743,7 +825,7 @@ function pf_irc_chat_tab:RefreshChat(state)
         local previous_message = nil
         for _, message in ipairs(messages) do
             local grouped = same_message_group(previous_message, message)
-            local row = pf_irc_message_row(message, grouped)
+            local row = pf_irc_message_row(message, grouped, self.emoji_width, self.emoji_height)
             self.messages:AddWindow(row, true)
             row:SetAutoDelete(false)
             table.insert(self.message_rows, row)
@@ -871,7 +953,7 @@ function pf_irc_chat_tab:Send()
     local text = self.input:GetText()
     local ok, error_code = pf_irc_chat.send_message(text)
     if ok then
-        self.input:SetText("")
+        self.input_fields:set_text("chat", "")
     else
         self.status_value:SetText(error_text(error_code, ""))
         self.status_value:SetTextColor(GetARGB(255, 235, 85, 70))
@@ -933,7 +1015,7 @@ end
 function pf_irc_chat_tab:InsertConfiguredCommand(command_id)
     local value = self.command_templates and self.command_templates[command_id] or nil
     if not value then return end
-    self.input:SetText(value)
+    self.input_fields:set_text("chat", value)
     self:HideCommandMenu()
     self:BeginChatInput()
 end

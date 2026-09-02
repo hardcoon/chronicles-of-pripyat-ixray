@@ -53,10 +53,16 @@
         <user_panel x="791" y="195" width="168" height="481"/>
         <users_caption x="798" y="202" width="154" height="25"><text font="letterica16" align="c" color="ui_5"/></users_caption>
         <users x="798" y="231" width="161" height="445" right_ident="2" vert_interval="1" always_show_scroll="0" scroll_profile="pf_irc_compact"/>
-        <input x="225" y="648" width="406" height="33" max_symb_count="500" stretch="1">
+        <!-- Transparent smile toggle: no button frame or filled background. -->
+        <emoji_toggle x="225" y="648" width="32" height="32">
+            <texture_e>ui_pf_irc_emoji_toggle_e</texture_e><texture_h>ui_pf_irc_emoji_toggle_h</texture_h>
+            <texture_t>ui_pf_irc_emoji_toggle_t</texture_t><texture_d>ui_pf_irc_emoji_toggle_d</texture_d>
+        </emoji_toggle>
+        <emoji_panel x="225" y="612" width="560" height="26"/>
+        <input x="263" y="648" width="368" height="33" max_symb_count="500" stretch="1">
             <text font="letterica18" vert_align="c" color="ui_5"/><texture a="242" r="20" g="20" b="20">ui\ui_noise</texture>
         </input>
-        <input_hitbox x="225" y="648" width="406" height="33"/>
+        <input_hitbox x="263" y="648" width="368" height="33"/>
         <input_layout_divider x="633" y="648" width="1" height="33" vertical="1"><texture a="95">ui_inGame2_pda_line_vertical</texture></input_layout_divider>
         <layout x="635" y="650" width="28" height="29"><text font="letterica16" align="c" vert_align="c" r="205" g="146" b="41"/></layout>
         <layout_send_divider x="665" y="648" width="1" height="33" vertical="1"><texture a="95">ui_inGame2_pda_line_vertical</texture></layout_send_divider>
@@ -72,6 +78,10 @@
         </commands>
     </chat>
 
+    <emoji_item x="0" y="0" width="26" height="26"/>
+    <emoji_icon x="1" y="1" width="24" height="24" stretch="1"/>
+    <!-- Inline only: match the text band; picker icons keep their larger size. -->
+    <emoji_inline x="0" y="0" width="14" height="14" stretch="1"/>
     <message_row x="0" y="0" width="522" height="38">
         <time x="0" y="0" width="42" height="18"><text font="letterica16" vert_align="c" r="110" g="115" b="118"/></time>
         <nick x="44" y="0" width="474" height="18"><text font="letterica16" vert_align="c" r="210" g="165" b="65"/></nick>

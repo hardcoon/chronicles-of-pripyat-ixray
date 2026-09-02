@@ -1,0 +1,221 @@
+-- Pure Lua 5.1 emoji codec. No callbacks, filesystem, network or engine calls.
+-- The wire format remains UTF-8 Unicode; texture IDs are local presentation.
+-- Catalog order is independent of atlas coordinates. Treat entries as read-only.
+local impl = { catalog = {}, by_unicode = {}, by_shortcode = {}, by_codepoint = {} }
+
+function impl.utf8(cp)
+    if cp < 128 then return string.char(cp) end
+    if cp < 2048 then
+        return string.char(192 + math.floor(cp / 64), 128 + cp % 64)
+    end
+    if cp < 65536 then
+        return string.char(224 + math.floor(cp / 4096), 128 + math.floor(cp / 64) % 64, 128 + cp % 64)
+    end
+    return string.char(240 + math.floor(cp / 262144), 128 + math.floor(cp / 4096) % 64,
+        128 + math.floor(cp / 64) % 64, 128 + cp % 64)
+end
+
+function impl.add(id, shortcode, cp, selector)
+    local base = impl.utf8(cp)
+    local unicode = base .. (selector and impl.utf8(65039) or "")
+    local item = {
+        id = id, shortcode = ":" .. shortcode .. ":", unicode = unicode,
+        texture = "ui_pf_irc_emoji_" .. id, fallback = "[" .. shortcode .. "]"
+    }
+    impl.catalog[#impl.catalog + 1] = item
+    impl.by_codepoint[cp] = item
+    impl.by_unicode[base] = item
+    impl.by_unicode[base .. impl.utf8(65039)] = item
+    impl.by_shortcode[shortcode] = unicode
+end
+
+-- Texture names and Unicode match the approved twenty-cell atlas.
+impl.add("smile", "smile", 128516)
+impl.add("joy", "joy", 128514)
+impl.add("wink", "wink", 128521)
+impl.add("face_with_rolling_eyes", "face_with_rolling_eyes", 128580)
+impl.add("thinking_face", "thinking_face", 129300)
+impl.add("open_mouth", "open_mouth", 128558)
+impl.add("cry", "cry", 128546)
+impl.add("sob", "sob", 128557)
+impl.add("rage", "rage", 128545)
+impl.add("thumbs_up", "+1", 128077)
+impl.add("thumbs_down", "-1", 128078)
+impl.add("eyes", "eyes", 128064)
+impl.add("handshake", "handshake", 129309)
+impl.add("heart", "heart", 10084, true)
+impl.add("fire", "fire", 128293)
+impl.add("white_check_mark", "white_check_mark", 9989)
+impl.add("x", "x", 10060)
+impl.add("warning", "warning", 9888, true)
+impl.add("radioactive_sign", "radioactive_sign", 9762, true)
+impl.add("skull_and_crossbones", "skull_and_crossbones", 9760, true)
+impl.by_shortcode.thumbs_up = impl.by_shortcode["+1"]
+impl.by_shortcode.thumbsup = impl.by_shortcode["+1"]
+impl.by_shortcode.thumbs_down = impl.by_shortcode["-1"]
+impl.by_shortcode.thumbsdown = impl.by_shortcode["-1"]
+impl.by_shortcode.rolling_eyes = impl.by_shortcode.face_with_rolling_eyes
+impl.by_shortcode.thinking = impl.by_shortcode.thinking_face
+impl.by_shortcode.radioactive = impl.by_shortcode.radioactive_sign
+
+-- Invalid UTF-8 consumes exactly one byte and is preserved as ordinary text.
+function impl.read(text, pos)
+    local a, b, c, d = string.byte(text, pos, pos + 3)
+    if not a then return nil, pos end
+    if a < 128 then return a, pos + 1 end
+    if a >= 194 and a <= 223 and b and b >= 128 and b <= 191 then
+        return (a - 192) * 64 + b - 128, pos + 2
+    end
+    if a >= 224 and a <= 239 and b and c and b >= 128 and b <= 191 and c >= 128 and c <= 191
+        and (a ~= 224 or b >= 160) and (a ~= 237 or b <= 159) then
+        return (a - 224) * 4096 + (b - 128) * 64 + c - 128, pos + 3
+    end
+    if a >= 240 and a <= 244 and b and c and d and b >= 128 and b <= 191
+        and c >= 128 and c <= 191 and d >= 128 and d <= 191
+        and (a ~= 240 or b >= 144) and (a ~= 244 or b <= 143) then
+        return (a - 240) * 262144 + (b - 128) * 4096 + (c - 128) * 64 + d - 128, pos + 4
+    end
+    return nil, pos + 1
+end
+
+function impl.between(cp, a, b)
+    return cp and cp >= a and cp <= b
+end
+
+function impl.extension(cp)
+    return impl.between(cp, 65024, 65039) or impl.between(cp, 917760, 917999)
+        or impl.between(cp, 127995, 127999) or impl.between(cp, 917536, 917631)
+        or impl.between(cp, 768, 879) or impl.between(cp, 6832, 6911)
+        or impl.between(cp, 7616, 7679) or impl.between(cp, 8400, 8447)
+        or impl.between(cp, 65056, 65071)
+end
+
+function impl.default_emoji(cp)
+    if impl.between(cp, 126976, 129791) then return true end
+    return cp == 8986 or cp == 8987 or impl.between(cp, 9193, 9196) or cp == 9200 or cp == 9203
+        or cp == 9748 or cp == 9749 or impl.between(cp, 9800, 9811) or cp == 9855 or cp == 9875
+        or cp == 9889 or cp == 9898 or cp == 9899 or cp == 9917 or cp == 9918 or cp == 9924 or cp == 9925
+        or cp == 9934 or cp == 9940 or cp == 9962 or cp == 9970 or cp == 9971 or cp == 9973
+        or cp == 9978 or cp == 9981 or cp == 9989 or cp == 9994 or cp == 9995 or cp == 10024
+        or cp == 10060 or cp == 10062 or impl.between(cp, 10067, 10069) or cp == 10071
+        or impl.between(cp, 10133, 10135) or cp == 11035 or cp == 11036 or cp == 11088 or cp == 11093
+end
+
+function impl.symbol(cp)
+    -- Text-default symbols become emoji only with VS16; ordinary punctuation
+    -- (including copyright/trademark without VS16) remains untouched.
+    return cp == 169 or cp == 174 or cp == 8252 or cp == 8265 or cp == 8482 or cp == 8505
+        or impl.between(cp, 8596, 8601) or cp == 8617 or cp == 8618 or cp == 9000 or cp == 9167
+        or impl.between(cp, 9208, 9210) or cp == 9410 or cp == 9642 or cp == 9643 or cp == 9654 or cp == 9664
+        or impl.between(cp, 9723, 10175) or cp == 10548 or cp == 10549
+        or impl.between(cp, 11013, 11015) or cp == 12336 or cp == 12349 or cp == 12951 or cp == 12953
+end
+
+function impl.tails(text, pos)
+    while pos <= #text do
+        local cp, after = impl.read(text, pos)
+        if not impl.extension(cp) then break end
+        pos = after
+    end
+    return pos
+end
+
+-- Returns one editing unit. Emoji sequences are consumed before lookup so a
+-- known base followed by a skin tone/ZWJ is not drawn as a misleading fragment.
+-- This is an emoji-aware scanner, not a full Unicode grapheme-break library.
+function impl.unit(text, pos)
+    local cp, after = impl.read(text, pos)
+    if not cp then return after, nil, false end
+    local following = impl.read(text, after)
+    local emoji = impl.by_codepoint[cp] ~= nil or impl.default_emoji(cp)
+        or (impl.symbol(cp) and following == 65039)
+    local end_pos = impl.tails(text, after)
+    if cp == 35 or cp == 42 or impl.between(cp, 48, 57) then
+        local probe = after
+        if following == 65039 then probe = select(2, impl.read(text, probe)) end
+        if impl.read(text, probe) == 8419 then
+            emoji = true
+            end_pos = impl.tails(text, select(2, impl.read(text, probe)))
+        end
+    end
+    if impl.between(cp, 127462, 127487) and impl.between(following, 127462, 127487) then
+        end_pos = impl.tails(text, select(2, impl.read(text, after)))
+    end
+    if emoji then
+        while impl.read(text, end_pos) == 8205 do
+            local joined = select(2, impl.read(text, end_pos))
+            end_pos = joined
+            local next_cp, next_after = impl.read(text, joined)
+            if not next_cp or not (impl.default_emoji(next_cp) or impl.symbol(next_cp)) then break end
+            end_pos = impl.tails(text, next_after)
+        end
+    end
+    local item = emoji and impl.by_unicode[string.sub(text, pos, end_pos - 1)] or nil
+    return end_pos, item, emoji
+end
+
+function entries()
+    return impl.catalog
+end
+
+function to_wire(text)
+    local result = string.gsub(tostring(text or ""), ":([%w_+%-]+):", function(name)
+        return impl.by_shortcode[name] or (":" .. name .. ":")
+    end)
+    return result
+end
+
+-- Supported run: { emoji = catalog_entry, text = matched_unicode }.
+-- Ordinary run: { text = original_text }; unknown emoji: { text = "[emoji]" }.
+-- Every run also has raw (exact source), first/last (inclusive byte range),
+-- and units (editing-unit count) so display fallbacks cannot shift the caret.
+function tokenize(text)
+    text = tostring(text or "")
+    local result, plain, pos, first, units = {}, {}, 1, 1, 0
+    while pos <= #text do
+        local after, item, emoji = impl.unit(text, pos)
+        if emoji then
+            if #plain > 0 then
+                local raw = table.concat(plain)
+                result[#result + 1] = { text = raw, raw = raw, first = first, last = pos - 1, units = units }
+                plain = {}
+                units = 0
+            end
+            local raw = string.sub(text, pos, after - 1)
+            result[#result + 1] = { emoji = item, text = item and raw or "[emoji]", raw = raw,
+                first = pos, last = after - 1, units = 1 }
+        else
+            if #plain == 0 then first = pos end
+            plain[#plain + 1] = string.sub(text, pos, after - 1)
+            units = units + 1
+        end
+        pos = after
+    end
+    if #plain > 0 then
+        local raw = table.concat(plain)
+        result[#result + 1] = { text = raw, raw = raw, first = first, last = #text, units = units }
+    end
+    return result
+end
+
+function plain_text(text)
+    local runs, result = tokenize(text), {}
+    for i = 1, #runs do
+        result[#result + 1] = runs[i].emoji and runs[i].emoji.fallback or runs[i].text
+    end
+    return table.concat(result)
+end
+
+-- One-based byte starts plus #text + 1 as sentinel; count excludes sentinel.
+-- For insertion after logical cursor N (zero-based), use starts[N + 1].
+function offsets(text)
+    text = tostring(text or "")
+    local result, count, pos = {}, 0, 1
+    while pos <= #text do
+        count = count + 1
+        result[count] = pos
+        pos = impl.unit(text, pos)
+    end
+    result[count + 1] = #text + 1
+    return result, count
+end

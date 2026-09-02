@@ -1,0 +1,323 @@
+-- Local rich-text rendering for the IRC addon. No callbacks, network or
+-- engine calls run at import. The supplied parent owns every native widget;
+-- keep the renderer only for as long as that parent's PDA generation exists.
+-- CUITextWnd does not draw children, so parent must be CUIWindow/CUIStatic.
+
+local renderer = {}
+renderer.__index = renderer
+
+local function attach(parent, widget)
+    widget:SetAutoDelete(true)
+    widget:Enable(false)
+    parent:AttachChild(widget)
+    return widget
+end
+
+local function text_widget(parent, font)
+    local widget = attach(parent, CUITextWnd())
+    widget:SetFont(font)
+    widget:SetTextComplexMode(false)
+    widget:SetTextAlignment(CGameFont.alLeft)
+    widget:SetTextOffset(0, 0)
+    widget:Show(false)
+    return widget
+end
+
+function create(parent, font, icon_width, icon_height, line_height)
+    local result = setmetatable({
+        parent = parent,
+        font = font,
+        icon_width = math.max(1, tonumber(icon_width) or 14),
+        icon_height = math.max(1, tonumber(icon_height) or 14),
+        line_height = math.max(1, tonumber(line_height) or 20),
+        texts = {},
+        images = {},
+        measure_cache = {},
+        measure_count = 0,
+        viewport_start = 1,
+        height = 0
+    }, renderer)
+    result.measure_widget = text_widget(parent, font)
+    return result
+end
+
+function renderer:measure(text)
+    if text == "" then return 0 end
+    local cached = self.measure_cache[text]
+    if cached then return cached end
+    self.measure_widget:SetText(text)
+    self.measure_widget:AdjustWidthToText()
+    local width = math.max(0, self.measure_widget:GetWidth())
+    -- Bound caches per renderer. Input contents can change for hours, whereas
+    -- history renderers are normally laid out only once per message refresh.
+    if self.measure_count >= 512 then
+        self.measure_cache = {}
+        self.measure_count = 0
+    end
+    self.measure_cache[text] = width
+    self.measure_count = self.measure_count + 1
+    return width
+end
+
+local function make_units(text)
+    local units = {}
+    for _, token in ipairs(pf_irc_emoji.tokenize(text)) do
+        if token.emoji then
+            units[#units + 1] = { emoji = token.emoji }
+        elseif token.raw and token.text ~= token.raw and token.units == 1 then
+            -- An unsupported emoji sequence is one editing unit, even though
+            -- its safe native-font fallback is several printable characters.
+            units[#units + 1] = { text = token.text }
+        else
+            local offsets, count = pf_irc_emoji.offsets(token.text or "")
+            for index = 1, count do
+                units[#units + 1] = {
+                    text = token.text:sub(offsets[index], offsets[index + 1] - 1)
+                }
+            end
+        end
+    end
+    return units
+end
+
+local function new_line()
+    return { items = {}, width = 0 }
+end
+
+-- Adjacent text fragments are measured together: summing glyph widths alone
+-- would lose the font's inter-letter spacing and gradually drift into icons.
+function renderer:added_width(line, unit)
+    if unit.emoji then return unit.width or self.icon_width end
+    local last = line.items[#line.items]
+    if last and not last.emoji then
+        return self:measure(last.text .. unit.text) - last.width
+    end
+    return self:measure(unit.text)
+end
+
+function renderer:add_unit(line, unit)
+    local extra = self:added_width(line, unit)
+    local last = line.items[#line.items]
+    if not unit.emoji and last and not last.emoji then
+        last.text = last.text .. unit.text
+        last.width = last.width + extra
+    else
+        line.items[#line.items + 1] = {
+            text = unit.text,
+            emoji = unit.emoji,
+            width = extra
+        }
+    end
+    line.width = line.width + extra
+end
+
+function renderer:range_line(units, first, last)
+    local line = new_line()
+    for index = first, last do self:add_unit(line, units[index]) end
+    return line
+end
+
+function renderer:single_line(units, width, caret)
+    local display = {}
+    local caret_index = nil
+    if caret ~= nil then
+        caret = math.max(0, math.min(#units, math.floor(tonumber(caret) or 0)))
+    end
+    for index = 0, #units do
+        if caret == index then
+            caret_index = #display + 1
+            display[#display + 1] = { text = "|" }
+        end
+        local unit = units[index + 1]
+        if unit then
+            -- Input is a single line even for pasted CR/LF. Preserve logical
+            -- positions while rendering either separator as a visible space.
+            if unit.text == "\n" or unit.text == "\r" or unit.text == "\t" then
+                display[#display + 1] = { text = " " }
+            else
+                display[#display + 1] = unit
+            end
+        end
+    end
+    if #display == 0 then return { new_line() } end
+
+    local first = caret_index and math.min(self.viewport_start, caret_index) or 1
+    first = math.max(1, math.min(#display, first))
+    if caret_index then
+        -- Shift only when necessary; opening the picker or typing a short
+        -- suffix must not make the composer jump back to its beginning.
+        while first < caret_index and
+            self:range_line(display, first, caret_index).width > width do
+            first = first + 1
+        end
+    end
+    local line = new_line()
+    local last = first - 1
+    for index = first, #display do
+        local unit = display[index]
+        if line.width + self:added_width(line, unit) > width then break end
+        self:add_unit(line, unit)
+        last = index
+    end
+    -- Backfill after deletion or Home/End when the right edge becomes empty.
+    if last == #display then
+        while first > 1 do
+            local candidate = self:range_line(display, first - 1, last)
+            if candidate.width > width then break end
+            first = first - 1
+            line = candidate
+        end
+    end
+    self.viewport_start = first
+    return { line }
+end
+
+local function unit_space(unit)
+    return not unit.emoji and (unit.text == " " or unit.text == "\t")
+end
+
+function renderer:multiline(units, width)
+    local lines = { new_line() }
+    local line = lines[1]
+    local index = 1
+    while index <= #units do
+        local unit = units[index]
+        if unit.text == "\r" then
+            index = index + 1
+        elseif unit.text == "\n" then
+            line = new_line()
+            lines[#lines + 1] = line
+            index = index + 1
+        elseif unit_space(unit) then
+            local space = { text = unit.text == "\t" and "    " or " " }
+            if #line.items > 0 and line.width + self:added_width(line, space) <= width then
+                self:add_unit(line, space)
+            end
+            index = index + 1
+        else
+            local last = index
+            if not unit.emoji then
+                while last < #units do
+                    local next_unit = units[last + 1]
+                    if next_unit.emoji or unit_space(next_unit) or
+                        next_unit.text == "\n" or next_unit.text == "\r" then break end
+                    last = last + 1
+                end
+            end
+            local word = self:range_line(units, index, last)
+            local first_word_item = word.items[1]
+            local extra = first_word_item and self:added_width(line, first_word_item) or 0
+            if #line.items > 0 and line.width + extra > width then
+                line = new_line()
+                lines[#lines + 1] = line
+            end
+            for word_index = index, last do
+                local word_unit = units[word_index]
+                if line.width + self:added_width(line, word_unit) > width and #line.items > 0 then
+                    line = new_line()
+                    lines[#lines + 1] = line
+                end
+                if self:added_width(line, word_unit) <= width - line.width then
+                    self:add_unit(line, word_unit)
+                elseif word_unit.emoji then
+                    -- Degenerate tiny containers still never overflow.
+                    self:add_unit(line, { emoji = word_unit.emoji, width = width })
+                end
+            end
+            index = last + 1
+        end
+    end
+    return lines
+end
+
+function renderer:get_text(index)
+    if not self.texts[index] then
+        self.texts[index] = text_widget(self.parent, self.font)
+    end
+    return self.texts[index]
+end
+
+function renderer:get_image(index)
+    if not self.images[index] then
+        local widget = attach(self.parent, CUIStatic())
+        widget:SetStretchTexture(true)
+        widget:SetTextureColor(GetARGB(255, 255, 255, 255))
+        widget:Show(false)
+        self.images[index] = { widget = widget, texture = nil }
+    end
+    return self.images[index]
+end
+
+function renderer:draw_layout(lines, width, color, centered, single_line)
+    local text_count, image_count = 0, 0
+    local row_height = math.max(self.line_height, self.icon_height)
+    if single_line then
+        local parent_height = self.parent:GetHeight()
+        if parent_height > 0 then row_height = math.min(row_height, parent_height) end
+    end
+    -- letterica16 is top-aligned: its visible glyph band is about 14 UI units.
+    -- The 20/21-unit row also includes spacing below the text. Centering icons
+    -- in that full row makes them hang below the letters, especially in input.
+    local text_band_height = math.min(14, row_height)
+    for line_index, line in ipairs(lines) do
+        local x = centered and math.max(0, (width - line.width) / 2) or 0
+        local y = (line_index - 1) * row_height
+        for _, item in ipairs(line.items) do
+            if item.emoji then
+                image_count = image_count + 1
+                local image = self:get_image(image_count)
+                if image.texture ~= item.emoji.texture then
+                    image.widget:InitTexture(item.emoji.texture)
+                    image.texture = item.emoji.texture
+                end
+                local scale = math.min(1, item.width / self.icon_width,
+                    row_height / self.icon_height)
+                local image_width = self.icon_width * scale
+                local image_height = self.icon_height * scale
+                image.widget:SetWndPos(vector2():set(x,
+                    y + math.max(0, (text_band_height - image_height) / 2)))
+                image.widget:SetWndSize(vector2():set(image_width, image_height))
+                image.widget:Show(true)
+            else
+                text_count = text_count + 1
+                local widget = self:get_text(text_count)
+                widget:SetText(item.text)
+                widget:SetTextColor(color)
+                widget:SetWndPos(vector2():set(x, y))
+                widget:SetWndSize(vector2():set(item.width, row_height))
+                widget:Show(true)
+            end
+            x = x + item.width
+        end
+    end
+    for index = text_count + 1, #self.texts do self.texts[index]:Show(false) end
+    for index = image_count + 1, #self.images do self.images[index].widget:Show(false) end
+    self.height = #lines * row_height
+    return self.height
+end
+
+function renderer:render(raw_text, width, color, options)
+    options = options or {}
+    raw_text = tostring(raw_text or "")
+    width = math.max(0, tonumber(width) or 0)
+    local parent_width = self.parent:GetWidth()
+    if parent_width > 0 then width = math.min(width, parent_width) end
+    local center = options.center == true
+    local single = options.single_line == true
+    local selected = options.select_all == true
+    if self.last_text == raw_text and self.last_width == width and
+        self.last_color == color and self.last_center == center and
+        self.last_single == single and self.last_caret == options.caret and
+        self.last_selected == selected then return self.height end
+    self.last_text, self.last_width, self.last_color = raw_text, width, color
+    self.last_center, self.last_single, self.last_caret = center, single, options.caret
+    self.last_selected = selected
+    local units = make_units(raw_text)
+    -- Leave a subpixel margin for fractional font metrics at the right edge.
+    local content_width = math.max(0, width - 0.5)
+    local lines
+    if content_width <= 0 then lines = { new_line() }
+    elseif single then lines = self:single_line(units, content_width, options.caret)
+    else lines = self:multiline(units, content_width) end
+    return self:draw_layout(lines, width, color, center, single)
+end
