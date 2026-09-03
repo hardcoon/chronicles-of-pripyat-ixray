@@ -35,9 +35,10 @@ developer mode. Game difficulty does not enable or disable it.
 - The 41 main aura objects anchor serialized vanilla `primary_object` PDA
   markers, but every coordinate starts hidden. A marker is permanently
   discovered only after the actor physically enters its main aura; discovery
-  is saved in one compact actor `pstor` value. Novikov's coordinate service
+  is saved in one compact actor `pstor` value and produces a PDA discovery
+  notification. Novikov's coordinate service
   calls `pf_proc_group_markers.reveal_group(group_id)` after a successful
-  1,000-ruble purchase; already discovered groups are omitted from its lists.
+  500-ruble purchase; already discovered groups are omitted from its lists.
 - Artifact spawning and cooking are intentionally absent.
 - Runtime coordinates are validated against the active `level.ai`, cross table,
   `level.cform`, stacked-navigation/interior masks, roads, and manual exclusions.

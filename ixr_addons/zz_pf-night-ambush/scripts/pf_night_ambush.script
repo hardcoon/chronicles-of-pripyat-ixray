@@ -1,0 +1,416 @@
+-- Night ambush: one actor callback, no ALife scans, no engine changes.
+-- Daytime: clock every 30 s. At night: one roof ray/s while otherwise eligible.
+-- Spawn-position geometry and nearest-NPC queries: only when due.
+local C = {
+    key = "pf_night_ambush_v1", revealed_key = "pf_night_ambush_revealed",
+    grasp_key = "pf_night_ambush_grasp",
+    start_hour = 1, end_hour = 5, wait_min = 15 * 60, wait_max = 60 * 60,
+    tick = 1000, day_tick = 30000, retry = 10000, grace = 60000,
+    npc_radius = 60, cleanup_distance = 120, online_timeout = 15000,
+    bloodsucker = "pf_night_bloodsucker", chimera = "pf_night_chimera",
+    mute_mask = 4294967295, angles = {0, 0.20, -0.20},
+    approach_tick = 250, reveal_distance = 5,
+}
+local state = {version = 1, sequence = 1}
+local runtime = {next_tick = 0, grace_until = 0, next_attempt = 0}
+local hooks = {}
+local impl = {}
+
+function impl.copy_state(source)
+    local result = {version = 1, sequence = 1}
+    if type(source) ~= "table" then return result end
+    for _, key in ipairs({"day", "remaining", "fired_day", "sequence"}) do
+        result[key] = source[key]
+    end
+    result.sequence = math.max(1, math.min(4, math.floor(tonumber(result.sequence) or 1)))
+    if result.remaining ~= nil then
+        result.remaining = math.max(0, math.min(C.wait_max, tonumber(result.remaining) or C.wait_max))
+    end
+    if type(source.active) == "table" then
+        result.active = {}
+        for _, key in ipairs({"id", "name", "section", "level", "day", "confirmed", "revealed"}) do
+            result.active[key] = source.active[key]
+        end
+    end
+    return result
+end
+
+function impl.reset_runtime()
+    runtime = {next_tick = 0, grace_until = 0, next_attempt = 0}
+end
+
+function impl.save_state(data)
+    data[C.key] = impl.copy_state(state)
+end
+
+function impl.load_state(data)
+    state = impl.copy_state(data[C.key])
+    impl.reset_runtime()
+end
+
+function impl.clock()
+    local time = game.get_game_time()
+    local y, m, d, h, minute, second = time:get(0, 0, 0, 0, 0, 0, 0)
+    return time, string.format("%04d-%02d-%02d", y, m, d), h, minute, second
+end
+
+function impl.section_owned(section)
+    return section == C.bloodsucker or section == C.chimera
+end
+
+function impl.active_server()
+    local a = state.active
+    if not a or not a.id or not impl.section_owned(a.section) then return nil end
+    local object = alife():object(a.id)
+    if object and object:name() == a.name and object:section_name() == a.section then
+        return object
+    end
+end
+
+function impl.reveal(object)
+    if not object or not impl.section_owned(object:section()) then return end
+    xr_logic.pstor_store(object, C.revealed_key, true)
+    if object:alive() then object:set_sound_mask(0) end
+    if state.active and state.active.id == object:id() then
+        state.active.revealed = true
+    end
+end
+
+function impl.actor_hit(actor, amount, direction, who, bone)
+    if amount > 0 and who and impl.section_owned(who:section()) then
+        impl.reveal(who)
+    end
+end
+
+function impl.attack(object, actor)
+    if object:action() then return end
+    object:script(true, "pf_night_ambush")
+    action(object, act(act.attack, actor), sound(sound.attack), cond(cond.time_end, 3600000))
+end
+
+function impl.watch_grasp()
+    local grasp = runtime.grasp
+    if not grasp then return end
+    local object = level.object_by_id(grasp.id)
+    local actor = db.actor
+    if not object or object:name() ~= grasp.name or not object:alive()
+        or not actor or not actor:alive() then
+        runtime.grasp = nil
+        return
+    end
+    -- Observe the native release before the next AI cycle can start another grab.
+    -- These two getters run per frame only during the single opening capture.
+    if actor:is_inventory_disabled() or actor:is_pda_disabled() then return end
+    xr_logic.pstor_store(object, C.grasp_key, 2)
+    runtime.grasp = nil
+    impl.attack(object, actor)
+end
+
+function impl.confirm(object)
+    local a = state.active
+    if not a or a.id ~= object:id() or a.confirmed then return end
+    a.confirmed = true
+    state.fired_day = a.day
+    state.sequence = state.sequence % 4 + 1
+    printf("[pf_night_ambush] spawned %s id=%d day=%s", a.section, a.id, a.day)
+end
+
+function impl.remove_active(reason)
+    local object = impl.active_server()
+    if object then alife():release(object, true) end
+    state.active = nil
+    runtime.pending_since = nil
+    runtime.next_attempt = time_global() + C.retry
+    printf("[pf_night_ambush] encounter released: %s", reason)
+end
+
+function impl.manage_active(actor, position, now)
+    local a = state.active
+    if not a then return end
+    local server = impl.active_server()
+    if not server then
+        state.active = nil
+        runtime.pending_since = nil
+        return
+    end
+    if a.level ~= level.name() then
+        impl.remove_active("level changed")
+        return
+    end
+    local object = level.object_by_id(a.id)
+    if object and not object:alive() then
+        -- Stock body/loot cleanup remains responsible for the corpse.
+        state.active = nil
+        runtime.pending_since = nil
+        return
+    end
+    if not a.confirmed then
+        runtime.pending_since = runtime.pending_since or now
+        if object and runtime.bound_id == a.id then
+            impl.confirm(object)
+        elseif now - runtime.pending_since > C.online_timeout then
+            impl.remove_active("online timeout")
+            return
+        end
+    end
+    local target = object and object:position() or server.position
+    if position:distance_to_sqr(target) > C.cleanup_distance * C.cleanup_distance then
+        if not object or not actor:see(object) then impl.remove_active("left behind") end
+    end
+end
+
+function impl.ray(origin, direction, distance)
+    local ray = runtime.ray
+    if not ray then ray = ray_pick(); runtime.ray = ray end
+    ray:set_flags(3)
+    ray:set_ignore_object(db.actor)
+    ray:set_position(origin)
+    ray:set_direction(direction)
+    ray:set_range(distance)
+    if ray:query() then return ray:get_distance() end
+end
+
+function impl.open_sky(position)
+    return not impl.ray(vector():set(position.x, position.y + 1.7, position.z),
+        vector():set(0, 1, 0), 100)
+end
+
+function impl.protected(position)
+    for name in pairs(db.no_weap_zones or {}) do
+        local zone = db.zone_by_name[name]
+        if zone and zone:inside(position) then return true end
+    end
+    return false
+end
+
+function impl.peaceful_nearby(position)
+    nearest.set(C.npc_radius, position)
+    for index = 0, nearest.size() - 1 do
+        local object = nearest.get(index)
+        if object and object:id() ~= db.actor:id() and IsStalker(object) and object:alive()
+            and object:relation(db.actor) ~= game_object.enemy then
+            return true
+        end
+    end
+    return false
+end
+
+function impl.spawn_point(actor, position, chimera)
+    if not impl.open_sky(position) then return nil end
+    local facing = vector():set(device().cam_dir)
+    facing.y = 0
+    if facing:magnitude() < 0.01 then facing:set(actor:direction()); facing.y = 0 end
+    if facing:magnitude() < 0.01 then return nil end
+    facing:normalize()
+    local distance, minimum, maximum = 10, 9, 11
+    if chimera then distance, minimum, maximum = 13, 12, 14 end
+    for _, angle in ipairs(C.angles) do
+        local c, s = math.cos(angle), math.sin(angle)
+        local direction = vector():set(-facing.x * c + facing.z * s, 0,
+            -facing.x * s - facing.z * c)
+        local vertex = level.vertex_in_direction(actor:level_vertex_id(), direction, distance)
+        -- CActor has no CRestrictedObject in this engine. Check the graph here;
+        -- the private monster checks its own restrictions during net_spawn.
+        if level.valid_vertex_id(vertex) then
+            local point = vector():set(level.vertex_position(vertex))
+            local offset = vector():set(point):sub(position)
+            local length = offset:magnitude()
+            local behind = offset.x * facing.x + offset.z * facing.z
+            if length >= minimum and length <= maximum and behind < -0.90 * length
+                and math.abs(offset.y) <= 1.2 and not impl.protected(point)
+                and impl.open_sky(point) then
+                local ground = impl.ray(vector():set(point.x, point.y + 2, point.z),
+                    vector():set(0, -1, 0), 3)
+                local clear = ground and math.abs(ground - 2) < 0.5
+                local side_x, side_z = -direction.z * 0.6, direction.x * 0.6
+                -- A body-width corridor at three heights also protects the native jump approach.
+                for _, side in ipairs({-1, 0, 1}) do
+                    if not clear then break end
+                    for _, height in ipairs({0.4, 1.1, 1.8}) do
+                        local start = vector():set(point.x + side * side_x, point.y + height,
+                            point.z + side * side_z)
+                        local to_actor = vector():set(position.x + side * side_x,
+                            position.y + height, position.z + side * side_z):sub(start)
+                        local range = to_actor:magnitude()
+                        if impl.ray(start, to_actor:normalize(), range) then clear = false; break end
+                    end
+                end
+                if clear then point.y = point.y + 0.1; return point, vertex, facing end
+            end
+        end
+    end
+end
+
+function impl.try_spawn(actor, position, now, day)
+    runtime.next_attempt = now + C.retry
+    if impl.protected(position) or impl.peaceful_nearby(position) then return end
+    local chimera = state.sequence == 4
+    local point, vertex, facing = impl.spawn_point(actor, position, chimera)
+    if not point then return end
+    local section = chimera and C.chimera or C.bloodsucker
+    local server = alife():create(section, point, vertex, actor:game_vertex_id())
+    if not server then return end
+    server.m_smart_terrain_id = 65535
+    server.angle = vector():set(0, -math.atan2(facing.x, facing.z), 0)
+    state.active = {id = server.id, name = server:name(), section = section,
+        level = level.name(), day = day, confirmed = false, revealed = false}
+    runtime.pending_since = now
+end
+
+function impl.update()
+    if runtime.grasp then impl.watch_grasp() end
+    local now = time_global()
+    if now < runtime.next_tick then return end
+    runtime.next_tick = now + C.tick
+    local actor = db.actor
+    if not actor or not actor:alive() then runtime.next_tick = now + C.day_tick; return end
+    if runtime.actor ~= actor then
+        runtime.actor = actor
+        runtime.grace_until = now + C.grace
+        runtime.last_game = nil
+        -- This callback is unowned by the installed actor binder. Only this addon owns it.
+        actor:set_callback(callback.hit, impl.actor_hit)
+        if not runtime.restored then
+            local data = alife_storage_manager.get_state()
+            if data[C.key] then state = impl.copy_state(data[C.key]) end
+            runtime.restored = true
+        end
+    end
+    local time, day, hour = impl.clock()
+    local factor = level.get_time_factor()
+    local elapsed = runtime.last_game and time:diffSec(runtime.last_game) or 0
+    local real_elapsed = runtime.last_real and (now - runtime.last_real) / 1000 or 0
+    local jumped = elapsed < 0 or real_elapsed > 45 or
+        elapsed > real_elapsed * math.max(factor, runtime.last_factor or factor) + 2
+    runtime.last_game, runtime.last_real, runtime.last_factor = time, now, factor
+    local sleeping = has_alife_info("actor_is_sleeping") or has_alife_info("sleep_active")
+    local holder = actor:get_current_holder() ~= nil
+    if jumped or (runtime.sleeping and not sleeping) or (runtime.holder and not holder) then
+        runtime.grace_until = now + C.grace
+    end
+    runtime.sleeping, runtime.holder = sleeping, holder
+    local position = actor:position()
+    impl.manage_active(actor, position, now)
+    if state.day ~= day then
+        state.day = day
+        state.remaining = math.random(C.wait_min, C.wait_max)
+        runtime.eligible = false
+    end
+    if hour < C.start_hour or hour >= C.end_hour or state.fired_day == day then
+        runtime.eligible = false
+        if not state.active then runtime.next_tick = now + C.day_tick end
+        return
+    end
+    local eligible = not jumped and not sleeping and not holder and not hooks.input_blocked
+        and not actor:is_talking()
+        and not device():is_paused() and level.main_input_receiver() == nil
+        and (device().precache_frame or 0) == 0
+        -- is_actor_outdoors() uses render luminance and is false in open night terrain.
+        -- One reusable vertical ray avoids lighting-dependent indoor detection.
+        and not surge_manager.is_started() and impl.open_sky(position)
+    if eligible and runtime.eligible then state.remaining = math.max(0, state.remaining - elapsed) end
+    runtime.eligible = eligible
+    -- Grace postpones the encounter, not eligible walking time in the countdown.
+    if eligible and now >= runtime.grace_until and state.remaining == 0
+        and not state.active and now >= runtime.next_attempt then
+        impl.try_spawn(actor, position, now, day)
+    end
+end
+
+-- Private binder: preserve stock spawn/save/hit/death/loot handling. Its update
+-- deliberately does not run the stock squad walker (which releases scripted act).
+-- act.attack selects the native combat state; it does not script movement or jumps.
+class "night_ambush_binder" (bind_monster.generic_object_binder)
+
+function night_ambush_binder:__init(object) super(object)
+    self.next_update = 0
+end
+
+function night_ambush_binder:net_spawn(server)
+    if not bind_monster.generic_object_binder.net_spawn(self, server) then return false end
+    if self.object:alive() then
+        if not self.object:accessible(self.object:level_vertex_id()) then return false end
+        local revealed = self.object:section() == C.chimera
+            or xr_logic.pstor_retrieve(self.object, C.revealed_key, false)
+        self.object:set_sound_mask(revealed and 0 or C.mute_mask)
+        runtime.bound_id = self.object:id()
+        impl.confirm(self.object)
+    end
+    return true
+end
+
+function night_ambush_binder:update(delta)
+    object_binder.update(self, delta)
+    local now = time_global()
+    if now < self.next_update or not self.object:alive() then return end
+    self.next_update = now + C.tick
+    local actor = db.actor
+    if self.object:section() == C.bloodsucker then
+        if actor and actor:alive() then
+            local grasp = xr_logic.pstor_retrieve(self.object, C.grasp_key, 0)
+            if grasp == 2 then impl.attack(self.object, actor); return end
+            if grasp == 1 then
+                runtime.grasp = runtime.grasp or {id = self.object:id(), name = self.object:name()}
+                return
+            end
+            -- set_enemy feeds the native enemy manager without locking eStateAttack.
+            -- That leaves the stock vampire state free to select the opening grab.
+            if self.target_actor ~= actor then
+                self.object:set_enemy(actor)
+                self.target_actor = actor
+            end
+            self.next_update = now + C.approach_tick
+            local distance = self.object:position():distance_to_sqr(actor:position())
+            if distance <= 9 and actor:is_inventory_disabled() and actor:is_pda_disabled()
+                and not actor:is_hud_animator_active() then
+                xr_logic.pstor_store(self.object, C.grasp_key, 1)
+                runtime.grasp = {id = self.object:id(), name = self.object:name()}
+            end
+            if not xr_logic.pstor_retrieve(self.object, C.revealed_key, false) then
+                -- Only the single approaching bloodsucker uses this light distance tick.
+                -- Unmute before the native grasp sound; ordinary damage arrives later.
+                if distance <= C.reveal_distance^2 then
+                    impl.reveal(self.object)
+                end
+            end
+        end
+        return
+    end
+    if actor and actor:alive() then impl.attack(self.object, actor) end
+end
+
+function night_ambush_binder:hit_callback(object, amount, direction, who, bone)
+    if amount > 0 then impl.reveal(object) end
+    bind_monster.generic_object_binder.hit_callback(self, object, amount, direction, who or object, bone)
+end
+
+function night_ambush_binder:death_callback(object, who)
+    bind_monster.generic_object_binder.death_callback(self, object, who or object)
+end
+
+function bind(object)
+    object:bind_object(night_ambush_binder(object))
+end
+
+function on_game_start()
+    if hooks.registered then return end
+    hooks.registered = true
+    -- There is no input-enabled getter in this build. Delegate to the original
+    -- functions and only observe their state; never re-enable input ourselves.
+    local disable, enable = level.disable_input, level.enable_input
+    level.disable_input = function(...)
+        hooks.input_blocked = true
+        runtime.eligible = false
+        return disable(...)
+    end
+    level.enable_input = function(...)
+        hooks.input_blocked = false
+        return enable(...)
+    end
+    RegisterScriptCallback("update", impl.update)
+    RegisterScriptCallback("load", impl.reset_runtime)
+    RegisterScriptCallback("save_state", impl.save_state)
+    RegisterScriptCallback("load_state", impl.load_state)
+end
+
+on_game_start()

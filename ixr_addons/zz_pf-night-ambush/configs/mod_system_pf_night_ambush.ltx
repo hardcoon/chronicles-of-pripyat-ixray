@@ -1,0 +1,26 @@
+; Private variants only. Health, visuals, damage and chimera jumps are inherited.
+[pf_night_bloodsucker]:bloodsucker_strong
+script_binding = pf_night_ambush.bind
+step_params = pf_night_bloodsucker_steps
+; The native check casts this threshold to signed int and adds a random -1..1.
+; -1 permits the first grab even when that random addition is +1.
+Vampire_Sufficient_Hits = -1
+Vampire_Want_Speed = 1
+Sound_Vampire_Grasp = monsters\bloodsucker\sucker_growl_
+
+[pf_night_chimera]:chimera_normal
+script_binding = pf_night_ambush.bind
+step_params = pf_night_chimera_steps
+
+; The material step player bypasses the Lua voice mask. Preserve step timing,
+; but mute the volume for these variants throughout their lifetime.
+[pf_night_bloodsucker_steps]:m_bloodsucker_step_params
+stand_run_0 = 1, 0.15, 0, 0.70, 0
+stand_run_dmg_0 = 1, 0.15, 0, 0.40, 0
+stand_walk_fwd_0 = 1, 0.05, 0, 0.50, 0
+stand_walk_fwd_dmg_0 = 1, 0.05, 0, 0.60, 0
+stand_steal_0 = 2, 0.15, 0, 0.50, 0
+
+[pf_night_chimera_steps]:m_chimera_step_params
+stand_walk_0 = 1, 0.01, 0, 0.25, 0
+stand_run_fwd_0 = 1, 0.01, 0, 0.25, 0

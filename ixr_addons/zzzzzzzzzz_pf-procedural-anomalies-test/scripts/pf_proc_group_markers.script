@@ -9,6 +9,7 @@ local CHECK_INTERVAL_MS = 200
 local RETRY_DELAY_MS = 1000
 local EXPECTED_GROUPS = 41
 local MAX_GROUP_RADIUS_SQR = 50 * 50
+local DISCOVERY_MESSAGE = "pf_proc_anomaly_zone_discovered"
 
 local entries = {
 	{ group_id = 1, object_name = "pf_proc_fixed_g01_a_base", hint = "st_pf_proc_group_01" },
@@ -63,9 +64,6 @@ local previous_actor_position = nil
 local function gate_open()
 	return db.actor ~= nil
 		and level.name() == "pripyat_full"
-		and pf_stash_qa ~= nil
-		and type(pf_stash_qa.is_developer_mode) == "function"
-		and pf_stash_qa.is_developer_mode() == true
 end
 
 local function copy_position(position)
@@ -200,7 +198,9 @@ function update(now)
 	local from = previous_actor_position or actor_position
 	for _, entry in ipairs(entries) do
 		if not discovered[entry.group_id] and actor_crossed_aura(entry, from, actor_position) then
-			reveal_group(entry.group_id)
+			if reveal_group(entry.group_id) then
+				news_manager.send_tip(db.actor, DISCOVERY_MESSAGE, nil, nil, nil, nil)
+			end
 			break
 		end
 	end
