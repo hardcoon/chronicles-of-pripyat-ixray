@@ -2327,7 +2327,8 @@ function impl.build_cyan_loot()
 	impl.add_post_magnet_detector_rolls(loot, "cyan")
 	if impl.roll(3) then impl.add_random_loot(loot, loot_pools.flavour, 1, 1) end
 	if impl.roll(12) then impl.add_random_loot(loot, loot_pools.electronics_cyan, 1, 1) end
-	if impl.roll(4) then impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1) end
+	-- Equal three-item pool: 6% total gives 2% per strange consumable.
+	if impl.roll(6) then impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1) end
 	if impl.roll(2) then impl.add_loot(loot, "lz_nm_stash_beacon") end
 	impl.add_stash_pda_roll(loot, "cyan")
 	-- Add these last so both guaranteed support slots remain new visible item
