@@ -1072,13 +1072,13 @@ function impl.repair_weapon_with_metal_part(part, target)
 		return false
 	end
 
-	target:set_condition(math.min(1.0, condition + 0.01))
+	target:set_condition(math.min(1.0, condition + 0.02))
 	impl.release_item(part)
 	impl.mark_inventory_dirty()
-	core.message("lz_nm_repair_part_complete")
+	core.message("pf_lz_nm_repair_part_complete")
 	printf(
 		"lz_new_mechanics: consumed metal part to repair weapon [%s] from [%.4f] to [%.4f]",
-		tostring(target:section()), condition, math.min(1.0, condition + 0.01)
+		tostring(target:section()), condition, math.min(1.0, condition + 0.02)
 	)
 	return true
 end
