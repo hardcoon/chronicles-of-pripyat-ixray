@@ -25,6 +25,39 @@ local game_difficulty_by_num = {
 
 local weapon_hide = {}
 local primary_objects_filled = false
+local ARTEFACT_STATISTICS_REPAIR_PSTOR = "pf_artefact_statistics_repaired_v1"
+
+local function counts_as_found_artefact(section)
+	local ini = system_ini()
+	return not ini:line_exist(section, "count_as_found_artefact") or
+		ini:r_bool(section, "count_as_found_artefact")
+end
+
+local function repair_loaded_found_artefact_count()
+	local simulator = alife()
+	if not db.actor or not simulator or not xr_statistic.taken_artefacts or
+			xr_logic.pstor_retrieve(db.actor, ARTEFACT_STATISTICS_REPAIR_PSTOR, false) then
+		return
+	end
+
+	local excluded_ids = {}
+	for artefact_id in pairs(xr_statistic.taken_artefacts) do
+		local artefact = simulator:object(artefact_id)
+		if artefact and not counts_as_found_artefact(artefact:section_name()) then
+			excluded_ids[#excluded_ids + 1] = artefact_id
+		end
+	end
+
+	for _, artefact_id in ipairs(excluded_ids) do
+		xr_statistic.taken_artefacts[artefact_id] = nil
+	end
+	if #excluded_ids > 0 then
+		xr_statistic.actor_statistic.artefacts_founded = math.max(0,
+			xr_statistic.actor_statistic.artefacts_founded - #excluded_ids)
+		printf("* PDA statistics: removed [%d] technical artefact pickups", #excluded_ids)
+	end
+	xr_logic.pstor_store(db.actor, ARTEFACT_STATISTICS_REPAIR_PSTOR, true)
+end
 
 local function set_vehicle_weapon_hud_hidden(self, hidden)
 	if not ActorMenu or not ActorMenu.get_maingame then return end
@@ -324,7 +357,9 @@ function actor_binder:on_item_take (obj, previous_owner_id)
 		end
 		local artefact = obj:get_artefact()
 		artefact:FollowByPath("NULL",0,vector():set(500,500,500))
-		xr_statistic.inc_founded_artefacts_counter(obj:id())
+		if counts_as_found_artefact(obj:section()) then
+			xr_statistic.inc_founded_artefacts_counter(obj:id())
+		end
 --[[
 		local s_art = alife():object(obj:id())
 		if(s_art) then
@@ -676,6 +711,7 @@ function actor_binder:load(reader)
 		self.last_level_name = n
 	end
 	xr_statistic.load(reader)
+	repair_loaded_found_artefact_count()
 	treasure_manager.get_treasure_manager():load(reader)
 	n = reader:r_u8()
 	for i = 1,n do

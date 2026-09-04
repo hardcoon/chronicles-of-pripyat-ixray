@@ -1,10 +1,12 @@
 ; Technical ARTEFACT class is used only so these salvage components can be
-; equipped on the belt and handled by the existing artefact bonus code.
+; equipped on the belt and handled by the existing artefact bonus code. They
+; are explicitly excluded from the PDA's "artefacts found" statistic.
 ; Their original section IDs, visuals, names, dismantling drops and order logic
 ; remain unchanged in the lower lz-new-mechanics layer.
 
 ![lz_nm_armor_pouch]:af_base
 class = ARTEFACT
+count_as_found_artefact = false
 belt = true
 slot = -1
 default_to_ruck = true
@@ -35,6 +37,7 @@ fire_wound_immunity = 0
 
 ![lz_nm_rubber_padding]:af_base
 class = ARTEFACT
+count_as_found_artefact = false
 belt = true
 slot = -1
 default_to_ruck = true
@@ -65,6 +68,7 @@ fire_wound_immunity = 0
 
 ![lz_nm_combat_boots]:af_base
 class = ARTEFACT
+count_as_found_artefact = false
 belt = true
 slot = -1
 default_to_ruck = true
