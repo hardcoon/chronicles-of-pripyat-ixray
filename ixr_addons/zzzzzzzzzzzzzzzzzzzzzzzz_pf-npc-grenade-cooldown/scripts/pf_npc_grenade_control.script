@@ -1,0 +1,25 @@
+-- Raises only the shared squad grenade cooldown. Stock NPC grenade logic,
+-- personal cooldowns, inventory and all player mechanics remain unchanged.
+
+local GROUP_THROW_INTERVAL_MS = 50000
+local original_net_spawn = xr_motivator.motivator_binder.net_spawn
+
+local function install()
+    if xr_motivator.pf_npc_grenade_control_installed == true then
+        return
+    end
+
+    xr_motivator.motivator_binder.net_spawn = function(self, server_object)
+        local spawned = original_net_spawn(self, server_object)
+
+        if spawned then
+            self.object:group_throw_time_interval(GROUP_THROW_INTERVAL_MS)
+        end
+
+        return spawned
+    end
+
+    xr_motivator.pf_npc_grenade_control_installed = true
+end
+
+install()
