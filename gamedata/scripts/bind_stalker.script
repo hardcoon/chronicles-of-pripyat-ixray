@@ -692,10 +692,16 @@ function actor_binder:load(reader)
 	local game_difficulty = reader:r_u8()
 	printf("load game_difficulty %s", tostring(game_difficulty))
 	get_console():execute("g_game_difficulty "..game_difficulty_by_num[game_difficulty])
-	local stored_input_time = reader:r_u8()
-	if stored_input_time == true then
-		self.st.disable_input_time = utils.r_CTime(reader)
+	-- save() writes a boolean followed by CTime when input is locked.
+	-- Reading the flag as a number and comparing it with true skipped
+	-- that time, shifting every subsequent field in the actor stream.
+	if reader:r_bool() then
+		utils.r_CTime(reader)
 	end
+	-- The old animation and its unsaved lock duration do not survive
+	-- loading. net_spawn enables input after this transient lock clears.
+	self.st.disable_input_time = nil
+	self.st.disable_input_idle = nil
 	xr_logic.pstor_load_all(self.object, reader)
 	self.weather_manager:load(reader)
 	release_body_manager.get_release_body_manager():load(reader)

@@ -3,6 +3,7 @@
 
 local GROUP_THROW_INTERVAL_MS = 50000
 local original_net_spawn = xr_motivator.motivator_binder.net_spawn
+local original_load = xr_motivator.motivator_binder.load
 
 local function install()
     if xr_motivator.pf_npc_grenade_control_installed == true then
@@ -12,11 +13,27 @@ local function install()
     xr_motivator.motivator_binder.net_spawn = function(self, server_object)
         local spawned = original_net_spawn(self, server_object)
 
-        if spawned then
+        -- Stock net_spawn returns successfully for corpses before touching
+        -- squad settings. A dead NPC may have no native agent manager;
+        -- calling this setter then can destroy its script binder.
+        if spawned and self.object and self.object:alive() then
             self.object:group_throw_time_interval(GROUP_THROW_INTERVAL_MS)
         end
 
         return spawned
+    end
+
+    xr_motivator.motivator_binder.load = function(self, reader)
+        -- Earlier versions could clear the corpse binder in net_spawn and
+        -- then save only native NPC data. Reading Lua fields from that empty
+        -- remainder corrupts logic/trade state. Rebuild it via normal spawn.
+        if reader:r_elapsed() == 0 then
+            printf("! [npc_binder] empty save block for [%s]; rebuilding script state",
+                tostring(self.object and self.object:id()))
+            self.loaded = false
+            return
+        end
+        return original_load(self, reader)
     end
 
     xr_motivator.pf_npc_grenade_control_installed = true

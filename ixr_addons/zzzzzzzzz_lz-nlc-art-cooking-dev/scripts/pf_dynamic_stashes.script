@@ -3208,7 +3208,17 @@ function impl.update_pending_empty_slots(now)
 				if (not client_box or client_box:is_inv_box_empty()) and not impl.has_items(box) then
 					impl.retire_empty_slot(slot)
 				elseif now >= entry.expires then
-					pending_empty_slots[slot_index] = nil
+					-- Keep watching an open stash even if the player waits before
+					-- taking everything. Native transfers can outlive m_in_use,
+					-- so the box take callback alone cannot finish this work.
+					local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+					local opened_box = menu and menu:GetMenuMode() == 4 and menu:GetInvBox() or nil
+					if opened_box and opened_box:id() == entry.object_id then
+						entry.expires = now + 3000
+						entry.due = now + EMPTY_RETIRE_DELAY_MS
+					else
+						pending_empty_slots[slot_index] = nil
+					end
 				else
 					entry.due = now + EMPTY_RETIRE_DELAY_MS
 				end
@@ -3964,6 +3974,10 @@ function on_actor_item_take(item, previous_owner_id)
 			pf_story_documents.on_document_taken(item)
 		end
 		impl.process_stash_search(slot)
+		-- Take-all and scripted transfers can reach the generic actor
+		-- callback after the box-specific in-use callback has stopped.
+		-- Check both ownership lists later, after transfer events settle.
+		impl.queue_empty_slot_check(slot)
 	else
 		-- Corpses can contain physical consumable PDAs rolled at death or as
 		-- managed loot, but taking an arbitrary item never reveals coordinates.
@@ -3990,7 +4004,9 @@ function on_inventory_box_open(box)
 	local slot = impl.slot_by_object_id(box:id())
 	if not slot then return false end
 	local server_box = alife():object(box:id(), true)
-	return server_box and impl.prepare_stash_search(slot, server_box) or false
+	local prepared = server_box and impl.prepare_stash_search(slot, server_box) or false
+	if prepared then impl.queue_empty_slot_check(slot) end
+	return prepared
 end
 
 -- Reserved integration point for the future legendary tier.
