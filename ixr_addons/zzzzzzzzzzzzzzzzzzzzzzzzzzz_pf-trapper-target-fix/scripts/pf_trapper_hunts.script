@@ -1,0 +1,852 @@
+local LEVEL_NAME = "pripyat_full"
+local TRAPPER_STORY_ID = "pf_yanov_trapper"
+local PSTOR_KEY = "pf_trapper_hunts_v1"
+local INTRO_PSTOR_KEY = "pf_trapper_hunts_intro_v1"
+local STATE_VERSION = "1"
+local TASK_PREFIX = "pf_trapper_hunt_"
+local TASK_SPOT = "secondary_task_location"
+local TASK_ICON = "ui_inGame2_Ohota_na_Krovososov"
+local MAX_ACTIVE = 3
+local MAX_ACCEPTED_PER_DAY = 3
+local UPDATE_INTERVAL_MS = 500
+local MISSING_SMART_GRACE_MS = 5000
+
+-- Only the twelve verified mutant smarts belong to the hunting pool. A name
+-- in this table is never sufficient on its own: the runtime board and a live
+-- squad of the advertised species are checked while offering and accepting.
+local targets = {
+	prif_sim_1 = {kind = "pf_trapper_hunt_kind_dogs", ammo_tier = "light", reward = 2500},
+	prif_sim_2 = {kind = "pf_trapper_hunt_kind_controller", ammo_tier = "medium", reward = 4000},
+	prif_sim_5 = {kind = "pf_trapper_hunt_kind_boar_flesh", ammo_tier = "light", reward = 2500},
+	prif_sim_6 = {kind = "pf_trapper_hunt_kind_bloodsucker", ammo_tier = "medium", reward = 4000},
+	prif_sim_7 = {kind = "pf_trapper_hunt_kind_dogs", ammo_tier = "light", reward = 2500},
+	prif_sim_9 = {kind = "pf_trapper_hunt_kind_bloodsucker", ammo_tier = "medium", reward = 4000},
+	prif_sim_10 = {kind = "pf_trapper_hunt_kind_snork", ammo_tier = "medium", reward = 4000},
+	prif_sim_11 = {kind = "pf_trapper_hunt_kind_tushkano", ammo_tier = "light", reward = 2500},
+	prif_sim_13 = {kind = "pf_trapper_hunt_kind_gigant", ammo_tier = "heavy", reward = 6000},
+	prif_sim_15 = {kind = "pf_trapper_hunt_kind_burer", ammo_tier = "medium", reward = 4000},
+	prif_sim_17 = {kind = "pf_trapper_hunt_kind_psydog", ammo_tier = "medium", reward = 4000},
+	prif_sim_20 = {kind = "pf_trapper_hunt_kind_chimera", ammo_tier = "heavy", reward = 6000}
+}
+
+local target_order = {
+	"prif_sim_1", "prif_sim_2", "prif_sim_5", "prif_sim_6",
+	"prif_sim_7", "prif_sim_9", "prif_sim_10", "prif_sim_11",
+	"prif_sim_13", "prif_sim_15", "prif_sim_17", "prif_sim_20"
+}
+
+-- These are the progressive conventional-ammo slices of the green, cyan and
+-- purple dynamic-stash pools. Each higher tier contains only the sections
+-- newly introduced by that stash tier; grenades and exotic ammunition stay
+-- excluded from repeatable hunts.
+local ammo_rewards = {
+	light = {count = 40, sections = {
+		"ammo_9x18_fmj", "ammo_9x18_pmm", "ammo_9x19_fmj",
+		"ammo_11.43x23_fmj", "ammo_12x70_buck",
+		"ammo_7.62x25_p", "ammo_7.62x25_ps"
+	}},
+	medium = {count = 30, sections = {
+		"ammo_9x19_pbp", "ammo_11.43x23_hydro", "ammo_12x76_zhekan",
+		"ammo_5.45x39_fmj", "ammo_5.56x45_ss190",
+		"ammo_7.62x39_fmj", "ammo_9x39_pab9"
+	}},
+	heavy = {count = 20, sections = {
+		"ammo_5.45x39_ap", "ammo_5.56x45_ap", "ammo_9x39_ap",
+		"ammo_7.62x54_7h1"
+	}}
+}
+
+local monster_factions = {
+	monster = true,
+	monster_predatory_day = true,
+	monster_predatory_night = true,
+	monster_vegetarian = true,
+	monster_special = true
+}
+
+-- ALife squads can visit another species' origin. Check the actual creature
+-- classes, not the smart name, faction or squad template. Class names are
+-- resolved only at runtime, after the engine has registered clsid.
+local target_classes = {
+	pf_trapper_hunt_kind_dogs = {"dog_s", "pseudodog_s"},
+	pf_trapper_hunt_kind_controller = {"controller_s"},
+	pf_trapper_hunt_kind_boar_flesh = {"boar_s", "flesh_s"},
+	pf_trapper_hunt_kind_bloodsucker = {"bloodsucker_s"},
+	pf_trapper_hunt_kind_snork = {"snork_s"},
+	pf_trapper_hunt_kind_tushkano = {"tushkano_s"},
+	pf_trapper_hunt_kind_gigant = {"gigant_s"},
+	pf_trapper_hunt_kind_burer = {"burer_s"},
+	pf_trapper_hunt_kind_psydog = {"psy_dog_s"},
+	pf_trapper_hunt_kind_chimera = {"chimera_s"}
+}
+
+local state = nil
+local next_update = 0
+local task_runtime = {}
+local missing_smart_since = {}
+local last_dialog_text = nil
+local dialog_offer_snapshot = {}
+local dialog_ready_snapshot = {}
+local pending_offer_smart = nil
+local no_offer_log_day = nil
+local squad_index_board = nil
+local squad_index_expires = 0
+local squads_by_smart = {}
+
+local function tr(id)
+	return game.translate_string(id)
+end
+
+local function split_plain(value, separator)
+	local result = {}
+	value = tostring(value or "")
+	if value == "" then return result end
+	local start = 1
+	while true do
+		local first, last = string.find(value, separator, start, true)
+		if first == nil then
+			table.insert(result, string.sub(value, start))
+			break
+		end
+		table.insert(result, string.sub(value, start, first - 1))
+		start = last + 1
+	end
+	return result
+end
+
+local function format_money(value)
+	local text = tostring(math.floor(tonumber(value) or 0))
+	local formatted = text
+	while true do
+		-- Keep grouped amounts on one line in task and dialog text. The UTF-8
+		-- non-breaking space is written as byte escapes for Lua 5.1.
+		local changed, count = string.gsub(
+			formatted, "^(-?%d+)(%d%d%d)", "%1\194\160%2")
+		formatted = changed
+		if count == 0 then break end
+	end
+	return formatted
+end
+
+local function ammo_reward_for_smart(smart_name)
+	local target = targets[smart_name]
+	return target and ammo_rewards[target.ammo_tier] or nil
+end
+
+local function current_day_key()
+	local year, month, day, hour, minute, second, millisecond = 0, 0, 0, 0, 0, 0, 0
+	year, month, day, hour, minute, second, millisecond = game.get_game_time():get(
+		year, month, day, hour, minute, second, millisecond
+	)
+	return string.format("%04d%02d%02d", year, month, day)
+end
+
+local function new_state()
+	return {
+		day = current_day_key(),
+		accepted_today = 0,
+		serial = 0,
+		offers = {},
+		active = {}
+	}
+end
+
+local function encode_order(order)
+	return table.concat({
+		order.task_id,
+		order.smart_name,
+		table.concat(order.squad_ids, "."),
+		tostring(order.reward),
+		order.status,
+		order.accepted_day
+	}, "~")
+end
+
+local function encode_state()
+	local orders = {}
+	for _, order in ipairs(state.active) do
+		table.insert(orders, encode_order(order))
+	end
+	return table.concat({
+		STATE_VERSION,
+		state.day,
+		tostring(state.accepted_today),
+		tostring(state.serial),
+		table.concat(state.offers, ","),
+		table.concat(orders, ";")
+	}, "|")
+end
+
+local function save_state()
+	if db.actor ~= nil and state ~= nil then
+		xr_logic.pstor_store(db.actor, PSTOR_KEY, encode_state())
+	end
+end
+
+local function decode_order(encoded)
+	local fields = split_plain(encoded, "~")
+	if #fields ~= 6 or targets[fields[2]] == nil then return nil end
+	local squad_ids = {}
+	for _, value in ipairs(split_plain(fields[3], ".")) do
+		local id = tonumber(value)
+		if id ~= nil then table.insert(squad_ids, id) end
+	end
+	if #squad_ids == 0 then return nil end
+	local status = fields[5] == "ready" and "ready" or "hunting"
+	return {
+		task_id = fields[1],
+		smart_name = fields[2],
+		squad_ids = squad_ids,
+		reward = tonumber(fields[4]) or targets[fields[2]].reward,
+		status = status,
+		accepted_day = fields[6]
+	}
+end
+
+local function load_state()
+	state = new_state()
+	local encoded = xr_logic.pstor_retrieve(db.actor, PSTOR_KEY, "")
+	local fields = split_plain(encoded, "|")
+	if #fields ~= 6 or fields[1] ~= STATE_VERSION then return end
+	state.day = fields[2]
+	state.accepted_today = math.max(0, math.min(
+		MAX_ACCEPTED_PER_DAY, tonumber(fields[3]) or 0))
+	state.serial = math.max(0, tonumber(fields[4]) or 0)
+	for _, smart_name in ipairs(split_plain(fields[5], ",")) do
+		if targets[smart_name] ~= nil then table.insert(state.offers, smart_name) end
+	end
+	for _, encoded_order in ipairs(split_plain(fields[6], ";")) do
+		local order = decode_order(encoded_order)
+		if order ~= nil and #state.active < MAX_ACTIVE then
+			table.insert(state.active, order)
+			local serial = tonumber(string.match(order.task_id, "(%d+)$")) or 0
+			state.serial = math.max(state.serial, serial)
+		end
+	end
+end
+
+local function smart_data(smart_name)
+	local board = sim_board.get_sim_board()
+	if board == nil or board.smarts_by_names == nil then return nil, nil, nil end
+	local smart = board.smarts_by_names[smart_name]
+	if smart == nil or smart.id == nil then return board, nil, nil end
+	local entry = board.smarts and board.smarts[smart.id] or nil
+	if entry == nil then return board, nil, nil end
+	return board, smart, entry
+end
+
+local function is_monster_squad(squad)
+	if squad == nil then return false end
+	local faction = squad.player_id
+	if faction == nil and squad.get_squad_community ~= nil then
+		faction = squad:get_squad_community()
+	end
+	return monster_factions[faction] == true
+end
+
+local function squad_matches_target(squad, target)
+	if squad == nil or squad.squad_members == nil or target == nil then return false end
+	local allowed = target_classes[target.kind]
+	if allowed == nil then return false end
+	local sim = alife()
+	if sim == nil then return false end
+	local found = false
+	for member in squad:squad_members() do
+		local object = member and member.id and sim:object(member.id) or nil
+		if object ~= nil and (object.alive == nil or object:alive()) then
+			if object.clsid == nil then return false end
+			local object_class = object:clsid()
+			local matches = false
+			for _, class_name in ipairs(allowed) do
+				if clsid[class_name] ~= nil and object_class == clsid[class_name] then
+					matches = true
+					break
+				end
+			end
+			-- Every surviving member must match the advertised group. Otherwise
+			-- the quest would also require killing an undisclosed mutant/NPC.
+			if not matches then return false end
+			found = true
+		end
+	end
+	return found
+end
+
+local function assigned_squad_index(board)
+	local now = time_global()
+	if squad_index_board == board and now < squad_index_expires then
+		return squads_by_smart
+	end
+	squad_index_board = board
+	squad_index_expires = now + MISSING_SMART_GRACE_MS
+	squads_by_smart = {}
+	for _, squad in pairs(board.squads or {}) do
+		if squad.smart_id ~= nil then
+			local bucket = squads_by_smart[squad.smart_id]
+			if bucket == nil then
+				bucket = {}
+				squads_by_smart[squad.smart_id] = bucket
+			end
+			table.insert(bucket, squad)
+		end
+	end
+	return squads_by_smart
+end
+
+local function live_squad_ids(smart_name)
+	local board, smart, entry = smart_data(smart_name)
+	local result = {}
+	local seen = {}
+	if entry == nil then return result end
+	local function append_squad(squad)
+		if squad ~= nil and squad.id ~= nil and not seen[squad.id]
+			and squad.smart_id == smart.id and is_monster_squad(squad)
+			and squad_matches_target(squad, targets[smart_name]) then
+			seen[squad.id] = true
+			table.insert(result, squad.id)
+		end
+	end
+	for _, squad in pairs(entry.squads or {}) do append_squad(squad) end
+	-- On load the global squad registry can already contain an assigned squad
+	-- while the smart-local cache is still being rebuilt. smart_id is the
+	-- authoritative assignment used by sim_board and still represents a real
+	-- squad on this smart; include it without spawning or widening the target.
+	for _, squad in ipairs(assigned_squad_index(board)[smart.id] or {}) do
+		-- Recheck the live field so a cached entry can never keep a squad on
+		-- the old smart after the simulation moves it.
+		if squad.smart_id == smart.id then append_squad(squad) end
+	end
+	table.sort(result)
+	return result
+end
+
+local function log_empty_offer_pool()
+	local day = current_day_key()
+	if no_offer_log_day == day then return end
+	local board = sim_board.get_sim_board()
+	if board == nil or board.smarts_by_names == nil then return end
+	local registered = 0
+	local live_smarts = 0
+	local live_squads = 0
+	for _, smart_name in ipairs(target_order) do
+		local _, smart = smart_data(smart_name)
+		if smart ~= nil then registered = registered + 1 end
+		local count = #live_squad_ids(smart_name)
+		if count > 0 then live_smarts = live_smarts + 1 end
+		live_squads = live_squads + count
+	end
+	if registered == 0 then return end
+	no_offer_log_day = day
+	printf("! [pf_trapper_hunts] no offers: registered [%d/%d], live smarts [%d], live squads [%d]",
+		registered, #target_order, live_smarts, live_squads)
+end
+
+local function active_smart_set()
+	local result = {}
+	for _, order in ipairs(state.active) do result[order.smart_name] = true end
+	return result
+end
+
+local function refresh_day()
+	local day = current_day_key()
+	if state.day == day then return false end
+	state.day = day
+	state.accepted_today = 0
+	state.offers = {}
+	return true
+end
+
+local function refresh_offers()
+	local changed = refresh_day()
+	local active_smarts = active_smart_set()
+	local seen = {}
+	local kept = {}
+	local capacity = math.min(
+		MAX_ACTIVE - #state.active,
+		MAX_ACCEPTED_PER_DAY - state.accepted_today
+	)
+	capacity = math.max(0, capacity)
+
+	for _, smart_name in ipairs(state.offers) do
+		if #kept < capacity and not active_smarts[smart_name] and not seen[smart_name]
+				and #live_squad_ids(smart_name) > 0 then
+			table.insert(kept, smart_name)
+			seen[smart_name] = true
+		else
+			changed = true
+		end
+	end
+
+	local eligible = {}
+	for _, smart_name in ipairs(target_order) do
+		if not active_smarts[smart_name] and not seen[smart_name]
+				and #live_squad_ids(smart_name) > 0 then
+			table.insert(eligible, smart_name)
+		end
+	end
+	for index = #eligible, 2, -1 do
+		local random_index = math.random(index)
+		eligible[index], eligible[random_index] = eligible[random_index], eligible[index]
+	end
+	while #kept < capacity and #eligible > 0 do
+		table.insert(kept, table.remove(eligible))
+		changed = true
+	end
+	state.offers = kept
+	if changed then save_state() end
+	if capacity > 0 and #state.offers == 0 then log_empty_offer_pool() end
+	return changed
+end
+
+local function initialize_state()
+	if db.actor == nil then return false end
+	if state == nil then load_state() end
+	refresh_offers()
+	return true
+end
+
+local function kind_name(smart_name)
+	local target = targets[smart_name]
+	return target and tr(target.kind) or tr("pf_trapper_hunt_kind_unknown")
+end
+
+local function offer_kind_name(smart_name)
+	local target = targets[smart_name]
+	local id = target and target.kind or "pf_trapper_hunt_kind_unknown"
+	return tr(id .. "_offer")
+end
+
+local function live_members(order)
+	local result = {}
+	local sim = alife()
+	if sim == nil then return result end
+	for _, squad_id in ipairs(order.squad_ids) do
+		local squad = sim:object(squad_id)
+		if squad ~= nil and squad.npc_count ~= nil and squad:npc_count() > 0 then
+			local member_count_before = #result
+			if squad.squad_members ~= nil then
+				for member in squad:squad_members() do
+					if member ~= nil and member.id ~= nil and sim:object(member.id) ~= nil then
+						table.insert(result, member.id)
+					end
+				end
+			end
+			if #result == member_count_before and squad.commander_id ~= nil then
+				local commander_id = squad:commander_id()
+				if commander_id ~= nil and sim:object(commander_id) ~= nil then
+					table.insert(result, commander_id)
+				end
+			end
+		end
+	end
+	table.sort(result)
+	return result
+end
+
+local function trapper_object_id()
+	local id = get_story_object_id(TRAPPER_STORY_ID)
+	return id ~= nil and id ~= 65535 and id or nil
+end
+
+local function task_target(order, members)
+	if order.status == "ready" then return trapper_object_id() end
+	if #members == 1 then return members[1] end
+	local _, smart = smart_data(order.smart_name)
+	return smart and smart.id or nil
+end
+
+local function task_stage(order, members)
+	if order.status == "ready" then return "ready" end
+	if #members == 1 then return "last" end
+	return "hunting"
+end
+
+local function task_text(order, members)
+	local kind = kind_name(order.smart_name)
+	local title = string.format(tr("pf_trapper_hunt_task_title"), kind)
+	if order.status == "ready" then
+		return title, string.format(tr("pf_trapper_hunt_task_ready"),
+			format_money(order.reward))
+	elseif #members == 1 then
+		return title, string.format(tr("pf_trapper_hunt_task_last"),
+			format_money(order.reward))
+	end
+	return title, string.format(tr("pf_trapper_hunt_task_hunting"),
+		kind, format_money(order.reward))
+end
+
+local function ensure_native_task(order, members)
+	local target_id = task_target(order, members)
+	if target_id == nil or db.actor == nil then return end
+	local title, description = task_text(order, members)
+	local stage = task_stage(order, members)
+	local game_task = db.actor:get_task(order.task_id, true)
+	if game_task == nil then
+		game_task = CGameTask()
+		game_task:set_id(order.task_id)
+		game_task:set_type(task.additional)
+		game_task:set_priority(1)
+		game_task:set_icon_name(TASK_ICON)
+		game_task:set_title(title)
+		game_task:set_description(description)
+		game_task:set_map_location(TASK_SPOT)
+		game_task:set_map_object_id(target_id)
+		db.actor:give_task(game_task, 0, false, 0)
+		task_runtime[order.task_id] = {target = target_id, stage = stage}
+		return
+	end
+	local runtime = task_runtime[order.task_id]
+	if runtime == nil or runtime.target ~= target_id or runtime.stage ~= stage then
+		game_task:set_title(title)
+		game_task:set_description(description)
+		-- Updating the stored object id alone does not move an already-created
+		-- map spot. The engine's change_map_location call removes the old spot
+		-- and creates a new one for the current hunt stage.
+		game_task:change_map_location(TASK_SPOT, target_id)
+		task_runtime[order.task_id] = {target = target_id, stage = stage}
+		-- A missing runtime entry means the task was just restored from a save;
+		-- resync it silently. Only live stage transitions are PDA updates.
+		if runtime ~= nil then
+			news_manager.send_task(db.actor, "updated", game_task)
+		end
+	end
+end
+
+local function finish_native_task(order, task_state)
+	if db.actor == nil then return end
+	local game_task = db.actor:get_task(order.task_id, true)
+	if game_task ~= nil then db.actor:set_task_state(task_state, order.task_id) end
+	task_runtime[order.task_id] = nil
+end
+
+local function remove_active_at(index)
+	local order = state.active[index]
+	table.remove(state.active, index)
+	return order
+end
+
+local function cancel_missing_smart(index)
+	local order = remove_active_at(index)
+	finish_native_task(order, task.fail)
+	if order.accepted_day == current_day_key() then
+		state.accepted_today = math.max(0, state.accepted_today - 1)
+	end
+	printf("! [pf_trapper_hunts] cancelled [%s]: smart [%s] is missing",
+		order.task_id, order.smart_name)
+	return true
+end
+
+local function update_orders()
+	local board = sim_board.get_sim_board()
+	if board == nil or board.smarts_by_names == nil or board.smarts == nil then
+		return false
+	end
+	local changed = false
+	local now = time_global()
+	for index = #state.active, 1, -1 do
+		local order = state.active[index]
+		local _, smart = smart_data(order.smart_name)
+		if smart == nil then
+			local missing_since = missing_smart_since[order.task_id]
+			if missing_since == nil then
+				missing_smart_since[order.task_id] = now
+			elseif now - missing_since >= MISSING_SMART_GRACE_MS then
+				missing_smart_since[order.task_id] = nil
+				cancel_missing_smart(index)
+				changed = true
+			end
+		else
+			missing_smart_since[order.task_id] = nil
+			local members = live_members(order)
+			if #members == 0 and order.status ~= "ready" then
+				order.status = "ready"
+				changed = true
+			end
+			ensure_native_task(order, members)
+		end
+	end
+	if changed then
+		refresh_offers()
+		save_state()
+	end
+end
+
+local function offer_at(index)
+	if not initialize_state() then return nil end
+	return state.offers[index]
+end
+
+local function offer_text(index)
+	local smart_name = offer_at(index)
+	if smart_name == nil then return "" end
+	dialog_offer_snapshot[index] = smart_name
+	local target = targets[smart_name]
+	return string.format(
+		tr("pf_trapper_hunt_offer_format"),
+		offer_kind_name(smart_name),
+		format_money(target.reward)
+	)
+end
+
+local function find_offer(smart_name)
+	if smart_name == nil then return nil end
+	for index, candidate in ipairs(state.offers) do
+		if candidate == smart_name then return index end
+	end
+	return nil
+end
+
+local function prepare_offer(index)
+	if not initialize_state() then return false end
+	local smart_name = state.offers[index]
+	local expected_smart = dialog_offer_snapshot[index]
+	dialog_offer_snapshot = {}
+	if expected_smart ~= nil and smart_name ~= expected_smart then
+		pending_offer_smart = nil
+		last_dialog_text = tr("pf_trapper_hunt_accept_stale")
+		return false
+	end
+	if smart_name == nil or #state.active >= MAX_ACTIVE
+		or state.accepted_today >= MAX_ACCEPTED_PER_DAY then
+		pending_offer_smart = nil
+		last_dialog_text = tr("pf_trapper_hunt_accept_unavailable")
+		return false
+	end
+	pending_offer_smart = smart_name
+	last_dialog_text = nil
+	return true
+end
+
+local function validate_pending_offer()
+	local smart_name = pending_offer_smart
+	if smart_name == nil or not initialize_state() then return nil, nil end
+	local index = find_offer(smart_name)
+	if index == nil then
+		pending_offer_smart = nil
+		last_dialog_text = tr("pf_trapper_hunt_accept_stale")
+		return nil, nil
+	end
+	if #state.active >= MAX_ACTIVE or state.accepted_today >= MAX_ACCEPTED_PER_DAY then
+		pending_offer_smart = nil
+		last_dialog_text = tr("pf_trapper_hunt_accept_unavailable")
+		return nil, nil
+	end
+	local squad_ids = live_squad_ids(smart_name)
+	if #squad_ids == 0 then
+		table.remove(state.offers, index)
+		refresh_offers()
+		save_state()
+		pending_offer_smart = nil
+		last_dialog_text = tr("pf_trapper_hunt_accept_stale")
+		return nil, nil
+	end
+	return index, squad_ids
+end
+
+local function accept_pending()
+	local smart_name = pending_offer_smart
+	local index, squad_ids = validate_pending_offer()
+	if index == nil then return false end
+	state.serial = state.serial + 1
+	local target = targets[smart_name]
+	local order = {
+		task_id = string.format("%s%06d", TASK_PREFIX, state.serial),
+		smart_name = smart_name,
+		squad_ids = squad_ids,
+		reward = target.reward,
+		status = "hunting",
+		accepted_day = current_day_key()
+	}
+	table.insert(state.active, order)
+	table.remove(state.offers, index)
+	state.accepted_today = state.accepted_today + 1
+	ensure_native_task(order, live_members(order))
+	refresh_offers()
+	save_state()
+	pending_offer_smart = nil
+	last_dialog_text = tr("pf_trapper_hunt_accept_success")
+	return true
+end
+
+local function accept_offer(index)
+	if not prepare_offer(index) then return false end
+	return accept_pending()
+end
+
+local function ready_orders()
+	local result = {}
+	if not initialize_state() then return result end
+	for active_index, order in ipairs(state.active) do
+		if order.status == "ready" then
+			table.insert(result, {active_index = active_index, order = order})
+		end
+	end
+	return result
+end
+
+local function ready_text(index)
+	local ready = ready_orders()[index]
+	if ready == nil then return "" end
+	dialog_ready_snapshot[index] = ready.order.task_id
+	return tr("pf_trapper_hunt_turn_in_format")
+end
+
+local function give_ammo_reward(order)
+	local actor = db.actor
+	local ammo = ammo_reward_for_smart(order.smart_name)
+	if actor == nil or ammo == nil or #ammo.sections == 0 then return nil, 0 end
+	local section = ammo.sections[math.random(1, #ammo.sections)]
+	create_ammo(section, actor:position(), actor:level_vertex_id(),
+		actor:game_vertex_id(), actor:id(), ammo.count)
+	if news_manager ~= nil and type(news_manager.relocate_item) == "function" then
+		news_manager.relocate_item(actor, "in", section, ammo.count)
+	end
+	return section, ammo.count
+end
+
+local function turn_in_ready(index, first_speaker, second_speaker)
+	local ready = nil
+	local expected_task = dialog_ready_snapshot[index]
+	local candidates = ready_orders()
+	if expected_task ~= nil then
+		for _, candidate in ipairs(candidates) do
+			if candidate.order.task_id == expected_task then
+				ready = candidate
+				break
+			end
+		end
+	else
+		ready = candidates[index]
+	end
+	dialog_ready_snapshot = {}
+	if ready == nil then
+		last_dialog_text = tr("pf_trapper_hunt_turn_in_unavailable")
+		return false
+	end
+	local order = remove_active_at(ready.active_index)
+	finish_native_task(order, task.completed)
+	dialogs.relocate_money_to_actor(first_speaker, second_speaker, order.reward)
+	local ammo_section, ammo_count = give_ammo_reward(order)
+	refresh_offers()
+	save_state()
+	printf("~ [pf_trapper_hunts] paid [%s]: %d RU, %d x [%s]",
+		order.task_id, order.reward, ammo_count, tostring(ammo_section))
+	-- Money relocation and the explicit stock item notice report both rewards.
+	-- Keep only a short in-character reply here.
+	last_dialog_text = tr("pf_trapper_hunt_turn_in_success")
+	return true
+end
+
+function update()
+	if db.actor == nil or level.name() ~= LEVEL_NAME then return end
+	local now = time_global()
+	if now < next_update then return end
+	next_update = now + UPDATE_INTERVAL_MS
+	if initialize_state() then update_orders() end
+end
+
+function reset()
+	state = nil
+	next_update = 0
+	task_runtime = {}
+	missing_smart_since = {}
+	last_dialog_text = nil
+	dialog_offer_snapshot = {}
+	dialog_ready_snapshot = {}
+	pending_offer_smart = nil
+	no_offer_log_day = nil
+	squad_index_board = nil
+	squad_index_expires = 0
+	squads_by_smart = {}
+end
+
+function greeting_text(first_speaker, second_speaker)
+	if intro_done(first_speaker, second_speaker) then
+		return tr("pf_yanov_trapper_greeting_repeat")
+	end
+	return tr("pf_yanov_trapper_greeting_intro")
+end
+
+function intro_done(first_speaker, second_speaker)
+	return db.actor ~= nil
+		and xr_logic.pstor_retrieve(db.actor, INTRO_PSTOR_KEY, false) == true
+end
+
+function needs_intro(first_speaker, second_speaker)
+	return not intro_done(first_speaker, second_speaker)
+end
+
+function complete_intro(first_speaker, second_speaker)
+	if db.actor == nil then return false end
+	xr_logic.pstor_store(db.actor, INTRO_PSTOR_KEY, true)
+	return true
+end
+
+function can_offer_1(first_speaker, second_speaker) return offer_at(1) ~= nil end
+function can_offer_2(first_speaker, second_speaker) return offer_at(2) ~= nil end
+function can_offer_3(first_speaker, second_speaker) return offer_at(3) ~= nil end
+function offer_text_1(first_speaker, second_speaker) return offer_text(1) end
+function offer_text_2(first_speaker, second_speaker) return offer_text(2) end
+function offer_text_3(first_speaker, second_speaker) return offer_text(3) end
+function prepare_offer_1(first_speaker, second_speaker) return prepare_offer(1) end
+function prepare_offer_2(first_speaker, second_speaker) return prepare_offer(2) end
+function prepare_offer_3(first_speaker, second_speaker) return prepare_offer(3) end
+function accept_offer_1(first_speaker, second_speaker) return accept_offer(1) end
+function accept_offer_2(first_speaker, second_speaker) return accept_offer(2) end
+function accept_offer_3(first_speaker, second_speaker) return accept_offer(3) end
+
+function confirmation_text(first_speaker, second_speaker)
+	local smart_name = pending_offer_smart
+	local index = validate_pending_offer()
+	if index == nil then return last_dialog_text or tr("pf_trapper_hunt_accept_unavailable") end
+	return string.format(tr("pf_trapper_hunt_confirmation_format"),
+		kind_name(smart_name))
+end
+
+function has_pending_offer(first_speaker, second_speaker)
+	return validate_pending_offer() ~= nil
+end
+
+function accept_pending_offer(first_speaker, second_speaker)
+	return accept_pending()
+end
+
+function clear_pending_offer(first_speaker, second_speaker)
+	pending_offer_smart = nil
+	dialog_offer_snapshot = {}
+	return true
+end
+
+function can_turn_in_1(first_speaker, second_speaker) return ready_orders()[1] ~= nil end
+function can_turn_in_2(first_speaker, second_speaker) return ready_orders()[2] ~= nil end
+function can_turn_in_3(first_speaker, second_speaker) return ready_orders()[3] ~= nil end
+function turn_in_text_1(first_speaker, second_speaker) return ready_text(1) end
+function turn_in_text_2(first_speaker, second_speaker) return ready_text(2) end
+function turn_in_text_3(first_speaker, second_speaker) return ready_text(3) end
+function turn_in_1(first_speaker, second_speaker)
+	return turn_in_ready(1, first_speaker, second_speaker)
+end
+function turn_in_2(first_speaker, second_speaker)
+	return turn_in_ready(2, first_speaker, second_speaker)
+end
+function turn_in_3(first_speaker, second_speaker)
+	return turn_in_ready(3, first_speaker, second_speaker)
+end
+
+function has_no_offer(first_speaker, second_speaker)
+	return offer_at(1) == nil
+end
+
+function no_offer_text(first_speaker, second_speaker)
+	if not initialize_state() then return tr("pf_trapper_hunt_no_targets") end
+	if #state.active >= MAX_ACTIVE then return tr("pf_trapper_hunt_active_limit") end
+	if state.accepted_today >= MAX_ACCEPTED_PER_DAY then
+		return tr("pf_trapper_hunt_daily_limit")
+	end
+	log_empty_offer_pool()
+	return tr("pf_trapper_hunt_no_targets")
+end
+
+function dialog_result_text(first_speaker, second_speaker)
+	return last_dialog_text or tr("pf_trapper_hunt_accept_unavailable")
+end
