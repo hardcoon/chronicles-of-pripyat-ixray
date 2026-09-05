@@ -685,7 +685,32 @@ function actor_binder:save(packet)
 	SendScriptCallback("save", packet) -- IX-Ray
 end
 ----------------------------------------------------------------------------------------------------------------------
+local function reset_runtime_managers_after_load(reader)
+	pf_anomaly_stream.reset()
+	pf_dynamic_stashes.reset()
+	pf_dynamic_corpses.reset()
+	pf_story_encounter.reset()
+	pf_scientist_bunker.reset()
+	pf_hermann_trade.reset()
+	pf_yanov_station.reset()
+	pf_trapper_hunts.reset()
+	pf_bunker_access.reset()
+	pf_trade_access.reset()
+	pf_hawaiian_trade.reset()
+	SendScriptCallback("load", reader) -- IX-Ray
+end
+
 function actor_binder:load(reader)
+	-- If a previous script failure cleared the binder, its save block is empty.
+	-- Keep the freshly initialized binder alive and rebuild transient caches via
+	-- the normal update lifecycle instead of reading past the end of the stream.
+	if reader:r_elapsed() == 0 then
+		printf("! [actor_binder] empty save block; using fresh runtime state")
+		self.f_surge_manager_loaded = false
+		reset_runtime_managers_after_load(reader)
+		return
+	end
+
 	set_save_marker(reader, "load", false, "actor_binder")
 	object_binder.load(self, reader)
 	--' Загружаем уровень сложности
@@ -748,18 +773,7 @@ function actor_binder:load(reader)
 
 	set_save_marker(reader, "load", true, "actor_binder")
 
-	pf_anomaly_stream.reset()
-	pf_dynamic_stashes.reset()
-	pf_dynamic_corpses.reset()
-	pf_story_encounter.reset()
-	pf_scientist_bunker.reset()
-	pf_hermann_trade.reset()
-	pf_yanov_station.reset()
-	pf_trapper_hunts.reset()
-	pf_bunker_access.reset()
-	pf_trade_access.reset()
-	pf_hawaiian_trade.reset()
-	SendScriptCallback("load", reader) -- IX-Ray
+	reset_runtime_managers_after_load(reader)
 end
 
 
