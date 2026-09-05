@@ -86,18 +86,19 @@ local TRACE_STATUS_COLORS = {
 	failed = "%c[255, 225, 75, 65]"
 }
 
+-- Initial power range, followed by the chance with all initial protection removed.
 local TRACE_CHANCE_DEFAULTS = {
 	purple = {
-		novice = { 4, 8 }, stalker = { 7, 14 },
-		veteran = { 14, 24 }, master = { 20, 30 }
+		novice = { 4, 8, 10 }, stalker = { 7, 14, 18 },
+		veteran = { 14, 24, 30 }, master = { 20, 30, 40 }
 	},
 	orange = {
-		novice = { 1, 1.5 }, stalker = { 2, 5 },
-		veteran = { 10, 17 }, master = { 17, 24 }
+		novice = { 1, 1.5, 3 }, stalker = { 2, 5, 7 },
+		veteran = { 10, 17, 22 }, master = { 17, 24, 30 }
 	},
 	red = {
-		novice = { 0.5, 0.8 }, stalker = { 0.7, 2 },
-		veteran = { 3, 8 }, master = { 10, 17 }
+		novice = { 0.5, 0.8, 2 }, stalker = { 0.7, 2, 4 },
+		veteran = { 3, 8, 10 }, master = { 10, 17, 20 }
 	}
 }
 
@@ -1005,13 +1006,23 @@ local function get_extract_money(power, base_encryption)
 	return math.ceil(power * 0.2 * clamp(base_encryption, 20, 100) * multiplier)
 end
 
-local function trace_success_chance(tier, rank, power)
+local function trace_success_chance(tier, rank, power, encryption, base_encryption)
 	local defaults = TRACE_CHANCE_DEFAULTS[tier] and TRACE_CHANCE_DEFAULTS[tier][rank]
 	if not defaults then return 0 end
 	local minimum = setting_number("trace_" .. tier .. "_" .. rank .. "_min", defaults[1])
 	local maximum = setting_number("trace_" .. tier .. "_" .. rank .. "_max", defaults[2])
 	local factor = (clamp(tonumber(power) or 25, 25, 100) - 25) / 75
-	return clamp(minimum + (maximum - minimum) * factor, 0, 100)
+	local base_chance = clamp(minimum + (maximum - minimum) * factor, 0, 100)
+	local initial_protection = clamp(tonumber(base_encryption) or 0, 0, 100)
+	if initial_protection <= 0 then return base_chance end
+	local remaining = clamp(tonumber(encryption) or initial_protection, 0, initial_protection)
+	local removed_fraction = (initial_protection - remaining) / initial_protection
+	local ceiling = clamp(setting_number(
+		"trace_" .. tier .. "_" .. rank .. "_unprotected_cap", defaults[3]
+	), base_chance, 100)
+	-- Only the success threshold changes; the saved roll and one attempt per
+	-- tier remain the same. Existing command rebuilding refreshes the preview.
+	return base_chance + (ceiling - base_chance) * removed_fraction
 end
 
 local function trace_offer_chance(tier)
@@ -1478,7 +1489,7 @@ function lz_ph_hacking_dialog:BuildCommands(script)
 			self:AddCommand(
 				TRACE_COMMANDS[tier],
 				script.power,
-				trace_success_chance(tier, profile.rank, script.power)
+				trace_success_chance(tier, profile.rank, script.power, self.encryption, self.base_encryption)
 			)
 		end
 	end
