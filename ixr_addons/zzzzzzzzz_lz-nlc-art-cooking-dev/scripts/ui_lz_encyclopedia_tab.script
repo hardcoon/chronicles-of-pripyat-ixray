@@ -42,9 +42,14 @@ local LIST_ENTRY_INDENT = UTF8_NBSP .. UTF8_NBSP
 local CATEGORY_ORDER = {
 	pf_story_encyclopedia_documents = 10,
 	lz_ghost_city_encyclopedia = 20,
-	lz_nm_encyclopedia_mutants = 30,
-	lz_nm_encyclopedia_mechanics = 40,
-	lz_nlc_art_cooking_recipes = 50
+	lz_pripyat_before_accident_encyclopedia = 30,
+	lz_nm_encyclopedia_mutants = 40,
+	lz_nm_encyclopedia_mechanics = 50,
+	lz_nlc_art_cooking_recipes = 60
+}
+local LORE_DOCUMENT_CATEGORIES = {
+	lz_ghost_city_encyclopedia = true,
+	lz_pripyat_before_accident_encyclopedia = true
 }
 
 local function category_less(left, right)
@@ -140,8 +145,8 @@ end
 
 function lz_encyclopedia_tab:LoadArticles()
 	self.categories = {}
-	self.ghost_city_found = 0
-	self.ghost_city_total = 0
+	self.lore_documents_found = 0
+	self.lore_documents_total = 0
 	local ini = ini_file("plugins\\lz_new_mechanics_encyclopedia.ltx")
 	self.article_ini = ini
 	if not ini:section_exist("encyclopedia") then return end
@@ -165,9 +170,11 @@ function lz_encyclopedia_tab:LoadArticles()
 					end
 				end
 			end
-			if section == "lz_ghost_city_encyclopedia" then
-				self.ghost_city_found = #category.articles
-				self.ghost_city_total = category.total_articles
+			if LORE_DOCUMENT_CATEGORIES[section] then
+				self.lore_documents_found =
+					self.lore_documents_found + #category.articles
+				self.lore_documents_total =
+					self.lore_documents_total + category.total_articles
 			end
 			-- A locked story category should not advertise that unread evidence exists.
 			if #category.articles > 0 then table.insert(self.categories, category) end
@@ -195,8 +202,8 @@ function lz_encyclopedia_tab:UpdateCaption()
 	local format = game.translate_string("pda_encyclopedia_ghost_counter")
 	self.caption:TextControl():SetText(string.format(
 		format,
-		self.ghost_city_found or 0,
-		self.ghost_city_total or 0
+		self.lore_documents_found or 0,
+		self.lore_documents_total or 0
 	))
 end
 

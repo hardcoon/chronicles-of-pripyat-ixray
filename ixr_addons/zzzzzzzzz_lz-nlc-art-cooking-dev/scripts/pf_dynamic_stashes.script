@@ -46,10 +46,10 @@ local FIXED_PDA_SECTIONS = {
 }
 local LEGACY_VEHICLE_MARKER_SECTION = "pf_stash_vehicle_marker"
 local STORY_DOCUMENT_ROLL_CHANCE = 20
--- The collection contains 36 independent lore notes, three times more than
--- the personal-story archive. Its search roll remains higher than the separate
--- personal-story progression roll without making lore notes commonplace.
-local GHOST_CITY_NOTE_ROLL_CHANCE = 35
+-- Both lore catalogues share one mutually exclusive search opportunity. A
+-- successful roll can yield one Ghost City note or one Life Before the
+-- Accident note, never one from each catalogue in the same stash rotation.
+local LORE_NOTE_ROLL_CHANCE = 35
 local SLOT_GRID_CELL_SIZE = 32
 local MAPPING_CLEANUP_GRID_CELL_SIZE = 4
 local impl = {}
@@ -1267,6 +1267,7 @@ function impl.get_persistent_state()
 				local saved = state.slots[index]
 				if type(saved) == "table" then
 					saved.ghost_city_note = nil
+					saved.pripyat_city_note = nil
 					saved.ghost_city_roll_checked = nil
 				end
 			end
@@ -1483,6 +1484,16 @@ end
 function impl.ghost_city_note_found(index)
 	return lz_new_mechanics and lz_new_mechanics.ghost_city_note_found and
 		lz_new_mechanics.ghost_city_note_found(index) == true
+end
+
+function impl.pripyat_city_note_count()
+	if not lz_new_mechanics or not lz_new_mechanics.pripyat_city_note_count then return 0 end
+	return tonumber(lz_new_mechanics.pripyat_city_note_count()) or 0
+end
+
+function impl.pripyat_city_note_found(index)
+	return lz_new_mechanics and lz_new_mechanics.pripyat_city_note_found and
+		lz_new_mechanics.pripyat_city_note_found(index) == true
 end
 
 function impl.initialize_slots()
@@ -2913,6 +2924,11 @@ function impl.ghost_city_note_section(index)
 	return lz_new_mechanics.ghost_city_note_section(index)
 end
 
+function impl.pripyat_city_note_section(index)
+	if not lz_new_mechanics or not lz_new_mechanics.pripyat_city_note_section then return nil end
+	return lz_new_mechanics.pripyat_city_note_section(index)
+end
+
 function impl.ensure_ghost_city_note(slot, box)
 	local index = slot and tonumber(slot.state.ghost_city_note) or nil
 	if not index or not box then return false end
@@ -2921,6 +2937,22 @@ function impl.ensure_ghost_city_note(slot, box)
 		return false
 	end
 	local section = impl.ghost_city_note_section(index)
+	if not section then return false end
+	for child_id in alife():get_children(box) do
+		local child = alife():object(child_id, true)
+		if child and child:section_name() == section then return true end
+	end
+	return impl.spawn_item({ section = section }, box.id)
+end
+
+function impl.ensure_pripyat_city_note(slot, box)
+	local index = slot and tonumber(slot.state.pripyat_city_note) or nil
+	if not index or not box then return false end
+	if impl.pripyat_city_note_found(index) then
+		slot.state.pripyat_city_note = nil
+		return false
+	end
+	local section = impl.pripyat_city_note_section(index)
 	if not section then return false end
 	for child_id in alife():get_children(box) do
 		local child = alife():object(child_id, true)
@@ -2938,33 +2970,80 @@ function impl.ghost_city_note_pending(index)
 	return false
 end
 
--- Unlike ordinary loot, Ghost City notes are not assigned when the world is
--- initialized or when a box materializes. The first real search of each stash
--- makes one persistent roll and, on success, draws one still-unseen note.
-function impl.try_spawn_ghost_city_note(slot)
+function impl.pripyat_city_note_pending(index)
+	for _, candidate in ipairs(slots) do
+		if candidate.state and tonumber(candidate.state.pripyat_city_note) == index then
+			return true
+		end
+	end
+	return false
+end
+
+function impl.available_lore_notes(count, found, pending)
+	local available = {}
+	for index = 1, count do
+		if not found(index) and not pending(index) then table.insert(available, index) end
+	end
+	return available
+end
+
+-- Unlike ordinary loot, lore notes are not assigned when the world is
+-- initialized or when a box materializes. The first real search makes one
+-- persistent 35% roll. On success, a separate deterministic 50/50 choice
+-- selects one nonempty catalogue, then one unseen note inside that catalogue.
+function impl.try_spawn_lore_note(slot)
 	if not slot or slot.state.ghost_city_roll_checked then return false end
 	slot.state.ghost_city_roll_checked = true
 	if impl.slot_deterministic_percent(slot, "pf_stash_ghost_city_roll_v1") >
-		GHOST_CITY_NOTE_ROLL_CHANCE then return false end
-	local available = {}
-	for index = 1, impl.ghost_city_note_count() do
-		if not impl.ghost_city_note_found(index) and not impl.ghost_city_note_pending(index) then
-			table.insert(available, index)
+		LORE_NOTE_ROLL_CHANCE then return false end
+
+	local ghost_available = impl.available_lore_notes(
+		impl.ghost_city_note_count(),
+		impl.ghost_city_note_found,
+		impl.ghost_city_note_pending
+	)
+	local city_available = impl.available_lore_notes(
+		impl.pripyat_city_note_count(),
+		impl.pripyat_city_note_found,
+		impl.pripyat_city_note_pending
+	)
+	if #ghost_available == 0 and #city_available == 0 then return false end
+
+	local city_selected = #ghost_available == 0 or
+		(#city_available > 0 and
+		impl.slot_deterministic_percent(slot, "pf_stash_lore_catalog_v1") > 50)
+	local available = city_selected and city_available or ghost_available
+	local purpose = city_selected and "pf_stash_pripyat_city_note_v1" or
+		"pf_stash_ghost_city_note_v1"
+	local index = available[impl.slot_loot_seed(slot, purpose) % #available + 1]
+	if city_selected then
+		slot.state.pripyat_city_note = index
+	else
+		slot.state.ghost_city_note = index
+	end
+	local box = slot.id and alife():object(slot.id, true) or nil
+	local spawned = false
+	if box then
+		if city_selected then
+			spawned = impl.ensure_pripyat_city_note(slot, box)
+		else
+			spawned = impl.ensure_ghost_city_note(slot, box)
 		end
 	end
-	if #available == 0 then return false end
-	local index = available[
-		impl.slot_loot_seed(slot, "pf_stash_ghost_city_note_v1") % #available + 1]
-	slot.state.ghost_city_note = index
-	local box = slot.id and alife():object(slot.id, true) or nil
-	if box and impl.ensure_ghost_city_note(slot, box) then
+	if spawned then
 		printf(
-			"[PF STASH] Ghost City note %02d added during search of slot %d",
-			index, slot.index or 0
+			"[PF STASH] %s lore note %02d added during search of slot %d",
+			city_selected and "Pripyat City" or "Ghost City",
+			index,
+			slot.index or 0
 		)
 		return true
 	end
-	slot.state.ghost_city_note = nil
+	if city_selected then
+		slot.state.pripyat_city_note = nil
+	else
+		slot.state.ghost_city_note = nil
+	end
 	return false
 end
 
@@ -3040,6 +3119,7 @@ function impl.spawn_slot(slot)
 	slot.state.defer_loot = nil
 	impl.ensure_hacking_usb(slot, box)
 	impl.ensure_ghost_city_note(slot, box)
+	impl.ensure_pripyat_city_note(slot, box)
 	if slot.state.story_doc then impl.spawn_story_document(slot) end
 	return true
 end
@@ -3803,7 +3883,7 @@ end
 
 function impl.process_stash_search(slot)
 	if not impl.record_stash_search(slot) then return end
-	impl.try_spawn_ghost_city_note(slot)
+	impl.try_spawn_lore_note(slot)
 	impl.process_stash_ambush(slot, false)
 	local message = stash_hint_messages[math.random(1, #stash_hint_messages)]
 	if slot.tier == "cyan" then
@@ -3830,8 +3910,10 @@ function impl.prepare_stash_search(slot, server_box)
 	impl.ensure_purple_discovery_reward(slot, server_box)
 	impl.ensure_hacking_usb(slot, server_box)
 	impl.ensure_ghost_city_note(slot, server_box)
+	impl.ensure_pripyat_city_note(slot, server_box)
 	impl.process_stash_search(slot)
 	impl.ensure_ghost_city_note(slot, server_box)
+	impl.ensure_pripyat_city_note(slot, server_box)
 	impl.apply_slot_item_conditions(server_box, slot)
 	return true
 end
@@ -3869,6 +3951,12 @@ function on_actor_item_take(item, previous_owner_id)
 			lz_new_mechanics.ghost_city_note_index(section) or nil
 		if ghost_city_index and slot.state.ghost_city_note == ghost_city_index then
 			slot.state.ghost_city_note = nil
+		end
+		local pripyat_city_index = lz_new_mechanics and
+			lz_new_mechanics.pripyat_city_note_index and
+			lz_new_mechanics.pripyat_city_note_index(section) or nil
+		if pripyat_city_index and slot.state.pripyat_city_note == pripyat_city_index then
+			slot.state.pripyat_city_note = nil
 		end
 		local story_index = pf_story_documents.document_index(section)
 		if story_index and slot.state.story_doc == story_index then
@@ -4022,6 +4110,7 @@ function impl.rotate_slot(slot)
 	slot.state.story_roll_checked = nil
 	slot.state.story_doc = nil
 	slot.state.ghost_city_note = nil
+	slot.state.pripyat_city_note = nil
 	slot.state.ghost_city_roll_checked = nil
 	slot.state.usb_roll_checked = nil
 	slot.state.usb_reserved_level = nil
@@ -4066,6 +4155,7 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 	if box and not slot.state.depleted then
 		impl.ensure_hacking_usb(slot, box)
 		impl.ensure_ghost_city_note(slot, box)
+		impl.ensure_pripyat_city_note(slot, box)
 		if slot.loot_materialized then impl.apply_slot_item_conditions(box, slot) end
 		local marker_type = tier.marker
 		if not slot.state.discovered and not tier.hint_required and

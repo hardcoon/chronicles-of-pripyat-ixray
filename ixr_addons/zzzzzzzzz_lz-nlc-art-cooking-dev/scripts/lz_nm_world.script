@@ -117,13 +117,70 @@ local lore_test_stash_items = {
 	"lz_lore_unprocessed_pripyat_film"
 }
 
+-- A separate collection backs the "Life Before the Accident" encyclopedia.
+-- It shares the stash opportunity with Ghost City, but never its article IDs
+-- or found flags.
+local pripyat_city_note_items = {
+	"lz_pripyat_city_note_01",
+	"lz_pripyat_city_note_02",
+	"lz_pripyat_city_note_03",
+	"lz_pripyat_city_note_04",
+	"lz_pripyat_city_note_05",
+	"lz_pripyat_city_note_06",
+	"lz_pripyat_city_note_07",
+	"lz_pripyat_city_note_08",
+	"lz_pripyat_city_note_09",
+	"lz_pripyat_city_note_10",
+	"lz_pripyat_city_note_11",
+	"lz_pripyat_city_note_12",
+	"lz_pripyat_city_note_13",
+	"lz_pripyat_city_note_14",
+	"lz_pripyat_city_note_15",
+	"lz_pripyat_city_note_16",
+	"lz_pripyat_city_note_17",
+	"lz_pripyat_city_note_18",
+	"lz_pripyat_city_note_19",
+	"lz_pripyat_city_note_20",
+	"lz_pripyat_city_note_21",
+	"lz_pripyat_city_note_22",
+	"lz_pripyat_city_note_23",
+	"lz_pripyat_city_note_24",
+	"lz_pripyat_city_note_25",
+	"lz_pripyat_city_note_26",
+	"lz_pripyat_city_note_27",
+	"lz_pripyat_city_note_28",
+	"lz_pripyat_city_note_29",
+	"lz_pripyat_city_note_30",
+	"lz_pripyat_city_note_31",
+	"lz_pripyat_city_note_32",
+	"lz_pripyat_city_note_33",
+	"lz_pripyat_city_note_34",
+	"lz_pripyat_city_note_35",
+	"lz_pripyat_city_note_36",
+	"lz_pripyat_city_note_37",
+	"lz_pripyat_city_note_38",
+	"lz_pripyat_city_note_39",
+	"lz_pripyat_city_note_40",
+	"lz_pripyat_city_note_41",
+	"lz_pripyat_city_note_42",
+	"lz_pripyat_city_note_43",
+	"lz_pripyat_city_note_44"
+}
+
 local lore_encyclopedia_unlocks = {}
 local lore_note_indexes = {}
+local pripyat_city_note_indexes = {}
 for index, section in ipairs(lore_test_stash_items) do
 	lore_encyclopedia_unlocks[section] = string.format(
 		"lz_ghost_city_note_%02d_found", index
 	)
 	lore_note_indexes[section] = index
+end
+for index, section in ipairs(pripyat_city_note_items) do
+	lore_encyclopedia_unlocks[section] = string.format(
+		"lz_pripyat_city_note_%02d_found", index
+	)
+	pripyat_city_note_indexes[section] = index
 end
 
 function ghost_city_note_count()
@@ -146,12 +203,48 @@ function ghost_city_note_found(index)
 	return db.actor ~= nil and info ~= nil and db.actor:has_info(info)
 end
 
-function impl.has_any_lore_encyclopedia_article()
+function pripyat_city_note_count()
+	return #pripyat_city_note_items
+end
+
+function pripyat_city_note_section(index)
+	index = tonumber(index)
+	return index and pripyat_city_note_items[index] or nil
+end
+
+function pripyat_city_note_index(section)
+	return type(section) == "string" and pripyat_city_note_indexes[section] or nil
+end
+
+function pripyat_city_note_found(index)
+	index = tonumber(index)
+	local section = index and pripyat_city_note_items[index] or nil
+	local info = section and lore_encyclopedia_unlocks[section] or nil
+	return db.actor ~= nil and info ~= nil and db.actor:has_info(info)
+end
+
+function impl.has_lore_encyclopedia_article(collection)
 	if not db.actor then return false end
-	for _, info in pairs(lore_encyclopedia_unlocks) do
+	for _, section in ipairs(collection) do
+		local info = lore_encyclopedia_unlocks[section]
 		if db.actor:has_info(info) then return true end
 	end
 	return false
+end
+
+function impl.notify_lore_article(section)
+	if not db.actor then return end
+	local flag, message
+	if pripyat_city_note_indexes[section] then
+		flag = "lz_pripyat_city_first_article_notified"
+		message = "lz_pripyat_city_first_article_news"
+	elseif lore_note_indexes[section] then
+		flag = "lz_ghost_city_first_article_notified"
+		message = "lz_ghost_city_first_article_news"
+	end
+	if not flag or db.actor:has_info(flag) then return end
+	db.actor:give_info_portion(flag)
+	news_manager.send_tip(db.actor, message, nil, nil, nil, nil)
 end
 
 function impl.get_mechanics_encyclopedia_ini()
@@ -510,6 +603,7 @@ function impl.ensure_lore_test_stash()
 	end
 
 	local created = impl.ensure_start_stash_sections(stash, lore_test_stash_items)
+	created = created + impl.ensure_start_stash_sections(stash, pripyat_city_note_items)
 	impl.mark_lore_test_stash(stash)
 	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_REVISION_KEY, true)
 	printf(
@@ -707,36 +801,30 @@ function debug_spawn_lore_test_stash()
 	local present = {}
 	db.actor:iterate_inventory(function(_, item)
 		local section = item and item:section() or nil
-		if section and lore_note_indexes[section] then present[section] = true end
+		if section and lore_encyclopedia_unlocks[section] then present[section] = true end
 	end, db.actor)
 
 	local created = 0
 	local unlocked = 0
 	local unavailable = 0
-	for _, section in ipairs(lore_test_stash_items) do
-		local available = present[section] == true
-		if not present[section] then
-			if not core.get_sysini():section_exist(section) then
-				unavailable = unavailable + 1
-			elseif alife():create(section, vector(), 0, 0, db.actor:id()) then
-				created = created + 1
-				available = true
+	for _, collection in ipairs({ lore_test_stash_items, pripyat_city_note_items }) do
+		for _, section in ipairs(collection) do
+			local available = present[section] == true
+			if not present[section] then
+				if not core.get_sysini():section_exist(section) then
+					unavailable = unavailable + 1
+				elseif alife():create(section, vector(), 0, 0, db.actor:id()) then
+					created = created + 1
+					available = true
+				end
+			end
+			local info = lore_encyclopedia_unlocks[section]
+			if available and info and not db.actor:has_info(info) then
+				db.actor:give_info_portion(info)
+				impl.notify_lore_article(section)
+				unlocked = unlocked + 1
 			end
 		end
-		local info = lore_encyclopedia_unlocks[section]
-		if available and info and not db.actor:has_info(info) then
-			db.actor:give_info_portion(info)
-			unlocked = unlocked + 1
-		end
-	end
-
-	if unlocked > 0 and not db.actor:has_info("lz_ghost_city_first_article_notified") then
-		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
-		news_manager.send_tip(
-			db.actor,
-			"lz_ghost_city_first_article_news",
-			nil, nil, nil, nil
-		)
 	end
 	printf(
 		"lz_new_mechanics: lore test notes issued to inventory; added [%s], unlocked [%s], unavailable [%s]",
@@ -908,16 +996,9 @@ function actor_on_lore_item_take(item)
 	local info = lore_encyclopedia_unlocks[section]
 	if not info or db.actor:has_info(info) then return end
 	db.actor:give_info_portion(info)
-	if not db.actor:has_info("lz_ghost_city_first_article_notified") then
-		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
-		news_manager.send_tip(
-			db.actor,
-			"lz_ghost_city_first_article_news",
-			nil, nil, nil, nil
-		)
-	end
+	impl.notify_lore_article(section)
 	printf(
-		"lz_new_mechanics: Ghost City encyclopedia entry unlocked for [%s]",
+		"lz_new_mechanics: lore encyclopedia entry unlocked for [%s]",
 		tostring(section)
 	)
 end
@@ -1072,8 +1153,12 @@ function reset_and_migrate_on_load()
 	impl.cleanup_duplicate_start_stashes()
 	impl.retire_lore_test_stashes()
 	if db.actor and not db.actor:has_info("lz_ghost_city_first_article_notified") and
-		impl.has_any_lore_encyclopedia_article() then
+		impl.has_lore_encyclopedia_article(lore_test_stash_items) then
 		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
+	end
+	if db.actor and not db.actor:has_info("lz_pripyat_city_first_article_notified") and
+		impl.has_lore_encyclopedia_article(pripyat_city_note_items) then
+		db.actor:give_info_portion("lz_pripyat_city_first_article_notified")
 	end
 	-- One full pass per load migrates currently owned tools in old saves. Normal
 	-- gameplay remains event-driven; no inventory scan runs in the update loop.
