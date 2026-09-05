@@ -1,0 +1,1068 @@
+-- Radio-beacon registry, PDA direction finder, map markers, and travel.
+-- Engine callbacks and the serialized binder class remain in the facade.
+local state = {
+	beacon_next_update = 0,
+	beacon_filter_next_update = 0,
+	beacon_name_dialog_due = nil,
+	beacon_name_dialog_target = nil,
+	beacon_install_item_sections = {},
+	beacon_focus_id = nil,
+	beacon_focus_until = nil,
+	beacon_discovery_done = false,
+	beacon_hold_id = nil,
+	beacon_hold_started = nil,
+	beacon_hold_last_seen = nil,
+	beacon_hold_blocked = false,
+	pending_beacon_travel = nil,
+	pending_beacon_placement = nil,
+	beacon_last_hints = {},
+	personal_stash_ids = {},
+	personal_stash_last_fingerprints = {},
+	personal_stash_last_hints = {},
+	pda_map_spot_property = {},
+	ui_refresh_pending = false,
+	ui_destroy_confirmation_id = nil,
+	ui_name_dialog_id = nil
+}
+local impl = {}
+local core = lz_nm_core
+
+local BEACON_ID_KEY = "lz_nm_radio_beacon_id"
+local BEACON_NAME_KEY = "lz_nm_radio_beacon_name"
+local BEACON_IDS_KEY = "lz_nm_radio_beacon_ids_v2"
+local BEACON_NAME_PREFIX = "lz_nm_radio_beacon_name_"
+local BEACON_SPOT = "lz_nm_beacon_location"
+local BEACON_FOCUS_SPOT = "lz_nm_beacon_focus_location"
+local BEACON_LEGACY_SPOT = "secondary_task_location"
+local BEACON_UPDATE_MS = 2000
+local BEACON_FILTER_UPDATE_MS = 100
+local BEACON_HOLD_MS = 5000
+local BEACON_USE_DISTANCE = 3
+local BEACON_TRAVEL_DELAY_MS = 2000
+local STASH_BEACON_SECTION = "lz_nm_stash_beacon"
+local PERSONAL_STASH_SECTION = "lz_nm_backpack_box"
+local PERSONAL_STASH_SPOT = "ui_pda2_actor_box_location"
+local PERSONAL_STASH_ROWS_PER_COLUMN = 18
+local PERSONAL_STASH_MAX_ENTRIES = PERSONAL_STASH_ROWS_PER_COLUMN * 2
+local PERSONAL_STASH_COLUMN_CHARS = 38
+
+local stash_category_colors = {
+	artefact = "%c[255,255,80,80]",
+	ammo = "%c[255,255,255,255]",
+	upgrade = "%c[255,200,110,255]",
+	weapon = "%c[255,255,165,70]",
+	armor = "%c[255,90,205,255]",
+	medicine = "%c[255,105,220,120]",
+	food = "%c[255,245,220,85]",
+	misc = "%c[255,180,180,180]"
+}
+
+local stash_category_order = {
+	artefact = 1,
+	ammo = 2,
+	upgrade = 3,
+	weapon = 4,
+	armor = 5,
+	medicine = 6,
+	food = 7,
+	misc = 8
+}
+
+-- The validated inventory registry is the authoritative category source. Its
+-- numeric groups already cover inherited and addon-overridden sections, where
+-- checking only the engine class can otherwise misclassify food or grenades.
+local stash_registry_categories = {
+	[10] = "weapon",
+	[20] = "ammo",
+	[30] = "armor",
+	[50] = "medicine",
+	[60] = "food",
+	[70] = "artefact",
+	[80] = "upgrade"
+}
+
+local purple_stash_items = {
+	itm_gunsmith_toolkit = true,
+	itm_outfit_toolkit = true,
+	itm_repairkit_tier_1 = true,
+	itm_repairkit_tier_2 = true,
+	itm_repairkit_tier_soft = true,
+	itm_repairkit_tier_3 = true,
+	itm_field_upgrade_kit_blue = true,
+	itm_field_upgrade_kit_red = true,
+	itm_field_upgrade_kit_yellow = true,
+	itm_field_upgrade_kit_green = true,
+	toolkit_1 = true,
+	toolkit_2 = true,
+	toolkit_3 = true
+}
+
+function impl.personal_stash_item_name(section)
+	local ini = core.get_sysini()
+	-- An existing but empty inv_name_short may read as nil in IX-Ray.
+	-- Resolve a usable name before both sorting and building the map hint.
+	for index = 1, 2 do
+		local line = index == 1 and "inv_name_short" or "inv_name"
+		if ini:line_exist(section, line) then
+			local text_id = ini:r_string(section, line)
+			if type(text_id) == "string" and string.find(text_id, "%S") then
+				local name = game.translate_string(text_id)
+				if type(name) == "string" and string.find(name, "%S") then
+					return name
+				end
+			end
+		end
+	end
+	return section
+end
+
+function impl.personal_stash_item_category(section)
+	local ini = core.get_sysini()
+	if ini:section_exist("inventory_sort_registry") and
+		ini:line_exist("inventory_sort_registry", section) then
+		local group = tonumber(ini:r_string("inventory_sort_registry", section))
+		if stash_registry_categories[group] then return stash_registry_categories[group] end
+	end
+	if purple_stash_items[section] then return "upgrade" end
+	local class = ini:line_exist(section, "class") and ini:r_string(section, "class") or ""
+	if class == "ARTEFACT" or string.sub(class, 1, 8) == "ARTEFACT" then return "artefact" end
+	if string.sub(class, 1, 4) == "AMMO" or string.sub(class, 1, 2) == "G_" then return "ammo" end
+	if string.sub(class, 1, 3) == "WP_" and class ~= "WP_SCOPE" and
+		class ~= "WP_SILEN" and class ~= "WP_GLAUN" then return "weapon" end
+	if class == "E_STLK" or class == "E_HLMET" then return "armor" end
+	if class == "II_MEDKI" or class == "II_BANDG" or class == "II_ANTIR" or
+		string.sub(section, 1, 5) == "drug_" then return "medicine" end
+	if class == "II_FOOD" or class == "II_BOTTL" then return "food" end
+	return "misc"
+end
+
+function impl.personal_stash_contents(box)
+	local counts = {}
+	for child_id in alife():get_children(box) do
+		local child = alife():object(child_id, true)
+		if child then
+			local section = core.canonical_item_section(child:section_name())
+			counts[section] = (counts[section] or 0) + 1
+		end
+	end
+
+	local fingerprint_parts, entries = {}, {}
+	for section, count in pairs(counts) do
+		table.insert(fingerprint_parts, string.format("%s=%d", section, count))
+		local category = impl.personal_stash_item_category(section)
+		table.insert(entries, {
+			section = section,
+			count = count,
+			name = impl.personal_stash_item_name(section),
+			category = category,
+			order = stash_category_order[category]
+		})
+	end
+	table.sort(fingerprint_parts)
+	table.sort(entries, function(left, right)
+		if left.order ~= right.order then return left.order < right.order end
+		local left_name = string.lower(left.name)
+		local right_name = string.lower(right.name)
+		if left_name ~= right_name then return left_name < right_name end
+		return left.section < right.section
+	end)
+	return counts[STASH_BEACON_SECTION] ~= nil, table.concat(fingerprint_parts, "|"), entries
+end
+
+function impl.personal_stash_visible_length(text)
+	-- String-table text is normally returned in the active single-byte code
+	-- page, but UTF-8 text can also reach this helper.  Counting only UTF-8
+	-- lead bytes made CP1251 punctuation in the 0x80-0xBF range disappear from
+	-- the width: every pair of guillemets then added two surplus spaces before
+	-- the second column.  Count valid UTF-8 by code point and otherwise treat
+	-- the whole string as single-byte text.
+	local index, length, size = 1, 0, #text
+	while index <= size do
+		local byte = string.byte(text, index)
+		local continuation = 0
+		if byte < 128 then
+			continuation = 0
+		elseif byte >= 194 and byte <= 223 then
+			continuation = 1
+		elseif byte >= 224 and byte <= 239 then
+			continuation = 2
+		elseif byte >= 240 and byte <= 244 then
+			continuation = 3
+		else
+			return size
+		end
+		if index + continuation > size then return size end
+		for offset = 1, continuation do
+			local next_byte = string.byte(text, index + offset)
+			if next_byte < 128 or next_byte > 191 then return size end
+		end
+		index = index + continuation + 1
+		length = length + 1
+	end
+	return length
+end
+
+function impl.personal_stash_entry_text(entry)
+	local suffix = entry.count and entry.count > 1 and string.format(" x%d", entry.count) or ""
+	return entry.name .. suffix
+end
+
+function impl.personal_stash_hint(entries)
+	local cells, rows = {}, {}
+	local visible = math.min(#entries, PERSONAL_STASH_MAX_ENTRIES)
+	if #entries > PERSONAL_STASH_MAX_ENTRIES then
+		-- Reserve the final cell for the overflow counter so the tooltip always
+		-- stays within exactly eighteen rows per column.
+		visible = PERSONAL_STASH_MAX_ENTRIES - 1
+	end
+	for index = 1, visible do table.insert(cells, entries[index]) end
+	if visible < #entries then
+		table.insert(cells, {
+			name = string.format(
+				game.translate_string("lz_nm_stash_beacon_more"),
+				#entries - visible
+			),
+			category = "misc"
+		})
+	end
+
+	local row_count = math.min(#cells, PERSONAL_STASH_ROWS_PER_COLUMN)
+	local column_chars = PERSONAL_STASH_COLUMN_CHARS
+	if #cells > PERSONAL_STASH_ROWS_PER_COLUMN then
+		for row = 1, row_count do
+			local left_length = impl.personal_stash_visible_length(
+				impl.personal_stash_entry_text(cells[row])
+			)
+			column_chars = math.max(column_chars, left_length + 2)
+		end
+	end
+	for row = 1, row_count do
+		local left = cells[row]
+		local right = cells[row + PERSONAL_STASH_ROWS_PER_COLUMN]
+		local left_text = impl.personal_stash_entry_text(left)
+		local line = stash_category_colors[left.category] .. left_text
+		if right then
+			local padding = math.max(
+				2,
+				column_chars - impl.personal_stash_visible_length(left_text)
+			)
+			line = line .. "%c[default]" .. string.rep(" ", padding) ..
+				stash_category_colors[right.category] .. impl.personal_stash_entry_text(right)
+		end
+		table.insert(rows, line)
+	end
+	-- IX-Ray recognizes the literal two-byte sequence "\\n". It must remain
+	-- inside the preceding colored subline; placing %c[default] first creates an
+	-- empty subline whose newline marker is discarded by CUILines.
+	return table.concat(rows, "\\n%c[default]") .. "%c[default]"
+end
+
+function impl.refresh_personal_stash_markers(force)
+	local missing = {}
+	for id in pairs(state.personal_stash_ids) do
+		local box = alife():object(id, true)
+		if not box or box:section_name() ~= PERSONAL_STASH_SECTION then
+			table.insert(missing, id)
+		else
+			local has_beacon, fingerprint, entries = impl.personal_stash_contents(box)
+			if force or fingerprint ~= state.personal_stash_last_fingerprints[id] or
+				level.map_has_object_spot(id, PERSONAL_STASH_SPOT) == 0 then
+				local hint = has_beacon and impl.personal_stash_hint(entries) or
+					game.translate_string("lz_nm_backpack_marker")
+				if level.map_has_object_spot(id, PERSONAL_STASH_SPOT) == 0 then
+					level.map_add_object_spot_ser(id, PERSONAL_STASH_SPOT, hint)
+				elseif force or hint ~= state.personal_stash_last_hints[id] then
+					level.map_change_spot_hint(id, PERSONAL_STASH_SPOT, hint)
+				end
+				state.personal_stash_last_fingerprints[id] = fingerprint
+				state.personal_stash_last_hints[id] = hint
+			end
+		end
+	end
+	for _, id in ipairs(missing) do unregister_personal_stash(id) end
+end
+
+function register_personal_stash(id)
+	id = tonumber(id)
+	if not id then return end
+	state.personal_stash_ids[id] = true
+	state.personal_stash_last_fingerprints[id] = nil
+	state.personal_stash_last_hints[id] = nil
+end
+
+function unregister_personal_stash(id)
+	id = tonumber(id)
+	if not id then return end
+	state.personal_stash_ids[id] = nil
+	state.personal_stash_last_fingerprints[id] = nil
+	state.personal_stash_last_hints[id] = nil
+end
+
+function impl.discover_personal_stashes()
+	for _, object in alife():objects() do
+		if object:section_name() == PERSONAL_STASH_SECTION then
+			register_personal_stash(object.id)
+		end
+	end
+end
+
+function impl.load_beacon_ids()
+	local result, seen = {}, {}
+	if not db.actor then return result end
+	local serialized = tostring(xr_logic.pstor_retrieve(db.actor, BEACON_IDS_KEY, "") or "")
+	for token in string.gmatch(serialized, "[^,]+") do
+		local id = tonumber(token)
+		if id and id > 0 and not seen[id] then
+			seen[id] = true
+			table.insert(result, id)
+		end
+	end
+	-- Migrate the original single-beacon save format once.
+	local legacy_id = tonumber(xr_logic.pstor_retrieve(db.actor, BEACON_ID_KEY, 0)) or 0
+	if legacy_id > 0 and not seen[legacy_id] then table.insert(result, legacy_id) end
+	return result
+end
+
+function impl.save_beacon_ids(ids)
+	if not db.actor then return end
+	local serialized = {}
+	for _, id in ipairs(ids) do table.insert(serialized, tostring(id)) end
+	xr_logic.pstor_store(db.actor, BEACON_IDS_KEY, table.concat(serialized, ","))
+	xr_logic.pstor_store(db.actor, BEACON_ID_KEY, 0)
+end
+
+function impl.discover_beacon_ids(ids)
+	local result, seen = {}, {}
+	for _, id in ipairs(ids or {}) do
+		id = tonumber(id)
+		if id and id > 0 and not seen[id] then
+			seen[id] = true
+			table.insert(result, id)
+		end
+	end
+	-- Repair saves made while the list implementation was incomplete: the
+	-- deployed server objects are authoritative even if their ID list is absent.
+	for _, object in alife():objects() do
+		if object:section_name() == "lz_nm_radio_beacon_world" and not seen[object.id] then
+			seen[object.id] = true
+			table.insert(result, object.id)
+		end
+	end
+	return result
+end
+
+function impl.ensure_beacon_ids_discovered()
+	local ids = impl.load_beacon_ids()
+	if state.beacon_discovery_done then return ids end
+	ids = impl.discover_beacon_ids(ids)
+	impl.save_beacon_ids(ids)
+	state.beacon_discovery_done = true
+	return ids
+end
+
+function impl.has_beacon_id(search_id)
+	search_id = tonumber(search_id)
+	for _, id in ipairs(impl.load_beacon_ids()) do
+		if id == search_id then return true end
+	end
+	return false
+end
+
+function impl.normalize_beacon_name(name)
+	name = tostring(name or "")
+	name = string.gsub(name, "[%c]", " ")
+	name = string.gsub(name, "^%s+", "")
+	name = string.gsub(name, "%s+$", "")
+	name = string.gsub(name, "%s%s+", " ")
+	return name ~= "" and name or nil
+end
+
+function impl.generated_beacon_name()
+	return string.format(game.translate_string("lz_nm_beacon_default_name"), math.random(10000, 99999))
+end
+
+function impl.is_legacy_generated_beacon_name(name)
+	if not name then return false end
+	return string.match(name, "^Пеленгатор%s+№%d+$") ~= nil or
+		string.match(name, "^Direction Finder No%.?%s*%d+$") ~= nil
+end
+
+function get_beacon_name(id)
+	if not db.actor then return game.translate_string("lz_nm_beacon_name") end
+	id = tonumber(id)
+	local name = id and impl.normalize_beacon_name(xr_logic.pstor_retrieve(db.actor, BEACON_NAME_PREFIX .. tostring(id), "")) or nil
+	if not name and id then
+		local legacy_id = tonumber(xr_logic.pstor_retrieve(db.actor, BEACON_ID_KEY, 0)) or 0
+		if legacy_id == id then
+			name = impl.normalize_beacon_name(xr_logic.pstor_retrieve(db.actor, BEACON_NAME_KEY, ""))
+		end
+	end
+	return name or game.translate_string("lz_nm_beacon_name")
+end
+
+function set_beacon_name(id, name)
+	id = tonumber(id)
+	if not db.actor or not id or not impl.has_beacon_id(id) then return false end
+	name = impl.normalize_beacon_name(name) or get_beacon_name(id)
+	xr_logic.pstor_store(db.actor, BEACON_NAME_PREFIX .. tostring(id), name)
+	state.beacon_last_hints[id] = nil
+	impl.refresh_beacon_marker(true)
+	return true
+end
+
+function impl.clear_beacon(id)
+	id = tonumber(id)
+	if id and level.map_has_object_spot(id, BEACON_SPOT) ~= 0 then
+		level.map_remove_object_spot(id, BEACON_SPOT)
+	end
+	-- Saves made before the dedicated beacon icon used a side-quest marker.
+	-- Remove it during migration so an already deployed beacon gets one spot.
+	if id and level.map_has_object_spot(id, BEACON_LEGACY_SPOT) ~= 0 then
+		level.map_remove_object_spot(id, BEACON_LEGACY_SPOT)
+	end
+	if id and level.map_has_object_spot(id, BEACON_FOCUS_SPOT) ~= 0 then
+		level.map_remove_object_spot(id, BEACON_FOCUS_SPOT)
+	end
+	if db.actor and id then
+		local remaining = {}
+		for _, stored_id in ipairs(impl.load_beacon_ids()) do
+			if stored_id ~= id then table.insert(remaining, stored_id) end
+		end
+		impl.save_beacon_ids(remaining)
+		xr_logic.pstor_store(db.actor, BEACON_NAME_PREFIX .. tostring(id), "")
+	end
+	if id then state.beacon_last_hints[id] = nil end
+	state.ui_refresh_pending = true
+end
+
+function impl.client_beacon_at_crosshair()
+	if not db.actor or level.get_target_dist() > BEACON_USE_DISTANCE then return nil end
+	local object = level.get_target_obj()
+	return object and object:section() == "lz_nm_radio_beacon_world" and object or nil
+end
+
+function impl.reset_beacon_hold()
+	if state.beacon_hold_id then
+		local object = level.object_by_id(state.beacon_hold_id)
+		if object then object:set_tip_text(game.translate_string("lz_nm_beacon_world_use")) end
+	end
+	state.beacon_hold_id = nil
+	state.beacon_hold_started = nil
+	state.beacon_hold_last_seen = nil
+end
+
+function impl.begin_or_continue_beacon_hold()
+	if state.beacon_hold_blocked then return end
+	local object = impl.client_beacon_at_crosshair()
+	if not object then
+		impl.reset_beacon_hold()
+		return
+	end
+	local now = time_global()
+	if state.beacon_hold_id ~= object:id() then
+		impl.reset_beacon_hold()
+		state.beacon_hold_id = object:id()
+		state.beacon_hold_started = now
+	end
+	state.beacon_hold_last_seen = now
+end
+
+function beacon_on_key_press(dik)
+	if dik_to_bind(dik) == key_bindings.kUSE then impl.begin_or_continue_beacon_hold() end
+end
+
+function beacon_on_key_hold(dik)
+	if dik_to_bind(dik) == key_bindings.kUSE then impl.begin_or_continue_beacon_hold() end
+end
+
+function beacon_on_key_release(dik)
+	if dik_to_bind(dik) == key_bindings.kUSE then
+		impl.reset_beacon_hold()
+		state.beacon_hold_blocked = false
+	end
+end
+
+function impl.update_beacon_hold(now)
+	if not state.beacon_hold_id then return end
+	local target = impl.client_beacon_at_crosshair()
+	if not target or target:id() ~= state.beacon_hold_id or
+		not state.beacon_hold_last_seen or now - state.beacon_hold_last_seen > 250 then
+		impl.reset_beacon_hold()
+		return
+	end
+	local elapsed = now - state.beacon_hold_started
+	local progress = math.min(100, math.floor(elapsed * 100 / BEACON_HOLD_MS + 0.5))
+	target:set_tip_text(string.format(game.translate_string("lz_nm_beacon_destroy_progress"), progress))
+	if elapsed < BEACON_HOLD_MS then return end
+	local id = state.beacon_hold_id
+	impl.reset_beacon_hold()
+	state.beacon_hold_blocked = true
+	state.ui_destroy_confirmation_id = id
+end
+
+function destroy_beacon_confirmed(id)
+	id = tonumber(id)
+	local object = id and alife():object(id, true) or nil
+	if not object or object:section_name() ~= "lz_nm_radio_beacon_world" then return false end
+	impl.clear_beacon(id)
+	alife():release(object, true)
+	core.message("lz_nm_beacon_destroy_complete")
+	return true
+end
+
+function impl.distance_to(position)
+	local actor_position = db.actor:position()
+	local dx = position.x - actor_position.x
+	local dy = position.y - actor_position.y
+	local dz = position.z - actor_position.z
+	return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+function impl.distance_to_beacon(object)
+	local actor_server = alife():actor()
+	if actor_server and object then
+		local actor_level = game_graph():vertex(actor_server.m_game_vertex_id):level_id()
+		local beacon_level = game_graph():vertex(object.m_game_vertex_id):level_id()
+		if actor_level ~= beacon_level and utils and utils.graph_distance then
+			return utils.graph_distance(actor_server.m_game_vertex_id, object.m_game_vertex_id)
+		end
+	end
+	return impl.distance_to(object.position)
+end
+
+function impl.travel_cost(distance)
+	-- Wear is reduced by 40%: 500 m ~= 3%, 1000 m ~= 6%.
+	-- The former 30% long-route cap is reduced proportionally to 18%.
+	local damage = math.min(0.30, math.max(0.01, distance / 10000)) * 0.60
+	-- Estimate the route at a slow 1 km/h pace: the actor is moving through the
+	-- Zone over rough terrain while carrying heavy equipment. Short routes cost
+	-- at least one in-game minute; exceptionally long routes cap at six hours.
+	local hours = math.min(6, math.max(1 / 60, distance / 1000))
+	return hours, damage
+end
+
+function format_beacon_travel_time(hours)
+	hours = math.max(0, tonumber(hours) or 0)
+	if hours < 1 then
+		local minutes = math.max(1, math.floor(hours * 60 + 0.5))
+		return string.format(game.translate_string("lz_nm_beacon_time_minutes"), minutes)
+	end
+	return string.format(game.translate_string("lz_nm_beacon_time_hours"), hours)
+end
+
+function get_beacons()
+	local result = {}
+	if not db.actor then return result end
+	local actor_server = alife():actor()
+	local actor_level = actor_server and game_graph():vertex(actor_server.m_game_vertex_id):level_id() or nil
+	for _, id in ipairs(impl.ensure_beacon_ids_discovered()) do
+		local object = alife():object(id, true)
+		if object then
+			local stored_name = impl.normalize_beacon_name(xr_logic.pstor_retrieve(db.actor, BEACON_NAME_PREFIX .. tostring(id), ""))
+			if not stored_name then
+				stored_name = impl.generated_beacon_name()
+				xr_logic.pstor_store(db.actor, BEACON_NAME_PREFIX .. tostring(id), stored_name)
+			end
+			local distance = impl.distance_to_beacon(object)
+			local hours, damage = impl.travel_cost(distance)
+			local beacon_level = game_graph():vertex(object.m_game_vertex_id):level_id()
+			table.insert(result, {
+				id = id,
+				name = stored_name,
+				distance = math.floor(distance + 0.5),
+				hours = hours,
+				damage = math.floor(damage * 100 + 0.5),
+				same_level = actor_level == beacon_level
+			})
+		end
+	end
+	return result
+end
+
+function impl.beacon_hint(object)
+	local distance = impl.distance_to_beacon(object)
+	local hours, damage = impl.travel_cost(distance)
+	return string.format(
+		game.translate_string("lz_nm_beacon_map_hint"),
+		beacon_name_for_utf8(get_beacon_name(object.id)), math.floor(distance + 0.5),
+		format_beacon_travel_time(hours), math.floor(damage * 100 + 0.5)
+	)
+end
+
+function impl.refresh_beacon_marker(force)
+	if not db.actor then return end
+	local missing = {}
+	for _, id in ipairs(impl.load_beacon_ids()) do
+		local object = alife():object(id, true)
+		if not object then
+			table.insert(missing, id)
+		else
+			local hint = impl.beacon_hint(object)
+			if level.map_has_object_spot(id, BEACON_LEGACY_SPOT) ~= 0 then
+				level.map_remove_object_spot(id, BEACON_LEGACY_SPOT)
+			end
+			if force or hint ~= state.beacon_last_hints[id] or level.map_has_object_spot(id, BEACON_SPOT) == 0 then
+				if level.map_has_object_spot(id, BEACON_SPOT) ~= 0 then
+					level.map_remove_object_spot(id, BEACON_SPOT)
+				end
+				level.map_add_object_spot_ser(id, BEACON_SPOT, hint)
+				state.beacon_last_hints[id] = hint
+			end
+		end
+	end
+	for _, id in ipairs(missing) do impl.clear_beacon(id) end
+end
+
+-- The stock PDA filter only changes spots whose type is "primary_object".
+-- Mirror that actual state onto our custom beacon icons, keeping their own
+-- artwork while making both the regular and focus markers part of Locations.
+function impl.sync_beacon_location_filter(now)
+	if now < state.beacon_filter_next_update then return end
+	state.beacon_filter_next_update = now + BEACON_FILTER_UPDATE_MS
+	local manager = level.map_manager()
+	if not manager then return end
+	local locations_enabled = nil
+	manager:AllLocationsForEach(function(location, spot_type)
+		if spot_type == "primary_object" then
+			locations_enabled = location:SpotEnabled()
+			return true
+		end
+		return false
+	end)
+	if locations_enabled == nil then return end
+	manager:AllLocationsForEach(function(location, spot_type)
+		if spot_type == BEACON_SPOT or spot_type == BEACON_FOCUS_SPOT then
+			if location:SpotEnabled() ~= locations_enabled then
+				if locations_enabled then
+					location:EnableSpot()
+				else
+					location:DisableSpot()
+				end
+			end
+		end
+		return false
+	end)
+end
+
+function impl.complete_beacon_placement(item)
+	if not item or not db.actor or not core.is_actor_owned_item(item) then return false end
+	local actor_position = db.actor:position()
+	local direction = db.actor:direction()
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	local x = length > 0.001 and direction.x / length or 1
+	local z = length > 0.001 and direction.z / length or 0
+	local position = vector():set(actor_position.x + x * 1.5, actor_position.y, actor_position.z + z * 1.5)
+	-- Probe the surface under the intended point instead of adding an arbitrary
+	-- vertical offset. A tiny inset keeps the scanner base visually grounded.
+	local ground_ray = ray_pick()
+	ground_ray:set_flags(3)
+	ground_ray:set_range(6)
+	ground_ray:set_ignore_object(db.actor)
+	ground_ray:set_position(vector():set(position.x, actor_position.y + 2, position.z))
+	ground_ray:set_direction(vector():set(0, -1, 0))
+	if ground_ray:query() then
+		position.y = actor_position.y + 2 - ground_ray:get_distance() - 0.02
+	else
+		position.y = actor_position.y - 0.02
+	end
+	local object = alife():create(
+		"lz_nm_radio_beacon_world", position,
+		db.actor:level_vertex_id(), db.actor:game_vertex_id()
+	)
+	if not object then
+		core.message("lz_nm_beacon_place_failed")
+		return false
+	end
+	object.angle = vector():set(0, math.atan2(direction.x, direction.z), 0)
+	local ids = impl.load_beacon_ids()
+	table.insert(ids, object.id)
+	impl.save_beacon_ids(ids)
+	xr_logic.pstor_store(db.actor, BEACON_NAME_PREFIX .. tostring(object.id), impl.generated_beacon_name())
+	state.beacon_install_item_sections[object.id] = item:section()
+	core.release_item(item)
+	impl.refresh_beacon_marker(true)
+	state.beacon_name_dialog_due = time_global() + 150
+	state.beacon_name_dialog_target = object.id
+	return true
+end
+
+function place_beacon(item)
+	if not item or not db.actor then return false end
+	if not core.require_actor_owned_item(item) then return false end
+	if state.pending_beacon_placement then return false end
+	state.pending_beacon_placement = {
+		item_id = item:id(),
+		due = time_global() + 150
+	}
+	return false
+end
+
+
+function confirm_beacon_install(id)
+	id = tonumber(id)
+	local object = id and alife():object(id, true) or nil
+	if not object or object:section_name() ~= "lz_nm_radio_beacon_world" or not impl.has_beacon_id(id) then
+		return false
+	end
+	state.beacon_install_item_sections[id] = nil
+	core.message("lz_nm_beacon_placed")
+	return true
+end
+
+function cancel_beacon_install(id)
+	id = tonumber(id)
+	if not id then return false end
+	local object = id and alife():object(id, true) or nil
+	if object and object:section_name() ~= "lz_nm_radio_beacon_world" then
+		return false
+	end
+	-- Restore the consumed inventory item first. If creation unexpectedly fails,
+	-- keep the deployed beacon instead of making the player lose both objects.
+	local item_section = state.beacon_install_item_sections[id] or "lz_nm_radio_beacon"
+	if not core.create_for_actor(item_section) then return false end
+	state.beacon_install_item_sections[id] = nil
+	impl.clear_beacon(id)
+	if object then alife():release(object, true) end
+	impl.refresh_beacon_marker(true)
+	core.message("lz_nm_beacon_place_cancelled")
+	return true
+end
+
+-- IX-Ray/Gunslinger disassembly callbacks. The engine destroys the source item
+-- after effect_disassemble_item returns, so this code only creates the salvage.
+
+function pda_property_box_add_properties(property_ui, id, level_name)
+	state.pda_map_spot_property.id = id
+	state.pda_map_spot_property.level_name = level_name
+	map_spot_menu_add_property(property_ui, id, level_name)
+end
+
+function pda_property_box_clicked(property_ui)
+	local list_item = property_ui and property_ui:GetSelectedItem() or nil
+	if not list_item then return end
+	local text_item = list_item:GetTextItem()
+	if not text_item then return end
+	map_spot_menu_property_clicked(
+		property_ui,
+		state.pda_map_spot_property.id,
+		state.pda_map_spot_property.level_name,
+		text_item:GetText()
+	)
+end
+
+function impl.is_travel_equipment(item)
+	if core.is_weapon(item) or core.is_outfit_or_helmet(item) then return true end
+	if type(IsDetector) == "function" and IsDetector(item) then return true end
+	local section = item and item:section() or nil
+	if not section or not core.get_sysini():line_exist(section, "class") then return false end
+	local class = core.get_sysini():r_string(section, "class") or ""
+	return string.sub(class, 1, 4) == "DET_"
+end
+
+function impl.damage_travel_equipment(estimated_damage)
+	local damaged = 0
+	local function apply(_, item)
+		if not impl.is_travel_equipment(item) then return end
+		local condition = item:condition()
+		if not condition or condition <= 0 then return end
+		-- Each equipment item gets its own roll around the displayed estimate.
+		local spread = math.random(75, 125) / 100
+		item:set_condition(math.max(0.01, condition - estimated_damage * spread))
+		damaged = damaged + 1
+	end
+	db.actor:iterate_inventory(apply, db.actor)
+	return damaged
+end
+
+function impl.complete_beacon_travel(pending)
+	local object = pending and alife():object(pending.id, true) or nil
+	if not object or not db.actor then
+		if pending and pending.id then impl.clear_beacon(pending.id) end
+		core.message("lz_nm_beacon_destroyed")
+		return false
+	end
+	impl.damage_travel_equipment(pending.damage)
+	level.change_game_time(0, pending.whole_hours, pending.minutes)
+	if surge_manager and surge_manager.get_surge_manager then
+		surge_manager.get_surge_manager().time_forwarded = true
+	end
+	if psi_storm_manager and psi_storm_manager.get_psi_storm_manager then
+		psi_storm_manager.get_psi_storm_manager().time_forwarded = true
+	end
+	if level_weathers and level_weathers.get_weather_manager then
+		level_weathers.get_weather_manager():forced_weather_change()
+	end
+	local actor_position = db.actor:position()
+	local offset_x, offset_z = actor_position.x - object.position.x, actor_position.z - object.position.z
+	local offset_length = math.sqrt(offset_x * offset_x + offset_z * offset_z)
+	if pending.level_name ~= level.name() or offset_length < 0.001 then
+		offset_x, offset_z, offset_length = 1, 0, 1
+	end
+	local destination = vector():set(
+		object.position.x + offset_x / offset_length * 0.5,
+		object.position.y + 0.15,
+		object.position.z + offset_z / offset_length * 0.5
+	)
+	if pending.level_name == level.name() then
+		db.actor:set_actor_position(destination)
+	else
+		ChangeLevel(
+			destination, object.m_level_vertex_id, object.m_game_vertex_id,
+			vector():set(0, 0, 0), true
+		)
+	end
+	core.message("lz_nm_beacon_travel_complete")
+	core.refresh_actor_menu()
+	return true
+end
+
+function impl.perform_beacon_travel(object, level_name)
+	if not object or not db.actor then return false end
+	if state.pending_beacon_travel then return false end
+	if db.actor.bleeding > 0 then
+		core.message("lz_nm_beacon_bleeding")
+		return false
+	end
+	-- Actor radiation is normalized to 0..1; 0.10 is the requested 100 mSv.
+	if db.actor.radiation > 0.10 then
+		core.message("lz_nm_beacon_radiation")
+		return false
+	end
+	local distance = impl.distance_to_beacon(object)
+	if distance < 1 then
+		core.message("lz_nm_beacon_too_close")
+		return false
+	end
+	local hours, damage = impl.travel_cost(distance)
+	local whole_hours = math.floor(hours)
+	local minutes = math.floor((hours - whole_hours) * 60 + 0.5)
+	-- Keep a safe return point at the actor's current location. This runs only
+	-- after every travel validation succeeds and before the fade or teleport.
+	xr_effects.scenario_autosave(
+		db.actor, nil, {"st_save_lz_before_beacon_travel"})
+	get_hud():HidePdaMenu()
+	if ixray_fadefx and ixray_fadefx.travel_effect then
+		ixray_fadefx.travel_effect()
+	else
+		level.add_complex_effector("fade_in_out", 105183)
+	end
+	state.pending_beacon_travel = {
+		id = object.id,
+		level_name = level_name,
+		whole_hours = whole_hours,
+		minutes = minutes,
+		damage = damage,
+		due = time_global() + BEACON_TRAVEL_DELAY_MS
+	}
+	return true
+end
+
+function travel_to_beacon(id)
+	id = tonumber(id)
+	local object = id and alife():object(id, true) or nil
+	if not object then
+		if id then impl.clear_beacon(id) end
+		core.message("lz_nm_beacon_destroyed")
+		return false
+	end
+	local actor_server = alife():actor()
+	local same_level = false
+	if actor_server then
+		local actor_level = game_graph():vertex(actor_server.m_game_vertex_id):level_id()
+		local beacon_level = game_graph():vertex(object.m_game_vertex_id):level_id()
+		same_level = actor_level == beacon_level
+	end
+	return impl.perform_beacon_travel(object, same_level and level.name() or "")
+end
+
+function show_beacon_on_map(id)
+	id = tonumber(id)
+	if not id or not impl.has_beacon_id(id) or not alife():object(id, true) then return false end
+	local pda_menu = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+	if not pda_menu then return false end
+	if state.beacon_focus_id and level.map_has_object_spot(state.beacon_focus_id, BEACON_FOCUS_SPOT) ~= 0 then
+		level.map_remove_object_spot(state.beacon_focus_id, BEACON_FOCUS_SPOT)
+	end
+	level.map_add_object_spot_ser(id, BEACON_FOCUS_SPOT, get_beacon_name(id))
+	state.beacon_focus_id = id
+	state.beacon_focus_until = time_global() + 5000
+	pda_menu:SetActiveSubdialog("eptTasks")
+	local pda_tabs = pda_menu:GetTabControl()
+	if pda_tabs then
+		pda_tabs:SetActiveTab("eptTasks")
+	end
+	return true
+end
+
+function map_spot_menu_add_property(property_ui, id, level_name, hint)
+	if not impl.has_beacon_id(id) then return end
+	state.pda_map_spot_property.id = id
+	state.pda_map_spot_property.level_name = level_name
+	local object = alife():object(id, true)
+	if not object then return end
+	property_ui:AddItem(game.translate_string("lz_nm_beacon_travel_action"))
+end
+
+function map_spot_menu_property_clicked(property_ui, id, level_name, property)
+	if not impl.has_beacon_id(id) then return end
+	local object = alife():object(id, true)
+	if not object then return end
+	local expected = game.translate_string("lz_nm_beacon_travel_action")
+	if property == expected then impl.perform_beacon_travel(object, level_name) end
+end
+
+function beacon_name_for_utf8(name)
+	return core.text_for_utf8(tostring(name or ""))
+end
+
+function beacon_name_for_edit(id)
+	return core.text_for_legacy(get_beacon_name(id))
+end
+
+function take_ui_requests()
+	if not state.ui_refresh_pending and not state.ui_destroy_confirmation_id and
+		not state.ui_name_dialog_id then return nil end
+	local requests = {
+		refresh = state.ui_refresh_pending,
+		destroy_confirmation_id = state.ui_destroy_confirmation_id,
+		name_dialog_id = state.ui_name_dialog_id
+	}
+	state.ui_refresh_pending = false
+	state.ui_destroy_confirmation_id = nil
+	state.ui_name_dialog_id = nil
+	return requests
+end
+
+function reset_runtime_on_load()
+	state.pending_beacon_placement = nil
+	state.beacon_filter_next_update = 0
+	state.beacon_last_hints = {}
+	state.beacon_discovery_done = false
+	state.personal_stash_ids = {}
+	state.personal_stash_last_fingerprints = {}
+	state.personal_stash_last_hints = {}
+	state.ui_refresh_pending = false
+	state.ui_destroy_confirmation_id = nil
+	state.ui_name_dialog_id = nil
+end
+
+function migrate_and_refresh_on_load()
+	if db.actor then
+		local legacy_id = tonumber(xr_logic.pstor_retrieve(db.actor, BEACON_ID_KEY, 0)) or 0
+		local legacy_name = impl.normalize_beacon_name(
+			xr_logic.pstor_retrieve(db.actor, BEACON_NAME_KEY, "")
+		)
+		local ids = impl.discover_beacon_ids(impl.load_beacon_ids())
+		state.beacon_discovery_done = true
+		for _, id in ipairs(ids) do
+			local name = impl.normalize_beacon_name(
+				xr_logic.pstor_retrieve(db.actor, BEACON_NAME_PREFIX .. tostring(id), "")
+			)
+			if not name or impl.is_legacy_generated_beacon_name(name) then
+				xr_logic.pstor_store(
+					db.actor,
+					BEACON_NAME_PREFIX .. tostring(id),
+					(id == legacy_id and legacy_name and
+						not impl.is_legacy_generated_beacon_name(legacy_name) and legacy_name) or
+						impl.generated_beacon_name()
+				)
+			end
+		end
+		impl.save_beacon_ids(ids)
+		xr_logic.pstor_store(db.actor, BEACON_NAME_KEY, "")
+	end
+	impl.refresh_beacon_marker(true)
+	impl.discover_personal_stashes()
+	impl.refresh_personal_stash_markers(true)
+end
+
+function on_game_load()
+	reset_runtime_on_load()
+	migrate_and_refresh_on_load()
+end
+
+function update_actions(now)
+	if state.pending_beacon_placement and now >= state.pending_beacon_placement.due then
+		local pending = state.pending_beacon_placement
+		state.pending_beacon_placement = nil
+		local item = level.object_by_id(pending.item_id)
+		if item and core.is_actor_owned_item(item) then
+			impl.complete_beacon_placement(item)
+		end
+	end
+	if state.pending_beacon_travel and now >= state.pending_beacon_travel.due then
+		local travel = state.pending_beacon_travel
+		state.pending_beacon_travel = nil
+		impl.complete_beacon_travel(travel)
+	end
+	impl.update_beacon_hold(now)
+	if state.beacon_focus_until and now >= state.beacon_focus_until then
+		if state.beacon_focus_id and
+			level.map_has_object_spot(state.beacon_focus_id, BEACON_FOCUS_SPOT) ~= 0 then
+			level.map_remove_object_spot(state.beacon_focus_id, BEACON_FOCUS_SPOT)
+		end
+		state.beacon_focus_id = nil
+		state.beacon_focus_until = nil
+	end
+	if state.beacon_name_dialog_due and now >= state.beacon_name_dialog_due then
+		state.beacon_name_dialog_due = nil
+		state.ui_name_dialog_id = state.beacon_name_dialog_target
+		state.beacon_name_dialog_target = nil
+	end
+	impl.sync_beacon_location_filter(now)
+end
+
+function update_marker(now)
+	if now < state.beacon_next_update then return end
+	state.beacon_next_update = now + BEACON_UPDATE_MS
+	impl.refresh_beacon_marker(false)
+	impl.refresh_personal_stash_markers(false)
+end
+
+function hit_source(object)
+	if not object then return nil, "" end
+	local section = object:section()
+	if not section or not core.get_sysini():line_exist(section, "class") then
+		return section, ""
+	end
+	return section, core.get_sysini():r_string(section, "class") or ""
+end
+
+function is_explosive_source(object)
+	local section, class = hit_source(object)
+	if string.sub(class, 1, 2) == "G_" or class == "WP_RPG7" or class == "WP_RG6" then
+		return true
+	end
+	section = string.lower(section or "")
+	return string.find(section, "grenade", 1, true) ~= nil or
+		string.find(section, "rpg", 1, true) ~= nil or
+		string.find(section, "explos", 1, true) ~= nil
+end
+
+function handle_binder_hit(binder, object, amount, who)
+	amount = tonumber(amount) or 0
+	if amount <= 0 then return end
+	local from_actor = db.actor and who and who:id() == db.actor:id()
+	local weapon = from_actor and db.actor:active_item() or nil
+	local firearm_hits = binder.hits % 16
+	local knife_hits = math.floor(binder.hits / 16)
+	local section, class = hit_source(weapon)
+	local is_knife_hit = class == "WP_KNIFE" or section == "wpn_knife"
+	local is_explosive_hit = is_explosive_source(weapon) or
+		is_explosive_source(who) or amount >= 1.45
+	if is_knife_hit then
+		knife_hits = math.min(15, knife_hits + 1)
+	elseif is_explosive_hit then
+		firearm_hits = binder.threshold
+	else
+		firearm_hits = math.min(15, firearm_hits + 1)
+	end
+	binder.hits = knife_hits * 16 + firearm_hits
+	if knife_hits >= 2 or firearm_hits >= binder.threshold then
+		impl.clear_beacon(object:id())
+		local server = alife():object(object:id(), true)
+		if server then alife():release(server, true) end
+		core.message(knife_hits >= 2 and "lz_nm_beacon_deactivated" or
+			"lz_nm_beacon_destroyed")
+	end
+end
