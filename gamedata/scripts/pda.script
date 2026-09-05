@@ -133,11 +133,12 @@ end
 
 function dialog_wnd_showed()
 	dialog_closed = false
-	for k,v in pairs(db.storage) do
-		local npc = v.object
-		if npc ~= nil then
-			local npc_id = npc:id()
-			if npc:is_talking() and npc_id ~= db.actor:id() then
+	local actor_id = db.actor:id()
+	-- Cached Lua wrappers can outlive their native objects. Resolve live IDs first.
+	for npc_id in pairs(db.storage) do
+		if npc_id ~= actor_id then
+			local npc = level.object_by_id(npc_id)
+			if npc ~= nil and npc:is_talking() then
 				local sound_theme = xr_sound.sound_table[npc_id]
 				if sound_theme and sound_theme.reset then
 					sound_theme:reset(npc_id)
