@@ -1,6 +1,6 @@
--- Save-compatible Yanov radio bootstrap. The addon owns this callback and
--- never scans the ALife registry: a persistent actor pstor key points directly
--- to the one server object created for this save.
+-- One Yanov radio per ALife world, including saves with lost pstor IDs or
+-- accumulated copies. Reconcile once after load/online-spawn notifications;
+-- no permanent world scan and no native object references kept between calls.
 
 local settings = {
 	section = "pf_yanov_radio",
@@ -23,7 +23,10 @@ local runtime = {
 	callbacks_registered = false,
 	update_armed = false,
 	fallback_complete = false,
-	next_try_ms = 0
+	next_try_ms = 0,
+	canonical_id = nil,
+	pending_removals = {},
+	recheck_requested = false
 }
 
 local impl = {}
@@ -46,13 +49,33 @@ function impl.placement_matches(object)
 	return yaw_delta <= settings.yaw_tolerance
 end
 
-function impl.stored_radio(sim)
-	local stored_id = tonumber(xr_logic.pstor_retrieve(db.actor, settings.pstor_key, -1)) or -1
-	if stored_id < 0 then return nil end
+function impl.stored_id()
+	local id = tonumber(xr_logic.pstor_retrieve(db.actor, settings.pstor_key, -1))
+	if not id or id < 0 or id >= 65535 or id % 1 ~= 0 then return nil end
+	return id
+end
 
-	local object = sim:object(stored_id, true)
-	if object and object:section_name() == settings.section then return object end
-	return nil
+function impl.removals_finished(sim)
+	local waiting = false
+	for id in pairs(runtime.pending_removals) do
+		local object = sim:object(id, true)
+		if object and object:section_name() == settings.section then
+			waiting = true
+		else
+			runtime.pending_removals[id] = nil
+		end
+	end
+	return not waiting
+end
+
+function impl.release_radio(sim, id, reason)
+	local object = sim:object(id, true)
+	if not object or object:section_name() ~= settings.section then return end
+	-- Online destruction may be deferred. Never queue it twice or create a
+	-- replacement until the server registry confirms that removal completed.
+	runtime.pending_removals[id] = true
+	printf("~ [pf_yanov_radio] removing %s id [%s]", reason, tostring(id))
+	sim:release(object, true)
 end
 
 function impl.spawn_radio(sim)
@@ -72,6 +95,7 @@ function impl.spawn_radio(sim)
 	object.m_level_vertex_id = settings.level_vertex_id
 	object.m_game_vertex_id = settings.game_vertex_id
 	xr_logic.pstor_store(db.actor, settings.pstor_key, object.id)
+	runtime.canonical_id = object.id
 	printf("~ [pf_yanov_radio] created server object id [%s]", tostring(object.id))
 	return object
 end
@@ -80,27 +104,52 @@ function impl.ensure_radio()
 	if not db.actor then return false end
 
 	local sim = alife()
-	if not sim then return false end
-	-- Fixed LV/GV values let ALife register this object offline on Pripyat even
-	-- while the actor is on another level. Old saves therefore need no
-	-- permanent level watcher and receive the receiver immediately.
-	local object = impl.stored_radio(sim)
-	if object and not impl.placement_matches(object) then
-		-- Replace only the one tracked object when an addon update changes its
-		-- authored position or yaw. This also repairs a receiver saved after it
-		-- physically fell.
-		printf("~ [pf_yanov_radio] repairing server object placement id [%s]", tostring(object.id))
-		local replacement = impl.spawn_radio(sim)
-		if not replacement then return nil end
-		sim:release(object, true)
-		return replacement
+	if not sim or not sim:object(db.actor:id(), true) then return false end
+	if not impl.removals_finished(sim) then return false end
+
+	local stored_id = impl.stored_id()
+	local ids = {}
+	local keep_id = nil
+	-- Pstor is only a preference: its absence must never mean an empty world.
+	-- Collect IDs first; releasing during this iterator invalidates the registry.
+	for _, object in sim:objects() do
+		if object:section_name() == settings.section then
+			local id = object.id
+			ids[#ids + 1] = id
+			if not keep_id or id == stored_id or (keep_id ~= stored_id and id < keep_id) then
+				keep_id = id
+			end
+		end
 	end
-	return object or impl.spawn_radio(sim)
+
+	runtime.canonical_id = keep_id
+	if not keep_id then return impl.spawn_radio(sim) ~= nil end
+	if stored_id ~= keep_id then
+		xr_logic.pstor_store(db.actor, settings.pstor_key, keep_id)
+		printf("~ [pf_yanov_radio] adopted existing server object id [%s]", tostring(keep_id))
+	end
+
+	for _, id in ipairs(ids) do
+		if id ~= keep_id then impl.release_radio(sim, id, "duplicate") end
+	end
+	if next(runtime.pending_removals) then return false end
+
+	local object = sim:object(keep_id, true)
+	if not object or object:section_name() ~= settings.section then return false end
+	if not impl.placement_matches(object) then
+		-- Retain the existing placement-repair behavior, but remove first and
+		-- wait for destruction rather than spawning into an occupied position.
+		runtime.canonical_id = nil
+		impl.release_radio(sim, keep_id, "misplaced receiver")
+		return false
+	end
+	return true
 end
 
 function impl.arm_update()
 	runtime.fallback_complete = false
 	runtime.next_try_ms = 0
+	runtime.recheck_requested = true
 	if runtime.update_armed then return true end
 	RegisterScriptCallback("update", impl.update)
 	runtime.update_armed = true
@@ -124,13 +173,27 @@ function impl.update()
 	local now = time_global()
 	if now < runtime.next_try_ms then return end
 	runtime.next_try_ms = now + settings.retry_ms
-	if impl.ensure_radio() then impl.finish_update() end
+	runtime.recheck_requested = false
+	if impl.ensure_radio() and not runtime.recheck_requested then impl.finish_update() end
 end
 
 function impl.on_actor_load()
 	-- Actor load is sent after pstor_load_all and the ALife registry load. Arm
 	-- a fresh one-shot because a quick-load can switch to another save.
+	runtime.canonical_id = nil
+	runtime.pending_removals = {}
 	impl.arm_update()
+end
+
+function on_radio_spawn(id)
+	-- Called by the object binder, including copies created by other scripts.
+	-- Defer all ALife mutations until actor update, outside net_spawn/load.
+	impl.arm_update()
+end
+
+function is_primary(id)
+	-- Extra copies stay silent and noninteractive until deferred removal.
+	return runtime.canonical_id == id
 end
 
 function on_game_start()

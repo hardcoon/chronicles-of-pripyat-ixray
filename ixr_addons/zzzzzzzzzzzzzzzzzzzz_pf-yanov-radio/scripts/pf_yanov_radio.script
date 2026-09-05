@@ -283,6 +283,7 @@ end
 
 function pf_yanov_radio_binder:net_spawn(data)
 	if not object_binder.net_spawn(self, data) then return false end
+	pf_yanov_radio_spawn.on_radio_spawn(self.object:id())
 	self.music_duck_key = "pf_yanov_radio:" .. tostring(self.object:id())
 	impl.clear_music_duck(self)
 	self.object:set_nonscript_usable(false)
@@ -314,6 +315,13 @@ function pf_yanov_radio_binder:update(delta)
 		return
 	end
 
+	if not pf_yanov_radio_spawn.is_primary(self.object:id()) then
+		impl.clear_music_duck(self)
+		impl.stop_sound(self)
+		self.next_update_ms = now + settings.off_poll_ms
+		return
+	end
+
 	local distance_sqr = self.object:position():distance_to_sqr(db.actor:position())
 	if not self.runtime_ready then
 		impl.initialize_runtime(self, now, distance_sqr)
@@ -337,6 +345,7 @@ function pf_yanov_radio_binder:update(delta)
 end
 
 function pf_yanov_radio_binder:use_callback(object, who)
+	if not pf_yanov_radio_spawn.is_primary(self.object:id()) then return end
 	self.powered = not self.powered
 	local now = time_global()
 
