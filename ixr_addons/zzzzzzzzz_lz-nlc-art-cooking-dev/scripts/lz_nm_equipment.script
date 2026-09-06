@@ -47,7 +47,9 @@ local upgrade_tools = {
 	itm_field_upgrade_kit_blue = "magazine",
 	itm_field_upgrade_kit_red = "reload",
 	itm_field_upgrade_kit_yellow = "caliber",
-	itm_field_upgrade_kit_green = "weight"
+	itm_field_upgrade_kit_green = "weight",
+	itm_field_upgrade_kit_anomalous_nozzle = "anomalous_nozzle",
+	itm_field_upgrade_kit_anomalous_barrel = "anomalous_barrel"
 }
 
 local recovered_field_upgrade_tools = {
@@ -58,7 +60,9 @@ local recovered_field_upgrade_tools = {
 	magazine = "itm_field_upgrade_kit_blue",
 	reload = "itm_field_upgrade_kit_red",
 	caliber = "itm_field_upgrade_kit_yellow",
-	weight = "itm_field_upgrade_kit_green"
+	weight = "itm_field_upgrade_kit_green",
+	anomalous_nozzle = "itm_field_upgrade_kit_anomalous_nozzle",
+	anomalous_barrel = "itm_field_upgrade_kit_anomalous_barrel"
 }
 
 
@@ -719,9 +723,11 @@ function actor_on_inventory_trade(item, sell_bye)
 	end
 end
 
-local FIELD_UPGRADE_TYPES = { "rough", "fine", "soft", "calibration", "magazine", "reload", "caliber", "weight" }
+local FIELD_UPGRADE_TYPES = { "rough", "fine", "soft", "calibration", "magazine", "reload", "caliber", "weight", "anomalous_nozzle", "anomalous_barrel" }
 local FIELD_UPGRADE_LIMIT = 3
-local FIELD_UPGRADE_SINGLE_USE = { magazine = true, reload = true, caliber = true, weight = true }
+local FIELD_UPGRADE_SINGLE_USE = { magazine = true, reload = true, caliber = true, weight = true,
+	anomalous_nozzle = true, anomalous_barrel = true }
+local FIELD_UPGRADE_UNIQUE = { anomalous_nozzle = true, anomalous_barrel = true }
 
 function impl.field_upgrade_key(section)
 	return string.lower(string.gsub(section, "[^%w_]", "_"))
@@ -762,7 +768,9 @@ local FIELD_UPGRADE_TOOLTIP_EFFECTS = {
 	magazine = { text = "lz_nm_weapon_upgrade_effect_magazine" },
 	reload = { text = "lz_nm_weapon_upgrade_effect_reload", per_stage = 35 },
 	caliber = { text = "lz_nm_weapon_upgrade_effect_caliber" },
-	weight = { text = "lz_nm_weapon_upgrade_effect_weight" }
+	weight = { text = "lz_nm_weapon_upgrade_effect_weight" },
+	anomalous_nozzle = { text = "lz_nm_weapon_upgrade_effect_anomalous_nozzle" },
+	anomalous_barrel = { text = "lz_nm_weapon_upgrade_effect_anomalous_barrel" }
 }
 
 -- These two shipped localizations are read only while repairing saves made by
@@ -795,7 +803,9 @@ local FIELD_UPGRADE_EFFECT_KEYS = {
 	magazine = { "ammo_mag_size" },
 	reload = { "hud" },
 	caliber = { "ammo_class" },
-	weight = { "inv_weight" }
+	weight = { "inv_weight" },
+	anomalous_nozzle = { "cost" },
+	anomalous_barrel = { "cost" }
 }
 
 function impl.field_upgrade_definition_valid(upgrade, upgrade_type)
@@ -917,6 +927,9 @@ function refresh_field_upgrade_tooltip(target)
 		if stages > 0 and effect then
 			local text = game.translate_string(effect.text)
 			if effect.per_stage then text = string.format(text, effect.per_stage * stages) end
+			if FIELD_UPGRADE_UNIQUE[upgrade_type] then
+				text = "%c[255,185,135,220]" .. text .. "%c[255,240,190,70]"
+			end
 			table.insert(lines, text)
 		end
 	end
@@ -973,6 +986,11 @@ function impl.install_field_upgrade(tool, target)
 		return false
 	end
 	local count, type_counts = impl.field_upgrade_state(target)
+	if FIELD_UPGRADE_UNIQUE[upgrade_type] and
+		((type_counts.anomalous_nozzle or 0) + (type_counts.anomalous_barrel or 0)) > 0 then
+		core.message("lz_nm_upgrade_unique_conflict")
+		return false
+	end
 	if FIELD_UPGRADE_SINGLE_USE[upgrade_type] and (type_counts[upgrade_type] or 0) > 0 then
 		core.message("lz_nm_upgrade_duplicate")
 		return false
@@ -1179,34 +1197,67 @@ function impl.disassemble_equipment(tool, target)
 	if not disassembly_tools[core.canonical_item_section(tool:section())] then return false end
 	if core.is_weapon_mechanics_target(target) then
 
-		-- CInventoryItem::m_upgrades is append-only. The engine-facing iterator
-		-- walks that vector in installation order, so the final callback value is
-		-- the real most recently installed upgrade, including after save/load.
-		local upgrade_id = impl.last_installed_upgrade(target)
-		local metal = core.create_for_actor("lz_nm_metal_part")
-		if not metal then
+		-- Keep every unique module once, plus the last non-unique native upgrade.
+		-- The native iterator retains installation order across saves/transfers.
+		if type(target.iterate_installed_upgrades) ~= "function" then
 			core.message("lz_nm_disassemble_weapon_failed")
 			return false
 		end
-		local recovered = nil
-		if upgrade_id then
-			recovered = impl.create_recovered_upgrade(upgrade_id)
-			if not recovered then
-				alife():release(metal, true)
-				core.message("lz_nm_disassemble_weapon_failed")
+		local upgrade_ids, seen_unique, last_regular = {}, {}, nil
+		if type(target.iterate_installed_upgrades) == "function" then
+			target:iterate_installed_upgrades(function(id)
+				id = tostring(id)
+				local section = impl.recovered_field_tool(id)
+				local kind = section and upgrade_tools[section]
+				if FIELD_UPGRADE_UNIQUE[kind] then
+					if not seen_unique[kind] then
+						seen_unique[kind] = true
+						table.insert(upgrade_ids, id)
+					end
+				else
+					last_regular = id
+				end
 				return false
-			end
+			end)
 		end
-
+		if last_regular then table.insert(upgrade_ids, last_regular) end
+		local rewards = { { section = "lz_nm_metal_part" } }
+		for _, id in ipairs(upgrade_ids) do
+			table.insert(rewards, {
+				section = impl.recovered_field_tool(id) or "lz_nm_recovered_upgrade", id = id
+			})
+		end
+		local created = {}
+		local ok, reason = pcall(function()
+			for _, reward in ipairs(rewards) do
+				local object = core.create_for_actor(reward.section)
+				if not object then error("cannot create " .. reward.section) end
+				table.insert(created, object)
+				if reward.section == "lz_nm_recovered_upgrade" then
+					xr_logic.pstor_store(db.actor,
+						RECOVERED_UPGRADE_KEY_PREFIX .. tostring(object.id), reward.id)
+				end
+			end
+		end)
+		if not ok then
+			for _, object in ipairs(created) do
+				local storage = db.storage[db.actor:id()]
+				if storage and storage.pstor then
+					storage.pstor[RECOVERED_UPGRADE_KEY_PREFIX .. tostring(object.id)] = nil
+				end
+				alife():release(object, true)
+			end
+			core.message("lz_nm_disassemble_weapon_failed")
+			printf("! [field_upgrade] weapon salvage rolled back: %s", tostring(reason))
+			return false
+		end
 		local target_section = target:section()
 		impl.release_item(target)
 		impl.consume_one_use(tool)
-		core.message(upgrade_id and "lz_nm_disassemble_weapon_complete_upgrade" or
+		core.message(#upgrade_ids > 0 and "lz_nm_disassemble_weapon_complete_upgrade" or
 			"lz_nm_disassemble_weapon_complete_plain")
-		printf(
-			"lz_new_mechanics: disassembled weapon [%s], recovered last upgrade [%s]",
-			tostring(target_section), tostring(upgrade_id or "none")
-		)
+		printf("lz_new_mechanics: disassembled weapon [%s], recovered upgrades [%s]",
+			tostring(target_section), table.concat(upgrade_ids, ", "))
 		return true
 	elseif core.is_helmet(target) then
 		local target_id = target:id()

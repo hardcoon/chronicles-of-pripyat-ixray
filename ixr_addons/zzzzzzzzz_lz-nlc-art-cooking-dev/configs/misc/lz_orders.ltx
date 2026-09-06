@@ -1,5 +1,5 @@
 [lz_orders]
-template_count = 62
+template_count = 68
 variants_per_client = 5
 ; Applied to every generated offer that requests ordinary or rare provisions.
 ; The 22% weight factor yields about 39% of five-slot boards with at least one
@@ -74,6 +74,12 @@ template_59 = lz_order_yakov_psi_organs
 template_60 = lz_order_yakov_controller_sample
 template_61 = lz_order_yakov_giant_organs
 template_62 = lz_order_yakov_chimera_trophy
+template_63 = lz_order_snork_harmonicas
+template_64 = lz_order_remote_camp_guitars
+template_65 = lz_order_patrol_binoculars
+template_66 = lz_order_instrument_consignment
+template_67 = lz_order_observation_optics
+template_68 = lz_order_mixed_barter_cargo
 
 [lz_order_frontline_medicine]
 client = lz_order_frontline_medicine_client
@@ -821,3 +827,81 @@ weight = 1
 variant_count = 1
 recipe_gated = true
 item_pool = af_kol_3, af_babka_3
+
+; Fixed field-supply contracts: one offer per template, without generic
+; repair substitutions or quantity/reward scaling. Shared clients retain
+; the usual one-client-per-board restriction.
+[lz_order_snork_harmonicas]
+client = lz_order_gloomy_hunter_client
+title = lz_order_snork_harmonicas_title
+descr = lz_order_snork_harmonicas_descr
+board_descr = lz_order_snork_harmonicas_board_descr
+deadline_hours = 48
+reward = 1200
+weight = 5
+variant_count = 1
+fixed_requirements = true
+item_1 = harmonica_a, 3
+
+[lz_order_remote_camp_guitars]
+client = lz_order_north_loop_caravan_client
+title = lz_order_remote_camp_guitars_title
+descr = lz_order_remote_camp_guitars_descr
+board_descr = lz_order_remote_camp_guitars_board_descr
+deadline_hours = 48
+reward = 1800
+weight = 5
+variant_count = 1
+fixed_requirements = true
+item_1 = guitar_a, 3
+
+[lz_order_patrol_binoculars]
+client = lz_order_ladoga_guard_client
+title = lz_order_patrol_binoculars_title
+descr = lz_order_patrol_binoculars_descr
+board_descr = lz_order_patrol_binoculars_board_descr
+deadline_hours = 48
+reward = 2000
+weight = 5
+variant_count = 1
+fixed_requirements = true
+item_1 = wpn_binoc, 2
+
+[lz_order_instrument_consignment]
+client = lz_order_arsen_long_client
+title = lz_order_instrument_consignment_title
+descr = lz_order_instrument_consignment_descr
+board_descr = lz_order_instrument_consignment_board_descr
+deadline_hours = 72
+reward = 5500
+weight = 3
+variant_count = 1
+fixed_requirements = true
+item_1 = guitar_a, 6
+item_2 = harmonica_a, 4
+
+[lz_order_observation_optics]
+client = lz_order_long_rations_client
+title = lz_order_observation_optics_title
+descr = lz_order_observation_optics_descr
+board_descr = lz_order_observation_optics_board_descr
+deadline_hours = 72
+reward = 3300
+weight = 3
+variant_count = 1
+fixed_requirements = true
+item_1 = wpn_binoc, 3
+
+[lz_order_mixed_barter_cargo]
+client = lz_order_arsen_long_client
+title = lz_order_mixed_barter_cargo_title
+descr = lz_order_mixed_barter_cargo_descr
+board_descr = lz_order_mixed_barter_cargo_board_descr
+deadline_hours = 72
+reward = 6000
+weight = 2
+variant_count = 1
+fixed_requirements = true
+item_1 = guitar_a, 4
+item_2 = harmonica_a, 3
+item_3 = wpn_binoc, 2

@@ -1,0 +1,210 @@
+-- Quest-only weapon modules. The facade owns the death hooks and calls us
+-- before/after the stock handler; no world scan or actor-update subscription.
+local core = lz_nm_core
+local state = { pools = nil }
+local impl = {}
+local settings = {
+	-- Versioned salt is part of the save-compatible loot algorithm. Never seed
+	-- this with time, position, weapon, kill order, or the global Lua RNG.
+	salt = "pf_anomalous_target_v1",
+	result_key = "pf_anom_v1_result",
+	class_key = "pf_anom_v1_class",
+	done_key = "pf_anom_v1_granted",
+	native_key = "pf_anom_v1_native_done",
+	pool_config = "misc\\lz_nlc_art_spawn.ltx",
+	families = { "psi", "electric", "chemical", "gravitational", "thermal" },
+	-- Basis points: low-class and class-IV probabilities are exclusive ranges.
+	chances = {
+		tushkano_s = { 100, 50 }, dog_s = { 300, 150 },
+		flesh_s = { 500, 250 }, pseudodog_s = { 800, 400 },
+		boar_s = { 1000, 500 }, snork_s = { 1000, 500 },
+		bloodsucker_s = { 1500, 750 }, burer_s = { 1500, 750 },
+		controller_s = { 1500, 750 }, poltergeist_s = { 1500, 750 },
+		psy_dog_s = { 1500, 750 }, chimera_s = { 2000, 1000 },
+		gigant_s = { 2500, 1250 }
+	}
+}
+
+function impl.mul32(a, b)
+	-- Split products keep every intermediate exact in Lua 5.1 doubles.
+	a = a % 4294967296
+	local low, high = a % 65536, math.floor(a / 65536)
+	return (low * (b % 65536) +
+		((high * (b % 65536) + low * math.floor(b / 65536)) % 65536) * 65536) % 4294967296
+end
+
+function impl.mix(value)
+	-- Murmur3's 32-bit finalizer; bit is supplied by IX-Ray's LuaJIT runtime.
+	-- A linear generator can bias rank selection conditional on a winning roll.
+	value = bit.bxor(value, bit.rshift(value, 16))
+	value = impl.mul32(value, 2246822507)
+	value = bit.bxor(value, bit.rshift(value, 13))
+	value = impl.mul32(value, 3266489909)
+	return bit.bxor(value, bit.rshift(value, 16)) % 4294967296
+end
+
+function impl.advance(value)
+	return impl.mix((value + 2654435769) % 4294967296)
+end
+
+function impl.seed(id, section)
+	local key = settings.salt .. ":" .. tostring(id) .. ":" .. tostring(section)
+	local value = 104729
+	for index = 1, #key do
+		value = (value * 131 + string.byte(key, index)) % 2147483647
+	end
+	if value == 0 then value = 1 end
+	for _ = 1, 5 do value = impl.advance(value) end
+	return value
+end
+
+function impl.natural_pools()
+	if state.pools then return state.pools end
+	local pools = { {}, {}, {}, {} }
+	local config = ini_file(settings.pool_config)
+	for artifact_class = 1, 4 do
+		local seen = {}
+		for _, family in ipairs(settings.families) do
+			-- Read the same authoritative natural pools directly. This subsystem
+			-- never calls a sibling gameplay module. Cooking recipes, technical
+			-- af_rank values and family weights are not used.
+			local raw = config:r_string("spawn_family_" .. family, "class_" .. artifact_class) or ""
+			for token in string.gmatch(raw, "[^,]+") do
+				local section = string.gsub(string.gsub(token, "^%s+", ""), "%s+$", "")
+				if not seen[section] and core.get_sysini():section_exist(section) then
+					seen[section] = true
+					table.insert(pools[artifact_class], section)
+				end
+			end
+		end
+		-- Config iteration order never affects an individual target's result.
+		table.sort(pools[artifact_class])
+	end
+	state.pools = pools
+	return pools
+end
+
+function impl.is_phantom(target)
+	local section = string.lower(target:section())
+	local class = target:clsid()
+	return (clsid.psy_dog_phantom_s and class == clsid.psy_dog_phantom_s)
+		or (clsid.phantom_s and class == clsid.phantom_s)
+		or string.find(section, "phantom", 1, true) ~= nil
+		or string.find(section, "illusion", 1, true) ~= nil
+end
+
+function impl.chances(target, kind)
+	if kind == "npc" then return 1000, 500 end
+	if kind ~= "mutant" or impl.is_phantom(target) then return 0, 0 end
+	local class = target:clsid()
+	for name, chances in pairs(settings.chances) do
+		if clsid[name] and class == clsid[name] then
+			return chances[1], chances[2]
+		end
+	end
+	-- This entry point is called only by the generic monster death binder;
+	-- unlisted real monster classes inherit the standard 10% + 5% profile.
+	return 1000, 500
+end
+
+function impl.active_upgrade(kind)
+	local weapon = db.actor and db.actor:active_item()
+	if not weapon or not core.is_weapon_mechanics_target(weapon) then return false end
+	local suffix = kind == "npc" and "anomalous_nozzle" or "anomalous_barrel"
+	local key = string.lower(string.gsub(weapon:section(), "[^%w_]", "_"))
+	return weapon:has_upgrade("lz_nm_up_" .. key .. "_" .. suffix)
+end
+
+function impl.resolve(target, low, high)
+	local value = impl.seed(target:id(), target:section())
+	local roll = value % 10000
+	local artifact_class = 0
+	if roll < low then
+		value = impl.advance(value)
+		artifact_class = 1 + value % 3
+	elseif roll < low + high then
+		artifact_class = 4
+	else
+		return "none", 0
+	end
+	value = impl.advance(value)
+	local pool = impl.natural_pools()[artifact_class]
+	if #pool == 0 then
+		printf("! [anomalous_upgrade] empty natural pool for class [%d]", artifact_class)
+		return "none", 0
+	end
+	return pool[1 + value % #pool], artifact_class
+end
+
+-- Snapshot before stock logic: NPC cleanup can remove inventory objects and
+-- a poltergeist's handler can release the target itself. All persistent fields
+-- live in its ordinary xr_logic pstor, discarded with that entity, never in a
+-- global ID-indexed save table. Recycled IDs cannot inherit the grant marker.
+function prepare_death(target, killer, kind)
+	if not target then return nil end
+	local storage = db.storage[target:id()]
+	if not storage then return nil end
+	if storage.pf_anom_death_busy or xr_logic.pstor_retrieve(target, settings.done_key, false) then
+		return { duplicate = true }
+	end
+	local result = xr_logic.pstor_retrieve(target, settings.result_key)
+	if not result then
+		local artifact_class = 0
+		result = "none"
+		if db.actor and killer and killer:id() == db.actor:id()
+			and (kind == "npc" or kind == "mutant") and impl.active_upgrade(kind) then
+			local low, high = impl.chances(target, kind)
+			result, artifact_class = impl.resolve(target, low, high)
+		end
+		xr_logic.pstor_store(target, settings.result_key, result)
+		xr_logic.pstor_store(target, settings.class_key, artifact_class)
+	end
+	local position = target:position()
+	storage.pf_anom_death_busy = true
+	return {
+		id = target:id(), section = target:section(), result = result,
+		storage = storage, pstor = storage.pstor,
+		position = vector():set(position.x, position.y, position.z),
+		level_vertex = target:level_vertex_id(), game_vertex = target:game_vertex_id(),
+		ground = clsid.poltergeist_s and target:clsid() == clsid.poltergeist_s,
+		skip_native = storage.pstor[settings.native_key] == true
+	}
+end
+
+function complete_death(context)
+	if not context or context.duplicate then return end
+	local saved = context.pstor
+	saved[settings.native_key] = true
+	if context.result == "none" then
+		saved[settings.done_key] = true
+		context.storage.pf_anom_death_busy = nil
+		return
+	end
+	local parent = nil
+	local corpse = alife():object(context.id)
+	if not context.ground and corpse and db.storage[context.id] == context.storage then
+		parent = context.id
+	end
+	if not parent then context.position.y = context.position.y + 0.25 end
+	local ok, artifact = pcall(function()
+		if parent then
+			return alife():create(context.result, context.position,
+				context.level_vertex, context.game_vertex, parent)
+		end
+		return alife():create(context.result, context.position,
+			context.level_vertex, context.game_vertex)
+	end)
+	context.storage.pf_anom_death_busy = nil
+	if not ok or not artifact then
+		-- Keep the exact result pending. A repeated callback can retry the spawn
+		-- without re-running stock inventory cleanup or rolling a new reward.
+		printf("! [anomalous_upgrade] reward creation failed for target [%s:%s], result [%s]",
+			tostring(context.id), context.section, context.result)
+		return false
+	end
+	saved[settings.done_key] = true
+	printf("[anomalous_upgrade] target [%s:%s], artifact [%s], class [%s], ground [%s]",
+		tostring(context.id), context.section, context.result,
+		tostring(saved[settings.class_key]), tostring(parent == nil))
+	return true
+end

@@ -1,0 +1,236 @@
+-- Event-driven scanner subsystem. No update registration, timers or ALife scans.
+-- The mechanics facade supplies field changes and applies returned indications.
+local core = lz_nm_core
+local settings = {
+	storage_key = "pf_anomaly_scanner_v1",
+	item = "pf_anomaly_scanner",
+	world = "pf_anomaly_scanner_world",
+	groups = 41,
+	hold_ms = 5000,
+	use_distance = 3
+}
+local state = { natural = {}, by_id = {}, hold = nil, blocked = false }
+local impl = {}
+
+function impl.storage()
+	local root = alife_storage_manager.get_state()
+	if type(root[settings.storage_key]) ~= "table" then
+		root[settings.storage_key] = {
+			version = 1, placements = {},
+			prng_state = (math.floor(time_global()) + 8103701) % 2147483646 + 1
+		}
+	end
+	return root[settings.storage_key]
+end
+
+function impl.surges()
+	return math.max(0, math.floor(tonumber(
+		xr_statistic and xr_statistic.actor_statistic and xr_statistic.actor_statistic.surges
+	) or 0))
+end
+
+function impl.roll_fault(data)
+	data.prng_state = (data.prng_state * 48271) % 2147483647
+	local roll = math.floor(((data.prng_state - 1) * 100) / 2147483646) + 1
+	return roll <= 10
+end
+
+function impl.valid_object(entry)
+	local object = entry and alife():object(entry.id, true) or nil
+	return object and object:section_name() == settings.world
+		and object:name() == entry.name and object or nil
+end
+
+function impl.indication(group_id, entry)
+	if not entry then return "normal" end
+	if entry.faulty then return "gold" end
+	return state.natural[group_id] and "green" or "normal"
+end
+
+function on_game_load(natural)
+	state.natural = natural or {}
+	state.by_id = {}
+	state.hold = nil
+	state.blocked = false
+	local data = impl.storage()
+	local colors = {}
+	for group_id, entry in pairs(data.placements) do
+		if impl.valid_object(entry) then
+			state.by_id[entry.id] = group_id
+			colors[group_id] = impl.indication(group_id, entry)
+		else
+			data.placements[group_id] = nil
+			colors[group_id] = "normal"
+		end
+	end
+	return colors
+end
+
+function new_game_start()
+	alife_storage_manager.get_state()[settings.storage_key] = nil
+	return on_game_load({})
+end
+
+function on_field_events(events)
+	if not events then return nil end
+	local data = impl.storage()
+	local colors = nil
+	for group_id, present in pairs(events.fields or {}) do
+		state.natural[group_id] = present == true
+		local entry = data.placements[group_id]
+		if entry then
+			colors = colors or {}
+			colors[group_id] = impl.indication(group_id, entry)
+		end
+	end
+	-- Each completed emission is delivered once by the natural-artifact owner.
+	-- Persist the number as a second guard against duplicate delivery/load.
+	for _, emission in ipairs(events.emissions or {}) do
+		for group_id = 1, settings.groups do
+			local entry = data.placements[group_id]
+			if entry and emission > entry.last_emission then
+				if impl.valid_object(entry) then
+					entry.faulty = impl.roll_fault(data)
+					entry.last_emission = emission
+				else
+					state.by_id[entry.id] = nil
+					data.placements[group_id] = nil
+					entry = nil
+				end
+				colors = colors or {}
+				colors[group_id] = impl.indication(group_id, entry)
+			end
+		end
+	end
+	return colors
+end
+
+function can_place(group_id)
+	if not db.actor or level.name() ~= "pripyat_full" or not group_id
+		or group_id < 1 or group_id > settings.groups then
+		return false, "pf_scanner_outside_field"
+	end
+	local data = impl.storage()
+	local entry = data.placements[group_id]
+	if entry and impl.valid_object(entry) then return false, "pf_scanner_duplicate" end
+	if entry then
+		state.by_id[entry.id] = nil
+		data.placements[group_id] = nil
+	end
+	return true
+end
+
+function placement_context()
+	if not db.actor then return nil end
+	local origin = db.actor:position()
+	local direction = db.actor:direction()
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	local x = length > 0.001 and direction.x / length or 1
+	local z = length > 0.001 and direction.z / length or 0
+	local position = vector():set(origin.x + x * 1.5, origin.y, origin.z + z * 1.5)
+	local ground = ray_pick()
+	ground:set_flags(3)
+	ground:set_range(6)
+	ground:set_ignore_object(db.actor)
+	ground:set_position(vector():set(position.x, origin.y + 2, position.z))
+	ground:set_direction(vector():set(0, -1, 0))
+	if not ground:query() then return nil end
+	position.y = origin.y + 2 - ground:get_distance() - 0.02
+	return { actor_position = origin, position = position,
+		angle = vector():set(0, math.atan2(direction.x, direction.z), 0) }
+end
+
+function place(item, group_id, context)
+	if not item or item:section() ~= settings.item or not core.require_actor_owned_item(item) then
+		return false
+	end
+	local allowed, reason = can_place(group_id)
+	if not allowed then core.message(reason); return false end
+	if not context then core.message("pf_scanner_place_failed"); return false end
+	local object = alife():create(settings.world, context.position,
+		db.actor:level_vertex_id(), db.actor:game_vertex_id())
+	if not object then core.message("pf_scanner_place_failed"); return false end
+	object.angle = context.angle
+	local data = impl.storage()
+	local entry = { id = object.id, name = object:name(), faulty = impl.roll_fault(data),
+		last_emission = impl.surges() }
+	data.placements[group_id] = entry
+	state.by_id[entry.id] = group_id
+	core.release_item(item)
+	core.message("pf_scanner_placed")
+	return true, { [group_id] = impl.indication(group_id, entry) }
+end
+
+function impl.target()
+	if not db.actor or level.get_target_dist() > settings.use_distance then return nil end
+	local object = level.get_target_obj()
+	return object and object:section() == settings.world and state.by_id[object:id()]
+		and object or nil
+end
+
+function reset_hold()
+	if state.hold then
+		local object = level.object_by_id(state.hold.id)
+		if object then object:set_tip_text(game.translate_string("pf_scanner_world_use")) end
+	end
+	state.hold = nil
+end
+
+function on_key_press(dik)
+	if dik_to_bind(dik) ~= key_bindings.kUSE then return nil end
+	reset_hold()
+	return on_key_hold(dik)
+end
+
+function on_key_hold(dik)
+	if dik_to_bind(dik) ~= key_bindings.kUSE or state.blocked then return nil end
+	local object = impl.target()
+	if not object then reset_hold(); return nil end
+	local now = time_global()
+	if not state.hold or state.hold.id ~= object:id() or now - state.hold.last_seen > 250 then
+		reset_hold()
+		state.hold = { id = object:id(), started = now, last_seen = now }
+	end
+	state.hold.last_seen = now
+	local elapsed = now - state.hold.started
+	local percent = math.min(100, math.floor(elapsed * 100 / settings.hold_ms + 0.5))
+	object:set_tip_text(string.format(game.translate_string("pf_scanner_destroy_progress"), percent))
+	if elapsed < settings.hold_ms then return nil end
+	local id = state.hold.id
+	reset_hold()
+	state.blocked = true
+	return id
+end
+
+function on_key_release(dik)
+	if dik_to_bind(dik) == key_bindings.kUSE then
+		reset_hold()
+		state.blocked = false
+	end
+end
+
+function on_client_destroy(id)
+	-- net_destroy also means offline: never release the persistent placement here.
+	if state.hold and state.hold.id == id then reset_hold() end
+end
+
+function destroy_confirmed(id)
+	local data = impl.storage()
+	local group_id = state.by_id[id]
+	local entry = group_id and data.placements[group_id] or nil
+	local object = impl.valid_object(entry)
+	if not object or not db.actor or level.name() ~= "pripyat_full" then return false end
+	local position = db.actor:position()
+	local dx, dy, dz = position.x - object.position.x, position.y - object.position.y,
+		position.z - object.position.z
+	if dx * dx + dy * dy + dz * dz > settings.use_distance * settings.use_distance then
+		core.message("pf_scanner_too_far")
+		return false
+	end
+	reset_hold()
+	data.placements[group_id] = nil
+	state.by_id[id] = nil
+	alife():release(object, true)
+	core.message("pf_scanner_destroy_complete")
+	return true, { [group_id] = "normal" }
+end

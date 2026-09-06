@@ -1,0 +1,52 @@
+-- Passive dialog. It has no frame callback; the facade supplies the action.
+class "pf_scanner_destroy_dialog" (CUIScriptWnd)
+
+function pf_scanner_destroy_dialog:__init(confirm) super()
+	self.confirm = confirm
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pf_anomaly_scanner.xml")
+	xml:InitWindow("destroy_dialog", 0, self)
+	local form = xml:InitStatic("destroy_dialog:form", self)
+	xml:InitTextWnd("destroy_dialog:form:question", form)
+	xml:InitTextWnd("destroy_dialog:form:name", form)
+	xml:InitTextWnd("destroy_dialog:form:warning", form)
+	local yes = xml:Init3tButton("destroy_dialog:form:confirm_button", form)
+	local no = xml:Init3tButton("destroy_dialog:form:cancel_button", form)
+	self:Register(yes, "scanner_destroy_yes")
+	self:Register(no, "scanner_destroy_no")
+	self:AddCallback("scanner_destroy_yes", ui_events.BUTTON_CLICKED, self.Confirm, self)
+	self:AddCallback("scanner_destroy_no", ui_events.BUTTON_CLICKED, self.Cancel, self)
+	self:SetAutoDelete(false)
+end
+
+function pf_scanner_destroy_dialog:__finalize()
+end
+
+function pf_scanner_destroy_dialog:Open(id)
+	self.scanner_id = id
+	self:ShowDialog(true)
+end
+
+function pf_scanner_destroy_dialog:Confirm()
+	local id = self.scanner_id
+	self:Cancel()
+	if id then self.confirm(id) end
+end
+
+function pf_scanner_destroy_dialog:Cancel()
+	self.scanner_id = nil
+	self:HideDialog()
+end
+
+function pf_scanner_destroy_dialog:OnKeyboard(dik, action)
+	CUIScriptWnd.OnKeyboard(self, dik, action)
+	if action == ui_events.WINDOW_KEY_PRESSED then
+		if dik_to_bind(dik) == key_bindings.kQUIT then self:Cancel()
+		elseif dik == 28 or dik == 156 then self:Confirm() end
+	end
+	return true
+end
+
+function create(confirm)
+	return pf_scanner_destroy_dialog(confirm)
+end

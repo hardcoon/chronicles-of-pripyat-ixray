@@ -1,0 +1,27 @@
+; Separate inventory/world sections. Stock quest scanners remain untouched.
+[pf_anomaly_scanner]:device_pda
+$spawn = "devices\pf_anomaly_scanner"
+visual = dynamics\equipments\quest\scanner_artefact.ogf
+inv_name = pf_scanner_name
+inv_name_short = pf_scanner_name
+description = pf_scanner_desc
+inv_weight = 2.0
+inv_grid_width = 1
+inv_grid_height = 2
+inv_grid_x = 9
+inv_grid_y = 23
+cost = 1000
+can_trade = true
+quest_item = false
+use1_text = pf_scanner_install
+use1_functor = lz_new_mechanics.place_anomaly_scanner
+
+[pf_anomaly_scanner_world]:physic_object
+$spawn = "dynamic_objects\pf_anomaly_scanner_world"
+visual = dynamics\equipments\quest\scanner_artefact.ogf
+startup_animation = idle
+fixed_bones = link
+script_binding = lz_new_mechanics.bind_anomaly_scanner
+
+![inventory_sort_registry]
+pf_anomaly_scanner = electronics

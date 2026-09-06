@@ -1,0 +1,151 @@
+-- Keeper's separate Life Before the Accident collection: 10 + 14 + 20 notes.
+-- Called by the mechanics facade only during dialogue and game lifecycle events.
+local core = lz_nm_core
+local settings = {
+	storage_key = "pf_guardian_city_notes_v1",
+	note_count = 44,
+	stages = {
+		[1] = { notes = 10, rewards = { { section = "pf_anomaly_scanner", count = 5 } } },
+		[2] = { notes = 14, rewards = { { section = "itm_field_upgrade_kit_anomalous_nozzle", count = 1 } } },
+		[3] = { notes = 20, rewards = { { section = "itm_field_upgrade_kit_anomalous_barrel", count = 1 } } }
+	}
+}
+local state = { busy = false, succeeded = false }
+local impl = {}
+
+function impl.storage()
+	local root = alife_storage_manager.get_state()
+	if not root[settings.storage_key] then
+		root[settings.storage_key] = { version = 1, stage = 1, submitted = {} }
+	end
+	return root[settings.storage_key]
+end
+
+function impl.configured(stage)
+	if not stage or #stage.rewards == 0 then return false end
+	for _, reward in ipairs(stage.rewards) do
+		if not reward.section or not reward.count or reward.count < 1
+			or reward.count ~= math.floor(reward.count) then return false end
+	end
+	return true
+end
+
+function impl.note_index(section)
+	local index = tonumber(string.match(section or "", "^lz_pripyat_city_note_(%d%d)$"))
+	return index and index >= 1 and index <= settings.note_count and index or nil
+end
+
+function impl.inventory_notes(data)
+	local unique, notes = {}, {}
+	if not db.actor then return notes end
+	db.actor:iterate_inventory(function(_, item)
+		local index = item and impl.note_index(item:section()) or nil
+		if index and not data.submitted[index] and core.is_actor_owned_item(item) then
+			local previous = unique[index]
+			if not previous or item:id() < previous.id then
+				unique[index] = { id = item:id(), section = item:section(), index = index }
+			end
+		end
+	end, db.actor)
+	for index = 1, settings.note_count do
+		if unique[index] then notes[#notes + 1] = unique[index] end
+	end
+	return notes
+end
+
+function stage_available(number)
+	if not db.actor or level.name() ~= "pripyat_full" or state.busy then return false end
+	local data = impl.storage()
+	return data.stage == number and impl.configured(settings.stages[number])
+end
+
+function branch_available()
+	return db.actor ~= nil and stage_available(impl.storage().stage)
+end
+
+function can_exchange(number)
+	return stage_available(number)
+		and #impl.inventory_notes(impl.storage()) >= settings.stages[number].notes
+end
+
+function impl.valid_notes(notes, count)
+	for index = 1, count do
+		local note = notes[index]
+		local object = note and alife():object(note.id, true) or nil
+		if not object or object:section_name() ~= note.section
+			or tonumber(object.parent_id) ~= db.actor:id()
+			or not level.object_by_id(note.id) then return false end
+	end
+	return true
+end
+
+function impl.rollback_rewards(created)
+	for _, object in ipairs(created) do alife():release(object, true) end
+end
+
+function impl.create_rewards(stage)
+	local created = {}
+	for _, reward in ipairs(stage.rewards) do
+		if not core.get_sysini():section_exist(reward.section) then return nil end
+	end
+	for _, reward in ipairs(stage.rewards) do
+		for _ = 1, reward.count do
+			local ok, object = pcall(core.create_for_actor, reward.section)
+			if not ok or not object then
+				impl.rollback_rewards(created)
+				return nil
+			end
+			created[#created + 1] = object
+		end
+	end
+	return created
+end
+
+function exchange(first_speaker, second_speaker, number)
+	if state.busy then return false end
+	state.succeeded = false
+	if not stage_available(number) then return false end
+	local npc = first_speaker
+	if npc and npc:id() == db.actor:id() then npc = second_speaker end
+	if not npc or npc:section() ~= "pf_monolith_guardian" then return false end
+	local data = impl.storage()
+	local stage = settings.stages[number]
+	-- Rebuild the selection at the moment of exchange, not from UI preconditions.
+	local notes = impl.inventory_notes(data)
+	if #notes < stage.notes or not impl.valid_notes(notes, stage.notes) then return false end
+	state.busy = true
+	local created = impl.create_rewards(stage)
+	if not created then state.busy = false; return false end
+	if not impl.valid_notes(notes, stage.notes) then
+		impl.rollback_rewards(created)
+		state.busy = false
+		return false
+	end
+	-- The saved archive records exact pages. All rewards exist before any page
+	-- is handed over; callbacks cannot reuse the same collection.
+	for index = 1, stage.notes do
+		local note = notes[index]
+		data.submitted[note.index] = true
+		db.actor:transfer_item(level.object_by_id(note.id), npc)
+	end
+	data.stage = number + 1
+	state.succeeded = true
+	state.busy = false
+	for _, reward in ipairs(stage.rewards) do
+		news_manager.relocate_item(db.actor, "in", reward.section, reward.count)
+	end
+	return true
+end
+
+function exchange_succeeded() return state.succeeded end
+function exchange_failed() return not state.succeeded end
+
+function on_game_load()
+	state.busy = false
+	state.succeeded = false
+end
+
+function new_game_start()
+	alife_storage_manager.get_state()[settings.storage_key] = nil
+	on_game_load()
+end

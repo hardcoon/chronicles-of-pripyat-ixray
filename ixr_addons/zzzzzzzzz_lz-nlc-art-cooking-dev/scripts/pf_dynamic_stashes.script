@@ -743,6 +743,16 @@ local ordinary_detector_drop_tables = {
 	}
 }
 
+-- A field scanner is a consumable infrastructure item: the actor can deploy
+-- one in each anomaly field, so it remains a recurring reward rather than a
+-- one-time sequence. Each eligible stash performs exactly one independent
+-- roll and can add at most one scanner.
+local anomaly_scanner_drop_chances = {
+	purple = 20,
+	orange = 80,
+	red = 100
+}
+
 -- Once the ordered red sequence has awarded Magnet, black-and-white stash
 -- detectors join the normal cache rotation. Every listed entry is an
 -- independent roll; there is no Svarog-equivalent device in this family.
@@ -2095,6 +2105,13 @@ function impl.add_ordinary_detector_rolls(loot, tier)
 	return impl.add_independent_detector_rolls(loot, ordinary_detector_drop_tables[tier])
 end
 
+function impl.add_anomaly_scanner_roll(loot, tier)
+	local chance = anomaly_scanner_drop_chances[tier]
+	if not chance or not impl.roll(chance) then return false end
+	impl.add_loot(loot, "pf_anomaly_scanner")
+	return true
+end
+
 function impl.add_post_magnet_detector_rolls(loot, tier, detector_stage)
 	if detector_stage == nil then
 		local saved = impl.get_persistent_state()
@@ -2370,6 +2387,7 @@ function impl.build_purple_loot()
 	end
 	impl.add_ordinary_detector_rolls(loot, "purple")
 	impl.add_post_magnet_detector_rolls(loot, "purple")
+	impl.add_anomaly_scanner_roll(loot, "purple")
 	if impl.roll(40) then impl.add_random_loot(loot, loot_pools.attachments, 1, impl.roll(25) and 2 or 1) end
 	if impl.roll(30) then impl.add_random_loot(loot, loot_pools.grenades, 1, 2) end
 	if impl.roll(35) then
@@ -2450,6 +2468,7 @@ function impl.build_orange_loot()
 
 	impl.add_ordinary_detector_rolls(loot, "orange")
 	impl.add_post_magnet_detector_rolls(loot, "orange")
+	impl.add_anomaly_scanner_roll(loot, "orange")
 	impl.add_stash_pda_roll(loot, "orange")
 	impl.add_reflash_module_roll(loot, "orange")
 	return loot
@@ -2504,6 +2523,7 @@ function impl.build_red_loot()
 	if detector_stage >= #red_detector_sequence then
 		impl.add_post_magnet_detector_rolls(loot, "red", detector_stage)
 	end
+	impl.add_anomaly_scanner_roll(loot, "red")
 	impl.add_loot(loot, "lz_nm_radio_beacon")
 
 	-- Unique mechanics are the core of the red tier. One strange consumable is
