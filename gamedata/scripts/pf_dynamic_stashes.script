@@ -140,11 +140,18 @@ local hacking_usb_tier_ceiling = {
 	red = 3
 }
 
-local RED_DETECTOR_ROLL_CHANCE = 50
 local red_detector_sequence = {
 	"pf_metal_detector_homemade",
 	"pf_metal_detector_wave",
 	"pf_metal_detector_magnet"
+}
+
+-- The legacy red_unique_detector_stage key now owns the full ordered
+-- progression. Homemade is assigned by the first purple discovery; only the
+-- next missing model is rolled until Magnet closes the sequence.
+local detector_progression_drop_chances = {
+	[2] = { purple = 5, orange = 20, red = 40 },
+	[3] = { purple = 3, orange = 10, red = 35 }
 }
 
 -- The first three purple discoveries provide a compact onboarding chain. The
@@ -753,7 +760,8 @@ local ordinary_detector_drop_tables = {
 -- one-time sequence. Each eligible stash performs exactly one independent
 -- roll and can add at most one scanner.
 local anomaly_scanner_drop_chances = {
-	purple = 20,
+	cyan = 10,
+	purple = 25,
 	orange = 80,
 	red = 100
 }
@@ -761,7 +769,7 @@ local anomaly_scanner_drop_chances = {
 -- One Hopper for the entire playthrough, shared by all eligible stash tiers.
 local jump_isolator_drop_chances = { purple = 15, orange = 50, red = 100 }
 
--- Once the ordered red sequence has awarded Magnet, black-and-white stash
+-- Once the ordered progression has awarded Magnet, black-and-white stash
 -- detectors join the normal cache rotation. Every listed entry is an
 -- independent roll; there is no Svarog-equivalent device in this family.
 local post_magnet_detector_drop_tables = {
@@ -2132,13 +2140,22 @@ function impl.add_jump_isolator_roll(loot, tier)
 	return saved
 end
 
-function impl.add_post_magnet_detector_rolls(loot, tier, detector_stage)
-	if detector_stage == nil then
-		local saved = impl.get_persistent_state()
-		detector_stage = math.floor(tonumber(saved.red_unique_detector_stage) or 0)
+function impl.add_stash_detector_rolls(loot, tier)
+	local saved = impl.get_persistent_state()
+	local detector_stage = impl.sync_red_detector_stage(saved)
+	if detector_stage >= #red_detector_sequence then
+		return impl.add_independent_detector_rolls(loot, post_magnet_detector_drop_tables[tier])
 	end
-	if detector_stage < #red_detector_sequence then return 0 end
-	return impl.add_independent_detector_rolls(loot, post_magnet_detector_drop_tables[tier])
+	if detector_stage < 1 then return 0 end
+
+	local next_stage = detector_stage + 1
+	local chances = detector_progression_drop_chances[next_stage]
+	local chance = chances and chances[tier]
+	if not chance or not impl.roll(chance) then return 0 end
+
+	impl.add_loot(loot, red_detector_sequence[next_stage])
+	saved.red_unique_detector_stage = next_stage
+	return 1
 end
 
 local reflash_module_default_chances = {
@@ -2278,9 +2295,15 @@ end
 
 function impl.sync_red_detector_stage(saved)
 	local stage = math.floor(tonumber(saved.red_unique_detector_stage) or 0)
-	-- Homemade is now the guaranteed first-purple reward. Red caches continue
-	-- the same saved sequence from Wave and can never duplicate that milestone.
-	stage = math.max(1, math.min(#red_detector_sequence, stage))
+	stage = math.max(0, math.min(#red_detector_sequence, stage))
+	-- The first purple discovery records Homemade. Inventory ownership remains
+	-- a compatibility fallback for saves or external grants made before that
+	-- stage was persisted.
+	local purple_stage = math.floor(tonumber(saved.purple_discovery_reward_stage) or 0)
+	if stage < 1 and (purple_stage >= 1 or
+			(db.actor and db.actor:object(red_detector_sequence[1]))) then
+		stage = 1
+	end
 	while stage < #red_detector_sequence and db.actor and
 			db.actor:object(red_detector_sequence[stage + 1]) do
 		stage = stage + 1
@@ -2335,7 +2358,7 @@ function impl.build_cyan_loot()
 	if impl.roll(8) then impl.add_random_loot(loot, loot_pools.salvage_parts, 1, 1) end
 	if impl.roll(10) then impl.add_random_loot(loot, loot_pools.mutant_trophies_cyan, 1, 1) end
 	impl.add_ordinary_detector_rolls(loot, "cyan")
-	impl.add_post_magnet_detector_rolls(loot, "cyan")
+	impl.add_stash_detector_rolls(loot, "cyan")
 	if impl.roll(3) then impl.add_random_loot(loot, loot_pools.flavour, 1, 1) end
 	if impl.roll(12) then impl.add_random_loot(loot, loot_pools.electronics_cyan, 1, 1) end
 	-- Equal three-item pool: 6% total gives 2% per strange consumable.
@@ -2346,6 +2369,7 @@ function impl.build_cyan_loot()
 	-- types even when an earlier optional roll used the same broad pool.
 	impl.add_distinct_random_loot(loot, loot_pools.cyan_bonus, 2)
 	impl.add_reflash_module_roll(loot, "cyan")
+	impl.add_anomaly_scanner_roll(loot, "cyan")
 	return loot
 end
 
@@ -2372,7 +2396,7 @@ function impl.build_purple_loot()
 		if impl.roll(10) then impl.add_random_loot(loot, loot_pools.artefacts_low_mid, 1, 1) end
 	end
 	impl.add_ordinary_detector_rolls(loot, "purple")
-	impl.add_post_magnet_detector_rolls(loot, "purple")
+	impl.add_stash_detector_rolls(loot, "purple")
 	impl.add_anomaly_scanner_roll(loot, "purple")
 	if impl.roll(40) then impl.add_random_loot(loot, loot_pools.attachments, 1, impl.roll(25) and 2 or 1) end
 	if impl.roll(30) then impl.add_random_loot(loot, loot_pools.grenades, 1, 2) end
@@ -2457,7 +2481,7 @@ function impl.build_orange_loot()
 	if impl.roll(7) then impl.add_loot(loot, "lz_nm_stash_beacon") end
 
 	impl.add_ordinary_detector_rolls(loot, "orange")
-	impl.add_post_magnet_detector_rolls(loot, "orange")
+	impl.add_stash_detector_rolls(loot, "orange")
 	impl.add_anomaly_scanner_roll(loot, "orange")
 	impl.add_stash_pda_roll(loot, "orange")
 	impl.add_reflash_module_roll(loot, "orange")
@@ -2480,7 +2504,6 @@ end
 
 function impl.build_red_loot()
 	local loot = {}
-	local state = impl.get_persistent_state()
 	-- The closed red reward table grants half an hour of portable detector power.
 	impl.add_loot(loot, "lz_nm_krona_battery")
 	impl.add_loot(loot, "lz_nm_krona_battery")
@@ -2496,22 +2519,11 @@ function impl.build_red_loot()
 	-- success can a third pass its conditional 20% roll (7% absolute).
 	impl.add_red_natural_artefacts(loot)
 
-	-- The first purple discovery owns Homemade; red caches advance Wave and
-	-- Magnet in the remaining ordered black-and-white detector sequence.
-	-- A failed roll keeps the same target for the next red cache. Recording the
-	-- stage when loot is generated prevents a detector from repeating if it is
-	-- left behind, sold or lost; owning the current target also advances it.
-	local detector_stage = impl.sync_red_detector_stage(state)
-	if detector_stage < #red_detector_sequence and impl.roll(RED_DETECTOR_ROLL_CHANCE) then
-		impl.add_loot(loot, red_detector_sequence[detector_stage + 1])
-		state.red_unique_detector_stage = detector_stage + 1
-	end
 	impl.add_ordinary_detector_rolls(loot, "red")
-	-- Use the stage from before this cache was generated. The red cache that
-	-- first awards Magnet must not immediately roll a duplicate Magnet.
-	if detector_stage >= #red_detector_sequence then
-		impl.add_post_magnet_detector_rolls(loot, "red", detector_stage)
-	end
+	-- Before Magnet this rolls only the next missing detector with this tier's
+	-- progression chance. Once Magnet has been recorded it switches to the
+	-- independent recurring table; the awarding cache cannot roll duplicates.
+	impl.add_stash_detector_rolls(loot, "red")
 	impl.add_anomaly_scanner_roll(loot, "red")
 	impl.add_loot(loot, "lz_nm_radio_beacon")
 
@@ -2806,6 +2818,10 @@ function impl.ensure_purple_discovery_reward(slot, box)
 			table.insert(loot, { section = item.section })
 			present = present + 1
 		end
+	end
+	if reward_stage == 1 then
+		saved.red_unique_detector_stage = math.max(1,
+			math.floor(tonumber(saved.red_unique_detector_stage) or 0))
 	end
 
 	if reward.guaranteed_usb_level == 1 then
@@ -3148,6 +3164,7 @@ end
 function impl.discover_slot(slot, box)
 	if not slot or not slot.state or slot.state.discovered then return false end
 	slot.state.discovered = true
+	impl.add_tier_marker(slot)
 	impl.try_assign_random_story_document(slot)
 	impl.ensure_purple_discovery_reward(slot, box)
 	return true
@@ -3182,6 +3199,7 @@ function impl.spawn_slot(slot)
 	slot.conditions_applied = false
 	slot.loot_materialized = true
 	slot.state.defer_loot = nil
+	impl.add_tier_marker(slot)
 	impl.ensure_hacking_usb(slot, box)
 	impl.ensure_ghost_city_note(slot, box)
 	impl.ensure_pripyat_city_note(slot, box)
@@ -3322,13 +3340,148 @@ function impl.slot_by_object_id(id)
 	return nil
 end
 
+-- The map is a projection of the existing slot state, never a second stash
+-- registry. Resolve only the bound physical box; reused IDs and empty boxes
+-- awaiting retirement must not acquire a stash marker.
+function impl.marker_box(slot)
+	if not slot or not slot.id or not slot.point or not slot.state or
+		not tier_data[slot.tier] or slot.state.depleted then return nil end
+	local box = alife():object(slot.id, true)
+	if not box or not stash_sections[box:section_name()] or
+		impl.position_distance_sqr(box.position, impl.stash_object_point(slot.point)) >
+			FIND_DISTANCE_SQR or not impl.has_items(box) then return nil end
+	return box
+end
+
+function impl.enable_tier_marker(location)
+	if not location:SpotEnabled() then location:EnableSpot() end
+	return false
+end
+
+function impl.sync_tier_marker(slot)
+	if not slot.state.discovered or not impl.marker_box(slot) then return false end
+	local marker = tier_data[slot.tier].marker
+	if level.map_has_object_spot(slot.id, marker) == 0 then
+		level.map_add_object_spot_ser(slot.id, marker, SPOT_HINT)
+		return level.map_has_object_spot(slot.id, marker) ~= 0
+	end
+	-- Existence alone does not imply visibility. Enable this exact type/ID
+	-- in place, without deleting map locations or allocating user-marker IDs.
+	level.map_manager():MapLocationsForEach(marker, slot.id, impl.enable_tier_marker)
+	return true
+end
+
+function impl.log_marker_error(slot, err)
+	local now = time_global()
+	if now < (state.next_marker_error_log or 0) then return end
+	state.next_marker_error_log = now + 30000
+	printf("[PF STASH] marker/discovery failed for slot %s, object %s: %s",
+		tostring(slot and slot.index), tostring(slot and slot.id), tostring(err))
+end
+
 function impl.add_tier_marker(slot)
-	if slot.id then
-		local marker = tier_data[slot.tier].marker
-		if level.map_has_object_spot(slot.id, marker) == 0 then
-			level.map_add_object_spot_ser(slot.id, marker, SPOT_HINT)
+	if not slot or not slot.state then return false end
+	-- A map API failure must not interrupt a hint transaction or loot creation.
+	-- The periodic pass retries from slot state; no persistent repair flags exist.
+	local ok, result = pcall(impl.sync_tier_marker, slot)
+	if not ok then impl.log_marker_error(slot, result) end
+	return ok and result == true
+end
+
+function impl.update_slot_marker(slot, actor_position, check_discovery, check_markers)
+	if not slot.id or not slot.point or slot.state.depleted then return end
+	if slot.state.discovered then
+		if check_markers then impl.add_tier_marker(slot) end
+		return
+	end
+	local tier = tier_data[slot.tier]
+	if not check_discovery or not tier or tier.hint_required or
+		impl.position_distance_sqr(actor_position, slot.point) >=
+			tier.discovery_distance_sqr then return end
+	local box = impl.marker_box(slot)
+	if box then impl.discover_slot(slot, box) end
+end
+
+function impl.collect_stash_marker_slots(actor_position, check_discovery, check_markers)
+	local work = state.marker_work
+	if not work then work = {} state.marker_work = work end
+	local count = 0
+	if check_discovery then
+		-- Reuse the manager's existing spatial index. At the current maximum
+		-- discovery radius (10 m), this touches at most four 32 m grid cells.
+		local radius = math.sqrt(math.max(tier_data.green.discovery_distance_sqr,
+			tier_data.cyan.discovery_distance_sqr, tier_data.purple.discovery_distance_sqr))
+		local min_x = math.floor((actor_position.x - radius) / SLOT_GRID_CELL_SIZE)
+		local max_x = math.floor((actor_position.x + radius) / SLOT_GRID_CELL_SIZE)
+		local min_z = math.floor((actor_position.z - radius) / SLOT_GRID_CELL_SIZE)
+		local max_z = math.floor((actor_position.z + radius) / SLOT_GRID_CELL_SIZE)
+		for cell_x = min_x, max_x do
+			local column = state.slot_grid[cell_x]
+			if column then
+				for cell_z = min_z, max_z do
+					local bucket = column[cell_z]
+					if bucket then
+						for _, index in ipairs(bucket) do
+							local slot = slots[index]
+							if slot and slot.id and not slot.state.discovered and
+								not slot.state.depleted and not tier_data[slot.tier].hint_required then
+								count = count + 1
+								work[count] = index
+							end
+						end
+					end
+				end
+			end
 		end
 	end
+	if check_markers then
+		-- Distant discovered boxes still need repair, but only on the slow tick.
+		-- Hidden candidates above and discovered candidates here are disjoint.
+		for index, slot in ipairs(slots) do
+			if slot.id and slot.state.discovered and not slot.state.depleted then
+				count = count + 1
+				work[count] = index
+			end
+		end
+	end
+	for index = #work, count + 1, -1 do work[index] = nil end
+	-- Preserve discovery/reward order independently of grid traversal order.
+	table.sort(work)
+	return work
+end
+
+function impl.update_stash_markers(now, actor_position)
+	if not searched_existing then return end
+	local check_markers = now >= (state.next_marker_check or 0)
+	local check_discovery = check_markers or now >= (state.next_discovery_check or 0)
+	if not check_discovery and not check_markers then return end
+	if check_discovery then state.next_discovery_check = now + 250 end
+	if check_markers then state.next_marker_check = now + CHECK_INTERVAL_MS end
+	-- Fetch position only on a due tick, not every actor update. Even when the
+	-- actor is stationary, the slow tick rechecks nearby boxes as a fallback.
+	actor_position = actor_position or db.actor:position()
+	if not check_markers and actor_position.x == state.discovery_x and
+		actor_position.y == state.discovery_y and actor_position.z == state.discovery_z then
+		return actor_position
+	end
+	if check_discovery then
+		state.discovery_x = actor_position.x
+		state.discovery_y = actor_position.y
+		state.discovery_z = actor_position.z
+	end
+	local discovered_any = false
+	local work = impl.collect_stash_marker_slots(actor_position, check_discovery, check_markers)
+	for _, index in ipairs(work) do
+		local slot = slots[index]
+		local was_discovered = slot.state.discovered
+		-- Protect only selected physical slots, not every logical reservation.
+		local ok, err = pcall(impl.update_slot_marker, slot, actor_position,
+			check_discovery, check_markers)
+		if not ok then impl.log_marker_error(slot, err) end
+		if slot.state.discovered and not was_discovered then discovered_any = true end
+	end
+	if discovered_any then news_manager.send_tip(db.actor, DISCOVERY_MESSAGE, nil, "pf_stash", nil, nil) end
+	return actor_position
 end
 
 function impl.reserve_physical_slot_for_hint()
@@ -3376,8 +3529,8 @@ function impl.reveal_detector_slot(slot)
 	slot.state.hinted = true
 	slot.state.discovered = true
 	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
-	impl.try_assign_random_story_document(slot)
 	impl.add_tier_marker(slot)
+	impl.try_assign_random_story_document(slot)
 	news_manager.send_tip(db.actor, HINT_MESSAGE, nil, "pf_stash", nil, nil)
 	return true
 end
@@ -3485,12 +3638,12 @@ function impl.reveal_hint_slot(slot, message, silent)
 	slot.state.hinted = true
 	slot.state.discovered = true
 	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
+	impl.add_tier_marker(slot)
 	impl.ensure_purple_discovery_reward(
 		slot,
 		slot.id and alife():object(slot.id, true) or nil
 	)
 	impl.try_assign_random_story_document(slot)
-	impl.add_tier_marker(slot)
 	if not silent then
 		news_manager.send_tip(db.actor, message or HINT_MESSAGE, nil, "pf_stash", nil, nil)
 	end
@@ -3639,6 +3792,7 @@ function grant_story_document_hint(index)
 	end
 	local server_box = alife():object(slot.id, true)
 	if not server_box then return false end
+	impl.add_tier_marker(slot)
 	local expected_section = pf_story_documents.document_section(index)
 	local has_story_item = false
 	for child_id in alife():get_children(server_box) do
@@ -3650,7 +3804,6 @@ function grant_story_document_hint(index)
 	end
 	-- Existing boxes did not pass through spawn_slot after story_doc was set.
 	if not has_story_item then impl.spawn_story_document(slot) end
-	impl.add_tier_marker(slot)
 	news_manager.send_tip(db.actor, "pf_story_archive_stash_revealed", nil, "pf_stash", nil, nil)
 	printf("[PF STORY] guaranteed document %02d assigned to cyan slot %d", index, slot.index or 0)
 	return true
@@ -4241,14 +4394,7 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 		impl.ensure_ghost_city_note(slot, box)
 		impl.ensure_pripyat_city_note(slot, box)
 		if slot.loot_materialized then impl.apply_slot_item_conditions(box, slot) end
-		local marker_type = tier.marker
-		if not slot.state.discovered and not tier.hint_required and
-			point_distance_sqr < tier.discovery_distance_sqr then
-			impl.discover_slot(slot, box)
-		end
-		if slot.state.discovered and level.map_has_object_spot(slot.id, marker_type) == 0 then
-			level.map_add_object_spot_ser(slot.id, marker_type, SPOT_HINT)
-		end
+		impl.update_slot_marker(slot, actor_position, true, false)
 		if slot.state.discovered then return true, materialized end
 	end
 
@@ -4263,6 +4409,8 @@ end
 function update()
 	if not db.actor or level.name() ~= LEVEL_NAME then return end
 	local now = time_global()
+	local actor_position = nil
+	if SYSTEM_ENABLED then actor_position = impl.update_stash_markers(now) end
 	impl.update_fixed_pda_rewards(now)
 	if not SYSTEM_ENABLED then return end
 	impl.update_pending_metal_detector_use(now)
@@ -4281,7 +4429,8 @@ function update()
 	impl.cleanup_legacy_stashes()
 	if #slots == 0 then impl.initialize_slots() end
 	impl.find_existing_objects()
-	local actor_position = db.actor:position()
+	actor_position = actor_position or db.actor:position()
+	impl.update_stash_markers(now, actor_position)
 	local current_physical = impl.retire_far_undiscovered(actor_position)
 	impl.cleanup_checked_sources()
 	local discovered_any = false
@@ -4415,6 +4564,13 @@ function reset()
 	slots = {}
 	pending_empty_slots = {}
 	next_check = 0
+	state.next_discovery_check = nil
+	state.next_marker_check = nil
+	state.next_marker_error_log = nil
+	state.marker_work = nil
+	state.discovery_x = nil
+	state.discovery_y = nil
+	state.discovery_z = nil
 	searched_existing = false
 	legacy_cleanup_done = false
 	old_pstor_cleaned = false
