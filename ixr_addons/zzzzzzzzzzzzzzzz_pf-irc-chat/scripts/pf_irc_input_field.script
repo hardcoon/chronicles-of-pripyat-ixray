@@ -10,7 +10,7 @@
 
 local ffi_ok, ffi = pcall(require, "ffi")
 local user32 = nil
-local foreground = { kernel32 = nil, process_id = nil, layout = 0x0409 }
+local foreground = { kernel32 = nil, process_id = nil, layout = 0x0409, layout_flipped = false }
 
 if ffi_ok then
     pcall(ffi.cdef, [[
@@ -137,7 +137,16 @@ local function layout_identifier()
 end
 
 function keyboard_layout()
-    return layout_identifier() == 0x0419 and "RU" or "EN"
+    local layout = layout_identifier() == 0x0419 and "RU" or "EN"
+    -- The PDA button flips the editor relative to the native layout instead
+    -- of replacing it, so Alt+Shift/Win+Space keep working afterwards.
+    if foreground.layout_flipped then return layout == "RU" and "EN" or "RU" end
+    return layout
+end
+
+function toggle_keyboard_layout()
+    foreground.layout_flipped = not foreground.layout_flipped
+    return keyboard_layout()
 end
 
 local function utf8_step(byte)

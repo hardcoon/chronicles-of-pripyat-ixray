@@ -13,7 +13,7 @@ local SYSTEM_ENABLED = true
 local LEGACY_SAVE_PREFIX = "pf_dynamic_stashes_v1_"
 local STARTING_STASH_COUNT = 400
 local CHECK_INTERVAL_MS = 2000
-local MAX_PHYSICAL_STASHES = 32
+local MAX_PHYSICAL_STASHES = 64
 local MAX_MATERIALIZATIONS_PER_UPDATE = 1
 local MAX_RETIREMENTS_PER_UPDATE = 12
 local MAX_PUZZLE_REWARD_CLAIMS = 4096
@@ -366,9 +366,11 @@ local loot_pools = {
 
 	-- Supported mutant trophies are spread by danger level. Cooked meat and
 	-- retired cat/fracture/zombie/snork-leg sections are intentionally absent.
+	-- Legacy IDs: chimera_kogot is the common tushkano appendage;
+	-- tushkano_head is the rare burer brain. Saved manifests stay intact.
 	mutant_trophies_green = {
 		"mutant_part_dog_tail", "mutant_part_flesh_eye",
-		"mutant_part_tushkano_head"
+		"mutant_part_chimera_kogot"
 	},
 	mutant_trophies_cyan = {
 		"mutant_part_boar_leg", "mutant_part_psevdodog_tail",
@@ -377,7 +379,7 @@ local loot_pools = {
 	},
 	mutant_trophies_purple = {
 		"mutant_part_krovosos_jaw", "mutant_part_krovosos_meat",
-		"mutant_part_burer_hand", "mutant_part_chimera_kogot",
+		"mutant_part_burer_hand", "mutant_part_tushkano_head",
 		"mutant_part_chimera_claw", "mutant_part_chimera_meat",
 		"mutant_part_controller_glass", "mutant_part_controller_hand"
 	},
@@ -558,7 +560,7 @@ local loot_pools = {
 		"lz_nm_metal_part", "lz_nm_armor_pouch", "lz_nm_rubber_padding",
 		"lz_nm_combat_boots", "lz_nm_used_filter",
 		"mutant_part_dog_tail", "mutant_part_flesh_eye",
-		"mutant_part_tushkano_head",
+		"mutant_part_chimera_kogot",
 		"jup_b200_tech_materials_wire", "jup_b200_tech_materials_capacitor",
 		"jup_b200_tech_materials_transistor",
 		"guitar_a", "harmonica_a", "wpn_binoc"
@@ -752,6 +754,9 @@ local anomaly_scanner_drop_chances = {
 	orange = 80,
 	red = 100
 }
+
+-- One Hopper for the entire playthrough, shared by all eligible stash tiers.
+local jump_isolator_drop_chances = { purple = 15, orange = 50, red = 100 }
 
 -- Once the ordered red sequence has awarded Magnet, black-and-white stash
 -- detectors join the normal cache rotation. Every listed entry is an
@@ -2112,6 +2117,18 @@ function impl.add_anomaly_scanner_roll(loot, tier)
 	return true
 end
 
+function impl.add_jump_isolator_roll(loot, tier)
+	local chance = jump_isolator_drop_chances[tier]
+	if not chance then return nil end
+	local saved = impl.get_persistent_state()
+	if saved.jump_isolator_awarded then return nil end
+	if not system_ini():section_exist("af_pf_jump_isolator") then return nil end
+	if not impl.roll(chance) then return nil end
+	impl.add_loot(loot, "af_pf_jump_isolator")
+	-- The caller commits this claim together with the completed slot manifest.
+	return saved
+end
+
 function impl.add_post_magnet_detector_rolls(loot, tier, detector_stage)
 	if detector_stage == nil then
 		local saved = impl.get_persistent_state()
@@ -2585,10 +2602,57 @@ function impl.build_slot_loot(slot)
 			loot = bundle_error
 		end
 	end
+	local jump_isolator_state = nil
+	if ok then
+		local bonus_ok, bonus_result = pcall(impl.add_jump_isolator_roll, loot, slot.tier)
+		if bonus_ok then
+			jump_isolator_state = bonus_result
+		else
+			ok = false
+			loot = bonus_result
+		end
+	end
 	state.loot_rng = nil
 	if not ok then error(loot) end
 	slot.state.loot_manifest = loot
+	if jump_isolator_state then jump_isolator_state.jump_isolator_awarded = true end
 	return loot
+end
+
+-- Only newly filled stashes opt in. Existing containers keep the original
+-- wear rules; no old loot is classified or migrated on load/open.
+function impl.enable_stash_item_protection(box)
+	if not box then return end
+	local state = alife_storage_manager.get_se_obj_state(box, true)
+	state.pf_stash_player_item_protection = box:name()
+end
+
+function impl.stash_protects_player_items(box)
+	if not box then return false end
+	local state = alife_storage_manager.get_se_obj_state(box, false)
+	return state and state.pf_stash_player_item_protection == box:name() or false
+end
+
+-- Mark on leaving the actor, not on pickup: freshly found loot must still
+-- pass through the original first-take wear fallback.
+function remember_actor_item(item)
+	local server_item = item and alife():object(item:id(), true) or nil
+	if not server_item then return end
+	local state = alife_storage_manager.get_se_obj_state(server_item, true)
+	state.pf_stash_actor_item = server_item:name()
+end
+
+function impl.was_actor_item(item)
+	local server_item = item and alife():object(item:id(), true) or nil
+	if not server_item then return false end
+	local state = alife_storage_manager.get_se_obj_state(server_item, false)
+	return state and state.pf_stash_actor_item == server_item:name() or false
+end
+
+function impl.clear_actor_item_origin(server_item)
+	local state = alife_storage_manager.get_se_obj_state(server_item, false)
+	-- ALife IDs may be reused. Fresh loot must never inherit a player marker.
+	if state then state.pf_stash_actor_item = nil end
 end
 
 function impl.spawn_item(entry, parent_id)
@@ -2598,6 +2662,7 @@ function impl.spawn_item(entry, parent_id)
 	end
 	local item = alife():create(entry.section, vector(), 0, 0, parent_id)
 	if not item then return false end
+	impl.clear_actor_item_origin(item)
 	return true
 end
 
@@ -2844,8 +2909,9 @@ function spawn_strange_zombied_loot(parent_id)
 	return created
 end
 
-function impl.apply_stash_item_condition(item, tier)
+function impl.apply_stash_item_condition(item, tier, protect_player_items)
 	if not item then return end
+	if protect_player_items and impl.was_actor_item(item) then return end
 	local kind = conditioned_loot_sections[item:section()]
 	local tier_ranges = stash_condition_ranges[tier]
 	local range = kind and tier_ranges and tier_ranges[kind] or nil
@@ -2859,13 +2925,15 @@ end
 
 function impl.apply_box_item_conditions(box, tier)
 	if not box then return end
+	local protect_player_items = impl.stash_protects_player_items(box)
 	for child_id in alife():get_children(box) do
-		impl.apply_stash_item_condition(level.object_by_id(child_id), tier)
+		impl.apply_stash_item_condition(level.object_by_id(child_id), tier, protect_player_items)
 	end
 end
 
 function impl.apply_slot_item_conditions(box, slot)
 	if not box or not slot or slot.conditions_applied then return end
+	local protect_player_items = impl.stash_protects_player_items(box)
 	local targets = {}
 	for _, entry in ipairs(slot.state.loot_manifest or {}) do
 		if entry.condition then
@@ -2879,10 +2947,12 @@ function impl.apply_slot_item_conditions(box, slot)
 	for child_id in alife():get_children(box) do
 		local item = level.object_by_id(child_id)
 		if item then
-			local section = item:section()
-			seen[section] = (seen[section] or 0) + 1
-			local target = targets[section] and targets[section][seen[section]] or nil
-			if target and item:condition() > target then item:set_condition(target) end
+			if not protect_player_items or not impl.was_actor_item(item) then
+				local section = item:section()
+				seen[section] = (seen[section] or 0) + 1
+				local target = targets[section] and targets[section][seen[section]] or nil
+				if target and item:condition() > target then item:set_condition(target) end
+			end
 		else
 			pending = true
 		end
@@ -2891,6 +2961,7 @@ function impl.apply_slot_item_conditions(box, slot)
 end
 
 function impl.spawn_loot_entries(parent_id, loot)
+	impl.enable_stash_item_protection(alife():object(parent_id, true))
 	local created = {}
 	for _, entry in ipairs(loot or {}) do
 		if impl.spawn_item(entry, parent_id) then table.insert(created, entry.section) end
@@ -2935,8 +3006,9 @@ function fill_story_legendary_stash(parent_id)
 	return #created
 end
 
-function apply_story_legendary_item_condition(item)
-	impl.apply_stash_item_condition(item, "orange")
+function apply_story_legendary_item_condition(item, previous_owner_id)
+	local box = previous_owner_id and alife():object(previous_owner_id, true) or nil
+	impl.apply_stash_item_condition(item, "orange", impl.stash_protects_player_items(box))
 end
 
 function impl.ghost_city_note_section(index)
@@ -3798,6 +3870,7 @@ function impl.complete_fixed_stash_pda_hack(server_pda, section, pda_id, reward_
 				end
 				return false
 			end
+			impl.clear_actor_item_origin(item)
 			table.insert(created_ids, item.id)
 		end
 	end
@@ -3806,6 +3879,7 @@ function impl.complete_fixed_stash_pda_hack(server_pda, section, pda_id, reward_
 	local names = {}
 	for _, reward in ipairs(selected) do
 		fixed_state.claimed[tostring(reward.box.id)] = { tier = reward.tier }
+		impl.enable_stash_item_protection(reward.box)
 		impl.add_fixed_pda_marker(reward.box, reward.tier)
 		impl.apply_box_item_conditions(reward.box, reward.tier)
 		table.insert(names, game.translate_string(stash_pda_tier_text[reward.tier]))
@@ -3976,7 +4050,8 @@ function on_actor_item_take(item, previous_owner_id)
 		end
 	end
 	if slot then
-		impl.apply_stash_item_condition(item, slot.tier)
+		local box = previous_owner_id and alife():object(previous_owner_id, true) or nil
+		impl.apply_stash_item_condition(item, slot.tier, impl.stash_protects_player_items(box))
 		local ghost_city_index = lz_new_mechanics and lz_new_mechanics.ghost_city_note_index and
 			lz_new_mechanics.ghost_city_note_index(section) or nil
 		if ghost_city_index and slot.state.ghost_city_note == ghost_city_index then

@@ -497,7 +497,7 @@ local function is_scarce_item(section)
 	local category = section_category(section)
 	return category == "artefact" or section == "mutant_part_krovosos_jaw" or
 		section == "mutant_part_chimera_claw" or
-		section == "mutant_part_chimera_kogot" or
+		section == "mutant_part_tushkano_head" or
 		section == "mutant_part_krovosos_meat" or
 		section == "mutant_part_chimera_meat" or section == "medkit_scientic"
 end
@@ -529,13 +529,13 @@ local generated_amount_caps = {
 	mutant_part_dog_meat = 6,
 	mutant_part_flesh_meat = 6,
 	mutant_part_tushkano_meat = 6,
-	mutant_part_tushkano_head = 5,
+	mutant_part_tushkano_head = 1,
 	mutant_part_boar_chop = 6,
 	mutant_part_psevdodog_meat = 5,
 	mutant_part_psevdodog_tail = 4,
 	mutant_part_krovosos_meat = 4,
 	mutant_part_chimera_meat = 2,
-	mutant_part_chimera_kogot = 1,
+	mutant_part_chimera_kogot = 5,
 	af_dummy_simbion = 1,
 	lz_nlc_af_dummy_battery = 1,
 	af_dummy_spring = 1,
@@ -575,10 +575,11 @@ local minimum_reward_values = {
 	mutant_part_boar_leg = 250,
 	mutant_part_snork_hand = 400,
 	mutant_part_krovosos_jaw = 1500,
-	mutant_part_chimera_claw = 1500,
-	mutant_part_chimera_kogot = 1500,
+	mutant_part_chimera_claw = 6000,
+	-- Legacy IDs retain their current identity: common appendage / rare brain.
+	mutant_part_chimera_kogot = 200,
 	mutant_part_psevdodog_tail = 400,
-	mutant_part_tushkano_head = 200,
+	mutant_part_tushkano_head = 4500,
 	-- Raw meat is priced by both yield per corpse and the danger/rarity of
 	-- finding its source mutant. Cooked compatibility sections are excluded.
 	mutant_part_dog_meat = 100,
@@ -588,11 +589,11 @@ local minimum_reward_values = {
 	mutant_part_psevdodog_meat = 300,
 	mutant_part_krovosos_meat = 800,
 	mutant_part_chimera_meat = 1500,
-	mutant_part_burer_hand = 2400,
-	mutant_part_pseudogigant_eye = 4500,
-	mutant_part_pseudogigant_hand = 3550,
-	mutant_part_controller_glass = 4200,
-	mutant_part_controller_hand = 3800,
+	mutant_part_burer_hand = 3000,
+	mutant_part_pseudogigant_eye = 7500,
+	mutant_part_pseudogigant_hand = 5000,
+	mutant_part_controller_glass = 5000,
+	mutant_part_controller_hand = 4000,
 	-- Natural artefacts pay 20% above Hermann's 60% buyback:
 	-- class I = 3600, class II = 5760, class III = 8640,
 	-- class IV = 7200.

@@ -1,0 +1,56 @@
+; Unique belt artefact. World model and atlas cell match jup_b1_half_artifact.
+; Its only natural source is a one-time 15/50/100% purple/orange/red stash roll.
+; COP-ENG-091 reads actor_jump_height only from equipped belt artefacts.
+
+[af_pf_jump_isolator]:af_base
+$spawn = "artefacts\af_pf_jump_isolator"
+class = ARTEFACT
+visual = dynamics\artefacts\af_psi_field.ogf
+inv_name = st_af_pf_jump_isolator
+inv_name_short = st_af_pf_jump_isolator
+description = st_af_pf_jump_isolator_descr
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 7
+inv_grid_y = 4
+inv_weight = 1.0
+cost = 1000
+quest_item = false
+can_trade = true
+belt = true
+slot = -1
+default_to_ruck = true
+af_actor_properties = on
+can_be_controlled = false
+af_rank = 0
+actor_jump_height = 2.5
+
+particles = artefact\artefact_mincer
+det_show_particles = artefact\af_electra_show
+det_hide_particles = artefact\af_electra_hide
+lights_enabled = true
+trail_light_color = 0.4,0.2,0.1
+trail_light_range = 2.0
+
+health_restore_speed = 0
+radiation_restore_speed = 0
+satiety_restore_speed = 0
+thirst_restore_speed = 0
+power_restore_speed = 0
+bleeding_restore_speed = 0
+additional_inventory_weight = 0
+additional_inventory_weight2 = 0
+hit_absorbation_sect = af_pf_jump_isolator_absorbation
+use_condition = false
+degrade_rate = 0
+
+[af_pf_jump_isolator_absorbation]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0

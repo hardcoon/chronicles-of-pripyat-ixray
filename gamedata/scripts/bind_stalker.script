@@ -373,6 +373,7 @@ function actor_binder:on_item_take (obj, previous_owner_id)
 end
 ----------------------------------------------------------------------------------------------------------------------
 function actor_binder:on_item_drop (obj)
+	pf_dynamic_stashes.remember_actor_item(obj)
 	if lz_new_mechanics and lz_new_mechanics.actor_on_inventory_item_drop then
 		lz_new_mechanics.actor_on_inventory_item_drop(obj)
 	end

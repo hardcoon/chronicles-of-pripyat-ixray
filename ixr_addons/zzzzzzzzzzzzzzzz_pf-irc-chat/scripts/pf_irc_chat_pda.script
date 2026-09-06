@@ -389,16 +389,19 @@ function pf_irc_chat_tab:__init() super()
     self.chat_input_hitbox = xml:Init3tButton("chat:input_hitbox", self.chat)
     xml:InitFrameLine("chat:input_layout_divider", self.chat)
     self.layout = xml:InitTextWnd("chat:layout", self.chat)
+    self.layout_hitbox = xml:Init3tButton("chat:layout_hitbox", self.chat)
     xml:InitFrameLine("chat:layout_send_divider", self.chat)
     self.send_button = xml:Init3tButton("chat:send", self.chat)
     xml:InitFrameLine("chat:send_commands_divider", self.chat)
     self.commands_button = xml:Init3tButton("chat:commands", self.chat)
     self:Register(self.disconnect_button, "disconnect")
     self:Register(self.chat_input_hitbox, "chat_input_hitbox")
+    self:Register(self.layout_hitbox, "chat_layout_toggle")
     self:Register(self.send_button, "chat_send")
     self:Register(self.commands_button, "chat_commands")
     self:AddCallback("disconnect", ui_events.BUTTON_CLICKED, self.DisconnectFromButton, self)
     self:AddCallback("chat_input_hitbox", ui_events.BUTTON_CLICKED, self.BeginChatInput, self)
+    self:AddCallback("chat_layout_toggle", ui_events.BUTTON_CLICKED, self.ToggleInputLayout, self)
     self:AddCallback("chat_send", ui_events.BUTTON_CLICKED, self.SendFromButton, self)
     self:AddCallback("chat_commands", ui_events.BUTTON_CLICKED, self.ShowCommandsFromButton, self)
 
@@ -591,6 +594,7 @@ function pf_irc_chat_tab:__init() super()
     end)
     self.input_fields:add_focus_region("chat", self.emoji_panel)
     self.input_fields:add_focus_region("chat", self.emoji_toggle)
+    self.input_fields:add_focus_region("chat", self.layout_hitbox)
     for _, item in ipairs(setting_fields) do
         self.input_fields:bind(item[1], "settings", item[2], item[3], item[4], item[5])
     end
@@ -652,6 +656,14 @@ end
 function pf_irc_chat_tab:BeginChatInput()
     if self.settings:IsShown() or self.chat:IsShown() ~= true then return end
     self.input_fields:focus("chat")
+end
+
+function pf_irc_chat_tab:ToggleInputLayout()
+    if self:InputScope() ~= "chat" then return end
+    local layout = pf_irc_input_field.toggle_keyboard_layout()
+    self.last_layout = layout
+    self.layout:SetText(layout)
+    self:BeginChatInput()
 end
 
 function pf_irc_chat_tab:ToggleEmojiPanel()
