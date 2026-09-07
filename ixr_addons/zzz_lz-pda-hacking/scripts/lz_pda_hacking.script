@@ -478,13 +478,11 @@ local function get_pda_state(id, section)
 	local profile = PDA_PROFILES[section]
 	saved.base_tier_roll = tonumber(saved.base_tier_roll) or
 		deterministic_seed(id, section, "lz_pda_base_tier_v1")
-	if saved.base_tier ~= "green" and saved.base_tier ~= "cyan" and
+	if profile and profile.base_tier == "master" then
+		saved.base_tier = "orange"
+	elseif saved.base_tier ~= "green" and saved.base_tier ~= "cyan" and
 		saved.base_tier ~= "purple" and saved.base_tier ~= "orange" then
-		if profile and profile.base_tier == "master" then
-			saved.base_tier = saved.base_tier_roll % 10000 < 5000 and "purple" or "orange"
-		else
-			saved.base_tier = profile and profile.base_tier or "green"
-		end
+		saved.base_tier = profile and profile.base_tier or "green"
 	end
 	saved.base_roll = tonumber(saved.base_roll) or
 		deterministic_seed(id, section, "lz_pda_base_slot_v1")
@@ -847,7 +845,7 @@ end
 local function reflash_reward_spec(pda_id, normal_section)
 	if normal_section ~= "pf_stash_pda_master" then return nil end
 	local legendary_chance = clamp(
-		setting_number("reflash_master_legendary_reward_chance", 40),
+		setting_number("reflash_master_legendary_reward_chance", 100),
 		0,
 		100
 	)
@@ -857,9 +855,7 @@ local function reflash_reward_spec(pda_id, normal_section)
 		"lz_pda_reflash_master_tier_v1"
 	)
 	return {
-		-- Purple is the epic tier; orange is the legendary tier. A dedicated
-		-- deterministic roll keeps the 60/40 reflash table save-scum-proof and
-		-- separate from the normal master-PDA 50/50 base reward.
+		-- Master reflashing grants one legendary coordinate without traces.
 		base_tier = roll < legendary_chance and "orange" or "purple",
 		bonus_tiers = {}
 	}

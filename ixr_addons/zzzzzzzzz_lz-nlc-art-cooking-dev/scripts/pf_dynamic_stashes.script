@@ -795,8 +795,7 @@ local stash_pda_profiles = {
 	pf_stash_pda_novice = { base_tier = "green" },
 	pf_stash_pda_stalker = { base_tier = "cyan" },
 	pf_stash_pda_veteran = { base_tier = "purple" },
-	-- A master PDA uses a deterministic 50/50 roll between purple and the
-	-- existing legendary (orange) tier. The roll never touches math.random.
+	-- A master PDA always grants the legendary (orange) base reward.
 	pf_stash_pda_master = { base_tier = "master" }
 }
 
@@ -3912,8 +3911,7 @@ function impl.pda_base_tier(section, pda_id)
 	local profile = stash_pda_profiles[section]
 	if not profile then return nil end
 	if profile.base_tier ~= "master" then return profile.base_tier end
-	local roll = impl.deterministic_pda_roll(pda_id, section, "lz_pda_base_tier_v1")
-	return roll % 10000 < 5000 and "purple" or "orange"
+	return "orange"
 end
 
 function impl.deterministic_slot(eligible, roll)
@@ -3923,7 +3921,6 @@ function impl.deterministic_slot(eligible, roll)
 end
 
 function impl.pda_reward_entries(section, pda_id, reward_spec)
-	local profile = stash_pda_profiles[section]
 	local base_tier = impl.pda_base_tier(section, pda_id)
 	if not base_tier then return nil end
 	local entries = {
@@ -3934,12 +3931,8 @@ function impl.pda_reward_entries(section, pda_id, reward_spec)
 	}
 	if type(reward_spec) ~= "table" then return entries end
 
-	-- The caller may persist the base choice and slot roll. Validate the tier so
-	-- a damaged or old state can never request an unknown cache class.
-	if profile.base_tier == "master" and
-		(reward_spec.base_tier == "purple" or reward_spec.base_tier == "orange") then
-		entries[1].tier = reward_spec.base_tier
-	end
+	-- Keep the saved coordinate roll; the PDA rank defines the base tier.
+	-- An older master-PDA reward cannot downgrade the legendary guarantee.
 	if tonumber(reward_spec.base_roll) then entries[1].roll = tonumber(reward_spec.base_roll) end
 
 	local bonus = type(reward_spec.bonus_tiers) == "table" and reward_spec.bonus_tiers or {}

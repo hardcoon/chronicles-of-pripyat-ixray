@@ -3,6 +3,7 @@ local ACTIVE_LIMIT = 5
 local GUARANTEED_SIMPLE_SLOT = 1
 local DAY_SECONDS = 24 * 60 * 60
 local PAYMENT_DELAY = DAY_SECONDS
+local DROP_POINT_COOLDOWN = 60 * 60
 local UPDATE_INTERVAL_MS = 1000
 local USE_DISTANCE = 3.0
 local BOARD_DESCRIPTION_WIDTH = 46
@@ -1375,6 +1376,14 @@ local function available_point_ids()
 	for _, order in ipairs(active) do
 		if order.point_id then occupied[order.point_id] = true end
 	end
+	-- Pending payments retain the saved delivery time for a full day, so the
+	-- one-hour cooldown also survives reloads without separate persistent state.
+	local now = game_seconds()
+	for _, order in ipairs(pending) do
+		if order.point_id and now < order.delivered_at + DROP_POINT_COOLDOWN then
+			occupied[order.point_id] = true
+		end
+	end
 	for point_id, point in pairs(drop_points) do
 		if not occupied[point_id] and point.level == level.name() and point_object(point_id, true) then
 			table.insert(result, point_id)
@@ -1606,6 +1615,7 @@ end
 
 local function find_next_state_check()
 	local result = nil
+	local now = game_seconds()
 	for index = 1, SLOT_COUNT do
 		local due = next_refresh[index]
 		if due and due > 0 and (not result or due < result) then result = due end
@@ -1615,6 +1625,8 @@ local function find_next_state_check()
 	end
 	for _, order in ipairs(pending) do
 		if order.payment_at and (not result or order.payment_at < result) then result = order.payment_at end
+		local available_at = order.delivered_at + DROP_POINT_COOLDOWN
+		if available_at > now and (not result or available_at < result) then result = available_at end
 	end
 	return result
 end
@@ -1676,7 +1688,8 @@ function update()
 	local now = game_seconds()
 	if not next_state_check then next_state_check = find_next_state_check() end
 	local changed = false
-	if next_state_check and now >= next_state_check then
+	local refresh_due = next_state_check and now >= next_state_check
+	if refresh_due then
 		changed = refresh_slots(now)
 		if impl.fail_expired(now) then changed = true end
 		if impl.pay_due_orders(now) then changed = true end
@@ -1691,10 +1704,9 @@ function update()
 	ensure_tasks()
 	refresh_point_markers()
 	update_dropbox_tip()
-	if changed then
-		save_state()
-		refresh_ui()
-	end
+	if changed then save_state() end
+	-- A cooldown expiry changes availability without changing the saved orders.
+	if changed or refresh_due then refresh_ui() end
 end
 
 function on_game_load()

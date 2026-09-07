@@ -1,0 +1,153 @@
+-- Native checkbox attached to the native Tasks page. No Lua UI object or
+-- callback is retained by the PDA when its native windows are destroyed.
+local SETTINGS_FILE = "pf_user_map_filter.cfg"
+local SCAN_INTERVAL_MS = 250
+local state = {
+    enabled = nil,
+    applied = false,
+    checkbox = nil,
+    map_open = false,
+    next_scan = 0,
+    callbacks_registered = false
+}
+
+local function settings_path()
+    return getFS():update_path("$app_data_root$", SETTINGS_FILE)
+end
+
+local function load_setting()
+    if state.enabled ~= nil then return end
+    local file = io.open(settings_path(), "r")
+    local value = file and file:read("*l") or nil
+    if file then file:close() end
+    -- Missing/invalid preferences keep the original visible-by-default UI.
+    state.enabled = value ~= "off"
+end
+
+local function save_setting(enabled)
+    local file = io.open(settings_path(), "w")
+    if not file then return false end
+    local written = file:write(enabled and "on\n" or "off\n")
+    local closed = file:close()
+    return written ~= nil and closed ~= nil
+end
+
+local function apply_location(location)
+    if location:IsUserDefined() and location:SpotEnabled() ~= state.enabled then
+        if state.enabled then
+            location:EnableSpot()
+        else
+            location:DisableSpot()
+        end
+    end
+    return false
+end
+
+local function apply_visibility()
+    -- Never retain native map-location pointers: deleting/replacing a marker
+    -- or loading a save may invalidate them between callbacks.
+    level.map_manager():AllLocationsForEach(apply_location)
+    state.applied = true
+    state.next_scan = time_global() + SCAN_INTERVAL_MS
+end
+
+function is_enabled()
+    load_setting()
+    return state.enabled
+end
+
+function set_enabled(enabled)
+    load_setting()
+    enabled = enabled == true
+    if enabled == state.enabled then return true end
+    if not save_setting(enabled) then
+        printf("! pf_user_map_filter: unable to save visibility preference")
+        return false
+    end
+    state.enabled = enabled
+    state.applied = false
+    return true
+end
+
+local function discard_ui_handles()
+    -- Load callbacks run after native PDA reconstruction. Do not call into
+    -- the previous windows, even just to hide or detach them.
+    state.checkbox = nil
+    state.map_open = false
+end
+
+local function capture_checkbox(pda)
+    -- Native window getters create fresh Lua userdata wrappers. They expose
+    -- no __eq, and rawequal cannot identify the underlying C++ window either.
+    -- The native Tasks page owns this control until UI/load teardown.
+    if not pda then
+        discard_ui_handles()
+        return
+    end
+    if state.checkbox then
+        local checked = state.checkbox:GetCheck()
+        if checked ~= state.enabled and not set_enabled(checked) then
+            state.checkbox:SetCheck(state.enabled)
+        end
+    end
+end
+
+function update()
+    if not db or not db.actor then return end
+    load_setting()
+
+    local pda = ActorMenu.get_pda_menu()
+    capture_checkbox(pda)
+    local map_open = pda ~= nil and pda:IsShown() and pda:GetActiveSection() == "eptTasks"
+
+    if map_open then
+        local owner = pda:GetActiveDialog()
+        if owner and owner:WindowName() == "pda_tasks" then
+            if not state.checkbox then
+                local xml = CScriptXmlInit()
+                xml:ParseFile("pf_user_map_filter.xml")
+                state.checkbox = xml:InitCheck("filter_user_markers", owner)
+                state.checkbox:SetCheck(state.enabled)
+            end
+        else
+            -- Another addon may temporarily bridge a script page through
+            -- eptTasks during F9 restoration. Wait for the actual map page.
+            map_open = false
+        end
+    end
+
+    -- Reconcile once after load, on a click, and when opening/closing the map.
+    -- AddUserLocation has no Lua callback. Only while the map is open AND the
+    -- filter is off, a throttled pass catches newly added/retyped markers.
+    -- Gameplay with a closed PDA does not periodically scan the map manager.
+    if not state.applied or map_open ~= state.map_open or
+        (map_open and not state.enabled and time_global() >= state.next_scan) then
+        apply_visibility()
+    end
+    state.map_open = map_open == true
+end
+
+function on_game_load()
+    discard_ui_handles()
+    state.enabled = nil
+    state.applied = false
+    state.next_scan = 0
+end
+
+function on_game_save()
+    -- Also capture a checkbox click immediately followed by a quicksave.
+    if state.enabled == nil then return end
+    capture_checkbox(ActorMenu.get_pda_menu())
+end
+
+function on_game_start()
+    if state.callbacks_registered then return true end
+    if type(RegisterScriptCallback) ~= "function" then return false end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_game_load)
+    RegisterScriptCallback("save", on_game_save)
+    state.callbacks_registered = true
+    return true
+end
+
+on_game_start()
