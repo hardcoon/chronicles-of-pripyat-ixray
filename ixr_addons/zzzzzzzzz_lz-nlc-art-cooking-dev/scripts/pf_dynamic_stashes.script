@@ -765,6 +765,14 @@ local anomaly_scanner_drop_chances = {
 	red = 100
 }
 
+-- Nimble's 20-litre fuel canister is a recurring independent utility drop.
+-- It never replaces another reward branch and is absent from lower tiers.
+local fuel_canister_drop_chances = {
+	purple = 5,
+	orange = 15,
+	red = 10
+}
+
 -- One Hopper for the entire playthrough, shared by all eligible stash tiers.
 local jump_isolator_drop_chances = { purple = 15, orange = 50, red = 100 }
 
@@ -2126,6 +2134,13 @@ function impl.add_anomaly_scanner_roll(loot, tier)
 	return true
 end
 
+function impl.add_fuel_canister_roll(loot, tier)
+	local chance = fuel_canister_drop_chances[tier]
+	if not chance or not impl.roll(chance) then return false end
+	impl.add_loot(loot, "pf_vehicle_fuel_canister")
+	return true
+end
+
 function impl.add_jump_isolator_roll(loot, tier)
 	local chance = jump_isolator_drop_chances[tier]
 	if not chance then return nil end
@@ -2430,6 +2445,7 @@ function impl.build_purple_loot()
 	impl.add_ordinary_detector_rolls(loot, "purple")
 	impl.add_stash_detector_rolls(loot, "purple")
 	impl.add_anomaly_scanner_roll(loot, "purple")
+	impl.add_fuel_canister_roll(loot, "purple")
 	if impl.roll(40) then impl.add_random_loot(loot, loot_pools.attachments, 1, impl.roll(25) and 2 or 1) end
 	if impl.roll(30) then impl.add_random_loot(loot, loot_pools.grenades, 1, 2) end
 	if impl.roll(35) then
@@ -2511,6 +2527,7 @@ function impl.build_orange_loot()
 	impl.add_ordinary_detector_rolls(loot, "orange")
 	impl.add_stash_detector_rolls(loot, "orange")
 	impl.add_anomaly_scanner_roll(loot, "orange")
+	impl.add_fuel_canister_roll(loot, "orange")
 	impl.add_stash_pda_roll(loot, "orange")
 	impl.add_reflash_module_roll(loot, "orange")
 	return loot
@@ -2554,6 +2571,7 @@ function impl.build_red_loot()
 	-- independent recurring table; the awarding cache cannot roll duplicates.
 	impl.add_stash_detector_rolls(loot, "red")
 	impl.add_anomaly_scanner_roll(loot, "red")
+	impl.add_fuel_canister_roll(loot, "red")
 	impl.add_loot(loot, "lz_nm_radio_beacon")
 
 	-- Unique mechanics are the core of the red tier. One strange consumable is
@@ -2600,8 +2618,13 @@ end
 -- so approaching again or loading a save cannot reroll sections or condition.
 function impl.build_slot_loot(slot)
 	if not slot or not slot.state then return {} end
-	if type(slot.state.loot_manifest) == "table" then
+	if type(slot.state.loot_manifest) == "table" and #slot.state.loot_manifest > 0 then
 		return slot.state.loot_manifest
+	end
+	if type(slot.state.loot_manifest) == "table" then
+		printf("[PF STASH] rebuilding empty loot manifest for slot %s (%s)",
+			tostring(slot.index or "?"), tostring(slot.tier or "?"))
+		slot.state.loot_manifest = nil
 	end
 	local red_bundle = nil
 	if slot.tier == "red" then red_bundle = impl.prepare_next_red_one_time_bundle() end
@@ -2627,6 +2650,10 @@ function impl.build_slot_loot(slot)
 	end
 	state.loot_rng = nil
 	if not ok then error(loot) end
+	if type(loot) ~= "table" or #loot == 0 then
+		error(string.format("[PF STASH] empty loot manifest for slot %s (%s)",
+			tostring(slot.index or "?"), tostring(slot.tier or "?")))
+	end
 	slot.state.loot_manifest = loot
 	if jump_isolator_state then jump_isolator_state.jump_isolator_awarded = true end
 	return loot
@@ -2668,13 +2695,14 @@ function impl.clear_actor_item_origin(server_item)
 	if state then state.pf_stash_actor_item = nil end
 end
 
-function impl.spawn_item(entry, parent_id)
+function impl.spawn_item(entry, parent_id, created_ids)
 	if not system_ini():section_exist(entry.section) then
 		printf("[PF STASH] invalid loot section: %s", tostring(entry.section))
 		return false
 	end
 	local item = alife():create(entry.section, vector(), 0, 0, parent_id)
 	if not item then return false end
+	if created_ids then table.insert(created_ids, item.id) end
 	impl.clear_actor_item_origin(item)
 	return true
 end
@@ -2977,13 +3005,27 @@ function impl.apply_slot_item_conditions(box, slot)
 	if not pending then slot.conditions_applied = true end
 end
 
-function impl.spawn_loot_entries(parent_id, loot)
+function impl.spawn_loot_entries(parent_id, loot, transactional)
 	impl.enable_stash_item_protection(alife():object(parent_id, true))
-	local created = {}
+	local created, created_ids = {}, {}
 	for _, entry in ipairs(loot or {}) do
-		if impl.spawn_item(entry, parent_id) then table.insert(created, entry.section) end
+		local ok, spawned = true, false
+		if transactional then
+			ok, spawned = pcall(impl.spawn_item, entry, parent_id, created_ids)
+		else
+			spawned = impl.spawn_item(entry, parent_id)
+		end
+		if not ok then return created, created_ids, spawned end
+		if spawned then table.insert(created, entry.section) end
 	end
-	return created
+	return created, created_ids, nil
+end
+
+function impl.rollback_spawned_items(created_ids)
+	for index = #(created_ids or {}), 1, -1 do
+		local item = alife():object(created_ids[index], true)
+		if item then alife():release(item, true) end
+	end
 end
 
 function impl.spawn_loot(parent_id, tier)
@@ -2991,7 +3033,24 @@ function impl.spawn_loot(parent_id, tier)
 end
 
 function impl.spawn_slot_loot(parent_id, slot)
-	return impl.spawn_loot_entries(parent_id, impl.build_slot_loot(slot))
+	return impl.spawn_loot_entries(parent_id, impl.build_slot_loot(slot), true)
+end
+
+function impl.try_spawn_complete_slot_loot(parent_id, slot, loot)
+	local ok, created, created_ids, spawn_error = pcall(
+		impl.spawn_slot_loot, parent_id, slot)
+	if not ok then return false, created end
+	if spawn_error or #created ~= #loot then
+		impl.rollback_spawned_items(created_ids)
+		if not spawn_error and not slot.spawn_failure_logged then
+			printf("[PF STASH] incomplete loot materialization for slot %s (%s): %d/%d; retry scheduled",
+				tostring(slot.index or "?"), tostring(slot.tier or "?"), #created, #loot)
+		end
+		slot.spawn_failure_logged = true
+		return false, spawn_error
+	end
+	slot.spawn_failure_logged = nil
+	return true
 end
 
 -- Compatibility fallback for saves made during the short-lived deferred-loot
@@ -3000,7 +3059,10 @@ end
 function impl.materialize_slot_loot(slot, box)
 	if not slot or not box then return false end
 	if slot.loot_materialized then return true end
-	impl.spawn_loot_entries(box.id, impl.build_slot_loot(slot))
+	local loot = impl.build_slot_loot(slot)
+	local materialized, spawn_error = impl.try_spawn_complete_slot_loot(box.id, slot, loot)
+	if spawn_error then error(spawn_error) end
+	if not materialized then return false end
 	slot.loot_materialized = true
 	slot.state.defer_loot = nil
 	slot.conditions_applied = false
@@ -3200,6 +3262,7 @@ end
 
 function impl.spawn_slot(slot)
 	local point = slot.point
+	local loot = impl.build_slot_loot(slot)
 	local section = point.model
 	if point.curated then
 		section = slot.state.container_model
@@ -3218,10 +3281,17 @@ function impl.spawn_slot(slot)
 	local box = alife():create(section, position, level_vertex_id, game_vertex_id)
 	if not box then return false end
 	box.angle = vector():set(0, math.rad(tonumber(point.yaw) or 0), 0)
-	-- Restore the proven streaming lifecycle: selecting 350 logical coordinates
+	-- Keep the streamed container and its deterministic contents atomic: an
+	-- incomplete child spawn is rolled back and retried from the saved manifest.
+	local materialized, spawn_error = impl.try_spawn_complete_slot_loot(box.id, slot, loot)
+	if not materialized then
+		impl.release_object(box.id)
+		if spawn_error then error(spawn_error) end
+		return false
+	end
+	-- Restore the proven streaming lifecycle: selecting 400 logical coordinates
 	-- is cheap, while one nearby physical container and its deterministic child
 	-- objects are created together. Opening the box is never a correctness gate.
-	impl.spawn_slot_loot(box.id, slot)
 	slot.id = box.id
 	slot.spawned_at = time_global()
 	slot.conditions_applied = false

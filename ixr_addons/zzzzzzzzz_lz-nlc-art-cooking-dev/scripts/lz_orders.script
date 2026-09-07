@@ -567,9 +567,10 @@ local minimum_reward_values = {
 	lz_nm_rubber_padding = 2400,
 	lz_nm_combat_boots = 3500,
 	lz_nm_recovered_upgrade = 7000,
-	itm_field_upgrade_kit_blue = 8000,
+	-- Rare, single-use weapon upgrades retain the approved scarcity premium.
+	itm_field_upgrade_kit_blue = 15700,
 	itm_field_upgrade_kit_green = 8000,
-	itm_field_upgrade_kit_red = 7000,
+	itm_field_upgrade_kit_red = 14900,
 	itm_field_upgrade_kit_yellow = 7000,
 	mutant_part_dog_tail = 200,
 	mutant_part_flesh_eye = 200,
@@ -802,10 +803,15 @@ local function make_variant(base, variant, base_index)
 			math.max(1, math.min(100, ini:r_s32("lz_orders", "ration_offer_weight_percent"))) or 100
 		weight = math.max(1, math.floor(weight * percent / 100 + 0.5))
 	end
-	local reward = math.max(
+	local reward = base.fixed_reward and base.reward or math.max(
 		scale_reward(base.reward, reward_factors[variant]),
 		minimum_order_reward(items, variant, category, base.minimum_reward_values)
 	)
+	-- Explicit reviewed prices apply to the generated basket, including prices
+	-- below the old generic rare-tier floor. Unreviewed variants keep their price.
+	if base.variant_rewards and base.variant_rewards[variant] then
+		reward = base.variant_rewards[variant]
+	end
 	return {
 		id = variant == 1 and base.id or base.id .. "_v" .. tostring(variant),
 		base_id = base.id,
@@ -818,6 +824,7 @@ local function make_variant(base, variant, base_index)
 		board_descr = base.board_descr,
 		deadline_hours = deadlines[variant],
 		reward = reward,
+		previous_reward = base.previous_rewards and base.previous_rewards[variant],
 		weight = weight,
 		items = items
 	}
@@ -958,6 +965,15 @@ local function materialize_pool_template(entry, section)
 	return result
 end
 
+function impl.read_variant_rewards(ini, id, prefix)
+	local result = {}
+	for variant = 1, 5 do
+		local key = prefix .. tostring(variant)
+		if ini:line_exist(id, key) then result[variant] = math.max(1, ini:r_s32(id, key)) end
+	end
+	return result
+end
+
 local function load_templates()
 	if templates then return templates end
 	templates = {}
@@ -981,6 +997,9 @@ local function load_templates()
 				reward = ini:r_s32(id, "reward"),
 				weight = math.max(1, ini:r_s32(id, "weight")),
 				fixed_requirements = ini:line_exist(id, "fixed_requirements") and ini:r_bool(id, "fixed_requirements") or false,
+				fixed_reward = ini:line_exist(id, "fixed_reward") and ini:r_bool(id, "fixed_reward") or false,
+				variant_rewards = impl.read_variant_rewards(ini, id, "variant_reward_"),
+				previous_rewards = impl.read_variant_rewards(ini, id, "previous_reward_"),
 				variant_count = ini:line_exist(id, "variant_count") and
 					math.max(1, ini:r_s32(id, "variant_count")) or variant_count,
 				recipe_gated = ini:line_exist(id, "recipe_gated") and ini:r_bool(id, "recipe_gated") or false,
@@ -1027,9 +1046,12 @@ local function load_templates()
 					template_by_id[entry.id] = entry
 				end
 			elseif valid and #entry.items > 0 then
-				for variant = 1, entry.variant_count do
+				local legacy_count = ini:line_exist(id, "legacy_variant_count") and
+					ini:r_s32(id, "legacy_variant_count") or entry.variant_count
+				for variant = 1, math.max(entry.variant_count, legacy_count) do
 					local variant_entry = make_variant(entry, variant, index)
-					table.insert(templates, variant_entry)
+					variant_entry.legacy_variant = variant > entry.variant_count
+					if not variant_entry.legacy_variant then table.insert(templates, variant_entry) end
 					template_by_id[variant_entry.id] = variant_entry
 				end
 			end
@@ -1058,6 +1080,13 @@ local function template_for(id)
 	return nil
 end
 
+function impl.order_reward(order, entry)
+	local saved = tonumber(order and order.reward)
+	if saved and saved > 0 and saved < math.huge then return math.floor(saved) end
+	entry = entry or template_for(order and order.template_id)
+	return entry and (entry.previous_reward or entry.reward) or 0
+end
+
 local function save_state()
 	if not db.actor then return end
 	local schedule_parts, refresh_parts, slot_parts = {}, {}, {}
@@ -1071,7 +1100,7 @@ local function save_state()
 	for _, order in ipairs(active) do
 		table.insert(active_parts, table.concat({
 			order.id, order.template_id, tostring(order.accepted_at),
-			tostring(order.deadline_at), order.point_id
+			tostring(order.deadline_at), order.point_id, tostring(impl.order_reward(order))
 		}, ","))
 	end
 
@@ -1079,7 +1108,7 @@ local function save_state()
 	for _, order in ipairs(pending) do
 		table.insert(pending_parts, table.concat({
 			order.id, order.template_id, tostring(order.delivered_at),
-			tostring(order.payment_at), order.point_id
+			tostring(order.payment_at), order.point_id, tostring(impl.order_reward(order))
 		}, ","))
 	end
 
@@ -1119,10 +1148,15 @@ local function decode_orders(serialized, is_pending, migrate_legacy_artifacts)
 		local fields = split(record, ",")
 		local template_id = fields[2]
 		if migrate_legacy_artifacts then template_id = impl.legacy_artifact_id(template_id) or template_id end
-		if #fields >= 5 and template_for(template_id) then
+		local entry = template_for(template_id)
+		if #fields >= 5 and entry then
+			-- Five-field saves predate reward snapshots. Recover the promised
+			-- price once; subsequent saves carry it independently of the template.
+			local reward = impl.order_reward({ reward = fields[6] }, entry)
 			if is_pending then
 				table.insert(result, {
 					id = fields[1], template_id = template_id,
+					reward = reward,
 					delivered_at = tonumber(fields[3]) or 0,
 					payment_at = tonumber(fields[4]) or 0,
 					point_id = fields[5]
@@ -1130,6 +1164,7 @@ local function decode_orders(serialized, is_pending, migrate_legacy_artifacts)
 			else
 				table.insert(result, {
 					id = fields[1], template_id = template_id,
+					reward = reward,
 					accepted_at = tonumber(fields[3]) or 0,
 					deadline_at = tonumber(fields[4]) or 0,
 					point_id = fields[5]
@@ -1227,7 +1262,8 @@ local function initialize_state()
 		for index = 1, SLOT_COUNT do
 			local id = stored_slots[index]
 			if id and id ~= "_" and template_for(id) then
-				slots[index] = id
+				local entry = template_for(id)
+				slots[index] = entry.legacy_variant and entry.base_id or id
 			elseif id and impl.legacy_artifact_id(id) and string.find(id, "_v", 1, true) then
 				replace_slots[index] = true
 			else
@@ -1461,7 +1497,7 @@ local function task_description(order)
 		utf8_text(translate("lz_order_task_point")), utf8_text(point_name(order.point_id))
 	))
 	table.insert(lines, string.format(
-		utf8_text(translate("lz_order_task_reward")), utf8_text(format_money(entry.reward))
+		utf8_text(translate("lz_order_task_reward")), utf8_text(format_money(impl.order_reward(order, entry)))
 	))
 	return table.concat(lines, "\\n")
 end
@@ -1598,11 +1634,12 @@ function impl.pay_due_orders(now)
 		if now >= order.payment_at then
 			local entry = template_for(order.template_id)
 			if entry then
-				db.actor:give_money(entry.reward)
-				if game_stats and game_stats.money_quest_update then game_stats.money_quest_update(entry.reward) end
+				local reward = impl.order_reward(order, entry)
+				db.actor:give_money(reward)
+				if game_stats and game_stats.money_quest_update then game_stats.money_quest_update(reward) end
 				message(string.format(
 					utf8_text(translate("lz_order_paid")),
-					utf8_text(order_title(entry)), utf8_text(format_money(entry.reward))
+					utf8_text(order_title(entry)), utf8_text(format_money(reward))
 				))
 			end
 			task_text_synced[order.id] = nil
@@ -1747,6 +1784,7 @@ function accept_order(slot_index)
 	local order = {
 		id = string.format("lz_order_%06d", order_counter),
 		template_id = template_id,
+		reward = entry.reward,
 		accepted_at = now,
 		deadline_at = now + entry.deadline_hours * 3600,
 		point_id = point_id
@@ -1778,6 +1816,7 @@ local function deliver_order(order, inventory)
 	table.insert(pending, {
 		id = order.id,
 		template_id = order.template_id,
+		reward = impl.order_reward(order, entry),
 		delivered_at = now,
 		payment_at = now + PAYMENT_DELAY,
 		point_id = order.point_id
@@ -1934,7 +1973,7 @@ function get_accepted_orders()
 				descr = board_description(entry),
 				items = requirements_text(entry, true),
 				deadline = format_time(order.deadline_at - now),
-				reward = format_money(entry.reward),
+				reward = format_money(impl.order_reward(order, entry)),
 				status = string.format(translate("lz_order_status_active"), point_name(order.point_id)),
 				sort_time = order.deadline_at,
 				pending = false
@@ -1950,7 +1989,7 @@ function get_accepted_orders()
 				descr = board_description(entry),
 				items = requirements_text(entry, false),
 				deadline = format_time(order.payment_at - now),
-				reward = format_money(entry.reward),
+				reward = format_money(impl.order_reward(order, entry)),
 				status = translate("lz_order_status_pending"),
 				sort_time = order.payment_at,
 				pending = true
