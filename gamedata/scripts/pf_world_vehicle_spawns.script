@@ -1,0 +1,212 @@
+-- Persistent one-time world vehicle spawns. Each entry uses actor pstor so a
+-- newly added vehicle is created in both new games and pre-existing saves,
+-- but is not recreated after the player moves or destroys it.
+
+local UPDATE_INTERVAL = 500
+
+local spawns = {
+	{
+		id = "lada_dead_v1",
+		section = "veh_dcp_lada_dead",
+		-- Reference save ZZZ: 723.085388, -0.001118, 460.432312.
+		-- Spawn is deliberately raised by exactly 0.05 m before physics settles.
+		position = { x = 723.085388, y = 0.048882, z = 460.432312 },
+		angle = { x = 0.015992, y = 1.370983, z = 0.004726 },
+		level_vertex_id = 10862908,
+		game_vertex_id = 33,
+		match_distance_sqr = 1.0,
+		initial_fuel = 0
+	}
+}
+
+local runtime = {
+	callbacks_registered = false,
+	update_registered = false,
+	spawn_complete = {},
+	fuel_complete = {},
+	next_update = 0
+}
+
+local update
+
+local function state_key(entry, suffix)
+	return "pf_world_vehicle_" .. entry.id .. "_" .. suffix
+end
+
+local function stored(key, default)
+	if db.actor == nil then return default end
+	return xr_logic.pstor_retrieve(db.actor, key, default)
+end
+
+local function save(key, value)
+	if db.actor ~= nil then
+		xr_logic.pstor_store(db.actor, key, value)
+	end
+end
+
+local function existing_vehicle_at_point(entry)
+	local simulator = alife()
+	if simulator == nil then return nil end
+
+	for _, object in simulator:objects() do
+		if object:section_name() == entry.section then
+			local current = object.position
+			local dx = current.x - entry.position.x
+			local dy = current.y - entry.position.y
+			local dz = current.z - entry.position.z
+			if dx * dx + dy * dy + dz * dz <= entry.match_distance_sqr then
+				return object
+			end
+		end
+	end
+	return nil
+end
+
+local function ensure_spawn(entry)
+	if runtime.spawn_complete[entry.id] then return true end
+	local spawned_key = state_key(entry, "spawned")
+	if stored(spawned_key, false) == true then
+		runtime.spawn_complete[entry.id] = true
+		return true
+	end
+
+	local simulator = alife()
+	if simulator == nil then return false end
+	local object = existing_vehicle_at_point(entry)
+	local reused = object ~= nil
+	if object == nil then
+		local position = vector():set(
+			entry.position.x,
+			entry.position.y,
+			entry.position.z
+		)
+		object = simulator:create(
+			entry.section,
+			position,
+			entry.level_vertex_id,
+			entry.game_vertex_id
+		)
+		if object == nil then
+			printf("! [pf_world_vehicle_spawns] failed to create %s", entry.section)
+			return false
+		end
+		object.angle = vector():set(
+			entry.angle.x,
+			entry.angle.y,
+			entry.angle.z
+		)
+	end
+
+	save(spawned_key, true)
+	save(state_key(entry, "object_id"), object.id)
+	save(state_key(entry, "initial_fuel_applied"), false)
+	runtime.spawn_complete[entry.id] = true
+	runtime.fuel_complete[entry.id] = nil
+	printf(
+		"[pf_world_vehicle_spawns] %s section=%s object_id=%s fuel=%s marker=none",
+		reused and "adopted" or "created",
+		entry.section,
+		tostring(object.id),
+		tostring(entry.initial_fuel)
+	)
+	return true
+end
+
+local function ensure_initial_fuel(entry)
+	if runtime.fuel_complete[entry.id] then return true end
+	local applied_key = state_key(entry, "initial_fuel_applied")
+	if stored(applied_key, false) == true then
+		runtime.fuel_complete[entry.id] = true
+		return true
+	end
+	if stored(state_key(entry, "spawned"), false) ~= true then return false end
+
+	local object_id = tonumber(stored(state_key(entry, "object_id"), -1)) or -1
+	if object_id < 0 then return false end
+	local simulator = alife()
+	local server_object = simulator ~= nil and simulator:object(object_id) or nil
+	if server_object == nil then
+		-- The once-only vehicle was destroyed before it came online. Do not
+		-- recreate it and do not leave a permanent update retry behind.
+		runtime.fuel_complete[entry.id] = true
+		return true
+	end
+	if level == nil or type(level.object_by_id) ~= "function" then return false end
+	local client_object = level.object_by_id(object_id)
+	if client_object == nil then return false end
+
+	local ok, applied = pcall(function()
+		local car = client_object:get_car()
+		if car == nil then return false end
+		local capacity = tonumber(car.fuel_tank) or 0
+		car.fuel = math.max(0, math.min(tonumber(entry.initial_fuel) or 0, capacity))
+		return true
+	end)
+	if not ok or applied ~= true then return false end
+
+	save(applied_key, true)
+	runtime.fuel_complete[entry.id] = true
+	printf(
+		"[pf_world_vehicle_spawns] initial fuel applied section=%s object_id=%s fuel=%s",
+		entry.section,
+		tostring(object_id),
+		tostring(entry.initial_fuel)
+	)
+	return true
+end
+
+local function stop_update()
+	if not runtime.update_registered then return end
+	UnregisterScriptCallback("update", update)
+	runtime.update_registered = false
+end
+
+local function start_update()
+	if runtime.update_registered then return end
+	RegisterScriptCallback("update", update)
+	runtime.update_registered = true
+end
+
+local function reset_runtime()
+	stop_update()
+	runtime.spawn_complete = {}
+	runtime.fuel_complete = {}
+	runtime.next_update = 0
+	start_update()
+end
+
+update = function()
+	if db.actor == nil then return end
+	local now = time_global()
+	if now < runtime.next_update then return end
+	runtime.next_update = now + UPDATE_INTERVAL
+
+	local complete = true
+	for _, entry in ipairs(spawns) do
+		local spawned = ensure_spawn(entry)
+		local fueled = spawned and ensure_initial_fuel(entry)
+		if not spawned or not fueled then
+			complete = false
+		end
+	end
+
+	if complete then
+		stop_update()
+		printf("[pf_world_vehicle_spawns] startup worker stopped")
+	end
+end
+
+function on_game_start()
+	if runtime.callbacks_registered then return true end
+	if type(RegisterScriptCallback) ~= "function"
+		or type(UnregisterScriptCallback) ~= "function" then
+		printf("! [pf_world_vehicle_spawns] dynamic callback API unavailable")
+		return false
+	end
+	RegisterScriptCallback("load", reset_runtime)
+	runtime.callbacks_registered = true
+	reset_runtime()
+	return true
+end
+
+on_game_start()

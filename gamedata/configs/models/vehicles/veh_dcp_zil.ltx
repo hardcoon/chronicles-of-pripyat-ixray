@@ -1,0 +1,442 @@
+; Lost Alpha Definitive Car Pack port for IX-Ray.
+; Exact donor: vehicle_zil / veh_zil_u_01.ogf / veh_zil_u_01.ltx.
+; Effective donor order: official patch layer, then base extract.
+; This file is embedded verbatim into veh_dcp_zil.ogf UserData.
+;-- ;physics\vehicles\zil\veh_zil_u_01.ogf (vehicle_zil)
+;-- ���-130 Definitive Car Pack
+;-- ������: Videoton
+
+[disable]
+linear_factor			= 0.5
+angular_factor    		= 0.5
+
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------
+
+[car_definition]
+character_scraper
+time_to_explosion			= 0 ;-- time to explode when damaged (ms)
+vehicle_feature_profile      = dcp_vehicle_v1
+camera_dynamics_profile      = vehicle_comfort_v1
+fuel_profile                 = dcp_vehicle_fuel_v1
+part_damage_mode             = body_only
+durability_factor            = 3.0
+vehicle_condition_profile    = dcp_vehicle_condition_v1
+collision_sound_profile      = dcp_vehicle_collision_v1
+door_air_resistance_scale    = 0.001
+interior_volume              = 0.75
+hit_stall_threshold           = 0.09
+fuel_speed_factor             = 2
+fuel_speed_optimal            = 55
+fuel_rpm_factor               = 1
+fuel_gas_factor               = 1
+tire_trail_wallmark_size      = 0.2
+tire_trails                   = true
+tire_trail_notsimilars        = false
+tire_sounds                   = true
+wheels_sound_delay            = 0.05
+slip_sliding_threshold        = 0.4
+vel_sliding_threshold         = 5
+wheels_spin_factor_start      = 0.86
+wheels_spin_factor_stop       = 0.88
+friction_slip_factor          = 0.8
+friction2_slip_factor         = 0.64
+friction_spin_factor          = 0.64
+friction2_spin_factor         = 0.41
+friction_slip_speed           = 0.004
+friction2_brp_boost           = 1.2
+handbrake_rpm_threshold       = 1.6
+steer_spin_boost              = 8
+steer_speed_boost             = 1
+steer_turn_factor             = 1.9
+steer_counter_turn_factor     = 1
+steer_turn_compensation       = 0.4
+steer_turn_compensation_max   = 0.2
+steer_turn_delta              = 0.6
+drift_start_boost             = 1.5
+drift_boost_time              = 0.25
+firsteye_panel                = false
+camera_pos                    = -0.523, 2.16, 1.37
+
+camera_pos_firsteye           = -0.523, 2.16, 1.37
+camera_pos_lookat			= 0.0, 2.6, -0.83
+camera_pos_free				= 0.0, 2.7, -1.03
+camera_inertion_n            = 0
+camera_inertion_k            = 0
+
+driving_wheels    			= back_left_wheel,back_right_wheel					; ������� �����
+steering_wheels   			= front_left_wheel,front_right_wheel					; ������� �����
+breaking_wheels   			= back_left_wheel,back_right_wheel,front_left_wheel,front_right_wheel	; ���������� �����
+doors                         = left_door, right_door, front_door
+steer             			= stearing_wheel							; ����
+driver_place      			= seat_left								; ����� ��������
+exhausts          			= exhausts								; ��������� �����
+exhaust_particles          = vehiclefx\exhaust_1
+damage						= damage_bones
+trunk_bone                 = kuzov
+trunk_use_mode             = open_inventory
+trunk_use_distance         = 3.5
+trunk_interaction_padding  = 0.05, 0.05, 0.05
+trunk_interaction_offset   = 0.0, 0.0, 0.85
+
+collision_hit_threshold = 0.2 ; [LA DC] minimum physical collision damage to be applied to car (vanilla is 5.0)
+
+;-------------------------------------------------------------------------------
+;------ Factory parameters of Engine -------------------------------------------
+
+fuel_tank                    = 170
+fuel_consumption             = 7
+engine_power				= 39.5        	; horse_power (kW=hp*0.808) max power
+max_power_rpm				= 3300        	; (nominal rpm ) on this rpm value engine power reaches maximum
+max_torque_rpm				= 2250       	; on this rpm engine torque reaches maximum
+
+power_increment_factor		= 0.01
+power_decrement_factor		= 0.1
+rpm_increment_factor		= 0.03
+rpm_decrement_factor		= 0.15
+m_power_neutral_factor		= 0.55
+
+; additional engine parameters
+
+max_engine_rpm			= 4000		; rpm (5000) rpm will never be more
+idling_engine_rpm		= 850       	; rpm (750) min rpm - starts from this rpm value
+
+;-------------------------------------------------------------------------------
+;------ Adjustment a wheel -----------------------------------------------------
+
+reference_radius		= 0.59		; ������ ������, ������������ ��� �������� ���������
+axle_friction     		= 3       	; ���������� �������� � ����������� �������. (N*m)
+steering_speed    		= 0.55         	; ����� �������� �������� ������, � ��������. rps (1)
+steering_torque   		= 200000    	; ���� �������������� ����. (N*m)
+break_torque			= 0.070		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.070		; ���� ���������� �������� (�� ��������� = break_torque)
+break_time        		= 1.0         	; ����� ���������� ���� ���������� �� ���������, ��� ��������������� (������� �����)
+
+;-------------------------------------------------------------------------------
+;------ Gearbox ----------------------------------------------------------------
+
+main_gear_ratio    		= 24.9         ; ������������ ���������
+auto_transmission  		= on           ; �������������� ������� (on/off)
+
+[transmission_gear_ratio]
+; shift down/ shift up. (rpm, ����������� ��� ������������)
+R	= 3.60, 1700, 3750
+N1	= 3.60, 1700, 3750
+N2	= 1.87, 1700, 3750
+N3	= 1.11, 1800, 3750
+N4	= 0.72, 1900, 3750
+
+;-------------------------------------------------------------------------------
+;------ Rest Adjustment --------------------------------------------------------
+
+[lights]
+headlights                     = f1, f3o, f4o
+stoplights                     = f5o, f6o
+
+[f1]
+bone               		= left_light
+color              		= 1.27,1.2,1.1,1
+range              		= 44
+cone_angle         		= 58
+spot_texture       		= dcp_zil\lights_bspot01_car
+glow_texture       		= glow\glow_Yellow
+glow_radius        		= 1.1
+
+[f3o]
+bone                          = left_back_light
+type                          = 1
+position                      = 0.0, 0.0, 0.02
+color                         = 0.6, 0, 0, 1
+range                         = 0.2
+
+[f4o]
+bone                          = right_back_light
+type                          = 1
+position                      = 0.0, 0.0, 0.02
+color                         = 0.6, 0, 0, 1
+range                         = 0.2
+
+[f5o]
+bone                          = left_stop_light
+type                          = 1
+position                      = 0.0, 0.0, 0.02
+color                         = 0.75, 0, 0, 1
+range                         = 0.35
+
+[f6o]
+bone                          = right_stop_light
+type                          = 1
+position                      = 0.0, 0.0, 0.02
+color                         = 0.75, 0, 0, 1
+range                         = 0.35
+
+[car_sound]
+snd_volume         		    = 1.0
+snd_name           		    = dcp_zil\l_zil_run
+engine_sound_start_dellay	= 0.5
+engine_start			    = dcp_zil\l_zil_start
+engine_stop				    = dcp_zil\l_zil_stop
+transmission_switch         = dcp_zil\o_car_gear
+explosion_sound    		    = weapons\heli_explosion
+relative_pos       			= -0.1,0.5,2.5
+left_door_open              = dcp_zil\gta_truck_door_open
+left_door_close             = dcp_zil\gta_truck_door_close
+right_door_open             = dcp_zil\gta_truck_door_open
+right_door_close            = dcp_zil\gta_truck_door_close
+front_door_open             = dcp_zil\o_tractor_door_open
+front_door_close            = dcp_zil\o_tractor_door_close
+
+;-------------------------------------------------------------------------------
+;------ animations params ------------------------------------------------------
+
+wheel_road                    = dcp_zil\wheel_road
+wheel_dirt                    = dcp_zil\wheel_dirt
+wheel_grass                   = dcp_zil\wheel_grass
+wheel_water                   = dcp_zil\wheel_water
+dirt_skid                     = dcp_zil\dirt_skid
+[doors]
+open_torque_factor		= 6	;��������� ������� ��� ��� ���������� ����� (default = 2)
+
+[front_door]
+use_distance                = 3.0
+linear_factor               = 1000
+angular_factor              = 1000
+spring_loaded               = true
+non_enterable               = true
+
+[speedometer]
+speedometer
+speedometer_max_speed       = 120
+speedometer_min_speed       = 10
+speedometer_factor          = 1.16
+speedometer_offset          = 0
+speedometer_direction       = -1
+
+[fuel]
+fuel
+fuel_angle                  = 61
+fuel_offset                 = 0
+
+[fan]
+fan
+fan_speed                   = 25
+fan_engine                  = true
+
+[front_axle]
+suspension
+steer                       = true
+move                        = true
+first_wheel                 = front_left_wheel
+second_wheel                = front_right_wheel
+suspension_offset           = 0
+
+[back_axle]
+suspension
+steer                       = true
+move                        = true
+first_wheel                 = back_left_wheel
+second_wheel                = back_right_wheel
+suspension_offset           = 0
+
+[right_caliper]
+suspension
+steer                       = true
+move                        = false
+first_wheel                 = front_right_wheel
+suspension_offset           = 0
+
+[left_caliper]
+suspension
+steer                       = true
+move                        = false
+first_wheel                 = front_left_wheel
+suspension_offset           = 0
+
+[animations]
+driver_animation_type       = 0
+
+;-------------------------------------------------------------------------------
+;------ damage params ----------------------------------------------------------
+
+[damage_particles]
+explosion_particles		= explosions\expl_mushroom_01
+car_damage_particles1		= explosions\expl_car_smoke_small
+car_damage_particles2		= explosions\expl_car_smoke_big
+wheels_damage_particles1	= vehiclefx\exhaust_1
+wheels_damage_particles2	= vehiclefx\exhaust_1
+
+particle_bones1			= kabina
+particle_bones2			= root
+
+;-------------------------------------------------------------------------------
+;------ particle bones ---------------------------------------------------------
+
+[particle_bones]
+root				=  0,-0.2,2.7
+kabina				=  0,0,1.1
+
+;-------------------------------------------------------------------------------
+;------ damage items -----------------------------------------------------------
+
+[damage_items]
+back_left_wheel       	= 0
+back_right_wheel      	= 0
+front_left_wheel      	= 0
+front_right_wheel     	= 0
+left_door				= 0
+right_door				= 0
+
+;-------------------------------------------------------------------------------
+;------ collisiondamage --------------------------------------------------------
+
+[collision_damage]
+root                  	= 0.00007
+front_bamper			= 0.0001
+kabina                	= 0.0001
+kabina2					= 0.0001
+seat_left				= 0.00008
+bak						= 0.00006
+kuzov					= 0.00003
+kuzov_left				= 0.00003
+kuzov_right				= 0.00003
+front_axle				= 0.00005
+back_axle				= 0.00005
+back_left_wheel       	= 0.00001
+back_right_wheel      	= 0.00001
+front_left_wheel      	= 0.00001
+front_right_wheel     	= 0.00001
+
+
+;-------------------------------------------------------------------------------
+;------ damage bones -----------------------------------------------------------
+
+[damage_bones]										;���������� ������ � ������, �� ��� ��������
+;bone_name			= <hit_scale>,<-1>,<wound_scale>
+;<hit_scale>			- �����. ��������� ���� (���������� ��������)
+;<wound_scale>			- �����. ��������� �������� �������� ���� - ��������������
+
+default				= 1, -1, 0.1
+
+[immunities]
+;-- 0.0 => 100% invulnerable
+;-- 1.0 => 100% vulnerable
+burn_immunity			= 0.08							;������������ ����������
+strike_immunity			= 0.0045
+shock_immunity			= 0.04
+wound_immunity			= 0.0
+radiation_immunity		= 0.0
+telepatic_immunity		= 0.0
+chemical_burn_immunity	= 0.04
+explosion_immunity		= 0.09
+fire_wound_immunity		= 0.013
+;-------------------------------------------------------------------------------
+;----------------explosion params-----------------------------------------------
+
+[explosion]
+blast					= 1
+blast_r					= 15
+blast_impulse			= 350
+frags		        	= 15
+frags_r					= 30
+frag_hit				= 0.5
+frag_hit_impulse		= 350
+hit_type_blast			= explosion
+hit_type_frag			= fire_wound
+up_throw_factor			= 0.25
+wm_size             	= 0.1
+explode_particles		= explosions\expl_car
+light_color				= 0.6,0.5,0.3
+light_range				= 15.0
+light_time 				= 0.5
+
+;������ �� ��������
+fragment_speed				= 76
+fragment_tracer_max_length	= 3
+explode_duration    		= 50			;���������������� ������ (�)
+
+;�����
+snd_explode				= weapons\heli_explosion
+;wallmarks
+wallmark_section		= explosion_marks
+
+[explode_effector]
+effect_sect_name= effector_explode_hit
+
+;-------------------------------------------------------------------------------
+;------ Others params ----------------------------------------------------------
+
+[air_resistance]
+linear_factor			= 65000.f		;
+angular_factor			= 1500.f		;
+
+
+[wheels_params]
+suspension_distance = 0.20
+suspension_force_inc = 50
+suspension_spring_factor = 1
+suspension_damping_factor = 5
+suspension_inertia = 0.5
+damping_factor			= 2			;
+spring_factor			= 1			;
+friction_factor			= 1.2		;
+
+[front_left_wheel]
+break_torque			= 0.04		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.003		; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor			= 2			;
+spring_factor			= 1			;
+friction_factor			= 1.0		;
+
+[front_right_wheel]
+break_torque			= 0.04		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.003		; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor			= 2			;
+spring_factor			= 1			;
+friction_factor			= 1.0		;
+
+[back_left_wheel]
+break_torque			= 0.04		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.07		; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor			= 2			;
+spring_factor			= 1			;
+friction_factor			= 1.15		;
+
+[back_right_wheel]
+break_torque			= 0.04		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.07		; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor			= 2			;
+spring_factor			= 1			;
+friction_factor			= 1.15		;
+
+[collide]
+not_collide_parts		= 1
+
+;-------------------------------------------------------------------------------
+;------ destroyed part ---------------------------------------------------------
+
+[destroyed]
+physics\vehicles\veh_empty
+;;physics\vehicles\Zaz\part\veh_zaz_u_01_part1
+;;physics\vehicles\Zaz\part\veh_zaz_u_01_part2
+;;physics\vehicles\Zaz\part\veh_zaz_u_01_part3
+;;physics\vehicles\Zaz\part\veh_zaz_u_01_part4
+;physics\vehicles\Zaz\part\veh_zaz_u_01_part5
+;physics\vehicles\Zaz\part\veh_zaz_u_01_part6
+
+
+[autoremove_parts]
+time				= 180
+
+;-------------------------------------------------------------------------------
+;--- part impulse_transition ---------------------------------------------------
+
+[impulse_transition_to_parts]
+random_min					= 10.0		; �������� �������� ������������� �������� ��������������� ����� ������ �������
+random_hit_imp				= 1.0		; �������� �������� ������������� �������� ��������������� ������������ ����
+;ref_bone			=		; ����� �� �� ������� ������������ �������� ��� ������ � ������� ����� �� ������, �� ��������� ���
+imp_transition_factor		= 1.0		; ������ � ������� �������������� ��� �� ��������� ������� �� ���� ������
+lv_transition_factor		= 0.5		; ����������� �������� �������� ��������
+av_transition_factor		= 0.5		; ����������� �������� ������� ��������
+
+;-------------------------------------------------------------------------------
+;------ End params -------------------------------------------------------------
