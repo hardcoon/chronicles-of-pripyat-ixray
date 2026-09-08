@@ -1,0 +1,59 @@
+; Anomalous Boots: radio-beacon travel wear is multiplied by 0.30 on the belt.
+; The ordinary salvage boots retain their own section and properties.
+
+[af_anomalous_boots]:af_base
+GroupControlSection = spawn_group
+$spawn = "artefacts\af_anomalous_boots"
+class = ARTEFACT
+visual = dynamics\equipments\item_snork_leg.ogf
+description = st_af_anomalous_boots_descr
+inv_name = st_af_anomalous_boots_name
+inv_name_short = st_af_anomalous_boots_name
+inv_weight = 1.10
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_af_anomalous_boots
+cost = 12000
+can_trade = true
+quest_item = false
+belt = true
+slot = -1
+default_to_ruck = true
+can_be_controlled = false
+af_rank = 0
+jump_height = 0.1
+particles = artefact\af_electra_idle
+particles_bone = link
+det_show_particles = artefact\af_electra_show
+det_hide_particles = artefact\af_electra_hide
+lights_enabled = true
+trail_light_color = 0.3, 0.65, 1.0
+trail_light_range = 2.0
+af_actor_properties = on
+health_restore_speed = 0
+radiation_restore_speed = 0
+satiety_restore_speed = 0
+thirst_restore_speed = 0
+power_restore_speed = 0
+bleeding_restore_speed = 0
+additional_inventory_weight = 0
+additional_inventory_weight2 = 0
+hit_absorbation_sect = af_anomalous_boots_absorbation
+use_condition = false
+degrade_rate = 0
+
+[af_anomalous_boots_absorbation]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0
+
+![inventory_sort_registry]
+af_anomalous_boots = artefacts

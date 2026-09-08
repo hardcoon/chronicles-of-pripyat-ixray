@@ -244,6 +244,23 @@ local qa_overlay_extra_stash_sections = {
 	pf_fixed_house_stash_wood_box = true
 }
 
+-- Independent of the save's general schema/build number, including pre-manifest
+-- saves. Fixed replacements preserve quantities and never consume a loot roll.
+local attachment_migration = {
+	version = 1,
+	replacements = {
+		["wpn_addon_scope_x2.7"] = "pso1m21",
+		wpn_addon_scope_night = "1pn93-1",
+		wpn_addon_scope_detector = "1p78",
+		["wpn_addon_scope_susat_x1.6"] = "ac10632",
+		wpn_addon_scope_susat_dusk = "acog",
+		wpn_addon_scope_susat_night = "pn23",
+		wpn_addon_scope_susat_custom = "aimpoint",
+		galil_scope = "okp",
+		sil_57 = "sil_556"
+	}
+}
+
 -- Only ordinary single-player inventory sections belong here. Story weapons,
 -- quest artefacts, multiplayer items and technical scene objects are excluded
 -- deliberately: a random stash must never advance or break a scripted task.
@@ -341,7 +358,8 @@ local loot_pools = {
 				"lz_nm_strange_shot", "lz_nm_strange_shot",
 				"lz_nm_strange_drink",
 				"mutant_part_pseudogigant_hand", "mutant_part_burer_hand",
-				"mutant_part_chimera_claw", "mutant_part_krovosos_jaw"
+				"mutant_part_chimera_claw", "mutant_part_krovosos_jaw",
+				"af_anomalous_boots"
 			}
 		},
 		{
@@ -552,12 +570,17 @@ local loot_pools = {
 	},
 
 	attachments = {
-		"wpn_addon_scope", "wpn_addon_scope_x2.7", "wpn_addon_scope_detector",
-		"wpn_addon_scope_night", "wpn_addon_scope_susat",
-		"wpn_addon_scope_susat_x1.6", "wpn_addon_scope_susat_custom",
-		"wpn_addon_scope_susat_dusk", "wpn_addon_scope_susat_night",
-		"wpn_addon_silencer", "wpn_addon_grenade_launcher",
-		"wpn_addon_grenade_launcher_m203"
+		-- Audited against the loaded STCoP weapon sections, including upgrades.
+		-- Each item attaches to at least one available weapon; no runtime scan.
+		"wpn_addon_scope", "wpn_addon_scope_susat", "1p78", "1pn93-1", "1pn93-4",
+		"ac10632", "acog", "aimpoint", "ekp", "eot", "kobra", "okp", "pn23",
+		"pso1m2", "pso1m21", "pu",
+		"wpn_addon_silencer", "sil_45", "sil_556", "sil_6p9", "sil_762_nato",
+		"sil_939", "sil_aps", "sil_hexagon", "sil_pbs1", "sil_pbs4", "sil_sniper",
+		"sil_tgp-a", "sil_tgp-v",
+		"wpn_addon_grenade_launcher", "wpn_addon_grenade_launcher_ag36",
+		"wpn_addon_grenade_launcher_fn40gl", "wpn_addon_grenade_launcher_gp34",
+		"wpn_addon_grenade_launcher_m203", "wpn_addon_grenade_launcher_m320"
 	},
 	grenades = { "grenade_rgd5", "grenade_f1", "grenade_gd-05" },
 
@@ -1236,6 +1259,32 @@ function impl.migrate_legacy_pstor(state)
 	return found
 end
 
+-- This runs only when the external state is first loaded into the module cache.
+-- Its own persisted marker also covers old saves opened after a newer save.
+function impl.migrate_attachment_manifests(saved_state)
+	if (tonumber(saved_state.attachment_manifest_version) or 0) >=
+		attachment_migration.version then return 0 end
+	local changed = 0
+	for _, saved in pairs(saved_state.slots or {}) do
+		local loot = type(saved) == "table" and saved.loot_manifest or nil
+		if type(loot) == "table" then
+			for _, entry in pairs(loot) do
+				local replacement = type(entry) == "table" and
+					attachment_migration.replacements[entry.section] or nil
+				if replacement then
+					entry.section = replacement
+					changed = changed + 1
+				end
+			end
+		end
+	end
+	saved_state.attachment_manifest_version = attachment_migration.version
+	if changed > 0 then
+		printf("[PF STASH] migrated %d saved attachment entries", changed)
+	end
+	return changed
+end
+
 function impl.get_persistent_state()
 	if persistent_state then return persistent_state end
 	local root = alife_storage_manager.get_state()
@@ -1439,6 +1488,7 @@ function impl.get_persistent_state()
 		state.loot_seed = impl.deterministic_pda_roll(
 			first, last, state.red_unique_detector_stage or 0, "pf_stash_world_seed_v1")
 	end
+	impl.migrate_attachment_manifests(state)
 	persistent_state = state
 	impl.clear_legacy_pstor()
 	return state
@@ -1697,8 +1747,16 @@ end
 
 function impl.find_existing_objects()
 	if searched_existing then return end
+	local saved_state = impl.get_persistent_state()
+	local attachment_boxes = (tonumber(saved_state.attachment_boxes_version) or 0) <
+		attachment_migration.version and {} or nil
 	for _, object in alife():objects() do
-		if stash_sections[object:section_name()] then
+		local section = object:section_name()
+		if attachment_boxes and (stash_sections[section] or
+			section == "pf_story_legendary_stash") then
+			table.insert(attachment_boxes, object.id)
+		end
+		if stash_sections[section] then
 			for _, slot in ipairs(slots) do
 				local object_point = slot.point and impl.stash_object_point(slot.point) or nil
 				if not slot.id and slot.point and
@@ -1733,6 +1791,20 @@ function impl.find_existing_objects()
 	for _, slot in ipairs(slots) do
 		local box = slot.id and alife():object(slot.id, true) or nil
 		if box then impl.reconcile_legacy_box_state(slot, box) end
+	end
+	if attachment_boxes then
+		local complete, changed = true, 0
+		for _, box_id in ipairs(attachment_boxes) do
+			local box = alife():object(box_id, true)
+			if box then
+				local ok, count = impl.migrate_box_attachments(box)
+				complete = complete and ok
+				changed = changed + count
+			end
+		end
+		if complete then saved_state.attachment_boxes_version = attachment_migration.version end
+		printf("[PF STASH] attachment migration: %d physical items, complete=%s",
+			changed, tostring(complete))
 	end
 	searched_existing = true
 end
@@ -2368,6 +2440,30 @@ function impl.add_prepared_red_one_time_bundle(loot, prepared)
 	return true
 end
 
+function impl.add_hunter_boots_reward(loot, tier)
+	if tier ~= "red" then return nil end
+	local saved = impl.get_persistent_state()
+	if saved.hunter_boots_awarded then return nil end
+	local stage = math.max(0, math.floor(tonumber(saved.red_one_time_bundle_stage_v2) or 0))
+	if stage == 0 then return nil end
+	local order = impl.red_one_time_bundle_order(saved)
+	local hunter_assigned = false
+	-- Bundle 2 is the hunter preset; its saved index and queue position stay intact.
+	for index = 1, math.min(stage, #order) do
+		if order[index] == 2 then hunter_assigned = true break end
+	end
+	if not hunter_assigned then return nil end
+	-- New hunter manifests already contain the boots. Older assigned presets
+	-- receive only the missing boots in the next newly built red manifest.
+	for _, entry in ipairs(loot) do
+		if entry.section == "af_anomalous_boots" then return saved end
+	end
+	if not system_ini():section_exist("af_anomalous_boots") then return nil end
+	impl.add_loot(loot, "af_anomalous_boots")
+	-- Commit the one-time claim only together with the completed slot manifest.
+	return saved
+end
+
 function impl.add_weapon(loot, pool, condition_min, condition_max, ammo_min, ammo_max)
 	local weapon = impl.add_loot(loot, impl.random_from(pool), condition_min, condition_max)
 	local ammo = weapon_ammo[weapon]
@@ -2703,13 +2799,15 @@ function impl.build_slot_loot(slot)
 			tostring(slot.index or "?"), tostring(slot.tier or "?")))
 	end
 	impl.add_lore_coordinate_note(loot, slot)
+	local hunter_boots_state = impl.add_hunter_boots_reward(loot, slot.tier)
 	slot.state.loot_manifest = loot
+	if hunter_boots_state then hunter_boots_state.hunter_boots_awarded = true end
 	if jump_isolator_state then jump_isolator_state.jump_isolator_awarded = true end
 	return loot
 end
 
 -- Only newly filled stashes opt in. Existing containers keep the original
--- wear rules; no old loot is classified or migrated on load/open.
+-- wear rules; the attachment migration does not opt old boxes into protection.
 function impl.enable_stash_item_protection(box)
 	if not box then return end
 	local state = alife_storage_manager.get_se_obj_state(box, true)
@@ -2754,6 +2852,41 @@ function impl.spawn_item(entry, parent_id, created_ids)
 	if created_ids then table.insert(created_ids, item.id) end
 	impl.clear_actor_item_origin(item)
 	return true
+end
+
+-- Called only by the existing one-time ALife rebind, never from update/open.
+-- Snapshot child IDs before mutation. Keep the old item if its replacement
+-- cannot spawn; a failed migration may retry on the next load, not in a timer.
+function impl.migrate_box_attachments(box)
+	local pending = {}
+	for child_id in alife():get_children(box) do
+		local item = alife():object(child_id, true)
+		local replacement = item and attachment_migration.replacements[item:section_name()]
+		if replacement then
+			local item_state = alife_storage_manager.get_se_obj_state(item, false)
+			if not item_state or item_state.pf_stash_actor_item ~= item:name() then
+				table.insert(pending, { id = child_id, section = replacement })
+			end
+		end
+	end
+	local complete, changed = true, 0
+	for _, entry in ipairs(pending) do
+		local item = alife():object(entry.id, true)
+		if item then
+			local created_ids = {}
+			local ok, spawned = pcall(impl.spawn_item, entry, box.id, created_ids)
+			if ok and spawned then
+				alife():release(item, true)
+				changed = changed + 1
+			else
+				impl.rollback_spawned_items(created_ids)
+				complete = false
+				printf("[PF STASH] attachment migration kept item %d in box %d: %s",
+					entry.id, box.id, tostring(ok and "spawn failed" or spawned))
+			end
+		end
+	end
+	return complete, changed
 end
 
 function impl.stash_contains_section(box, section)

@@ -673,6 +673,20 @@ function impl.travel_cost(distance)
 	return hours, damage
 end
 
+function impl.belt_adjusted_travel_damage(damage)
+	local actor = db.actor
+	if not actor then return damage end
+	-- Check only equipped belt slots. Rucksack copies have no effect, and
+	-- multiple pairs cannot stack the 70% reduction.
+	for index = 0, actor:belt_count() - 1 do
+		local item = actor:item_on_belt(index)
+		if item and item:section() == "af_anomalous_boots" then
+			return damage * 0.30
+		end
+	end
+	return damage
+end
+
 function format_beacon_travel_time(hours)
 	hours = math.max(0, tonumber(hours) or 0)
 	if hours < 1 then
@@ -703,7 +717,7 @@ function get_beacons()
 				name = stored_name,
 				distance = math.floor(distance + 0.5),
 				hours = hours,
-				damage = math.floor(damage * 100 + 0.5),
+				damage = math.floor(impl.belt_adjusted_travel_damage(damage) * 10000 + 0.5) / 100,
 				same_level = actor_level == beacon_level
 			})
 		end
@@ -717,7 +731,7 @@ function impl.beacon_hint(object)
 	return string.format(
 		game.translate_string("lz_nm_beacon_map_hint"),
 		beacon_name_for_utf8(get_beacon_name(object.id)), math.floor(distance + 0.5),
-		format_beacon_travel_time(hours), math.floor(damage * 100 + 0.5)
+		format_beacon_travel_time(hours), math.floor(impl.belt_adjusted_travel_damage(damage) * 10000 + 0.5) / 100
 	)
 end
 
@@ -892,6 +906,9 @@ function impl.is_travel_equipment(item)
 end
 
 function impl.damage_travel_equipment(estimated_damage)
+	-- Pending travel stores the base wear; evaluate the belt again when the
+	-- transition completes, so the bonus is applied exactly once.
+	estimated_damage = impl.belt_adjusted_travel_damage(estimated_damage)
 	local damaged = 0
 	local function apply(_, item)
 		if not impl.is_travel_equipment(item) then return end
