@@ -21,6 +21,7 @@ function pripyat_city_note_section(index) return lz_nm_world.pripyat_city_note_s
 function pripyat_city_note_index(section) return lz_nm_world.pripyat_city_note_index(section) end
 function pripyat_city_note_found(index) return lz_nm_world.pripyat_city_note_found(index) end
 function new_game_start()
+	pf_proc_group_markers.reset()
 	pf_guardian_city_notes.new_game_start()
 	local unlocked = lz_nm_world.new_game_start()
 	if lz_nlc_art_spawn and lz_nlc_art_spawn.new_game_start then
@@ -323,8 +324,10 @@ function beacon_on_game_load()
 	end
 	if lz_nlc_art_spawn and lz_nlc_art_spawn.on_game_load then
 		lz_nlc_art_spawn.on_game_load()
-		pf_proc_group_markers.set_scanner_indications(pf_anomaly_scanner.on_game_load(
-			lz_nlc_art_spawn.field_presence_snapshot()), true)
+		local colors, scanner_groups = pf_anomaly_scanner.on_game_load(
+			lz_nlc_art_spawn.field_presence_snapshot())
+		pf_proc_group_markers.set_scanner_indications(colors, true)
+		pf_proc_group_markers.restore_discovered_groups(scanner_groups)
 	end
 	return result
 end

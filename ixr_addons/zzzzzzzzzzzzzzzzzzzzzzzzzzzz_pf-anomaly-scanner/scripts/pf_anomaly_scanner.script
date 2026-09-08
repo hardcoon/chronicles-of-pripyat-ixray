@@ -54,16 +54,18 @@ function on_game_load(natural)
 	state.blocked = false
 	local data = impl.storage()
 	local colors = {}
+	local known_groups = {}
 	for group_id, entry in pairs(data.placements) do
 		if impl.valid_object(entry) then
 			state.by_id[entry.id] = group_id
 			colors[group_id] = impl.indication(group_id, entry)
+			known_groups[group_id] = true
 		else
 			data.placements[group_id] = nil
 			colors[group_id] = "normal"
 		end
 	end
-	return colors
+	return colors, known_groups
 end
 
 function new_game_start()

@@ -6,6 +6,7 @@
 local SPOT_TYPE = "primary_object"
 local DISCOVERY_PSTOR = "pf_proc_discovered_groups_v1"
 local CHECK_INTERVAL_MS = 200
+local DISCOVERY_SYNC_MS = 1000
 local RETRY_DELAY_MS = 1000
 local EXPECTED_GROUPS = 41
 local MAX_GROUP_RADIUS_SQR = 50 * 50
@@ -60,6 +61,7 @@ local next_action = 0
 local discovered = {}
 local entries_by_id = {}
 local previous_actor_position = nil
+local recovery = { last_raw = nil, next_read = 0, pending = {} }
 local scanner_indications = {}
 
 local function gate_open()
@@ -71,13 +73,19 @@ local function copy_position(position)
 	return vector():set(position.x, position.y, position.z)
 end
 
-local function load_discovered()
-	discovered = {}
-	local raw = xr_logic.pstor_retrieve(db.actor, DISCOVERY_PSTOR, "") or ""
-	for value in string.gmatch(tostring(raw), "%d+") do
+local function read_discovered(raw)
+	-- Missing/corrupt state is not evidence that no fields were discovered.
+	-- An explicitly saved empty string remains authoritative for fresh saves.
+	if type(raw) ~= "string" then return nil end
+	local result = {}
+	if raw == "" then return result end
+	for value in string.gmatch(raw .. ",", "(.-),") do
+		if not string.match(value, "^%d+$") then return nil end
 		local group_id = tonumber(value)
-		if entries_by_id[group_id] then discovered[group_id] = true end
+		if not entries_by_id[group_id] then return nil end
+		result[group_id] = true
 	end
+	return result
 end
 
 local function save_discovered()
@@ -85,7 +93,11 @@ local function save_discovered()
 	for group_id = 1, EXPECTED_GROUPS do
 		if discovered[group_id] then encoded[#encoded + 1] = tostring(group_id) end
 	end
-	xr_logic.pstor_store(db.actor, DISCOVERY_PSTOR, table.concat(encoded, ","))
+	local raw = table.concat(encoded, ",")
+	if raw ~= recovery.last_raw then
+		xr_logic.pstor_store(db.actor, DISCOVERY_PSTOR, raw)
+		recovery.last_raw = raw
+	end
 end
 
 local function apply_scanner_tint(entry)
@@ -121,6 +133,40 @@ local function set_marker(entry, visible)
 	if visible then apply_scanner_tint(entry) end
 end
 
+local function synchronize_discovered(initial)
+	local raw = xr_logic.pstor_retrieve(db.actor, DISCOVERY_PSTOR, false)
+	if not initial and raw == recovery.last_raw and not next(recovery.pending) then return end
+	local loaded = read_discovered(raw)
+	recovery.last_raw = raw
+	for _, entry in ipairs(entries) do
+		local group_id = entry.group_id
+		local previous = discovered[group_id]
+		local known = previous or (loaded and loaded[group_id]) or recovery.pending[group_id]
+		-- Recover only exact catalogue anchors, never arbitrary/user map spots.
+		if initial and not loaded and level.map_has_object_spot(entry.id, SPOT_TYPE) ~= 0 then
+			known = true
+		end
+		if known then discovered[group_id] = true end
+		if initial or (known and not previous) then set_marker(entry, known == true) end
+	end
+	recovery.pending = {}
+	-- Do not create an empty key while waiting for late actor save data.
+	if loaded or next(discovered) then save_discovered() end
+end
+
+-- The facade supplies groups proven by validated, still-existing scanners.
+-- Queue them when the actor load callback precedes the zone registry.
+function restore_discovered_groups(groups)
+	for value, known in pairs(groups or {}) do
+		local group_id = tonumber(value)
+		if known == true and group_id and group_id == math.floor(group_id)
+			and group_id >= 1 and group_id <= EXPECTED_GROUPS then
+			recovery.pending[group_id] = true
+		end
+	end
+	if ready and gate_open() then synchronize_discovered(false) end
+end
+
 local function build_registry()
 	local simulator = alife()
 	if not simulator then return false end
@@ -140,10 +186,7 @@ local function build_registry()
 	if count ~= EXPECTED_GROUPS then return false end
 	entries_by_id = {}
 	for _, entry in ipairs(entries) do entries_by_id[entry.group_id] = entry end
-	load_discovered()
-	-- Old test saves serialized all spots. Remove each undiscovered legacy spot
-	-- once so they migrate to the hidden-by-default rule.
-	for _, entry in ipairs(entries) do set_marker(entry, discovered[entry.group_id]) end
+	synchronize_discovered(true)
 	previous_actor_position = copy_position(db.actor:position())
 	ready = true
 	return true
@@ -186,6 +229,8 @@ function reveal_group(group_id)
 	group_id = math.floor(tonumber(group_id) or 0)
 	local entry = entries_by_id[group_id]
 	if not ready or not entry or not gate_open() then return false end
+	-- A discovery between polling ticks must not overwrite late loaded groups.
+	synchronize_discovered(false)
 	if not discovered[group_id] then
 		discovered[group_id] = true
 		save_discovered()
@@ -241,6 +286,10 @@ function update(now)
 		end
 	end
 	next_action = now + CHECK_INTERVAL_MS
+	if now >= recovery.next_read then
+		synchronize_discovered(false)
+		recovery.next_read = now + DISCOVERY_SYNC_MS
+	end
 	local actor_position = copy_position(db.actor:position())
 	local from = previous_actor_position or actor_position
 	for _, entry in ipairs(entries) do
@@ -264,5 +313,6 @@ function reset()
 	discovered = {}
 	entries_by_id = {}
 	previous_actor_position = nil
+	recovery = { last_raw = nil, next_read = 0, pending = {} }
 	scanner_indications = {}
 end
