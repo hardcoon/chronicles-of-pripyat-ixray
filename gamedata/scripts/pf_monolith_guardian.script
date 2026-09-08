@@ -13,25 +13,21 @@ local NOTE_COUNT = 36
 local GUARDIAN_COMPASS_SECTION = "pf_guardian_compass"
 local RED_STASH_TIER = "red"
 local RED_STASH_NEWS = "pf_monolith_guardian_red_stash_revealed"
-local EXCHANGE_PRECONDITION_CACHE_MS = 250
-local COOKED_EXCHANGE_REQUIREMENTS = {
-	[2] = 5, -- Modificats.
-	[3] = 3, -- Mesomodificats.
-	[4] = 2  -- Hypermodificats.
-}
+local T3_PRECONDITION_CACHE_MS = 250
+local sys_ini = system_ini()
 
 local REWARD_STAGES = {
 	[12] = {
 		previous = nil,
 		flag = "pf_monolith_guardian_reward_12_taken",
 		notes = 12,
-		rewards = {"af_dik_1"}
+		rewards = {"af_vyvert"}
 	},
 	[18] = {
 		previous = "pf_monolith_guardian_reward_12_taken",
 		flag = "pf_monolith_guardian_reward_18_taken",
 		notes = 6,
-		rewards = {"af_babka_2"}
+		rewards = {"af_gold_fish"}
 	},
 	[24] = {
 		previous = "pf_monolith_guardian_reward_18_taken",
@@ -51,10 +47,9 @@ local next_check = 0
 local guardian_id = nil
 local guardian_placed_id = nil
 local guardian_spawn_failure_reported = false
-local exchange_cache_time = -1
-local exchange_cache_tier_counts = {}
-local exchange_cache_section_counts = {}
-local exchange_cache_red_available = false
+local t3_cache_time = -1
+local t3_cache_counts = {}
+local t3_cache_red_available = false
 
 local function find_server_object(section)
 	for _, object in alife():objects() do
@@ -280,19 +275,23 @@ function exchange(first_speaker, second_speaker, milestone)
 	return true
 end
 
-local function is_exchangeable_cooked(item)
-	if item == nil or db.actor == nil or db.actor:is_on_belt(item) then return false end
-	local tier = lz_nlc_anomaly_registry.artifact_tier(item:section())
-	return tier ~= nil and tier >= 2 and tier <= 5
+local function is_exchangeable_t3_artifact(item)
+	if not item or db.actor:is_on_belt(item) then return false end
+	local section = item:section()
+	if not sys_ini:line_exist(section, "af_rank") or
+		sys_ini:r_u32(section, "af_rank") ~= 3 then return false end
+	if sys_ini:line_exist(section, "quest_item") and
+		sys_ini:r_bool(section, "quest_item") then return false end
+	if sys_ini:line_exist(section, "can_trade") and
+		not sys_ini:r_bool(section, "can_trade") then return false end
+	return true
 end
 
-local function rucksack_cooked_artifacts(tier, section)
+local function rucksack_t3_artifacts(section)
 	local artifacts = {}
 	if not db.actor then return artifacts end
 	db.actor:iterate_inventory(function(_, item)
-		if is_exchangeable_cooked(item) and
-			lz_nlc_anomaly_registry.artifact_tier(item:section()) == tier and
-			(section == nil or item:section() == section) then
+		if is_exchangeable_t3_artifact(item) and item:section() == section then
 			table.insert(artifacts, item)
 		end
 	end, db.actor)
@@ -300,104 +299,119 @@ local function rucksack_cooked_artifacts(tier, section)
 	return artifacts
 end
 
-local function invalidate_exchange_cache()
-	exchange_cache_time = -1
-	exchange_cache_tier_counts = {}
-	exchange_cache_section_counts = {}
-	exchange_cache_red_available = false
+local function invalidate_t3_cache()
+	t3_cache_time = -1
+	t3_cache_counts = {}
+	t3_cache_red_available = false
 end
 
-local function cached_exchange_inventory()
+local function cached_t3_inventory()
 	local now = time_global()
-	if exchange_cache_time >= 0 and
-		now - exchange_cache_time <= EXCHANGE_PRECONDITION_CACHE_MS then
-		return exchange_cache_tier_counts, exchange_cache_section_counts,
-			exchange_cache_red_available
+	if t3_cache_time >= 0 and now - t3_cache_time <= T3_PRECONDITION_CACHE_MS then
+		return t3_cache_counts, t3_cache_red_available
 	end
 
-	local tier_counts = {}
-	local section_counts = {}
+	local counts = {}
 	if db.actor then
 		db.actor:iterate_inventory(function(_, item)
-			if is_exchangeable_cooked(item) then
+			if is_exchangeable_t3_artifact(item) then
 				local section = item:section()
-				local tier = lz_nlc_anomaly_registry.artifact_tier(section)
-				tier_counts[tier] = (tier_counts[tier] or 0) + 1
-				section_counts[section] = (section_counts[section] or 0) + 1
+				counts[section] = (counts[section] or 0) + 1
 			end
 		end, db.actor)
 	end
-	exchange_cache_tier_counts = tier_counts
-	exchange_cache_section_counts = section_counts
-	exchange_cache_red_available = pf_dynamic_stashes and
+	t3_cache_counts = counts
+	t3_cache_red_available = pf_dynamic_stashes and
 		pf_dynamic_stashes.can_grant_hint and
 		pf_dynamic_stashes.can_grant_hint(RED_STASH_TIER) or false
-	exchange_cache_time = now
-	return exchange_cache_tier_counts, exchange_cache_section_counts,
-		exchange_cache_red_available
+	t3_cache_time = now
+	return t3_cache_counts, t3_cache_red_available
 end
 
-function can_exchange_cooked_tier(tier)
-	local required = COOKED_EXCHANGE_REQUIREMENTS[tier]
-	if not required then return false end
-	local tier_counts, _, red_available = cached_exchange_inventory()
-	return red_available and (tier_counts[tier] or 0) >= required
+local function counts_have_pair(counts, section_a, section_b)
+	if section_a == section_b then return (counts[section_a] or 0) >= 2 end
+	return (counts[section_a] or 0) >= 1 and (counts[section_b] or 0) >= 1
 end
 
-function can_exchange_absolute(section)
-	if not lz_nlc_anomaly_registry.is_absolute(section) then return false end
-	local _, section_counts, red_available = cached_exchange_inventory()
-	return red_available and (section_counts[section] or 0) >= 1
+local function resolve_t3_pair(section_a, section_b)
+	local artifacts_a = rucksack_t3_artifacts(section_a)
+	if section_a == section_b then return artifacts_a[1], artifacts_a[2] end
+	local artifacts_b = rucksack_t3_artifacts(section_b)
+	return artifacts_a[1], artifacts_b[1]
 end
 
-local function exchange_artifacts_for_hint(first_speaker, second_speaker, tier, amount, section)
-	local artifacts = rucksack_cooked_artifacts(tier, section)
-	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
-	if #artifacts < amount or not npc or not pf_dynamic_stashes or
+function can_exchange_t3_single(section)
+	local counts, red_available = cached_t3_inventory()
+	return red_available and (counts[section] or 0) >= 1
+end
+
+function exchange_t3_single(first_speaker, second_speaker, section)
+	local artifact = rucksack_t3_artifacts(section)[1]
+	if not artifact or not pf_dynamic_stashes or
 		not pf_dynamic_stashes.can_grant_hint or
 		not pf_dynamic_stashes.can_grant_hint(RED_STASH_TIER) then
 		printf(
-			"! [PF GUARDIAN] rejected cooked exchange tier=%s amount=%s section=%s",
-			tostring(tier), tostring(amount), tostring(section)
+			"! [PF GUARDIAN] rejected single T3 exchange item=%s",
+			tostring(section)
 		)
 		return false
 	end
 
-	-- Reveal first: if no hint can be granted, every rucksack item remains safe.
 	if not pf_dynamic_stashes.grant_hint(RED_STASH_TIER, RED_STASH_NEWS) then
-		printf(
-			"! [PF GUARDIAN] failed to reveal a red stash tier=%s amount=%s section=%s",
-			tostring(tier), tostring(amount), tostring(section)
-		)
+		printf("! [PF GUARDIAN] failed to reveal a red stash")
 		return false
 	end
 
-	for index = 1, amount do
-		db.actor:transfer_item(artifacts[index], npc)
-	end
-	invalidate_exchange_cache()
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+	db.actor:transfer_item(artifact, npc)
+	invalidate_t3_cache()
 	printf(
-		"[PF GUARDIAN] cooked exchange complete artifact_tier=%d amount=%d section=%s stash_tier=%s",
-		tier, amount, tostring(section), RED_STASH_TIER
+		"[PF GUARDIAN] single T3 artifact exchange complete item=%s tier=%s",
+		section, RED_STASH_TIER
 	)
 	return true
 end
 
-function exchange_cooked_tier(first_speaker, second_speaker, tier)
-	local required = COOKED_EXCHANGE_REQUIREMENTS[tier]
-	if not required then
-		printf("! [PF GUARDIAN] rejected unsupported cooked tier=%s", tostring(tier))
-		return false
-	end
-	return exchange_artifacts_for_hint(first_speaker, second_speaker, tier, required, nil)
+function can_exchange_t3_pair(section_a, section_b)
+	local counts, red_available = cached_t3_inventory()
+	return red_available and counts_have_pair(counts, section_a, section_b)
 end
 
-function exchange_absolute(first_speaker, second_speaker, section)
-	if not lz_nlc_anomaly_registry.is_absolute(section) then
-		printf("! [PF GUARDIAN] rejected non-absolute exchange item=%s", tostring(section))
+function can_exchange_t3_group(section_a, partner_sections)
+	local counts, red_available = cached_t3_inventory()
+	if not red_available then return false end
+	for _, section_b in ipairs(partner_sections) do
+		if counts_have_pair(counts, section_a, section_b) then return true end
+	end
+	return false
+end
+
+function exchange_t3_pair(first_speaker, second_speaker, section_a, section_b)
+	local artifact_a, artifact_b = resolve_t3_pair(section_a, section_b)
+	if not artifact_a or not artifact_b or not pf_dynamic_stashes or
+		not pf_dynamic_stashes.can_grant_hint or
+		not pf_dynamic_stashes.can_grant_hint(RED_STASH_TIER) then
+		printf(
+			"! [PF GUARDIAN] rejected T3 pair exchange items=%s,%s",
+			tostring(section_a), tostring(section_b)
+		)
 		return false
 	end
-	return exchange_artifacts_for_hint(first_speaker, second_speaker, 5, 1, section)
+
+	if not pf_dynamic_stashes.grant_hint(RED_STASH_TIER, RED_STASH_NEWS) then
+		printf("! [PF GUARDIAN] failed to reveal a red stash")
+		return false
+	end
+
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+	db.actor:transfer_item(artifact_a, npc)
+	db.actor:transfer_item(artifact_b, npc)
+	invalidate_t3_cache()
+	printf(
+		"[PF GUARDIAN] T3 artifact exchange complete items=%s,%s tier=%s",
+		section_a, section_b, RED_STASH_TIER
+	)
+	return true
 end
 
 -- Compass bonuses are owned by pf_guardian_compass_buffs callbacks.
@@ -431,7 +445,7 @@ function update()
 end
 
 function reset()
-	invalidate_exchange_cache()
+	invalidate_t3_cache()
 	next_check = 0
 	guardian_id = nil
 	guardian_placed_id = nil

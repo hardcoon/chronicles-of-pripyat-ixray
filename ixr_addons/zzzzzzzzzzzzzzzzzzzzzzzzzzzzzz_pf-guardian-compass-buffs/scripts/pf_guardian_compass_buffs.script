@@ -1,0 +1,114 @@
+-- Keeper's Compass: flat +8 recovery and +5% sprint while worn on the belt.
+-- Recovery uses the same game-time units as artefacts and consumable boosters.
+local settings = {section = "pf_guardian_compass", recovery = 0.008, sprint = 0.05}
+local state = {items = {}, serial = 0, active = false, registered = false}
+local impl = {}
+
+function impl.restore_item(id)
+    local item = level.object_by_id(id)
+    if item and item:section() == settings.section then
+        item:set_artefact_power(settings.recovery)
+    end
+end
+
+function impl.restore_sprint()
+    local actor = db.actor
+    if actor and actor == state.actor and state.sprint_target then
+        local current = actor:get_actor_sprint_koef()
+        if math.abs(current - state.sprint_target) < 0.00001 then
+            actor:set_actor_sprint_koef(state.sprint_base)
+        end
+    end
+    state.sprint_base = nil
+    state.sprint_target = nil
+end
+
+function reset()
+    impl.restore_sprint()
+    for id in pairs(state.items) do impl.restore_item(id) end
+    state.items = {}
+    state.actor = nil
+    state.active = false
+    state.game_time = nil
+    state.real_time = nil
+end
+
+function impl.update_sprint(actor, equipped)
+    if not equipped then
+        impl.restore_sprint()
+        return
+    end
+    local current = actor:get_actor_sprint_koef()
+    if not state.sprint_target or math.abs(current - state.sprint_target) >= 0.00001 then
+        -- Reapply after an external reset, without multiplying our own bonus.
+        state.sprint_base = current
+        state.sprint_target = current * (1 + settings.sprint)
+        actor:set_actor_sprint_koef(state.sprint_target)
+    end
+end
+
+function update()
+    local actor = db.actor
+    if not actor or not actor:alive() then
+        if state.actor then reset() end
+        return
+    end
+    if actor ~= state.actor then
+        reset()
+        state.actor = actor
+    end
+
+    -- The belt is bounded by equipment slots. No cached inventory search or
+    -- dependency on the Keeper's quest update is needed to activate the item.
+    state.serial = state.serial + 1
+    local count = 0
+    for index = 0, actor:belt_count() - 1 do
+        local item = actor:item_on_belt(index)
+        if item and item:section() == settings.section then
+            count = count + 1
+            state.items[item:id()] = state.serial
+            -- CActor's native artefact loop drops its current delta on the
+            -- application tick. Apply this item's full elapsed time here.
+            -- Zero only the instance effect; the LTX +8 remains the UI value.
+            if item:get_artefact_power() ~= 0 then item:set_artefact_power(0) end
+        end
+    end
+    for id, serial in pairs(state.items) do
+        if serial ~= state.serial then
+            impl.restore_item(id)
+            state.items[id] = nil
+        end
+    end
+
+    local equipped = count > 0
+    impl.update_sprint(actor, equipped)
+    local now = time_global()
+    local game_now = game.get_game_time()
+    if equipped and state.active and state.game_time and state.real_time then
+        local real_elapsed = now - state.real_time
+        local elapsed = game_now:diffSec(state.game_time)
+        -- Loading, sleep and scripted clock jumps are not recovery intervals.
+        if real_elapsed > 0 and real_elapsed <= 1000 and elapsed > 0 and elapsed <= 30 and not is_god_mode() then
+            if actor.power < 1 then
+                actor.power = settings.recovery * elapsed * count
+            end
+        end
+    end
+    state.active = equipped
+    state.game_time = game_now
+    state.real_time = now
+end
+
+function is_active()
+    return state.active and state.actor == db.actor
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", reset)
+    RegisterScriptCallback("net_destroy", reset)
+    state.registered = true
+end
+
+on_game_start()
