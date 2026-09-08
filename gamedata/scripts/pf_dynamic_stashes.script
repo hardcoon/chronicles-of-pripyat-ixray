@@ -124,7 +124,7 @@ local tier_data = {
 	orange = { marker = "pf_stash_orange", hint_required = true },
 	red = { marker = "pf_stash_red", hint_required = true }
 }
-local puzzle_reward_tiers = { green = true, cyan = true, purple = true }
+local puzzle_reward_tiers = { green = true, cyan = true, purple = true, orange = true, red = true }
 
 local function valid_puzzle_reward_id(reward_id)
 	reward_id = tostring(reward_id or ""):lower()
@@ -150,6 +150,7 @@ local red_detector_sequence = {
 -- progression. Homemade is assigned by the first purple discovery; only the
 -- next missing model is rolled until Magnet closes the sequence.
 local detector_progression_drop_chances = {
+	failure_limit = 15,
 	[2] = { purple = 5, orange = 20, red = 40 },
 	[3] = { purple = 3, orange = 10, red = 35 }
 }
@@ -753,6 +754,19 @@ local ordinary_detector_drop_tables = {
 		{ section = "detector_elite", chance = 15 },
 		{ section = "detector_scientific", chance = 10 }
 	}
+}
+
+-- First-find protection uses lifetime searches in parallel, not generated
+-- manifests. Unsearched caches must not spend another cache's guarantee.
+local ordinary_detector_search_guarantees = {
+	detector_simple = { after = 5, count_tiers = { "purple", "orange", "red" },
+		drop_tiers = { purple = true, orange = true, red = true } },
+	detector_advanced = { after = 10, count_tiers = { "purple", "orange", "red" },
+		drop_tiers = { purple = true, orange = true, red = true } },
+	detector_elite = { after = 20, count_tiers = { "purple", "orange", "red" },
+		drop_tiers = { purple = true, orange = true, red = true } },
+	detector_scientific = { after = 6, count_tiers = { "orange", "red" },
+		drop_tiers = { orange = true, red = true } }
 }
 
 -- A field scanner is a consumable infrastructure item: the actor can deploy
@@ -2158,6 +2172,7 @@ function impl.add_stash_detector_rolls(loot, tier)
 	local saved = impl.get_persistent_state()
 	local detector_stage = impl.sync_red_detector_stage(saved)
 	if detector_stage >= #red_detector_sequence then
+		saved.detector_progression_pity = nil
 		return impl.add_independent_detector_rolls(loot, post_magnet_detector_drop_tables[tier])
 	end
 	if detector_stage < 1 then return 0 end
@@ -2165,10 +2180,25 @@ function impl.add_stash_detector_rolls(loot, tier)
 	local next_stage = detector_stage + 1
 	local chances = detector_progression_drop_chances[next_stage]
 	local chance = chances and chances[tier]
-	if not chance or not impl.roll(chance) then return 0 end
+	if not chance then return 0 end
+
+	local limit = detector_progression_drop_chances.failure_limit
+	local pity = saved.detector_progression_pity
+	local misses = 0
+	if type(pity) == "table" and pity.stage == next_stage then
+		misses = math.max(0, math.min(limit, math.floor(tonumber(pity.misses) or 0)))
+	end
+	-- Consume the usual RNG draw even when the sixteenth attempt is guaranteed.
+	local rolled = impl.roll(chance)
+	if not rolled and misses < limit then
+		-- Replace the record so a failed manifest can restore its previous value.
+		saved.detector_progression_pity = { stage = next_stage, misses = misses + 1 }
+		return 0
+	end
 
 	impl.add_loot(loot, red_detector_sequence[next_stage])
 	saved.red_unique_detector_stage = next_stage
+	saved.detector_progression_pity = nil
 	return 1
 end
 
@@ -2462,11 +2492,12 @@ function impl.build_orange_loot()
 	impl.add_random_loot(loot, loot_pools.food_all, 1, 3)
 	impl.add_legendary_combat_core(loot)
 
-	if impl.roll(14) then
+	-- A legendary cache should almost always contain one protective item. Keep
+	-- the suit/helmet split at 75/25, but decouple exoskeleton rarity from the
+	-- much larger branch: 95% * 75% * (2/95) = exactly 1.5% per cache.
+	if impl.roll(95) then
 		if impl.roll(75) then
-			-- The exoskeleton family keeps its former 1/7 share of the outfit
-			-- branch: 14% * 75% * 1/7 = exactly 1.5% absolute per cache.
-			local pool = impl.loot_random(7) == 1 and loot_pools.outfits_orange_exo or
+			local pool = impl.loot_random(95) <= 2 and loot_pools.outfits_orange_exo or
 				loot_pools.outfits_orange
 			impl.add_random_loot(loot, pool, 1, 1, 50, 80)
 		else
@@ -2484,10 +2515,11 @@ function impl.build_orange_loot()
 		if impl.roll(35) then impl.add_random_loot(loot, loot_pools.repair_kits, 1, 1) end
 	end
 	if impl.roll(8) then impl.add_random_loot(loot, loot_pools.disassembly_kits, 1, 1) end
-	if impl.roll(55) then
-		impl.add_random_loot(loot, loot_pools.field_upgrades_orange, 1, 1)
-		if impl.roll(35) then impl.add_random_loot(loot, loot_pools.field_upgrades_orange, 1, 1) end
-	end
+	-- Legendary caches carry exactly four weapon upgrades: one weighted strong
+	-- upgrade and three distinct ordinary modules. The red tier keeps its
+	-- separate guaranteed pair of top kits.
+	impl.add_random_loot(loot, loot_pools.field_upgrades_orange, 1, 1)
+	impl.add_distinct_random_loot(loot, loot_pools.field_upgrades_basic, 3)
 	if impl.roll(12) then impl.add_random_loot(loot, loot_pools.salvage_parts, 1, 1) end
 	if impl.roll(20) then impl.add_random_loot(loot, loot_pools.mutant_trophies_orange, 1, 1) end
 	if impl.roll(10) then impl.add_random_loot(loot, loot_pools.strange_consumables, 1, 1) end
@@ -2596,6 +2628,9 @@ function impl.build_slot_loot(slot)
 			tostring(slot.index or "?"), tostring(slot.tier or "?"))
 		slot.state.loot_manifest = nil
 	end
+	local detector_state = impl.get_persistent_state()
+	local detector_stage = detector_state.red_unique_detector_stage
+	local detector_pity = detector_state.detector_progression_pity
 	local red_bundle = nil
 	if slot.tier == "red" then red_bundle = impl.prepare_next_red_one_time_bundle() end
 	state.loot_rng = { value = impl.slot_loot_seed(slot, "pf_stash_loot_v1") }
@@ -2619,8 +2654,10 @@ function impl.build_slot_loot(slot)
 		end
 	end
 	state.loot_rng = nil
-	if not ok then error(loot) end
-	if type(loot) ~= "table" or #loot == 0 then
+	if not ok or type(loot) ~= "table" or #loot == 0 then
+		detector_state.red_unique_detector_stage = detector_stage
+		detector_state.detector_progression_pity = detector_pity
+		if not ok then error(loot) end
 		error(string.format("[PF STASH] empty loot manifest for slot %s (%s)",
 			tostring(slot.index or "?"), tostring(slot.tier or "?")))
 	end
@@ -3297,6 +3334,8 @@ function impl.deplete_slot(slot)
 end
 
 function impl.retire_empty_slot(slot)
+	-- A failed supplemental spawn remains owed to this searched cache.
+	if slot and slot.state and slot.state.ordinary_detector_pending then return false end
 	local box_id = impl.deplete_slot(slot)
 	if not box_id then return false end
 	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
@@ -3306,11 +3345,20 @@ function impl.retire_empty_slot(slot)
 	end
 	impl.release_object(box_id)
 	if slot.id == box_id then slot.id = nil end
+	-- High-tier ambushes belong to completed pickup, after the empty box is
+	-- gone. Opening it or shuffling its contents must not spend another roll.
+	if slot.tier == "orange" or slot.tier == "red" then
+		impl.process_stash_ambush(slot, false)
+	end
 	return true
 end
 
 function impl.reconcile_legacy_box_state(slot, box)
 	if not slot or not slot.state or not box then return box end
+	if slot.state.ordinary_detector_pending then
+		impl.materialize_ordinary_detector_rewards(slot, box)
+		if slot.state.ordinary_detector_pending then return box end
+	end
 	if slot.state.depleted then
 		if impl.has_items(box) then
 			-- Repair saves made by a broken detector version which committed the
@@ -4166,6 +4214,91 @@ function use_stash_pda(pda)
 	return false
 end
 
+function impl.get_ordinary_detector_found()
+	local saved = impl.get_persistent_state()
+	if type(saved.ordinary_detector_found) == "table" then return saved.ordinary_detector_found end
+	local found = {}
+	-- One-time recovery for old saves: only already searched manifests count.
+	-- Rotated-away loot has no history; never guess from unsearched rewards.
+	for _, slot_state in pairs(saved.slots or {}) do
+		if type(slot_state) == "table" and slot_state.hint_checked then
+			for _, entry in ipairs(slot_state.loot_manifest or {}) do
+				if ordinary_detector_search_guarantees[entry.section] then found[entry.section] = true end
+			end
+		end
+	end
+	saved.ordinary_detector_found = found
+	return found
+end
+
+function impl.remember_ordinary_detector(section)
+	if ordinary_detector_search_guarantees[section] then
+		impl.get_ordinary_detector_found()[section] = true
+	end
+end
+
+function impl.materialize_ordinary_detector_rewards(slot, box)
+	local pending = slot and slot.state and slot.state.ordinary_detector_pending
+	if not pending then return true end
+	box = box or (slot.id and alife():object(slot.id, true))
+	if not box or not slot.loot_materialized then return false end
+	for section in pairs(pending) do
+		if impl.stash_contains_section(box, section) then
+			pending[section] = nil
+		else
+			local created_ids = {}
+			local ok, spawned = pcall(impl.spawn_item, { section = section }, box.id, created_ids)
+			if ok and spawned then
+				slot.spawned_at = time_global()
+				pending[section] = nil
+			else
+				impl.rollback_spawned_items(created_ids)
+				if not slot.ordinary_detector_spawn_error then
+					printf("[PF STASH] ordinary detector reward pending in slot %s: %s",
+						tostring(slot.index), tostring(section))
+					slot.ordinary_detector_spawn_error = true
+				end
+			end
+		end
+	end
+	if not next(pending) then
+		slot.state.ordinary_detector_pending = nil
+		slot.ordinary_detector_spawn_error = nil
+		return true
+	end
+	return false
+end
+
+function impl.assign_ordinary_detector_search_rewards(slot)
+	local saved = impl.get_persistent_state()
+	local found = impl.get_ordinary_detector_found()
+	local box = slot.id and alife():object(slot.id, true) or nil
+	-- Natural finds in this cache take precedence over the supplemental reward.
+	for _, entry in ipairs(slot.state.loot_manifest or {}) do
+		if ordinary_detector_search_guarantees[entry.section] then found[entry.section] = true end
+	end
+	for section, rule in pairs(ordinary_detector_search_guarantees) do
+		if not found[section] and ((db.actor and db.actor:object(section)) or
+			(box and impl.stash_contains_section(box, section))) then found[section] = true end
+		if not found[section] and rule.drop_tiers[slot.tier] then
+			local previous_searches = 0
+			for _, tier in ipairs(rule.count_tiers) do
+				previous_searches = previous_searches + (tonumber(saved.searched_counts[tier]) or 0)
+				-- record_stash_search has just counted the current first search.
+				if tier == slot.tier then previous_searches = previous_searches - 1 end
+			end
+			if previous_searches >= rule.after then
+				local loot = impl.build_slot_loot(slot)
+				table.insert(loot, { section = section })
+				local pending = slot.state.ordinary_detector_pending or {}
+				pending[section] = true
+				slot.state.ordinary_detector_pending = pending
+				found[section] = true
+			end
+		end
+	end
+end
+
 function impl.record_stash_search(slot)
 	if not slot or not slot.state or slot.state.hint_checked then return false end
 	slot.state.hint_checked = true
@@ -4175,15 +4308,22 @@ function impl.record_stash_search(slot)
 end
 
 function impl.process_stash_search(slot)
-	if not impl.record_stash_search(slot) then return end
+	if not impl.record_stash_search(slot) then
+		impl.materialize_ordinary_detector_rewards(slot)
+		return
+	end
+	impl.assign_ordinary_detector_search_rewards(slot)
+	impl.materialize_ordinary_detector_rewards(slot)
 	impl.try_spawn_lore_note(slot)
-	impl.process_stash_ambush(slot, false)
+	if slot.tier ~= "orange" and slot.tier ~= "red" then
+		impl.process_stash_ambush(slot, false)
+	end
 	local message = stash_hint_messages[math.random(1, #stash_hint_messages)]
 	if slot.tier == "cyan" then
 		impl.roll_hint("purple", 9, message)
 		impl.roll_hint("red", 1, message)
 	elseif slot.tier == "purple" then
-		impl.roll_hint("orange", 8, message)
+		impl.roll_hint("orange", 12, message)
 		impl.roll_hint("red", 5, message)
 	elseif slot.tier == "orange" then
 		impl.roll_hint("red", 25, message)
@@ -4192,8 +4332,8 @@ end
 
 -- Put every one-time search consequence into the physical box before the
 -- native inventory window is opened. The same helper serves ordinary use and
--- the metal detector, so documents, USBs, notes, ambushes and hint rolls cannot
--- diverge between the two search paths.
+-- the metal detector, so documents, USBs, notes and hint rolls cannot diverge
+-- between the two search paths. Orange/red ambushes wait for completed pickup.
 function impl.prepare_stash_search(slot, server_box)
 	if not slot or not server_box then return false end
 	if not impl.materialize_slot_loot(slot, server_box) then return false end
@@ -4229,6 +4369,12 @@ function on_actor_item_take(item, previous_owner_id)
 	local slot = impl.slot_by_object_id(previous_owner_id)
 	local server_item = item and alife():object(item:id(), true) or nil
 	local section = server_item and server_item:section_name() or (item and item:section())
+	impl.remember_ordinary_detector(section)
+	local pending = slot and slot.state.ordinary_detector_pending
+	if pending and section then
+		pending[section] = nil
+		if not next(pending) then slot.state.ordinary_detector_pending = nil end
+	end
 	local hacking = rawget(_G, "lz_pda_hacking")
 	local usb_level = hacking and hacking.usb_level_from_section and
 		hacking.usb_level_from_section(section) or nil
@@ -4406,6 +4552,8 @@ function impl.rotate_slot(slot)
 	slot.state.depleted = false
 	slot.state.hinted = false
 	slot.state.hint_checked = nil
+	slot.state.ordinary_detector_pending = nil
+	slot.ordinary_detector_spawn_error = nil
 	slot.state.ambush_checked = nil
 	slot.state.story_roll_checked = nil
 	slot.state.story_doc = nil

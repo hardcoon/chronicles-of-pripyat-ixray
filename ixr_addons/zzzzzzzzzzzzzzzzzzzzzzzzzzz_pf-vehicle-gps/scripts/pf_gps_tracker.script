@@ -1,0 +1,6 @@
+-- Register GPS IDs at native item spawn; retain the original optional physics logic.
+-- No item update callback, additional binder or save payload is introduced.
+function init(object)
+	lz_nm_beacons.register_stash_tracker(object:id())
+	bind_physic_object.init(object)
+end

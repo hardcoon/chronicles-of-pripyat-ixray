@@ -15,9 +15,10 @@ local GAMES = {
     wordle = { native = "pf_puzzles_wordle" }
 }
 local DIFFICULTIES = { easy = true, normal = true, hard = true }
-local REWARD_TIERS = { green = true, cyan = true, purple = true }
+local REWARD_TIERS = { green = true, cyan = true, purple = true, orange = true, red = true }
 local CONSUMED_TIERS = {
-    none = true, green = true, cyan = true, purple = true, spoiled = true
+    none = true, green = true, cyan = true, purple = true,
+    orange = true, red = true, spoiled = true
 }
 local STATUSES = { playing = true, won_pending = true, claimed = true }
 
@@ -231,14 +232,18 @@ end
 
 local function reward_tier_for(difficulty, roll)
     if difficulty == "easy" then return nil end
+    -- One fixed reward per victory; rare tiers take their share from green.
     if difficulty == "normal" then
-        if roll <= 85 then return "green" end
-        if roll <= 97 then return "cyan" end
-        return "purple"
+        if roll <= 84 then return "green" end
+        if roll <= 96 then return "cyan" end
+        if roll <= 99 then return "purple" end
+        return "orange"
     end
-    if roll <= 70 then return "green" end
-    if roll <= 94 then return "cyan" end
-    return "purple"
+    if roll <= 67 then return "green" end
+    if roll <= 91 then return "cyan" end
+    if roll <= 97 then return "purple" end
+    if roll <= 99 then return "orange" end
+    return "red"
 end
 
 local function clone_entry(entry)

@@ -33,18 +33,32 @@ local zombie_ammo_chance = {
 -- Roll consumable stash PDAs when stalkers die so every coordinate source is
 -- a physical item visible inside the corpse. Ordinary corpse searches must
 -- never reveal a dynamic stash directly.
+-- Every ordinary NPC rank can drop any PDA grade. Percentages share one
+-- mutually exclusive roll; unused probability means no PDA.
 local stash_pda_by_rank = {
 	novice = {
-		{ section = "pf_stash_pda_novice", chance = 24 }
+		{ section = "pf_stash_pda_novice", chance = 24 },
+		{ section = "pf_stash_pda_stalker", chance = 9 },
+		{ section = "pf_stash_pda_veteran", chance = 3 },
+		{ section = "pf_stash_pda_master", chance = 1 }
 	},
 	experienced = {
-		{ section = "pf_stash_pda_stalker", chance = 18 }
+		{ section = "pf_stash_pda_novice", chance = 6 },
+		{ section = "pf_stash_pda_stalker", chance = 20 },
+		{ section = "pf_stash_pda_veteran", chance = 6 },
+		{ section = "pf_stash_pda_master", chance = 3 }
 	},
 	veteran = {
-		{ section = "pf_stash_pda_veteran", chance = 14 }
+		{ section = "pf_stash_pda_novice", chance = 3 },
+		{ section = "pf_stash_pda_stalker", chance = 9 },
+		{ section = "pf_stash_pda_veteran", chance = 20 },
+		{ section = "pf_stash_pda_master", chance = 6 }
 	},
 	master = {
-		{ section = "pf_stash_pda_master", chance = 12 }
+		{ section = "pf_stash_pda_novice", chance = 1 },
+		{ section = "pf_stash_pda_stalker", chance = 6 },
+		{ section = "pf_stash_pda_veteran", chance = 15 },
+		{ section = "pf_stash_pda_master", chance = 20 }
 	}
 }
 
