@@ -2970,7 +2970,7 @@ function impl.ensure_hacking_usb(slot, box)
 		slot.state.usb_roll = fixed_roll
 	end
 	local attempted, level, section =
-		hacking.reserve_next_usb(ceiling, slot.index, fixed_roll)
+		hacking.reserve_next_usb(ceiling, slot.index, fixed_roll, nil, slot.tier)
 	if not attempted then return false end
 	slot.state.usb_roll_checked = true
 	if not level or not section then
@@ -3340,10 +3340,10 @@ function impl.available_lore_notes(count, found, pending)
 	return available
 end
 
--- Unlike ordinary loot, lore notes are not assigned when the world is
--- initialized or when a box materializes. The first real search makes one
--- persistent 35% roll. On success, a separate deterministic 50/50 choice
--- selects one nonempty catalogue, then one unseen note inside that catalogue.
+-- Ordinary searches make one persistent 35% lore roll per rotation, then a
+-- deterministic 50/50 catalogue choice and one unseen note. Coordinates may
+-- guarantee an unseen note in a chosen unsearched slot; the checked flag prevents a
+-- second assignment here. World initialization never assigns lore notes.
 function impl.try_spawn_lore_note(slot)
 	if not slot or slot.state.ghost_city_roll_checked then return false end
 	slot.state.ghost_city_roll_checked = true
@@ -3942,8 +3942,8 @@ function impl.reveal_hint_slot(slot, message, silent)
 end
 
 
--- Coordinates only recover a lore reservation already earned by a real search.
--- They never roll a note, allocate another slot or mark a document as collected.
+-- Recover uncollected reservations before looking at unsearched slots.
+-- Coordinates never allocate a slot or mark a document as collected.
 function impl.lore_hint_note_section(slot)
 	if not slot or not slot.point or not slot.state or slot.state.depleted then return nil end
 	local index = tonumber(slot.state.ghost_city_note)
@@ -3958,7 +3958,53 @@ function impl.lore_hint_note_section(slot)
 	return nil
 end
 
-function impl.select_lore_hint_slot()
+-- A coordinate sheet guarantees one unseen note in an existing unsearched
+-- slot. Its saved object ID makes the 70/20/10 tier choice stable across reloads.
+function impl.select_unsearched_lore_hint_slot(coordinate_id)
+	local ghost_available = impl.available_lore_notes(
+		impl.ghost_city_note_count(), impl.ghost_city_note_found, impl.ghost_city_note_pending)
+	local city_available = impl.available_lore_notes(
+		impl.pripyat_city_note_count(), impl.pripyat_city_note_found, impl.pripyat_city_note_pending)
+	if #ghost_available == 0 and #city_available == 0 then return nil end
+	local actor_position = db.actor:position()
+	local choices, total_weight = {}, 0
+	for _, entry in ipairs({ { "green", 70 }, { "cyan", 20 }, { "purple", 10 } }) do
+		local selected, selected_distance = nil, math.huge
+		for _, slot in ipairs(slots) do
+			if slot.tier == entry[1] and slot.point and slot.state and not slot.state.depleted and
+				not slot.state.ghost_city_roll_checked and not slot.state.ghost_city_note and
+				not slot.state.pripyat_city_note then
+				local distance = impl.position_distance_sqr(actor_position, slot.point)
+				if distance < selected_distance then selected, selected_distance = slot, distance end
+			end
+		end
+		if selected then
+			total_weight = total_weight + entry[2]
+			table.insert(choices, { slot = selected, weight = entry[2] })
+		end
+	end
+	if total_weight == 0 then return nil end
+	-- An exhausted tier contributes no weight; available tiers retain their ratio.
+	local root = impl.get_persistent_state()
+	local roll = impl.deterministic_pda_roll(
+		root.loot_seed, coordinate_id or 0, "pf_stash_lore_hint_tier_v1") % total_weight + 1
+	for _, choice in ipairs(choices) do
+		roll = roll - choice.weight
+		if roll <= 0 then
+			local selected = choice.slot
+			local city_selected = #ghost_available == 0 or (#city_available > 0 and
+				impl.slot_deterministic_percent(selected, "pf_stash_lore_catalog_v1") > 50)
+			local available = city_selected and city_available or ghost_available
+			local purpose = city_selected and "pf_stash_pripyat_city_note_v1" or
+				"pf_stash_ghost_city_note_v1"
+			local index = available[impl.slot_loot_seed(selected, purpose) % #available + 1]
+			return selected, city_selected and "pripyat_city_note" or "ghost_city_note", index
+		end
+	end
+	return nil
+end
+
+function impl.select_lore_hint_slot(coordinate_id)
 	local actor_position = db.actor:position()
 	for _, tier in ipairs({ "green", "cyan", "purple", "orange", "red" }) do
 		local selected, previous = nil, nil
@@ -3978,17 +4024,23 @@ function impl.select_lore_hint_slot()
 		-- Revisiting this reservation repairs its marker without charging another sheet.
 		if previous then return previous end
 	end
-	return nil
+	return impl.select_unsearched_lore_hint_slot(coordinate_id)
 end
 
-function grant_lore_note_hint()
+function grant_lore_note_hint(coordinate_id)
 	if not SYSTEM_ENABLED then return false, "unavailable" end
 	if not db.actor or level.name() ~= LEVEL_NAME then return false, "unavailable" end
 	impl.build_candidate_indexes()
 	if #slots == 0 then impl.initialize_slots() end
 	impl.find_existing_objects()
-	local slot = impl.select_lore_hint_slot()
+	local slot, note_field, note_index = impl.select_lore_hint_slot(coordinate_id)
 	if not slot then return false, "no_notes" end
+	if note_field then
+		-- Reserve before materialization, including failed/pending attempts. A
+		-- reload or ordinary search must restore this note, never choose another.
+		slot.state[note_field] = note_index
+		slot.state.ghost_city_roll_checked = true
+	end
 	local section = impl.lore_hint_note_section(slot)
 	local was_given = slot.state.lore_hint_given == true
 	local box = slot.id and alife():object(slot.id, true) or nil
@@ -4011,6 +4063,9 @@ function grant_lore_note_hint()
 	if not box or not impl.stash_contains_section(box, section) or not impl.add_tier_marker(slot) then
 		return false, "pending", slot
 	end
+	-- Revealing an unsearched target also performs the ordinary discovery rewards.
+	impl.ensure_purple_discovery_reward(slot, box)
+	impl.try_assign_random_story_document(slot)
 	if was_given then return false, "already_hinted", slot end
 	slot.state.lore_hint_given = true
 	return true, "granted", slot
@@ -4019,7 +4074,7 @@ end
 function impl.complete_lore_coordinate_use(item)
 	if not item or item:section() ~= "pf_lore_coordinate_note" or
 		not impl.require_actor_item(item) then return false end
-	local ok, granted, reason, slot = pcall(grant_lore_note_hint)
+	local ok, granted, reason, slot = pcall(grant_lore_note_hint, item:id())
 	if not ok then
 		printf("[PF STASH] lore coordinate hint pending: %s", tostring(granted))
 		granted, reason = false, "pending"

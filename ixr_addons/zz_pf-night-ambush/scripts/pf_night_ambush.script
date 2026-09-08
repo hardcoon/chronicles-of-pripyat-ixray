@@ -4,7 +4,7 @@
 local C = {
     key = "pf_night_ambush_v1", revealed_key = "pf_night_ambush_revealed",
     grasp_key = "pf_night_ambush_grasp",
-    start_hour = 1, end_hour = 5, wait_min = 15 * 60, wait_max = 60 * 60,
+    start_hour = 0, end_hour = 5.5, wait_min = 15 * 60, wait_max = 60 * 60,
     tick = 1000, day_tick = 30000, retry = 10000, grace = 60000,
     npc_radius = 60, cleanup_distance = 120, online_timeout = 15000,
     bloodsucker = "pf_night_bloodsucker", chimera = "pf_night_chimera",
@@ -51,7 +51,7 @@ end
 function impl.clock()
     local time = game.get_game_time()
     local y, m, d, h, minute, second = time:get(0, 0, 0, 0, 0, 0, 0)
-    return time, string.format("%04d-%02d-%02d", y, m, d), h, minute, second
+    return time, string.format("%04d-%02d-%02d", y, m, d), h + minute / 60, minute, second
 end
 
 function impl.section_owned(section)

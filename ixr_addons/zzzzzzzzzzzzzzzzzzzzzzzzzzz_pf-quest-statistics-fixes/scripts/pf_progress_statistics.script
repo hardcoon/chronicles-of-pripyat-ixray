@@ -1,0 +1,74 @@
+-- Preserve progress in the save's marshal sidecar as well as the actor block.
+-- A recovered/empty actor binder must not erase earlier quest or surge counts.
+local STORAGE_KEY = "pf_progress_statistics_v1"
+local state = { pending_load = true, callbacks_registered = false }
+
+local function count(value)
+    value = tonumber(value)
+    if not value or value ~= value or value == math.huge then return 0 end
+    return math.max(0, math.floor(value))
+end
+
+local function synchronize(root)
+    local stats = xr_statistic.actor_statistic
+    if type(root) ~= "table" or type(stats) ~= "table" then return end
+    local saved = root[STORAGE_KEY]
+    if type(saved) ~= "table" then saved = {} end
+    local previous_surges = count(stats.surges)
+    stats.surges = math.max(previous_surges, count(saved.surges))
+    stats.completed_quests = math.max(count(stats.completed_quests), count(saved.completed_quests))
+    if stats.surges > previous_surges then
+        -- Restoring a historical count is not a new emission. Avoid replaying
+        -- old artifact-spawn passes when the actor block alone was lost.
+        local artifacts = root.lz_nlc_art_spawn
+        if type(artifacts) == "table" then
+            artifacts.last_surges = math.max(count(artifacts.last_surges), stats.surges)
+        end
+    end
+    saved.surges = stats.surges
+    saved.completed_quests = stats.completed_quests
+    root[STORAGE_KEY] = saved
+end
+
+local function checkpoint()
+    synchronize(alife_storage_manager.get_state())
+end
+
+function on_game_load()
+    -- load_state precedes actor_binder:load; do not copy the previous game's
+    -- live counters into the newly loaded save here.
+    state.pending_load = true
+end
+
+function update()
+    if not state.pending_load or not db.actor then return end
+    checkpoint()
+    state.pending_load = false
+end
+
+function on_save_state(root)
+    synchronize(root)
+end
+
+function on_game_start()
+    if state.callbacks_registered then return end
+    local previous_surges = xr_statistic.inc_surges_counter
+    local previous_quests = xr_statistic.inc_completed_quests_counter
+    xr_statistic.inc_surges_counter = function(...)
+        checkpoint()
+        previous_surges(...)
+        checkpoint()
+    end
+    xr_statistic.inc_completed_quests_counter = function(...)
+        checkpoint()
+        previous_quests(...)
+        checkpoint()
+    end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_game_load)
+    RegisterScriptCallback("load_state", on_game_load)
+    RegisterScriptCallback("save_state", on_save_state)
+    state.callbacks_registered = true
+end
+
+on_game_start()

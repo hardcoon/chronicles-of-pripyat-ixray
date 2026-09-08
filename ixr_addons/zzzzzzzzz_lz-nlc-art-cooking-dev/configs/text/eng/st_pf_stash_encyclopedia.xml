@@ -30,17 +30,17 @@
 \n\nOnce discovered, the container receives a permanent PDA marker.
 \n\n%c[255,170,220,255]Stash-search equipment%c[default]
 \nRegular artefact detectors do not search for stashes. Use the special black-and-white Homemade, Wave, and Magnet detectors instead. Equip the device in the detector slot and keep it active. Its signal pulses faster as the stash gets closer.
-\n\nThese devices consume charge. A Krona Battery adds 15 minutes of operation.
+\n\nSignal range depends on the model:\n\n• Homemade: green — 20 m, cyan — 10 m.\n• Wave: cyan — 15 m, purple — 10 m.\n• Magnet: cyan — 20 m, purple — 15 m, legendary — 5 m.\n\nThe Homemade and Wave only provide a sound signal. The Magnet also reveals a permanent legendary stash marker within 5 m. None of these devices detects red stashes.\n\nThe devices consume charge only while active. A Krona Battery adds 15 minutes of operation, up to full capacity.
 \n\nThe first three newly discovered purple stashes introduce the system:
 \n\n1. The first contains the Homemade detector.
 \n2. The second contains a radio beacon and USB-1 software.
 \n3. The third contains three working Stalker PDAs.
-\n\nThe starting Metal Detector does not locate stashes. It transfers all contents of the nearest already discovered stash within 8 meters into the rucksack, in case the container cannot be looted manually.
+\n\nAfter the Homemade, new purple, legendary, and red stashes can yield the Wave, then the Magnet. Each model has protection against a long run of bad luck. Once the Magnet is obtained, detectors continue to appear as random stash loot. Selling or losing a device does not restart the sequence.\n\nThe starting Metal Detector opens the normal inventory window of the nearest accessible stash within 3 m when the container is difficult to reach manually. Take items with the usual controls, including Take All. Green, cyan, and purple stashes do not need to be discovered first; legendary and red stashes must already be revealed. The action is unavailable while another stash window is open.
 \n\n%c[255,170,220,255]Sources of stash leads%c[default]
 \nA lead immediately adds an exact colored marker to the PDA. There are several ways to obtain one.
 \n\n%c[255,255,190,90]1. Looting other stashes%c[default]
 \n\n• A cyan stash: 9% for a purple lead and 1% for a red lead.
-\n• A purple stash: 8% for a legendary lead and 5% for a red lead.
+\n• A purple stash: 12% for a legendary lead and 5% for a red lead.
 \n• A legendary stash: 25% for a red lead.
 \n\n%c[255,255,190,90]2. PDAs carried by dead stalkers%c[default]
 \nOrdinary corpses do not reveal coordinates automatically. You must find and hack a physical PDA on the body. Such PDAs can also appear inside stashes.
@@ -49,8 +49,8 @@
 \n• Stalker PDA + USB-1 → cyan stash;
 \n• Veteran PDA + USB-2 → purple stash;
 \n• Master PDA + USB-3 → guaranteed legendary stash.
-\n\nDuring a hack, additional traces can reveal coordinates of rarer stashes. Saving and loading does not change the predetermined result of a particular PDA.
-\n\nA failed attempt locks the PDA. A Reflashing Module decrypts a locked PDA immediately without another minigame. Nitro can return it to working order, after which it must be hacked normally.
+\n\nDuring a hack, traces can reveal additional purple, legendary, and red coordinates. Weakening protection raises the chance of an unattempted trace. Each trace tier allows one attempt; its reward is granted after the hack succeeds. Reloading alone does not reroll a particular PDA.
+\n\nA failed attempt or manually leaving the hack locks the PDA. A Reflashing Module immediately grants the basic lead for its rank without a minigame or additional traces. A Master PDA guarantees a legendary stash. Nitro can restore the PDA to working order for a fee, after which it must be hacked normally.
 \n\n%c[255,255,190,90]3. Traders and characters%c[default]
 \nHawaiian sells coordinates for:
 \n\n%c[255,130,220,120]• green stash — 500 RU;%c[default]
@@ -61,9 +61,9 @@
 \n\n%c[255,255,190,90]4. Strange consumables%c[default]
 \nStrange Stew, Strange Vodka, and Strange Drink cause a blackout and attempt to move the player 14–16 meters from a purple stash. No marker is granted; the stash must be found normally.
 \n\nDifferent events may follow the move. Stew triggers an attack by weak mercenaries, Vodka may leave a well-equipped zombified corpse nearby, and the Drink randomly chooses one of those branches. Vodka or the Drink can also produce no additional event.
-\n\n%c[255,170,220,255]How to loot a stash correctly%c[default]
-\nA stash counts as searched when its container is opened for the first time. A new lead, note, or special event may be assigned at that moment.
-\n\nThe contents are determined in advance. Reloading a save does not change the loot, and reopening the container does not create new items.
+\n\n%c[255,255,190,90]5. PDA applications and coordinate notes%c[default]\nWinning a PDA application on Normal or Hard difficulty grants one lead. Easy difficulty gives no reward. The tier is fixed for that game; reloading cannot reroll it.\n\nA coordinate note points to a stash containing an uncollected Ghost City or Life Before the Accident document. The search checks green stashes before moving to rarer tiers. If no suitable document is available, the note is not consumed.\n\n%c[255,170,220,255]How to loot a stash correctly%c[default]
+\nA stash counts as searched when its container is opened for the first time. A new lead or note may appear then. A purple stash also checks a 6% ambush chance at that point. Legendary (9%) and red (12%) stashes check for an ambush only after the last item is removed. Reopening or moving items around does not grant another event attempt.
+\n\nThe main contents are determined in advance. Reloading does not change the loot, and reopening the container does not create a fresh set of items.\n\nIf an ordinary artefact detector has not been found yet, first-find protection applies. The Echo, Bear, and Veles are guaranteed on the 6th, 11th, and 21st combined searches of purple, legendary, and red stashes. The Svarog is guaranteed on the 7th search of legendary and red stashes only. These counters run in parallel. Reopening and reloading do not add searches; an earlier find closes that model's guarantee.
 \n\nAfter the last item is removed, the container and its marker disappear. Once the player moves far enough away, the freed stash eventually receives a new location and new contents.
 \n\nLeaving even one item keeps the stash at its current location.
 \n\n%c[255,120,210,120]In short: inspect interiors and vehicles, keep the appropriate detector active, hack the PDAs you find, and completely empty discovered containers.%c[default]</text></string>

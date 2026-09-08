@@ -114,6 +114,10 @@ local USB_LEVELS = {
 	pda_hack_usb_3 = 3
 }
 
+-- USB-1 has its purple-discovery milestone; later levels keep their normal
+-- chance and receive a supplemental guarantee after three failed eligible rolls.
+local USB_FAILURE_LIMITS = { [2] = 3, [3] = 3, purple = 15 }
+
 local USB_INSTALL_MESSAGES = {
 	[1] = "lz_ph_usb1_installed",
 	[2] = "lz_ph_usb2_installed",
@@ -558,7 +562,7 @@ end
 
 -- Returns attempted, level, section. attempted=false means another reservation
 -- or no eligible missing level; the stash must not consume its one-time roll.
-function reserve_next_usb(max_level, slot_index, fixed_roll, guaranteed)
+function reserve_next_usb(max_level, slot_index, fixed_roll, guaranteed, stash_tier)
 	local state = get_state()
 	if state.reservation and state.acquired[state.reservation.level] then
 		state.reservation = nil
@@ -566,7 +570,12 @@ function reserve_next_usb(max_level, slot_index, fixed_roll, guaranteed)
 	if state.reservation then return false, nil, nil end
 
 	local eligible, level = can_grant_usb(max_level)
-	if not eligible then return false, nil, nil end
+	-- Only a real purple stash can advance the alternate USB-2 route. Generic
+	-- level-one grants and the USB-1 milestone retain their existing ceiling.
+	local purple_fallback = not eligible and not guaranteed and stash_tier == "purple" and
+		tonumber(max_level) == 1 and state.acquired[1] == true and not state.acquired[2]
+	if purple_fallback then level = 2
+	elseif not eligible then return false, nil, nil end
 	local chance = clamp(setting_number("usb_roll_chance", 50), 0, 100)
 	local roll = tonumber(fixed_roll)
 	if roll then
@@ -574,12 +583,39 @@ function reserve_next_usb(max_level, slot_index, fixed_roll, guaranteed)
 	else
 		roll = math.random(100)
 	end
-	if not guaranteed and roll > chance then return true, nil, nil end
+	local limit = USB_FAILURE_LIMITS[level]
+	local pity = state.usb_progression_pity
+	local misses = 0
+	local purple_misses = 0
+	if limit and type(pity) == "table" and pity.level == level then
+		misses = clamp(math.floor(tonumber(pity.misses) or 0), 0, limit)
+		purple_misses = clamp(math.floor(tonumber(pity.purple_misses) or 0), 0,
+			USB_FAILURE_LIMITS.purple)
+	end
+	if purple_fallback then
+		if purple_misses < USB_FAILURE_LIMITS.purple then
+			state.usb_progression_pity = {
+				level = level, misses = misses, purple_misses = purple_misses + 1
+			}
+			return true, nil, nil
+		end
+		guaranteed = true
+	end
+	if not guaranteed and roll > chance and (not limit or misses < limit) then
+		if limit then
+			state.usb_progression_pity = {
+				level = level, misses = misses + 1, purple_misses = purple_misses
+			}
+		end
+		return true, nil, nil
+	end
 
 	state.reservation = {
 		level = level,
 		slot = tonumber(slot_index) or 0
 	}
+	-- The existing reservation owns materialization retries and blocks duplicates.
+	state.usb_progression_pity = nil
 	return true, level, USB_SECTIONS[level]
 end
 
@@ -606,6 +642,10 @@ function register_usb_acquired(level, item_id)
 	local state = get_state()
 	local first_time = state.acquired[level] ~= true
 	state.acquired[level] = true
+	local pity = state.usb_progression_pity
+	if type(pity) == "table" and pity.level == level then
+		state.usb_progression_pity = nil
+	end
 	if state.reservation and tonumber(state.reservation.level) == level then
 		state.reservation = nil
 	end

@@ -1,0 +1,171 @@
+-- Audible feedback for the two native screen detectors. Their native UI and
+-- artefact discovery remain authoritative; this module only plays the beep.
+
+local settings = {
+    detectors = { detector_elite = true, detector_scientific = true },
+    rank = 3,
+    search_interval = 250,
+    update_interval = 25
+}
+local state = { profiles = {}, registered = false }
+local impl = {}
+
+function impl.stop_sound()
+    if state.sound then state.sound:stop() end
+end
+
+function impl.clear_target(now)
+    if state.target_id then impl.stop_sound() end
+    state.target_id = nil
+    state.target_name = nil
+    state.target_section = nil
+    state.last_pulse = now
+end
+
+function impl.clear_active()
+    impl.clear_target(0)
+    state.detector_id = nil
+    state.detector_section = nil
+    state.next_search = 0
+    state.next_update = 0
+    state.last_time = nil
+end
+
+function reset()
+    impl.stop_sound()
+    impl.clear_active()
+    state.sound = nil
+    state.sound_path = nil
+    state.profiles = {}
+end
+
+function impl.profile(section)
+    if state.profiles[section] then return state.profiles[section] end
+    -- Read the merged DLTX settings lazily, never during module import.
+    local ini = system_ini()
+    local profile = { radius = ini:r_float(section, "af_radius"), entries = {} }
+    local hud_volume = ini:r_float("hud_sound", "hud_sound_vol_k")
+    local index = 1
+    while ini:line_exist(section, "af_class_" .. index) do
+        local artefact = ini:r_string(section, "af_class_" .. index)
+        if ini:section_exist(artefact) and ini:line_exist(artefact, "af_rank") and
+            ini:r_u32(artefact, "af_rank") <= settings.rank then
+            local low, high = string.match(ini:r_string(section, "af_freq_" .. index),
+                "^%s*([^,]+),%s*([^,]+)")
+            local path, volume, delay = string.match(ini:r_string(section, "af_sound_" .. index .. "_"),
+                "^%s*([^,]+),?([^,]*),?([^,]*)")
+            profile.entries[artefact] = {
+                low = tonumber(low), high = tonumber(high),
+                path = string.match(path, "^%s*(.-)%s*$"),
+                volume = (tonumber(volume) or 1) * hud_volume,
+                delay = tonumber(delay) or 0
+            }
+        end
+        index = index + 1
+    end
+    state.profiles[section] = profile
+    return profile
+end
+
+function impl.find_target(actor_position, detector_position, profile, now)
+    -- The native detectors use this same ObjectSpace.GetNearest query. Only
+    -- its nearby results are inspected, at most four times a second.
+    nearest.set(profile.radius, actor_position)
+    local best = nil
+    local best_distance = profile.radius * profile.radius
+    for index = 0, nearest.size() - 1 do
+        local object = nearest.get(index)
+        if object and profile.entries[object:section()] and object:parent() == nil then
+            local distance = detector_position:distance_to_sqr(object:position())
+            if distance <= best_distance then
+                best = object
+                best_distance = distance
+            end
+        end
+    end
+    local id = best and best:id() or nil
+    local name = best and best:name() or nil
+    local section = best and best:section() or nil
+    if id ~= state.target_id or name ~= state.target_name or section ~= state.target_section then
+        impl.clear_target(now)
+        state.target_id = id
+        state.target_name = name
+        state.target_section = section
+    end
+    state.next_search = now + settings.search_interval
+end
+
+function update()
+    local actor = db.actor
+    local detector = actor and actor:alive() and actor:active_detector() or nil
+    local section = detector and detector:section() or nil
+    -- active_detector returns only a working device. Hiding it, an empty
+    -- battery, death or switching to a different family stops our sound.
+    if not settings.detectors[section] then
+        if state.detector_id then impl.clear_active() end
+        return
+    end
+
+    local now = time_global()
+    if state.last_time and now < state.last_time then reset() end
+    state.last_time = now
+    if detector:id() ~= state.detector_id or section ~= state.detector_section then
+        impl.clear_active()
+        state.detector_id = detector:id()
+        state.detector_section = section
+    end
+    if now < state.next_update then return end
+    state.next_update = now + settings.update_interval
+
+    local profile = impl.profile(section)
+    if profile.radius <= 0 then
+        impl.clear_target(now)
+        return
+    end
+    local detector_position = detector:position()
+    if now >= state.next_search then
+        impl.find_target(actor:position(), detector_position, profile, now)
+    end
+    if not state.target_id then return end
+
+    -- Keep only IDs between callbacks; reject picked-up/released artefacts
+    -- and reused IDs before each pulse without another spatial scan.
+    local target = level.object_by_id(state.target_id)
+    if not target or target:name() ~= state.target_name or
+        target:section() ~= state.target_section or target:parent() ~= nil then
+        impl.clear_target(now)
+        state.next_search = now
+        return
+    end
+    local distance = detector_position:distance_to(target:position())
+    if distance > profile.radius then
+        impl.clear_target(now)
+        state.next_search = now
+        return
+    end
+    local entry = profile.entries[state.target_section]
+    local relative = math.min(1, math.max(0, distance / profile.radius))
+    -- Same period and pitch curves as SimpleDetector/AdvancedDetector.
+    local period = (entry.low + (entry.high - entry.low) * relative * relative) * 1000
+    if now - state.last_pulse < period then return end
+
+    if state.sound_path ~= entry.path then
+        impl.stop_sound()
+        state.sound = sound_object(entry.path)
+        state.sound_path = entry.path
+    end
+    state.sound:play(actor, entry.delay, sound_object.s2d)
+    state.sound.volume = entry.volume
+    state.sound.frequency = 0.9 + 0.5 * (1 - relative)
+    state.last_pulse = now
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", reset)
+    RegisterScriptCallback("net_destroy", reset)
+    state.registered = true
+end
+
+on_game_start()

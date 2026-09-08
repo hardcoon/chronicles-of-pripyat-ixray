@@ -774,12 +774,177 @@ function impl.damage_travel_equipment(estimated_damage)
 	return damaged
 end
 
+-- One bounded search per requested travel, during the existing fade. No new
+-- update work, timers, persistent data or post-teleport monitoring.
+local BEACON_LANDING = {
+	radii = {0.7, 1.5, 3, 5, 7.5, 10},
+	directions = {{1, 0}, {0.70710678, 0.70710678}, {0, 1}, {-0.70710678, 0.70710678},
+		{-1, 0}, {-0.70710678, -0.70710678}, {0, -1}, {0.70710678, -0.70710678}},
+	footprint = {-0.35, 0, 0.35},
+	body_heights = {0.2, 0.9, 1.7},
+	max_radius_sqr = 100,
+	min_radius_sqr = 0.36,
+	max_height_difference = 0.75,
+	floor_probe_up = 0.5,
+	floor_probe_range = 1,
+	floor_vertex_tolerance = 0.4,
+	floor_spread = 0.22,
+	lift = 0.15,
+	headroom = 1.9,
+	dynamic_radius = 1.1,
+	dynamic_center_height = 0.95,
+	max_nearby = 128
+}
+
+function impl.beacon_landing_ray(probe, x, y, z, dx, dy, dz, distance)
+	probe:set_position(vector():set(x, y, z))
+	probe:set_direction(vector():set(dx, dy, dz))
+	probe:set_range(distance)
+	return probe:query()
+end
+
+function impl.beacon_landing_segment(probe, x, y, z, dx, dy, dz, distance)
+	-- Static ray queries cull back faces. Test both directions for walls and
+	-- narrow obstacles whose triangle winding faces away from the first ray.
+	return impl.beacon_landing_ray(probe, x, y, z, dx, dy, dz, distance) or
+		impl.beacon_landing_ray(probe, x + dx * distance, y + dy * distance,
+			z + dz * distance, -dx, -dy, -dz, distance)
+end
+
+function impl.beacon_landing_dynamic_clear(position, beacon_id)
+	-- A small native spatial query, not an ALife scan. Large intersecting
+	-- objects are included by their spatial bounds, even if their origin is far.
+	nearest.set(BEACON_LANDING.dynamic_radius, vector():set(position.x,
+		position.y + BEACON_LANDING.dynamic_center_height, position.z))
+	local count = nearest.size()
+	if count > BEACON_LANDING.max_nearby then return false end
+	for index = 0, count - 1 do
+		local object = nearest.get(index)
+		if object and object:id() ~= db.actor:id() and object:id() ~= beacon_id and
+			object:parent() == nil and
+			(IsStalker(object) or IsMonster(object) or object:get_physics_shell() ~= nil) then
+			return false
+		end
+	end
+	return true
+end
+
+function impl.beacon_landing_candidate(probe, point, beacon_position, beacon_id, anchor)
+	local dx, dz = point.x - beacon_position.x, point.z - beacon_position.z
+	local distance_sqr = dx * dx + dz * dz
+	if distance_sqr > BEACON_LANDING.max_radius_sqr or
+		distance_sqr < BEACON_LANDING.min_radius_sqr or
+		math.abs(point.y - beacon_position.y) > BEACON_LANDING.max_height_difference then
+		return nil
+	end
+	local floor_min, floor_max = math.huge, -math.huge
+	-- Nine support samples reject holes and the lip of a platform. Use the
+	-- highest support point so the lifted actor cannot start inside a slope.
+	for _, x in ipairs(BEACON_LANDING.footprint) do
+		for _, z in ipairs(BEACON_LANDING.footprint) do
+			local start_y = point.y + BEACON_LANDING.floor_probe_up
+			if not impl.beacon_landing_ray(probe, point.x + x, start_y, point.z + z,
+				0, -1, 0, BEACON_LANDING.floor_probe_range) then return nil end
+			local y = start_y - probe:get_distance()
+			if math.abs(y - point.y) > BEACON_LANDING.floor_vertex_tolerance then return nil end
+			floor_min, floor_max = math.min(floor_min, y), math.max(floor_max, y)
+			if floor_max - floor_min > BEACON_LANDING.floor_spread then return nil end
+		end
+	end
+	local landing_y = floor_max + BEACON_LANDING.lift
+	for _, x in ipairs(BEACON_LANDING.footprint) do
+		for _, z in ipairs(BEACON_LANDING.footprint) do
+			if impl.beacon_landing_ray(probe, point.x + x, landing_y, point.z + z,
+				0, 1, 0, BEACON_LANDING.headroom) then return nil end
+		end
+	end
+	-- Rows and columns through the standing actor's footprint cover the body,
+	-- including its centre; floor/head rays alone would miss vertical walls.
+	for _, height in ipairs(BEACON_LANDING.body_heights) do
+		for _, offset in ipairs(BEACON_LANDING.footprint) do
+			if impl.beacon_landing_segment(probe, point.x - 0.35, landing_y + height,
+				point.z + offset, 1, 0, 0, 0.7) or
+				impl.beacon_landing_segment(probe, point.x + offset, landing_y + height,
+					point.z - 0.35, 0, 0, 1, 0.7) then return nil end
+		end
+	end
+	-- Prefer the original placement vertex as the room reference. The beacon
+	-- can be inset into a wall: requiring a clear line all the way into its
+	-- mesh would reject even the valid bunker floor in the supplied save.
+	local reference = anchor or beacon_position
+	local rx, rz = point.x - reference.x, point.z - reference.z
+	local dy = landing_y - reference.y
+	local line_length = math.sqrt(rx * rx + rz * rz + dy * dy)
+	if rx * rx + rz * rz > 0.0025 then
+		local inset = anchor and 0 or math.min(0.4, line_length)
+		if impl.beacon_landing_segment(probe, reference.x + rx / line_length * inset,
+			reference.y + 1.4 + dy / line_length * inset, reference.z + rz / line_length * inset,
+			rx / line_length, dy / line_length, rz / line_length, line_length - inset) then return nil end
+	end
+	local result = vector():set(point.x, landing_y, point.z)
+	if not impl.beacon_landing_dynamic_clear(result, beacon_id) then return nil end
+	return result
+end
+
+function impl.find_beacon_landing(object)
+	-- CRayPick reads a static triangle material even for dynamic hits in this
+	-- engine. Keep every ray static; handle dynamic obstacles via nearest.
+	local probe = ray_pick()
+	probe:set_flags(rq_target.rqtStatic)
+	local beacon_position = object.position
+	local visited = {}
+	local anchor
+	local function try_vertex(id)
+		if not id or id == 4294967295 or visited[id] then return nil end
+		visited[id] = true
+		if not level.valid_vertex_id(id) or not level.is_accessible_vertex_id(id) then return nil end
+		local point = level.vertex_position(id)
+		if id == object.m_level_vertex_id then
+			local dx, dz = point.x - beacon_position.x, point.z - beacon_position.z
+			local distance_sqr = dx * dx + dz * dz
+			if distance_sqr >= BEACON_LANDING.min_radius_sqr and distance_sqr <= BEACON_LANDING.max_radius_sqr and
+				math.abs(point.y - beacon_position.y) <= BEACON_LANDING.max_height_difference then anchor = point end
+		end
+		return impl.beacon_landing_candidate(probe, point, beacon_position, object.id, anchor)
+	end
+	-- The stored vertex is the actor's placement location, often much safer
+	-- than the beacon's inset position at the very edge of a floor.
+	local destination = try_vertex(object.m_level_vertex_id)
+	if destination then return destination end
+	destination = try_vertex(level.vertex_id(beacon_position))
+	if destination then return destination end
+	-- At most 50 vertex candidates, deduplicated, with an immediate return on
+	-- success. Expanding to 5/7.5/10 m happens only if closer points fail.
+	for _, radius in ipairs(BEACON_LANDING.radii) do
+		for _, direction in ipairs(BEACON_LANDING.directions) do
+			local position = vector():set(beacon_position.x + direction[1] * radius,
+				beacon_position.y, beacon_position.z + direction[2] * radius)
+			destination = try_vertex(level.vertex_id(position))
+			if destination then return destination end
+		end
+	end
+	return nil
+end
+
 function impl.complete_beacon_travel(pending)
 	local object = pending and alife():object(pending.id, true) or nil
 	if not object or not db.actor then
 		if pending and pending.id then impl.clear_beacon(pending.id) end
 		core.message("lz_nm_beacon_destroyed")
 		return false
+	end
+	local destination
+	if pending.level_name == level.name() then
+		local ok, result = pcall(impl.find_beacon_landing, object)
+		if not ok or not result then
+			-- Exhaust the full 10 m search before reporting an obstructed site.
+			-- Never fall back to the old unchecked coordinate or charge for failure.
+			printf("[BEACON TRAVEL] No safe landing within 10 m: id=%s, result=%s",
+				tostring(pending.id), tostring(result))
+			core.message("lz_nm_beacon_no_safe_landing")
+			return false
+		end
+		destination = result
 	end
 	impl.damage_travel_equipment(pending.damage)
 	level.change_game_time(0, pending.whole_hours, pending.minutes)
@@ -792,20 +957,13 @@ function impl.complete_beacon_travel(pending)
 	if level_weathers and level_weathers.get_weather_manager then
 		level_weathers.get_weather_manager():forced_weather_change()
 	end
-	local actor_position = db.actor:position()
-	local offset_x, offset_z = actor_position.x - object.position.x, actor_position.z - object.position.z
-	local offset_length = math.sqrt(offset_x * offset_x + offset_z * offset_z)
-	if pending.level_name ~= level.name() or offset_length < 0.001 then
-		offset_x, offset_z, offset_length = 1, 0, 1
-	end
-	local destination = vector():set(
-		object.position.x + offset_x / offset_length * 0.5,
-		object.position.y + 0.15,
-		object.position.z + offset_z / offset_length * 0.5
-	)
 	if pending.level_name == level.name() then
 		db.actor:set_actor_position(destination)
 	else
+		-- A different level has no loaded local collision/AI graph to query.
+		-- Preserve the existing inter-level path; this project uses one map.
+		destination = vector():set(object.position.x + 0.5,
+			object.position.y + 0.15, object.position.z)
 		ChangeLevel(
 			destination, object.m_level_vertex_id, object.m_game_vertex_id,
 			vector():set(0, 0, 0), true
