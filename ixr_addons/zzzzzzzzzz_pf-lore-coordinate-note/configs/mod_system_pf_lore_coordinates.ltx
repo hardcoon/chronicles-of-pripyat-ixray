@@ -1,0 +1,20 @@
+; Ordinary consumable paper. A_ITEM exposes the native custom Use action.
+[pf_lore_coordinate_note]:hand_radio
+$spawn = "devices\pf_lore_coordinate_note"
+visual = dynamics\equipments\quest\notes_paper_2.ogf
+inv_name = pf_lore_coordinate_note_name
+inv_name_short = pf_lore_coordinate_note_name
+description = pf_lore_coordinate_note_descr
+inv_weight = 0.01
+cost = 500
+can_trade = true
+quest_item = false
+default_to_ruck = true
+auto_attach = false
+icons_texture = ui\pf_lore_coordinate_note
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+use1_text = pf_lore_coordinate_note_use
+use1_functor = pf_dynamic_stashes.use_lore_coordinates

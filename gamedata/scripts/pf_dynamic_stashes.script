@@ -2618,6 +2618,17 @@ end
 -- A slot rolls its ordinary contents once per rotation. The private seed is
 -- saved with the world and the resulting manifest is serialized with the slot,
 -- so approaching again or loading a save cannot reroll sections or condition.
+
+-- A separate deterministic purpose leaves every pre-existing loot roll intact.
+-- Only new manifests opt in; saved loot never gains a retroactive bonus.
+function impl.add_lore_coordinate_note(loot, slot)
+	if slot.tier ~= "purple" and slot.tier ~= "orange" and slot.tier ~= "red" then return end
+	if not system_ini():section_exist("pf_lore_coordinate_note") then return end
+	if impl.slot_deterministic_percent(slot, "pf_stash_lore_coordinates_v1") <= 30 then
+		table.insert(loot, { section = "pf_lore_coordinate_note" })
+	end
+end
+
 function impl.build_slot_loot(slot)
 	if not slot or not slot.state then return {} end
 	if type(slot.state.loot_manifest) == "table" and #slot.state.loot_manifest > 0 then
@@ -2661,6 +2672,7 @@ function impl.build_slot_loot(slot)
 		error(string.format("[PF STASH] empty loot manifest for slot %s (%s)",
 			tostring(slot.index or "?"), tostring(slot.tier or "?")))
 	end
+	impl.add_lore_coordinate_note(loot, slot)
 	slot.state.loot_manifest = loot
 	if jump_isolator_state then jump_isolator_state.jump_isolator_awarded = true end
 	return loot
@@ -3767,6 +3779,128 @@ function impl.reveal_hint_slot(slot, message, silent)
 	return true
 end
 
+
+-- Coordinates only recover a lore reservation already earned by a real search.
+-- They never roll a note, allocate another slot or mark a document as collected.
+function impl.lore_hint_note_section(slot)
+	if not slot or not slot.point or not slot.state or slot.state.depleted then return nil end
+	local index = tonumber(slot.state.ghost_city_note)
+	if index and not impl.ghost_city_note_found(index) then
+		local section = impl.ghost_city_note_section(index)
+		if section then return section end
+	end
+	index = tonumber(slot.state.pripyat_city_note)
+	if index and not impl.pripyat_city_note_found(index) then
+		return impl.pripyat_city_note_section(index)
+	end
+	return nil
+end
+
+function impl.select_lore_hint_slot()
+	local actor_position = db.actor:position()
+	for _, tier in ipairs({ "green", "cyan", "purple", "orange", "red" }) do
+		local selected, previous = nil, nil
+		local selected_distance, previous_distance = math.huge, math.huge
+		for _, slot in ipairs(slots) do
+			if slot.tier == tier and impl.lore_hint_note_section(slot) then
+				local distance = impl.position_distance_sqr(actor_position, slot.point)
+				if slot.state.lore_hint_given then
+					if distance < previous_distance then previous, previous_distance = slot, distance end
+				elseif distance < selected_distance then
+					selected, selected_distance = slot, distance
+				end
+			end
+		end
+		if selected then return selected end
+		-- A higher tier must wait until the lower tier's remaining notes are taken.
+		-- Revisiting this reservation repairs its marker without charging another sheet.
+		if previous then return previous end
+	end
+	return nil
+end
+
+function grant_lore_note_hint()
+	if not SYSTEM_ENABLED then return false, "unavailable" end
+	if not db.actor or level.name() ~= LEVEL_NAME then return false, "unavailable" end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	impl.find_existing_objects()
+	local slot = impl.select_lore_hint_slot()
+	if not slot then return false, "no_notes" end
+	local section = impl.lore_hint_note_section(slot)
+	local was_given = slot.state.lore_hint_given == true
+	local box = slot.id and alife():object(slot.id, true) or nil
+	if slot.id and (not box or not stash_sections[box:section_name()] or
+		impl.position_distance_sqr(box.position, impl.stash_object_point(slot.point)) > FIND_DISTANCE_SQR) then
+		-- An absent/reused ID is not the reserved box. Never release its new owner.
+		slot.id = nil
+		slot.loot_materialized = false
+		box = nil
+	end
+	slot.state.hinted = true
+	slot.state.discovered = true
+	if not box then
+		if not impl.reserve_physical_slot_for_hint() then return false, "pending", slot end
+		if not impl.spawn_slot(slot) then return false, "pending", slot end
+		box = slot.id and alife():object(slot.id, true) or nil
+	end
+	impl.ensure_ghost_city_note(slot, box)
+	impl.ensure_pripyat_city_note(slot, box)
+	if not box or not impl.stash_contains_section(box, section) or not impl.add_tier_marker(slot) then
+		return false, "pending", slot
+	end
+	if was_given then return false, "already_hinted", slot end
+	slot.state.lore_hint_given = true
+	return true, "granted", slot
+end
+
+function impl.complete_lore_coordinate_use(item)
+	if not item or item:section() ~= "pf_lore_coordinate_note" or
+		not impl.require_actor_item(item) then return false end
+	local ok, granted, reason, slot = pcall(grant_lore_note_hint)
+	if not ok then
+		printf("[PF STASH] lore coordinate hint pending: %s", tostring(granted))
+		granted, reason = false, "pending"
+	end
+	if granted then
+		local server_item = alife():object(item:id(), true)
+		alife():release(server_item, true)
+	end
+	local message = game.translate_string("pf_lore_coordinates_" .. reason)
+	if slot and (reason == "granted" or reason == "already_hinted") then
+		message = string.format(message, game.translate_string(stash_pda_tier_text[slot.tier]),
+			slot.point.position[1], slot.point.position[3])
+	end
+	impl.send_detector_news(message)
+	return granted
+end
+
+function impl.update_pending_lore_coordinate_use(now)
+	local pending = state.pending_lore_coordinate_use
+	if not pending or now < pending.due then return end
+	state.pending_lore_coordinate_use = nil
+	local item = level.object_by_id(pending.object_id)
+	if not item or item:name() ~= pending.object_name or
+		item:section() ~= "pf_lore_coordinate_note" or not impl.actor_owns_item(item) then return end
+	-- Leave inventory/trade/search UI before spawning or consuming ALife objects.
+	if get_hud() then get_hud():HideActorMenu() end
+	impl.complete_lore_coordinate_use(item)
+end
+
+function use_lore_coordinates(item)
+	if not db.actor or not item or item:section() ~= "pf_lore_coordinate_note" then return false end
+	if not impl.require_actor_item(item) then return false end
+	if not SYSTEM_ENABLED or level.name() ~= LEVEL_NAME then
+		impl.send_detector_news(game.translate_string("pf_lore_coordinates_unavailable"))
+		return false
+	end
+	if state.pending_lore_coordinate_use then return false end
+	state.pending_lore_coordinate_use = {
+		object_id = item:id(), object_name = item:name(), due = time_global() + 150
+	}
+	return false
+end
+
 function grant_hint(tier, message, silent)
 	if not SYSTEM_ENABLED then return false end
 	if not db.actor or level.name() ~= LEVEL_NAME or not tier_data[tier] then return false end
@@ -4552,6 +4686,7 @@ function impl.rotate_slot(slot)
 	slot.state.depleted = false
 	slot.state.hinted = false
 	slot.state.hint_checked = nil
+	slot.state.lore_hint_given = nil
 	slot.state.ordinary_detector_pending = nil
 	slot.ordinary_detector_spawn_error = nil
 	slot.state.ambush_checked = nil
@@ -4625,6 +4760,7 @@ function update()
 	impl.update_fixed_pda_rewards(now)
 	if not SYSTEM_ENABLED then return end
 	impl.update_pending_metal_detector_use(now)
+	impl.update_pending_lore_coordinate_use(now)
 	impl.update_pending_empty_slots(now)
 	impl.update_pending_strange_zombied_loot(now)
 	impl.update_strange_ambush_targets(now)
@@ -4791,5 +4927,6 @@ function reset()
 	detector_pulse_sound = nil
 	state.loot_rng = nil
 	state.pending_metal_detector_use = nil
+	state.pending_lore_coordinate_use = nil
 	state.pending_strange_zombied_loot = {}
 end
