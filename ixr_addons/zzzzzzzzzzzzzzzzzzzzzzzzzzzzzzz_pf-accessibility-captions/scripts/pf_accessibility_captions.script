@@ -10,6 +10,7 @@ local SOUND_TALKING = 0x00004000
 local SOUND_ATTACKING = 0x00002000
 local SOUND_EATING = 0x00001000
 local MAX_CAPTIONS = 3
+local MAX_GROUP_SOURCES = 32
 local CAPTION_LIFETIME = 2600
 local ROW_HEIGHT = 26
 
@@ -146,14 +147,34 @@ function impl.position_copy(position)
 	return vector():set(position)
 end
 
-function impl.add(key, text_id, position)
+function impl.add(key, source_key, text_id, many_text_id, position)
 	if not impl.enabled() or not db.actor or not position then return end
 	local now = time_global()
-	for index, entry in ipairs(state.entries) do
+	for _, entry in ipairs(state.entries) do
 		if entry.key == key then
 			entry.text_id = text_id
-			entry.position:set(position)
-			entry.expires = now + CAPTION_LIFETIME
+			entry.many_text_id = many_text_id
+			local source = entry.sources[source_key]
+			if not source then
+				local source_count = 0
+				local oldest_key = nil
+				local oldest_seen = now
+				for saved_key, saved_source in pairs(entry.sources) do
+					source_count = source_count + 1
+					if saved_source.last_seen <= oldest_seen then
+						oldest_key = saved_key
+						oldest_seen = saved_source.last_seen
+					end
+				end
+				if source_count >= MAX_GROUP_SOURCES and oldest_key then
+					entry.sources[oldest_key] = nil
+				end
+				source = { position = impl.position_copy(position), last_seen = now }
+				entry.sources[source_key] = source
+			else
+				source.position:set(position)
+				source.last_seen = now
+			end
 			impl.start_update()
 			return
 		end
@@ -162,8 +183,10 @@ function impl.add(key, text_id, position)
 	table.insert(state.entries, {
 		key = key,
 		text_id = text_id,
-		position = impl.position_copy(position),
-		expires = now + CAPTION_LIFETIME,
+		many_text_id = many_text_id,
+		sources = {
+			[source_key] = { position = impl.position_copy(position), last_seen = now }
+		},
 		display = ""
 	})
 	impl.start_update()
@@ -188,17 +211,39 @@ function impl.direction_id(position)
 	return "pf_acc_direction_front", distance
 end
 
-function impl.refresh_display(entry)
-	local direction_id, horizontal_distance = impl.direction_id(entry.position)
+function impl.refresh_display(entry, now)
 	local actor_position = db.actor:position()
-	local dy = entry.position.y - actor_position.y
-	local distance = math.sqrt(horizontal_distance * horizontal_distance + dy * dy)
+	local nearest_position = nil
+	local nearest_distance = math.huge
+	local source_count = 0
+	for source_key, source in pairs(entry.sources) do
+		if now - source.last_seen >= CAPTION_LIFETIME then
+			entry.sources[source_key] = nil
+		else
+			local dx = source.position.x - actor_position.x
+			local dy = source.position.y - actor_position.y
+			local dz = source.position.z - actor_position.z
+			local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+			source_count = source_count + 1
+			if distance < nearest_distance then
+				nearest_distance = distance
+				nearest_position = source.position
+			end
+		end
+	end
+	if source_count == 0 or not nearest_position then return false end
+	local direction_id = impl.direction_id(nearest_position)
+	local caption = translated(entry.text_id)
+	if source_count > 1 then
+		caption = translated(entry.many_text_id or entry.text_id) .. " ×" .. tostring(source_count)
+	end
 	entry.display = string.format(
 		"%s  %s  %s",
 		translated(direction_id),
-		translated(entry.text_id),
-		string.format(translated("pf_acc_distance"), math.floor(distance + 0.5))
+		caption,
+		string.format(translated("pf_acc_distance"), math.floor(nearest_distance + 0.5))
 	)
+	return true
 end
 
 update = function()
@@ -214,9 +259,10 @@ update = function()
 	end
 	local now = time_global()
 	for index = #state.entries, 1, -1 do
-		if now >= state.entries[index].expires then table.remove(state.entries, index) end
+		if not impl.refresh_display(state.entries[index], now) then
+			table.remove(state.entries, index)
+		end
 	end
-	for _, entry in ipairs(state.entries) do impl.refresh_display(entry) end
 	impl.show_entries()
 	if #state.entries == 0 then impl.stop_update() end
 end
@@ -235,29 +281,30 @@ end
 function on_actor_sound(actor, source_id, sound_type, position, power)
 	if not impl.enabled() then return end
 	if bit.band(sound_type, SOUND_ANOMALY) ~= 0 then
-		impl.add("anomaly:" .. tostring(source_id), "pf_acc_anomaly", position)
+		impl.add("anomaly", tostring(source_id), "pf_acc_anomaly", "pf_acc_anomaly_many", position)
 		return
 	end
 	if bit.band(sound_type, SOUND_MONSTER) == 0 then return end
 	local source = level.object_by_id(source_id)
 	local is_stalker = source and news_manager.is_npc_stalker(source:clsid()) or false
-	impl.add(
-		(is_stalker and "npc:" or "mutant:") .. tostring(source_id) .. ":" .. tostring(sound_type),
-		impl.sound_text_id(is_stalker, sound_type),
-		position
-	)
+	local text_id = impl.sound_text_id(is_stalker, sound_type)
+	impl.add((is_stalker and "npc:" or "mutant:") .. text_id,
+		tostring(source_id), text_id, text_id .. "_many", position)
 end
 
 function on_detector_pulse(kind, position)
 	if kind == "metal" then
-		impl.add("detector:metal", "pf_acc_metal_detector", position)
+		impl.add("detector:metal", "metal", "pf_acc_metal_detector", nil, position)
 	else
-		impl.add("detector:artefact", "pf_acc_artefact_detector", position)
+		impl.add("detector:artefact", "artefact", "pf_acc_artefact_detector", nil, position)
 	end
 end
 
 function on_anomaly_sound(position)
-	impl.add("anomaly:script", "pf_acc_anomaly", position)
+	local source_key = string.format("script:%d:%d:%d",
+		math.floor(position.x + 0.5), math.floor(position.y + 0.5),
+		math.floor(position.z + 0.5))
+	impl.add("anomaly", source_key, "pf_acc_anomaly", "pf_acc_anomaly_many", position)
 end
 
 function reset()
