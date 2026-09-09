@@ -1673,17 +1673,18 @@ end
 
 -- Find a navigable arrival point roughly the requested distance from a stash.
 -- The actor must remain outside the purple tier's three-metre discovery radius,
--- so snapping to a vertex is accepted only within a narrow 14-16 m band.
+-- so snapping to a vertex is accepted only within a narrow 14-16 m band. A
+-- curated container can sit on furniture or outside an AI cell, and its saved
+-- vertex can belong to another floor. Resolve every landing sample directly
+-- instead of walking outward from that unreliable container vertex.
 function impl.arrival_position_near_stash(point, requested_distance)
 	if not point then return nil end
 	local object_point = impl.stash_object_point(point)
 	local center_x = object_point.position[1]
 	local center_y = object_point.position[2]
 	local center_z = object_point.position[3]
-	local center = vector():set(center_x, center_y, center_z)
-	local start_vertex_id = point.level_vertex_id or level.vertex_id(center)
-	if not start_vertex_id or start_vertex_id == 4294967295 then return nil end
 	local base_angle = math.random() * math.pi * 2
+	local angle_step = math.pi * 2 / 48
 	local radii = {
 		requested_distance,
 		requested_distance - 0.5,
@@ -1691,13 +1692,21 @@ function impl.arrival_position_near_stash(point, requested_distance)
 		requested_distance - 1,
 		requested_distance + 1
 	}
+	local desired = vector()
 
-	for angle_index = 0, 23 do
-		local angle = base_angle + math.rad(angle_index * 15)
+	for angle_index = 0, 47 do
+		local angle = base_angle + angle_index * angle_step
+		local direction_x = math.cos(angle)
+		local direction_z = math.sin(angle)
 		for _, radius in ipairs(radii) do
-			local direction = vector():set(math.cos(angle), 0, math.sin(angle))
-			local vertex_id = level.vertex_in_direction(start_vertex_id, direction, radius)
-			if vertex_id and vertex_id ~= 4294967295 then
+			desired:set(
+				center_x + direction_x * radius,
+				center_y,
+				center_z + direction_z * radius
+			)
+			local vertex_id = level.vertex_id(desired)
+			if vertex_id and level.valid_vertex_id(vertex_id) and
+				level.is_accessible_vertex_id(vertex_id) then
 				local position = level.vertex_position(vertex_id)
 				local dx = position.x - center_x
 				local dz = position.z - center_z
