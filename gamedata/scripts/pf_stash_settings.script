@@ -1,0 +1,41 @@
+local DISABLE_GREEN_SPAWNING_SETTING_FILE = "pf_disable_green_stash_spawning.setting"
+
+local green_stash_spawning_disabled = nil
+
+local function setting_path()
+	return getFS():update_path(
+		"$app_data_root$", DISABLE_GREEN_SPAWNING_SETTING_FILE
+	)
+end
+
+function is_green_stash_spawning_disabled()
+	if green_stash_spawning_disabled ~= nil then
+		return green_stash_spawning_disabled
+	end
+
+	local file = io.open(setting_path(), "r")
+	if not file then
+		green_stash_spawning_disabled = false
+		return false
+	end
+
+	local value = string.lower(file:read("*l") or "")
+	file:close()
+	value = string.gsub(value, "^%s+", "")
+	value = string.gsub(value, "%s+$", "")
+	green_stash_spawning_disabled = value == "1" or value == "true" or
+		value == "on"
+	return green_stash_spawning_disabled
+end
+
+function set_green_stash_spawning_disabled(disabled)
+	local file = io.open(setting_path(), "w")
+	if not file then
+		printf("[PF STASH] Unable to save the disable-green-stash-spawning setting")
+		return false
+	end
+	file:write(disabled == true and "1\n" or "0\n")
+	file:close()
+	green_stash_spawning_disabled = disabled == true
+	return true
+end

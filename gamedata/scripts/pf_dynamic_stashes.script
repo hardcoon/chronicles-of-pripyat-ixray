@@ -1006,7 +1006,8 @@ function impl.nearest_detector_slot(actor_position, detector_data)
 						local available = tier and
 							(not tier.hint_required or slot.state.hinted or can_reveal)
 						local eligible = slot and slot.point and not slot.state.depleted and
-							slot_range and available
+							slot_range and available and
+							not impl.is_background_green_suppressed(slot)
 						if eligible then
 							local distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
 							local range_sqr = slot_range * slot_range
@@ -1825,13 +1826,26 @@ function impl.find_existing_objects()
 	searched_existing = true
 end
 
+function impl.is_background_green_suppressed(slot)
+	if not slot or slot.tier ~= "green" or not slot.state or
+		slot.state.discovered or slot.state.hinted then
+		return false
+	end
+	local settings = pf_stash_settings
+	if not (settings and settings.is_green_stash_spawning_disabled) then
+		return false
+	end
+	return settings.is_green_stash_spawning_disabled() == true
+end
+
 function impl.retire_far_undiscovered(actor_position)
 	local retired = 0
 	local physical = 0
 	for _, slot in ipairs(slots) do
 		if retired < MAX_RETIREMENTS_PER_UPDATE and slot.id and
 			not slot.state.discovered and
-			impl.position_distance_sqr(actor_position, slot.point) > DEMATERIALIZE_DISTANCE_SQR then
+			(impl.is_background_green_suppressed(slot) or
+			impl.position_distance_sqr(actor_position, slot.point) > DEMATERIALIZE_DISTANCE_SQR) then
 			impl.release_object(slot.id)
 			slot.id = nil
 			slot.spawned_at = 0
@@ -3393,6 +3407,14 @@ function impl.spawn_story_document(slot)
 	return impl.spawn_item({ section = section }, slot.id)
 end
 
+function impl.ensure_story_document(slot, box)
+	if not slot or not box or not slot.state.story_doc then return false end
+	local section = pf_story_documents.document_section(slot.state.story_doc)
+	if not section then return false end
+	if impl.stash_contains_section(box, section) then return true end
+	return impl.spawn_story_document(slot)
+end
+
 function impl.story_document_pending()
 	for _, candidate in ipairs(slots) do
 		if candidate.state and candidate.state.story_doc then return true end
@@ -3671,6 +3693,7 @@ function impl.update_slot_marker(slot, actor_position, check_discovery, check_ma
 		if check_markers then impl.add_tier_marker(slot) end
 		return
 	end
+	if impl.is_background_green_suppressed(slot) then return end
 	local tier = tier_data[slot.tier]
 	if not check_discovery or not tier or tier.hint_required or
 		impl.position_distance_sqr(actor_position, slot.point) >=
@@ -4005,12 +4028,73 @@ function impl.select_lore_hint_slot(coordinate_id)
 				end
 			end
 		end
-		if selected then return selected end
+		if selected then return selected, nil, nil, "lore" end
 		-- A higher tier must wait until the lower tier's remaining notes are taken.
 		-- Revisiting this reservation repairs its marker without charging another sheet.
-		if previous then return previous end
+		if previous then return previous, nil, nil, "lore" end
 	end
-	return impl.select_unsearched_lore_hint_slot(coordinate_id)
+	local selected, note_field, note_index = impl.select_unsearched_lore_hint_slot(coordinate_id)
+	if selected then return selected, note_field, note_index, "lore" end
+	if not impl.lore_collection_complete() then return nil end
+	return impl.select_story_hint_slot()
+end
+
+function impl.lore_collection_complete()
+	local ghost_count = impl.ghost_city_note_count()
+	local city_count = impl.pripyat_city_note_count()
+	if ghost_count <= 0 or city_count <= 0 then return false end
+	for index = 1, ghost_count do
+		if not impl.ghost_city_note_found(index) then return false end
+	end
+	for index = 1, city_count do
+		if not impl.pripyat_city_note_found(index) then return false end
+	end
+	return true
+end
+
+function impl.story_hint_document_section(slot)
+	if not slot or not slot.state or slot.state.depleted or
+		not pf_story_documents or not pf_story_documents.next_document_index or
+		not pf_story_documents.document_section then return nil end
+	local index = tonumber(slot.state.story_doc)
+	local next_index = tonumber(pf_story_documents.next_document_index())
+	if not index or index ~= next_index then return nil end
+	return pf_story_documents.document_section(index)
+end
+
+-- Once both lore catalogues are complete, coordinate sheets continue the
+-- personal-story queue. Documents 1-10 use the same cyan-through-orange tiers
+-- as ordinary story discovery; the guaranteed late hand-offs remain cyan-only.
+function impl.select_story_hint_slot()
+	if not pf_story_documents or not pf_story_documents.next_document_index then return nil end
+	local next_index = tonumber(pf_story_documents.next_document_index())
+	if not next_index or next_index < 1 or next_index > 12 then return nil end
+	local tiers = next_index >= 11 and { "cyan" } or { "cyan", "purple", "orange" }
+	local actor_position = db.actor:position()
+	for _, tier in ipairs(tiers) do
+		local selected, selected_distance = nil, math.huge
+		for _, slot in ipairs(slots) do
+			if slot.tier == tier and slot.point and impl.story_hint_document_section(slot) then
+				local distance = impl.position_distance_sqr(actor_position, slot.point)
+				if distance < selected_distance then selected, selected_distance = slot, distance end
+			end
+		end
+		if selected then return selected, nil, nil, "story" end
+	end
+	if impl.story_document_pending() then return nil end
+	for _, tier in ipairs(tiers) do
+		local selected, selected_distance = nil, math.huge
+		for _, slot in ipairs(slots) do
+			if slot.tier == tier and slot.point and slot.state and not slot.state.depleted and
+				not slot.state.discovered and not slot.state.story_roll_checked and
+				not slot.state.story_doc then
+				local distance = impl.position_distance_sqr(actor_position, slot.point)
+				if distance < selected_distance then selected, selected_distance = slot, distance end
+			end
+		end
+		if selected then return selected, "story_doc", next_index, "story" end
+	end
+	return nil
 end
 
 function grant_lore_note_hint(coordinate_id)
@@ -4019,15 +4103,20 @@ function grant_lore_note_hint(coordinate_id)
 	impl.build_candidate_indexes()
 	if #slots == 0 then impl.initialize_slots() end
 	impl.find_existing_objects()
-	local slot, note_field, note_index = impl.select_lore_hint_slot(coordinate_id)
+	local slot, note_field, note_index, target_kind = impl.select_lore_hint_slot(coordinate_id)
 	if not slot then return false, "no_notes" end
 	if note_field then
 		-- Reserve before materialization, including failed/pending attempts. A
 		-- reload or ordinary search must restore this note, never choose another.
 		slot.state[note_field] = note_index
-		slot.state.ghost_city_roll_checked = true
+		if target_kind == "story" then
+			slot.state.story_roll_checked = true
+		else
+			slot.state.ghost_city_roll_checked = true
+		end
 	end
-	local section = impl.lore_hint_note_section(slot)
+	local section = target_kind == "story" and impl.story_hint_document_section(slot) or
+		impl.lore_hint_note_section(slot)
 	local was_given = slot.state.lore_hint_given == true
 	local box = slot.id and alife():object(slot.id, true) or nil
 	if slot.id and (not box or not stash_sections[box:section_name()] or
@@ -4044,8 +4133,12 @@ function grant_lore_note_hint(coordinate_id)
 		if not impl.spawn_slot(slot) then return false, "pending", slot end
 		box = slot.id and alife():object(slot.id, true) or nil
 	end
-	impl.ensure_ghost_city_note(slot, box)
-	impl.ensure_pripyat_city_note(slot, box)
+	if target_kind == "story" then
+		impl.ensure_story_document(slot, box)
+	else
+		impl.ensure_ghost_city_note(slot, box)
+		impl.ensure_pripyat_city_note(slot, box)
+	end
 	if not box or not impl.stash_contains_section(box, section) or not impl.add_tier_marker(slot) then
 		return false, "pending", slot
 	end
@@ -4920,7 +5013,8 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 	local materialized = false
 
 	local tier = tier_data[slot.tier]
-	local available = not tier.hint_required or slot.state.hinted
+	local available = (not tier.hint_required or slot.state.hinted) and
+		not impl.is_background_green_suppressed(slot)
 	local should_materialize = point_distance_sqr <= MATERIALIZE_DISTANCE_SQR or
 		slot.state.hinted
 	if not slot.id and not slot.state.depleted and available and allow_materialize and
