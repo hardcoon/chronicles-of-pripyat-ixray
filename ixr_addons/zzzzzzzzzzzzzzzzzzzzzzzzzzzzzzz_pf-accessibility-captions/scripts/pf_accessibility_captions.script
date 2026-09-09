@@ -1,0 +1,282 @@
+-- Low-center captions for important positional sounds. The module owns no
+-- permanent update callback after the actor is bound and the queue is empty.
+
+local SOUND_MONSTER = 0x20000000
+local SOUND_ANOMALY = 0x10000000
+local SOUND_DYING = 0x00020000
+local SOUND_INJURING = 0x00010000
+local SOUND_STEP = 0x00008000
+local SOUND_TALKING = 0x00004000
+local SOUND_ATTACKING = 0x00002000
+local SOUND_EATING = 0x00001000
+local MAX_CAPTIONS = 3
+local CAPTION_LIFETIME = 2600
+local ROW_HEIGHT = 26
+
+local state = {
+	entries = {},
+	actor_bound = false,
+	callbacks_registered = false,
+	update_registered = false,
+	hud = nil,
+	hud_error_reported = false
+}
+local impl = {}
+local update
+
+local function translated(id)
+	return game.translate_string(id)
+end
+
+function impl.enabled()
+	return get_console():get_bool("snd_accessibility_captions") == true
+end
+
+class "pf_accessibility_captions_hud" (CUIScriptWnd)
+
+function pf_accessibility_captions_hud:__init() super()
+	self.render_holder = nil
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	self:SetAutoDelete(true)
+	local xml = CScriptXmlInit()
+	xml:ParseFile("pf_accessibility_captions.xml")
+	self.root = xml:InitStatic("captions", self)
+	self.rows = {}
+	for index = 1, MAX_CAPTIONS do
+		local shadow = xml:InitTextWnd("captions:shadow", self.root)
+		local line = xml:InitTextWnd("captions:line", self.root)
+		local y = 610 + (index - 1) * ROW_HEIGHT
+		shadow:SetWndPos(vector2():set(113, y + 1))
+		line:SetWndPos(vector2():set(112, y))
+		shadow:SetTextComplexMode(false)
+		line:SetTextComplexMode(false)
+		shadow:Show(false)
+		line:Show(false)
+		self.rows[index] = { shadow = shadow, line = line, last_text = nil }
+	end
+end
+
+function pf_accessibility_captions_hud:__finalize()
+	pcall(function()
+		if self.render_holder then self.render_holder:RemoveDialogToRender(self) end
+		self.render_holder = nil
+	end)
+end
+
+function pf_accessibility_captions_hud:SetEntries(entries)
+	for index, row in ipairs(self.rows) do
+		local entry = entries[index]
+		if entry then
+			if row.last_text ~= entry.display then
+				row.shadow:SetText(entry.display)
+				row.line:SetText(entry.display)
+				row.last_text = entry.display
+			end
+			row.shadow:Show(true)
+			row.line:Show(true)
+		else
+			row.shadow:Show(false)
+			row.line:Show(false)
+			row.last_text = nil
+		end
+	end
+end
+
+function impl.hide_hud()
+	if state.hud then
+		pcall(function()
+			local holder = state.hud.render_holder or get_hud()
+			if holder then holder:RemoveDialogToRender(state.hud) end
+			state.hud.render_holder = nil
+		end)
+	end
+	state.hud = nil
+end
+
+function impl.show_entries()
+	if #state.entries == 0 then
+		impl.hide_hud()
+		return
+	end
+	local ok, error_message = pcall(function()
+		local holder = get_hud()
+		if not holder then return end
+		if not state.hud then
+			state.hud = pf_accessibility_captions_hud()
+			state.hud.render_holder = holder
+			holder:AddDialogToRender(state.hud)
+		end
+		state.hud:SetEntries(state.entries)
+	end)
+	if ok then
+		state.hud_error_reported = false
+	elseif not state.hud_error_reported then
+		printf("! [pf_accessibility_captions] HUD failed: [%s]", tostring(error_message))
+		state.hud_error_reported = true
+		impl.hide_hud()
+	end
+end
+
+function impl.stop_update()
+	if not state.update_registered then return end
+	UnregisterScriptCallback("update", update)
+	state.update_registered = false
+end
+
+function impl.start_update()
+	if state.update_registered then return end
+	RegisterScriptCallback("update", update)
+	state.update_registered = true
+end
+
+function impl.bind_actor()
+	if state.actor_bound or not db.actor then return state.actor_bound end
+	db.actor:set_callback(callback.sound, on_actor_sound)
+	state.actor_bound = true
+	return true
+end
+
+function impl.clear()
+	for index = #state.entries, 1, -1 do state.entries[index] = nil end
+	impl.hide_hud()
+end
+
+function impl.position_copy(position)
+	if not position then return nil end
+	return vector():set(position)
+end
+
+function impl.add(key, text_id, position)
+	if not impl.enabled() or not db.actor or not position then return end
+	local now = time_global()
+	for index, entry in ipairs(state.entries) do
+		if entry.key == key then
+			entry.text_id = text_id
+			entry.position:set(position)
+			entry.expires = now + CAPTION_LIFETIME
+			impl.start_update()
+			return
+		end
+	end
+	if #state.entries >= MAX_CAPTIONS then table.remove(state.entries, 1) end
+	table.insert(state.entries, {
+		key = key,
+		text_id = text_id,
+		position = impl.position_copy(position),
+		expires = now + CAPTION_LIFETIME,
+		display = ""
+	})
+	impl.start_update()
+end
+
+function impl.direction_id(position)
+	local actor_position = db.actor:position()
+	local dx = position.x - actor_position.x
+	local dz = position.z - actor_position.z
+	local distance = math.sqrt(dx * dx + dz * dz)
+	if distance < 0.01 then return "pf_acc_direction_front", 0 end
+	local forward = device().cam_dir
+	local tx, tz = dx / distance, dz / distance
+	local forward_length = math.sqrt(forward.x * forward.x + forward.z * forward.z)
+	if forward_length < 0.01 then return "pf_acc_direction_front", distance end
+	local fx, fz = forward.x / forward_length, forward.z / forward_length
+	local dot = fx * tx + fz * tz
+	if dot < -0.35 then return "pf_acc_direction_back", distance end
+	local cross = fx * tz - fz * tx
+	if cross < -0.35 then return "pf_acc_direction_right", distance end
+	if cross > 0.35 then return "pf_acc_direction_left", distance end
+	return "pf_acc_direction_front", distance
+end
+
+function impl.refresh_display(entry)
+	local direction_id, horizontal_distance = impl.direction_id(entry.position)
+	local actor_position = db.actor:position()
+	local dy = entry.position.y - actor_position.y
+	local distance = math.sqrt(horizontal_distance * horizontal_distance + dy * dy)
+	entry.display = string.format(
+		"%s  %s  %s",
+		translated(direction_id),
+		translated(entry.text_id),
+		string.format(translated("pf_acc_distance"), math.floor(distance + 0.5))
+	)
+end
+
+update = function()
+	if not impl.bind_actor() then return end
+	if #state.entries == 0 then
+		impl.stop_update()
+		return
+	end
+	if not impl.enabled() or not db.actor then
+		impl.clear()
+		impl.stop_update()
+		return
+	end
+	local now = time_global()
+	for index = #state.entries, 1, -1 do
+		if now >= state.entries[index].expires then table.remove(state.entries, index) end
+	end
+	for _, entry in ipairs(state.entries) do impl.refresh_display(entry) end
+	impl.show_entries()
+	if #state.entries == 0 then impl.stop_update() end
+end
+
+function impl.sound_text_id(is_stalker, sound_type)
+	local prefix = is_stalker and "pf_acc_npc_" or "pf_acc_mutant_"
+	if bit.band(sound_type, SOUND_DYING) ~= 0 then return prefix .. "dying" end
+	if bit.band(sound_type, SOUND_INJURING) ~= 0 then return prefix .. "injuring" end
+	if bit.band(sound_type, SOUND_ATTACKING) ~= 0 then return prefix .. "attacking" end
+	if bit.band(sound_type, SOUND_TALKING) ~= 0 then return prefix .. "talking" end
+	if bit.band(sound_type, SOUND_STEP) ~= 0 then return prefix .. "step" end
+	if bit.band(sound_type, SOUND_EATING) ~= 0 then return prefix .. "eating" end
+	return prefix .. "generic"
+end
+
+function on_actor_sound(actor, source_id, sound_type, position, power)
+	if not impl.enabled() then return end
+	if bit.band(sound_type, SOUND_ANOMALY) ~= 0 then
+		impl.add("anomaly:" .. tostring(source_id), "pf_acc_anomaly", position)
+		return
+	end
+	if bit.band(sound_type, SOUND_MONSTER) == 0 then return end
+	local source = level.object_by_id(source_id)
+	local is_stalker = source and news_manager.is_npc_stalker(source:clsid()) or false
+	impl.add(
+		(is_stalker and "npc:" or "mutant:") .. tostring(source_id) .. ":" .. tostring(sound_type),
+		impl.sound_text_id(is_stalker, sound_type),
+		position
+	)
+end
+
+function on_detector_pulse(kind, position)
+	if kind == "metal" then
+		impl.add("detector:metal", "pf_acc_metal_detector", position)
+	else
+		impl.add("detector:artefact", "pf_acc_artefact_detector", position)
+	end
+end
+
+function on_anomaly_sound(position)
+	impl.add("anomaly:script", "pf_acc_anomaly", position)
+end
+
+function reset()
+	impl.clear()
+	state.actor_bound = false
+	impl.start_update()
+end
+
+function on_game_start()
+	if state.callbacks_registered then return end
+	if type(RegisterScriptCallback) ~= "function" or
+		type(UnregisterScriptCallback) ~= "function" then
+		printf("! [pf_accessibility_captions] dynamic callback API unavailable")
+		return
+	end
+	RegisterScriptCallback("load", reset)
+	RegisterScriptCallback("net_destroy", reset)
+	state.callbacks_registered = true
+	impl.start_update()
+end
+
+on_game_start()
