@@ -9,6 +9,7 @@ local LIGHT_ON_SQR = 35 * 35
 local LIGHT_OFF_SQR = 45 * 45
 local SOUND_ON_SQR = 20 * 20
 local SOUND_OFF_SQR = 30 * 30
+local CAPTION_REFRESH_INTERVAL_MS = 1000
 local DECORATIVE_ZONE_CHECK_INTERVAL_MS = 1000
 local GRID_CELL_SIZE = 64
 local GRID_NEIGHBOR_SPAN = math.ceil(math.sqrt(math.max(
@@ -291,6 +292,7 @@ local function enable_sound(index, anomaly, effects)
 	if pf_accessibility_captions and pf_accessibility_captions.on_anomaly_sound then
 		pf_accessibility_captions.on_anomaly_sound(position)
 	end
+	state.caption_refresh = time_global()
 	state.sound_playing = true
 	return true
 end
@@ -299,6 +301,7 @@ local function disable_sound(state)
 	if state and state.sound_playing and state.sound then
 		state.sound:stop_deffered()
 		state.sound_playing = false
+		state.caption_refresh = nil
 		return true
 	end
 	return false
@@ -377,6 +380,15 @@ local function actor_on_update()
 			enable_sound(index, anomaly, effects) then
 			update_active_index(index, states[index])
 			return
+		end
+		-- A looped sound has no repeated play event. Keep the accessibility row
+		-- alive at a bounded rate while this already-streamed sound remains on.
+		if state and state.sound_playing and
+			(not state.caption_refresh or now - state.caption_refresh >= CAPTION_REFRESH_INTERVAL_MS) then
+			state.caption_refresh = now
+			if pf_accessibility_captions and pf_accessibility_captions.on_anomaly_sound then
+				pf_accessibility_captions.on_anomaly_sound(anomaly_position(anomaly))
+			end
 		end
 	end
 end
