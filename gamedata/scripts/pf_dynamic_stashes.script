@@ -1075,7 +1075,7 @@ function impl.update_active_metal_detector(now)
 	if now < next_detector_pulse or #slots == 0 then return end
 
 	local actor_position = db.actor:position()
-	local _, nearest_distance_sqr, nearest_range, reveal_slot =
+	local nearest_slot, nearest_distance_sqr, nearest_range, reveal_slot =
 		impl.nearest_detector_slot(actor_position, detector_data)
 	if reveal_slot then impl.reveal_detector_slot(reveal_slot) end
 
@@ -1091,6 +1091,12 @@ function impl.update_active_metal_detector(now)
 	end
 	detector_pulse_sound:play_no_feedback(
 		db.actor, sound_object.s2d, 0, vector():set(0, 0, 0), 1.0)
+	if nearest_slot and nearest_slot.point and pf_accessibility_captions and
+		pf_accessibility_captions.on_detector_pulse then
+		local point = nearest_slot.point.position
+		pf_accessibility_captions.on_detector_pulse(
+			"metal", vector():set(point[1], point[2], point[3]))
+	end
 	next_detector_pulse = now + interval
 end
 

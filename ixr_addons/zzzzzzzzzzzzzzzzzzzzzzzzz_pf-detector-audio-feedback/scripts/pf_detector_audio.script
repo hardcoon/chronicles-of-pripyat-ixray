@@ -137,7 +137,8 @@ function update()
         state.next_search = now
         return
     end
-    local distance = detector_position:distance_to(target:position())
+    local target_position = target:position()
+    local distance = detector_position:distance_to(target_position)
     if distance > profile.radius then
         impl.clear_target(now)
         state.next_search = now
@@ -157,6 +158,9 @@ function update()
     state.sound:play(actor, entry.delay, sound_object.s2d)
     state.sound.volume = entry.volume
     state.sound.frequency = 0.9 + 0.5 * (1 - relative)
+    if pf_accessibility_captions and pf_accessibility_captions.on_detector_pulse then
+        pf_accessibility_captions.on_detector_pulse("artefact", target_position)
+    end
     state.last_pulse = now
 end
 

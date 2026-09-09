@@ -286,7 +286,11 @@ local function enable_sound(index, anomaly, effects)
 	if not state.sound then
 		state.sound = sound_object(effects.sound)
 	end
-	state.sound:play_at_pos(db.actor, anomaly_position(anomaly), 0, sound_object.s3d + sound_object.looped)
+	local position = anomaly_position(anomaly)
+	state.sound:play_at_pos(db.actor, position, 0, sound_object.s3d + sound_object.looped)
+	if pf_accessibility_captions and pf_accessibility_captions.on_anomaly_sound then
+		pf_accessibility_captions.on_anomaly_sound(position)
+	end
 	state.sound_playing = true
 	return true
 end
