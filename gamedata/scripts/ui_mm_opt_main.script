@@ -119,6 +119,7 @@ function options_dialog:SetCurrentValues()
 	opt:SaveBackupValues("key_binding")
 
 	self.dlg_sound:SetMusicPackValue(pf_copyright_music.get_pack())
+	self.dlg_gameplay:SetDisableGreenStashSpawningValue()
 	self.dlg_gameplay:SetDeveloperAccessValue()
 
 	self:UpdateDependControls()
@@ -350,6 +351,7 @@ function options_dialog:OnApplyChanges()
     self.timer = nil
     _G.b_discard_settings_shown = false
 	pf_copyright_music.set_pack(self.dlg_sound:GetMusicPackValue())
+	self.dlg_gameplay:SaveDisableGreenStashSpawningValue()
 	local developer_access_saved = self.dlg_gameplay:SaveDeveloperAccessValue()
 	if developer_access_saved and self.owner.RefreshNewGameMenu then
 		self.owner:RefreshNewGameMenu()

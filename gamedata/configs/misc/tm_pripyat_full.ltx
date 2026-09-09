@@ -17,13 +17,14 @@ prior = 119
 storyline = true
 title = pf_learn_past_name
 descr_functor = condlist
-; Physical encounter states deliberately do not update this task. The player
-; learns what happened through documents, with Sergey's identity revealed only
-; by document 12. If he is alive at that exact moment, the achievement flag
-; selects the surviving-brother finale below.
+; The player learns what happened through documents, with Sergey's identity
+; revealed only by document 12. If he is alive at that exact moment, the
+; achievement flag selects the surviving-brother finale below. His earlier
+; death fails the still-active task.
 descr = {+pf_story_doc_12_found +pf_story_path_continues_achievement_gained} pf_learn_past_text_12_alive, {+pf_story_doc_12_found} pf_learn_past_text_12_dead, {+pf_story_doc_11_found +pf_story_preacher_dead} pf_learn_past_text_11_dead, {+pf_story_doc_11_found} pf_learn_past_text_11_alive, {+pf_story_doc_10_found} pf_learn_past_text_10, {+pf_story_doc_09_found} pf_learn_past_text_09, {+pf_story_doc_08_found} pf_learn_past_text_08, {+pf_story_doc_07_found} pf_learn_past_text_07, {+pf_story_doc_06_found} pf_learn_past_text_06, {+pf_story_doc_05_found} pf_learn_past_text_05, {+pf_story_doc_04_found} pf_learn_past_text_04, {+pf_story_doc_03_found} pf_learn_past_text_03, {+pf_story_doc_02_found} pf_learn_past_text_02, {+pf_story_doc_01_found} pf_learn_past_text_01, pf_learn_past_text
 target = nil
 condlist_0 = {+pf_story_doc_12_found} complete
+condlist_1 = {+pf_story_preacher_dead -pf_story_doc_12_found} fail
 
 [pf_bunker_access]
 icon = ui_inGame2_Put_v_pripyat

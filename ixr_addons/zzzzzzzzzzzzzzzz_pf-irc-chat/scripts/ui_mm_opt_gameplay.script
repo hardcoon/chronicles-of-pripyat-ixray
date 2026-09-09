@@ -52,6 +52,31 @@ function opt_gameplay:InitControls(x, y, xml, handler)
     self.check_game_chat = chat_xml:InitCheck("chat_item:check", _st)
     chat_xml:InitStatic("chat_item:note", _st)
     addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_gameplay:cap_disable_green_stash_spawning", _st)
+    self.check_disable_green_stash_spawning = xml:InitCheck(
+        "tab_gameplay:check_disable_green_stash_spawning", _st
+    )
+    addControl(_st)
+end
+
+function opt_gameplay:SetDisableGreenStashSpawningValue()
+    self.disable_green_stash_spawning_backup =
+        pf_stash_settings.is_green_stash_spawning_disabled() == true
+    self.check_disable_green_stash_spawning:SetCheck(
+        self.disable_green_stash_spawning_backup
+    )
+end
+
+function opt_gameplay:SaveDisableGreenStashSpawningValue()
+    local disabled = self.check_disable_green_stash_spawning:GetCheck() == true
+    if disabled == self.disable_green_stash_spawning_backup then return true end
+    if not pf_stash_settings.set_green_stash_spawning_disabled(disabled) then
+        return false
+    end
+    self.disable_green_stash_spawning_backup = disabled
+    return true
 end
 
 function opt_gameplay:SetDeveloperAccessValue()
