@@ -4303,7 +4303,7 @@ function deliver_pending_puzzle_rewards(silent)
 			table.remove(order, index)
 		else
 			local granted, detail = grant_puzzle_reward_once(reward_id, entry.tier,
-				"pf_dynamic_stash_hint_received", silent == true)
+				"pf_puzzle_stash_reward_" .. entry.tier, silent == true)
 			if granted ~= true then return false, detail end
 			pending[reward_id] = nil
 			table.remove(order, index)
