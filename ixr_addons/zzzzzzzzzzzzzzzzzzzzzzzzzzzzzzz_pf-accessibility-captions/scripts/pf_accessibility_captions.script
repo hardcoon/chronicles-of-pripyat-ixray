@@ -12,6 +12,7 @@ local SOUND_EATING = 0x00001000
 local MAX_CAPTIONS = 3
 local MAX_GROUP_SOURCES = 32
 local CAPTION_LIFETIME = 2600
+local ANOMALY_CAPTION_MAX_DISTANCE_SQR = 30 * 30
 local ROW_HEIGHT = 26
 
 local state = {
@@ -147,13 +148,14 @@ function impl.position_copy(position)
 	return vector():set(position)
 end
 
-function impl.add(key, source_key, text_id, many_text_id, position)
+function impl.add(key, source_key, text_id, many_text_id, position, show_source_count)
 	if not impl.enabled() or not db.actor or not position then return end
 	local now = time_global()
 	for _, entry in ipairs(state.entries) do
 		if entry.key == key then
 			entry.text_id = text_id
 			entry.many_text_id = many_text_id
+			entry.show_source_count = show_source_count ~= false
 			local source = entry.sources[source_key]
 			if not source then
 				local source_count = 0
@@ -184,6 +186,7 @@ function impl.add(key, source_key, text_id, many_text_id, position)
 		key = key,
 		text_id = text_id,
 		many_text_id = many_text_id,
+		show_source_count = show_source_count ~= false,
 		sources = {
 			[source_key] = { position = impl.position_copy(position), last_seen = now }
 		},
@@ -234,8 +237,8 @@ function impl.refresh_display(entry, now)
 	if source_count == 0 or not nearest_position then return false end
 	local direction_id = impl.direction_id(nearest_position)
 	local caption = translated(entry.text_id)
-	if source_count > 1 then
-		caption = translated(entry.many_text_id or entry.text_id) .. " ×" .. tostring(source_count)
+	if source_count > 1 and entry.show_source_count then
+		caption = translated(entry.many_text_id or entry.text_id) .. " x" .. tostring(source_count)
 	end
 	entry.display = string.format(
 		"%s  %s  %s",
@@ -278,10 +281,23 @@ function impl.sound_text_id(is_stalker, sound_type)
 	return prefix .. "generic"
 end
 
+function impl.add_anomaly(source_key, position)
+	if not db.actor or not position then return end
+	local actor_position = db.actor:position()
+	local dx = position.x - actor_position.x
+	local dy = position.y - actor_position.y
+	local dz = position.z - actor_position.z
+	if dx * dx + dy * dy + dz * dz > ANOMALY_CAPTION_MAX_DISTANCE_SQR then return end
+	-- Several overlapping fields represent one environmental warning. Keep all
+	-- sources so direction and distance follow the nearest one, but never show a
+	-- stack counter as if anomalies were a pack of creatures.
+	impl.add("anomaly", source_key, "pf_acc_anomaly", nil, position, false)
+end
+
 function on_actor_sound(actor, source_id, sound_type, position, power)
 	if not impl.enabled() then return end
 	if bit.band(sound_type, SOUND_ANOMALY) ~= 0 then
-		impl.add("anomaly", tostring(source_id), "pf_acc_anomaly", "pf_acc_anomaly_many", position)
+		impl.add_anomaly(tostring(source_id), position)
 		return
 	end
 	if bit.band(sound_type, SOUND_MONSTER) == 0 then return end
@@ -304,7 +320,7 @@ function on_anomaly_sound(position)
 	local source_key = string.format("script:%d:%d:%d",
 		math.floor(position.x + 0.5), math.floor(position.y + 0.5),
 		math.floor(position.z + 0.5))
-	impl.add("anomaly", source_key, "pf_acc_anomaly", "pf_acc_anomaly_many", position)
+	impl.add_anomaly(source_key, position)
 end
 
 function reset()
