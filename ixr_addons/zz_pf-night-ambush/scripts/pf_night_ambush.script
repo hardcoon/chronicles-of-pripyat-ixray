@@ -4,11 +4,13 @@
 local C = {
     key = "pf_night_ambush_v1", revealed_key = "pf_night_ambush_revealed",
     grasp_key = "pf_night_ambush_grasp",
-    start_hour = 0, end_hour = 5.5, wait_min = 15 * 60, wait_max = 60 * 60,
-    tick = 1000, day_tick = 30000, retry = 10000, grace = 60000,
-    npc_radius = 60, cleanup_distance = 120, online_timeout = 15000,
+    start_hour = 0, end_hour = 5.5, wait_min = 10 * 60, wait_max = 30 * 60,
+    tick = 1000, day_tick = 30000, retry = 3000, grace = 15000,
+    npc_radius = 30, cleanup_distance = 120, online_timeout = 15000,
     bloodsucker = "pf_night_bloodsucker", chimera = "pf_night_chimera",
-    mute_mask = 4294967295, angles = {0, 0.20, -0.20},
+    mute_mask = 4294967295,
+    angles = {0, 0.35, -0.35, 0.70, -0.70, 1.05, -1.05},
+    spawn_distances = {9, 12, 15, 18}, rejection_log_interval = 30000,
     approach_tick = 250, reveal_distance = 5,
 }
 local state = {version = 1, sequence = 1}
@@ -195,61 +197,81 @@ function impl.peaceful_nearby(position)
     return false
 end
 
+function impl.reject(reason, now)
+    if runtime.last_rejection ~= reason or now >= (runtime.next_rejection_log or 0) then
+        printf("[pf_night_ambush] spawn blocked: %s", reason)
+        runtime.last_rejection = reason
+        runtime.next_rejection_log = now + C.rejection_log_interval
+    end
+end
+
 function impl.spawn_point(actor, position, chimera)
-    if not impl.open_sky(position) then return nil end
+    if not impl.open_sky(position) then return nil, nil, nil, "no open sky above actor" end
     local facing = vector():set(device().cam_dir)
     facing.y = 0
     if facing:magnitude() < 0.01 then facing:set(actor:direction()); facing.y = 0 end
-    if facing:magnitude() < 0.01 then return nil end
+    if facing:magnitude() < 0.01 then return nil, nil, nil, "invalid actor direction" end
     facing:normalize()
-    local distance, minimum, maximum = 10, 9, 11
-    if chimera then distance, minimum, maximum = 13, 12, 14 end
-    for _, angle in ipairs(C.angles) do
-        local c, s = math.cos(angle), math.sin(angle)
-        local direction = vector():set(-facing.x * c + facing.z * s, 0,
-            -facing.x * s - facing.z * c)
-        local vertex = level.vertex_in_direction(actor:level_vertex_id(), direction, distance)
-        -- CActor has no CRestrictedObject in this engine. Check the graph here;
-        -- the private monster checks its own restrictions during net_spawn.
-        if level.valid_vertex_id(vertex) then
-            local point = vector():set(level.vertex_position(vertex))
-            local offset = vector():set(point):sub(position)
-            local length = offset:magnitude()
-            local behind = offset.x * facing.x + offset.z * facing.z
-            if length >= minimum and length <= maximum and behind < -0.90 * length
-                and math.abs(offset.y) <= 1.2 and not impl.protected(point)
-                and impl.open_sky(point) then
-                local ground = impl.ray(vector():set(point.x, point.y + 2, point.z),
-                    vector():set(0, -1, 0), 3)
-                local clear = ground and math.abs(ground - 2) < 0.5
-                local side_x, side_z = -direction.z * 0.6, direction.x * 0.6
-                -- A body-width corridor at three heights also protects the native jump approach.
-                for _, side in ipairs({-1, 0, 1}) do
-                    if not clear then break end
-                    for _, height in ipairs({0.4, 1.1, 1.8}) do
+    for _, distance in ipairs(C.spawn_distances) do
+        local minimum, maximum = distance - 1.5, distance + 1.5
+        for _, angle in ipairs(C.angles) do
+            local c, s = math.cos(angle), math.sin(angle)
+            local direction = vector():set(-facing.x * c + facing.z * s, 0,
+                -facing.x * s - facing.z * c)
+            local vertex = level.vertex_in_direction(actor:level_vertex_id(), direction, distance)
+            -- CActor has no CRestrictedObject in this engine. Check the graph here;
+            -- the private monster checks its own restrictions during net_spawn.
+            if level.valid_vertex_id(vertex) then
+                local point = vector():set(level.vertex_position(vertex))
+                local offset = vector():set(point):sub(position)
+                local length = offset:magnitude()
+                local behind = offset.x * facing.x + offset.z * facing.z
+                if length >= minimum and length <= maximum and behind < -0.45 * length
+                    and math.abs(offset.y) <= 2.5 and not impl.protected(point)
+                    and impl.open_sky(point) then
+                    local ground = impl.ray(vector():set(point.x, point.y + 2, point.z),
+                        vector():set(0, -1, 0), 3.5)
+                    local clear = ground and math.abs(ground - 2) < 0.75
+                    local side_x, side_z = -direction.z * 0.6, direction.x * 0.6
+                    -- Four torso/head rays still reject walls while tolerating uneven ground
+                    -- and small low obstacles that made the old nine-ray corridor too strict.
+                    for _, sample in ipairs({{-1, 1.1}, {0, 1.1}, {1, 1.1}, {0, 1.8}}) do
+                        if not clear then break end
+                        local side, height = sample[1], sample[2]
                         local start = vector():set(point.x + side * side_x, point.y + height,
                             point.z + side * side_z)
                         local to_actor = vector():set(position.x + side * side_x,
                             position.y + height, position.z + side * side_z):sub(start)
                         local range = to_actor:magnitude()
-                        if impl.ray(start, to_actor:normalize(), range) then clear = false; break end
+                        if impl.ray(start, to_actor:normalize(), range) then clear = false end
                     end
+                    if clear then point.y = point.y + 0.1; return point, vertex, facing end
                 end
-                if clear then point.y = point.y + 0.1; return point, vertex, facing end
             end
         end
     end
+    return nil, nil, nil, chimera and "no safe chimera point behind actor"
+        or "no safe bloodsucker point behind actor"
 end
 
 function impl.try_spawn(actor, position, now, day)
     runtime.next_attempt = now + C.retry
-    if impl.protected(position) or impl.peaceful_nearby(position) then return end
+    if impl.protected(position) then
+        impl.reject("actor is inside a safe/no-weapon zone", now)
+        return
+    end
+    if impl.peaceful_nearby(position) then
+        impl.reject("friendly stalker is within 30 meters", now)
+        return
+    end
     local chimera = state.sequence == 4
-    local point, vertex, facing = impl.spawn_point(actor, position, chimera)
-    if not point then return end
+    local point, vertex, facing, reason = impl.spawn_point(actor, position, chimera)
+    if not point then impl.reject(reason or "no safe spawn point", now); return end
     local section = chimera and C.chimera or C.bloodsucker
     local server = alife():create(section, point, vertex, actor:game_vertex_id())
-    if not server then return end
+    if not server then impl.reject("ALife object creation failed", now); return end
+    runtime.last_rejection = nil
+    runtime.next_rejection_log = nil
     server.m_smart_terrain_id = 65535
     server.angle = vector():set(0, -math.atan2(facing.x, facing.z), 0)
     state.active = {id = server.id, name = server:name(), section = section,
