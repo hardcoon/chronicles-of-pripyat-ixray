@@ -1036,39 +1036,33 @@ function impl.beacon_landing_candidate(probe, point, beacon_position, beacon_id,
 end
 
 function impl.find_beacon_landing(object)
-	-- CRayPick reads a static triangle material even for dynamic hits in this
-	-- engine. Keep every ray static; handle dynamic obstacles via nearest.
+	-- AI nodes guide NPC navigation and may be on the ground below a walkable
+	-- roof. They are a landing hint, not a requirement for the actor's floor.
 	local probe = ray_pick()
 	probe:set_flags(rq_target.rqtStatic)
 	local beacon_position = object.position
-	local visited = {}
 	local anchor
-	local function try_vertex(id)
-		if not id or id == 4294967295 or visited[id] then return nil end
-		visited[id] = true
-		if not level.valid_vertex_id(id) or not level.is_accessible_vertex_id(id) then return nil end
+	local id = object.m_level_vertex_id
+	if id and level.valid_vertex_id(id) and level.is_accessible_vertex_id(id) then
 		local point = level.vertex_position(id)
-		if id == object.m_level_vertex_id then
-			local dx, dz = point.x - beacon_position.x, point.z - beacon_position.z
-			local distance_sqr = dx * dx + dz * dz
-			if distance_sqr >= BEACON_LANDING.min_radius_sqr and distance_sqr <= BEACON_LANDING.max_radius_sqr and
-				math.abs(point.y - beacon_position.y) <= BEACON_LANDING.max_height_difference then anchor = point end
+		local dx, dz = point.x - beacon_position.x, point.z - beacon_position.z
+		local distance_sqr = dx * dx + dz * dz
+		if distance_sqr >= BEACON_LANDING.min_radius_sqr and distance_sqr <= BEACON_LANDING.max_radius_sqr and
+			math.abs(point.y - beacon_position.y) <= BEACON_LANDING.max_height_difference then
+			anchor = point
+			local destination = impl.beacon_landing_candidate(probe, point, beacon_position, object.id, anchor)
+			if destination then return destination end
 		end
-		return impl.beacon_landing_candidate(probe, point, beacon_position, object.id, anchor)
 	end
-	-- The stored vertex is the actor's placement location, often much safer
-	-- than the beacon's inset position at the very edge of a floor.
-	local destination = try_vertex(object.m_level_vertex_id)
-	if destination then return destination end
-	destination = try_vertex(level.vertex_id(beacon_position))
-	if destination then return destination end
-	-- At most 50 vertex candidates, deduplicated, with an immediate return on
-	-- success. Expanding to 5/7.5/10 m happens only if closer points fail.
+	-- Keep the beacon's height while probing real collision. Projecting every
+	-- sample onto the AI graph used to move roof samples to the ground below
+	-- and reject them before even checking their physical support.
+	-- One stored hint plus 48 distinct samples: at most 49 candidates.
 	for _, radius in ipairs(BEACON_LANDING.radii) do
 		for _, direction in ipairs(BEACON_LANDING.directions) do
-			local position = vector():set(beacon_position.x + direction[1] * radius,
+			local point = vector():set(beacon_position.x + direction[1] * radius,
 				beacon_position.y, beacon_position.z + direction[2] * radius)
-			destination = try_vertex(level.vertex_id(position))
+			local destination = impl.beacon_landing_candidate(probe, point, beacon_position, object.id, anchor)
 			if destination then return destination end
 		end
 	end
