@@ -9,7 +9,13 @@ local TASK_ICON = "ui_inGame2_Ohota_na_Krovososov"
 local MAX_ACTIVE = 3
 local MAX_ACCEPTED_PER_DAY = 3
 local UPDATE_INTERVAL_MS = 500
-local MISSING_SMART_GRACE_MS = 5000
+local SQUAD_INDEX_CACHE_MS = 5000
+
+local MIGRATION = {
+	scan_limit = 10000,
+	max_scan_limit = 999999,
+	squad_sentinel = 65535
+}
 
 -- Only the twelve verified mutant smarts belong to the hunting pool. A name
 -- in this table is never sufficient on its own: the runtime board and a live
@@ -83,7 +89,6 @@ local target_classes = {
 local state = nil
 local next_update = 0
 local task_runtime = {}
-local missing_smart_since = {}
 local last_dialog_text = nil
 local dialog_offer_snapshot = {}
 local dialog_ready_snapshot = {}
@@ -92,9 +97,14 @@ local no_offer_log_day = nil
 local squad_index_board = nil
 local squad_index_expires = 0
 local squads_by_smart = {}
+local migration = {}
 
 local function tr(id)
 	return game.translate_string(id)
+end
+
+local function is_live_alife_object(object)
+	return object ~= nil and (object.alive == nil or object:alive())
 end
 
 local function split_plain(value, separator)
@@ -253,7 +263,7 @@ local function squad_matches_target(squad, target)
 	local found = false
 	for member in squad:squad_members() do
 		local object = member and member.id and sim:object(member.id) or nil
-		if object ~= nil and (object.alive == nil or object:alive()) then
+		if is_live_alife_object(object) then
 			if object.clsid == nil then return false end
 			local object_class = object:clsid()
 			local matches = false
@@ -278,7 +288,7 @@ local function assigned_squad_index(board)
 		return squads_by_smart
 	end
 	squad_index_board = board
-	squad_index_expires = now + MISSING_SMART_GRACE_MS
+	squad_index_expires = now + SQUAD_INDEX_CACHE_MS
 	squads_by_smart = {}
 	for _, squad in pairs(board.squads or {}) do
 		if squad.smart_id ~= nil then
@@ -418,24 +428,28 @@ end
 
 local function live_members(order)
 	local result = {}
+	local seen = {}
 	local sim = alife()
 	if sim == nil then return result end
+	local function append_member(id)
+		if id == nil or seen[id] then return end
+		local object = sim:object(id)
+		if is_live_alife_object(object) then
+			seen[id] = true
+			table.insert(result, id)
+		end
+	end
 	for _, squad_id in ipairs(order.squad_ids) do
 		local squad = sim:object(squad_id)
-		if squad ~= nil and squad.npc_count ~= nil and squad:npc_count() > 0 then
+		if squad ~= nil then
 			local member_count_before = #result
 			if squad.squad_members ~= nil then
 				for member in squad:squad_members() do
-					if member ~= nil and member.id ~= nil and sim:object(member.id) ~= nil then
-						table.insert(result, member.id)
-					end
+					append_member(member and member.id or nil)
 				end
 			end
 			if #result == member_count_before and squad.commander_id ~= nil then
-				local commander_id = squad:commander_id()
-				if commander_id ~= nil and sim:object(commander_id) ~= nil then
-					table.insert(result, commander_id)
-				end
+				append_member(squad:commander_id())
 			end
 		end
 	end
@@ -452,7 +466,7 @@ local function task_target(order, members)
 	if order.status == "ready" then return trapper_object_id() end
 	if #members == 1 then return members[1] end
 	local _, smart = smart_data(order.smart_name)
-	return smart and smart.id or nil
+	return smart and smart.id or members[1]
 end
 
 local function task_stage(order, members)
@@ -525,45 +539,19 @@ local function remove_active_at(index)
 	return order
 end
 
-local function cancel_missing_smart(index)
-	local order = remove_active_at(index)
-	finish_native_task(order, task.fail)
-	if order.accepted_day == current_day_key() then
-		state.accepted_today = math.max(0, state.accepted_today - 1)
-	end
-	printf("! [pf_trapper_hunts] cancelled [%s]: smart [%s] is missing",
-		order.task_id, order.smart_name)
-	return true
-end
-
 local function update_orders()
 	local board = sim_board.get_sim_board()
 	if board == nil or board.smarts_by_names == nil or board.smarts == nil then
 		return false
 	end
 	local changed = false
-	local now = time_global()
-	for index = #state.active, 1, -1 do
-		local order = state.active[index]
-		local _, smart = smart_data(order.smart_name)
-		if smart == nil then
-			local missing_since = missing_smart_since[order.task_id]
-			if missing_since == nil then
-				missing_smart_since[order.task_id] = now
-			elseif now - missing_since >= MISSING_SMART_GRACE_MS then
-				missing_smart_since[order.task_id] = nil
-				cancel_missing_smart(index)
-				changed = true
-			end
-		else
-			missing_smart_since[order.task_id] = nil
-			local members = live_members(order)
-			if #members == 0 and order.status ~= "ready" then
-				order.status = "ready"
-				changed = true
-			end
-			ensure_native_task(order, members)
+	for _, order in ipairs(state.active) do
+		local members = live_members(order)
+		if #members == 0 and order.status ~= "ready" then
+			order.status = "ready"
+			changed = true
 		end
+		ensure_native_task(order, members)
 	end
 	if changed then
 		refresh_offers()
@@ -737,6 +725,87 @@ local function turn_in_ready(index, first_speaker, second_speaker)
 	return true
 end
 
+function migration.scan_bound(args)
+	local raw = args and args[1] or nil
+	if raw == nil or tostring(raw) == "" then return MIGRATION.scan_limit end
+	local value = math.floor(tonumber(raw) or 0)
+	if value < 1 or value > MIGRATION.max_scan_limit then
+		printf("! [pf_trapper_hunts] migration expects a scan limit from 1 to %d",
+			MIGRATION.max_scan_limit)
+		return nil
+	end
+	return value
+end
+
+function migration.smart_from_title(title)
+	title = tostring(title or "")
+	for _, smart_name in ipairs(target_order) do
+		local candidate = string.format(tr("pf_trapper_hunt_task_title"),
+			kind_name(smart_name))
+		if title == candidate then return smart_name end
+	end
+	return nil
+end
+
+function migration.run(args)
+	if db.actor == nil or level.name() ~= LEVEL_NAME then
+		printf("! [pf_trapper_hunts] migration requires a loaded Pripyat save")
+		return 0
+	end
+	local scan_bound = migration.scan_bound(args)
+	if scan_bound == nil or not initialize_state() then return 0 end
+
+	local active_ids = {}
+	for _, order in ipairs(state.active) do active_ids[order.task_id] = true end
+	local recovered = 0
+	local unrecognized = 0
+	local no_capacity = 0
+	for serial = 1, scan_bound do
+		local task_id = string.format("%s%06d", TASK_PREFIX, serial)
+		local game_task = db.actor:get_task(task_id, true)
+		if game_task ~= nil and not active_ids[task_id] then
+			local smart_name = migration.smart_from_title(game_task:get_title())
+			if smart_name == nil then
+				unrecognized = unrecognized + 1
+			elseif #state.active >= MAX_ACTIVE then
+				no_capacity = no_capacity + 1
+			else
+				local order = {
+					task_id = task_id,
+					smart_name = smart_name,
+					squad_ids = {MIGRATION.squad_sentinel},
+					reward = targets[smart_name].reward,
+					status = "ready",
+					accepted_day = current_day_key()
+				}
+				table.insert(state.active, order)
+				active_ids[task_id] = true
+				state.serial = math.max(state.serial, serial)
+				ensure_native_task(order, {})
+				recovered = recovered + 1
+			end
+		end
+	end
+
+	if recovered > 0 then
+		state.accepted_today = math.min(MAX_ACCEPTED_PER_DAY,
+			math.max(state.accepted_today, #state.active))
+		refresh_offers()
+		save_state()
+	end
+	printf("~ [pf_trapper_hunts] migration: recovered [%d], unrecognized [%d], no capacity [%d]",
+		recovered, unrecognized, no_capacity)
+	return recovered
+end
+
+-- Manual recovery entry point for old saves whose native Trapper tasks have
+-- outlived the script state. Invoke once from the console through the stock
+-- command: run_string pf_trapper_hunts.migrate_old_save()
+function migrate_old_save(scan_bound)
+	local args = scan_bound ~= nil and {scan_bound} or {}
+	return migration.run(args)
+end
+
 function update()
 	if db.actor == nil or level.name() ~= LEVEL_NAME then return end
 	local now = time_global()
@@ -749,7 +818,6 @@ function reset()
 	state = nil
 	next_update = 0
 	task_runtime = {}
-	missing_smart_since = {}
 	last_dialog_text = nil
 	dialog_offer_snapshot = {}
 	dialog_ready_snapshot = {}
