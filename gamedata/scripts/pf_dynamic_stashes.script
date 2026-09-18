@@ -57,6 +57,7 @@ local state = {
 	slot_grid = {},
 	slot_grid_point_ids = {},
 	loot_rng = nil,
+	hydration_seed = nil,
 	pending_metal_detector_use = nil,
 	pending_strange_zombied_loot = {}
 }
@@ -118,11 +119,11 @@ local stash_hint_messages = {
 }
 
 local tier_data = {
-	green = { marker = "pf_stash_green", discovery_distance_sqr = 10 * 10, hint_required = false },
-	cyan = { marker = "pf_stash_cyan", discovery_distance_sqr = 5 * 5, hint_required = false },
-	purple = { marker = "pf_stash_purple", discovery_distance_sqr = 3 * 3, hint_required = false },
-	orange = { marker = "pf_stash_orange", hint_required = true },
-	red = { marker = "pf_stash_red", hint_required = true }
+	green = { marker = "pf_stash_green", discovery_distance_sqr = 10 * 10, hint_required = false, provision_chance = 20, hydration_chance = 23 },
+	cyan = { marker = "pf_stash_cyan", discovery_distance_sqr = 5 * 5, hint_required = false, provision_chance = 50, hydration_chance = 44 },
+	purple = { marker = "pf_stash_purple", discovery_distance_sqr = 3 * 3, hint_required = false, provision_chance = 70, hydration_chance = 57 },
+	orange = { marker = "pf_stash_orange", hint_required = true, provision_chance = 100 },
+	red = { marker = "pf_stash_red", hint_required = true, provision_chance = 100 }
 }
 local puzzle_reward_tiers = { green = true, cyan = true, purple = true, orange = true, red = true }
 
@@ -265,7 +266,16 @@ local attachment_migration = {
 -- quest artefacts, multiplayer items and technical scene objects are excluded
 -- deliberately: a random stash must never advance or break a scripted task.
 local loot_pools = {
-	food_basic = { "bread", "kolbasa", "conserva", "mineral_water" },
+	provisions = {
+		{ section = "conserva", chance = 20 },
+		{ section = "bread", chance = 30 },
+		{ section = "kolbasa", chance = 20 },
+		{ section = "energy_drink", chance = 20 },
+		{ section = "mineral_water", chance = 30 },
+		{ section = "flyaga", chance = 30 },
+		{ section = "vodka", chance = 40 }
+	},
+	hydration = { "energy_drink", "mineral_water", "flyaga" },
 	food_all = {
 		"bread", "kolbasa", "conserva", "vodka", "energy_drink",
 		"mineral_water", "flyaga"
@@ -587,7 +597,6 @@ local loot_pools = {
 	-- green stash. The pool avoids repair kits, artefacts and advanced gear so
 	-- the common tier becomes less empty without competing with cyan rewards.
 	green_bonus = {
-		"vodka", "energy_drink", "mineral_water", "flyaga",
 		"antirad", "medkit",
 		"grenade_rgd5", "grenade_gd-05",
 		"lz_nm_metal_part", "lz_nm_armor_pouch", "lz_nm_rubber_padding",
@@ -2347,6 +2356,110 @@ function impl.add_random_loot(loot, pool, minimum, maximum, condition_min, condi
 	end
 end
 
+function impl.add_provision_roll(loot, tier)
+	local settings = tier_data[tier]
+	local tier_chance = settings and settings.provision_chance or 0
+	if tier_chance <= 0 then return false end
+	if tier_chance < 100 and not impl.roll(tier_chance) then return false end
+
+	-- The tier roll guarantees at least one provision. The first item is selected
+	-- proportionally to the requested marginal chances; adjusted follow-up rolls
+	-- keep every item's final chance at its configured value without duplicates.
+	local total_chance = 0
+	for _, entry in ipairs(loot_pools.provisions) do
+		total_chance = total_chance + entry.chance
+	end
+	if total_chance <= 0 then return false end
+
+	local selection = impl.loot_random(total_chance)
+	local selected_index = 1
+	local threshold = 0
+	for index, entry in ipairs(loot_pools.provisions) do
+		threshold = threshold + entry.chance
+		if selection <= threshold then
+			selected_index = index
+			break
+		end
+	end
+
+	for index, entry in ipairs(loot_pools.provisions) do
+		if index == selected_index then
+			impl.add_loot(loot, entry.section)
+		else
+			local target_chance = entry.chance / 100
+			local selected_chance = entry.chance / total_chance
+			local followup_chance = (target_chance - selected_chance) / (1 - selected_chance)
+			if impl.loot_random() < followup_chance then impl.add_loot(loot, entry.section) end
+		end
+	end
+	return true
+end
+
+function impl.is_hydration_section(section)
+	for _, hydration_section in ipairs(loot_pools.hydration) do
+		if section == hydration_section then return true end
+	end
+	return false
+end
+
+function impl.loot_contains_hydration(loot)
+	for _, entry in ipairs(loot) do
+		if impl.is_hydration_section(entry.section) then return true end
+	end
+	return false
+end
+
+function impl.provision_hydration_chance()
+	local total_chance = 0
+	local nonhydration_chance = 0
+	for _, entry in ipairs(loot_pools.provisions) do
+		total_chance = total_chance + entry.chance
+		if not impl.is_hydration_section(entry.section) then
+			nonhydration_chance = nonhydration_chance + entry.chance
+		end
+	end
+	if total_chance <= 0 then return 0 end
+
+	local no_hydration_followup = 1
+	for _, entry in ipairs(loot_pools.provisions) do
+		if impl.is_hydration_section(entry.section) then
+			local target_chance = entry.chance / 100
+			local selected_chance = entry.chance / total_chance
+			local followup_chance = (target_chance - selected_chance) / (1 - selected_chance)
+			no_hydration_followup = no_hydration_followup * (1 - followup_chance)
+		end
+	end
+	return 1 - (nonhydration_chance / total_chance) * no_hydration_followup
+end
+
+function impl.hydration_target_random(tier, purpose)
+	if state.hydration_seed then
+		return (impl.deterministic_pda_roll(state.hydration_seed, tier, purpose) - 1) /
+			(DETERMINISTIC_MODULUS - 1)
+	end
+	return impl.loot_random()
+end
+
+function impl.add_hydration_target_roll(loot, tier)
+	local settings = tier_data[tier]
+	local target_chance = settings and settings.hydration_chance
+	if not target_chance or impl.loot_contains_hydration(loot) then return false end
+
+	local base_chance = ((settings.provision_chance or 0) / 100) *
+		impl.provision_hydration_chance()
+	local target_probability = target_chance / 100
+	if target_probability <= base_chance or base_chance >= 1 then return false end
+	local followup_chance = (target_probability - base_chance) / (1 - base_chance)
+	if impl.hydration_target_random(tier, "pf_stash_hydration_target_v1") >= followup_chance then
+		return false
+	end
+
+	local item_roll = impl.hydration_target_random(tier, "pf_stash_hydration_item_v1")
+	local item_index = math.min(#loot_pools.hydration, math.floor(item_roll * #loot_pools.hydration) + 1)
+	impl.add_loot(loot, loot_pools.hydration[item_index])
+	return true
+end
+
 function impl.add_distinct_random_loot(loot, pool, count)
 	local available = {}
 	local present = {}
@@ -2483,10 +2596,9 @@ end
 
 function impl.build_green_loot()
 	local loot = {}
-	impl.add_random_loot(loot, loot_pools.food_basic, 1, 1)
 	-- Entry-tier supply: reduced by 40% from the original 20% roll.
 	if impl.roll(12) then impl.add_loot(loot, "lz_nm_krona_battery") end
-	if impl.roll(45) then impl.add_random_loot(loot, loot_pools.food_all, 1, 1) end
+	impl.add_provision_roll(loot, "green")
 	if impl.roll(70) then impl.add_random_loot(loot, loot_pools.stash_medicine_basic, 1, 1) end
 	if impl.roll(25) then impl.add_random_loot(loot, loot_pools.stash_medicine_basic, 1, 1) end
 	if impl.roll(72) then impl.add_random_loot(loot, loot_pools.ammo_green, 1, 2) end
@@ -2507,7 +2619,7 @@ end
 function impl.build_cyan_loot()
 	local loot = {}
 	if impl.roll(21) then impl.add_loot(loot, "lz_nm_krona_battery") end
-	if impl.roll(65) then impl.add_random_loot(loot, loot_pools.food_all, 1, 2) end
+	impl.add_provision_roll(loot, "cyan")
 	impl.add_random_loot(loot, loot_pools.stash_medicine_field, 2, 4)
 	impl.add_random_loot(loot, loot_pools.ammo_cyan, 2, 4)
 	if impl.roll(22) then impl.add_weapon(loot, loot_pools.weapons_cyan, 20, 50, 1, 2) end
@@ -2545,7 +2657,7 @@ end
 function impl.build_purple_loot()
 	local loot = {}
 	if impl.roll(36) then impl.add_loot(loot, "lz_nm_krona_battery") end
-	if impl.roll(55) then impl.add_random_loot(loot, loot_pools.food_all, 1, 2) end
+	impl.add_provision_roll(loot, "purple")
 	impl.add_random_loot(loot, loot_pools.stash_medicine_advanced, 2, 5)
 	impl.add_random_loot(loot, loot_pools.ammo_purple, 3, 5)
 
@@ -2614,7 +2726,7 @@ function impl.build_orange_loot()
 	-- Legendary caches always carry at least one detector cell and can carry two.
 	impl.add_loot(loot, "lz_nm_krona_battery")
 	if impl.roll(30) then impl.add_loot(loot, "lz_nm_krona_battery") end
-	impl.add_random_loot(loot, loot_pools.food_all, 1, 3)
+	impl.add_provision_roll(loot, "orange")
 	impl.add_legendary_combat_core(loot)
 
 	-- A legendary cache should almost always contain one protective item. Keep
@@ -2680,6 +2792,7 @@ function impl.build_red_loot()
 	-- The closed red reward table grants half an hour of portable detector power.
 	impl.add_loot(loot, "lz_nm_krona_battery")
 	impl.add_loot(loot, "lz_nm_krona_battery")
+	impl.add_provision_roll(loot, "red")
 	-- Red has exactly one primary weapon branch: a normal legendary-tier weapon
 	-- or a named/story variant from the red-only pool, with equal probability.
 	-- The orange secondary-weapon roll is disabled so the two branches cannot mix.
@@ -2737,6 +2850,7 @@ function impl.build_loot(tier)
 	if medicine_chance and impl.roll(medicine_chance) then
 		impl.add_loot(loot, "drug_sleep")
 	end
+	impl.add_hydration_target_roll(loot, tier)
 	return loot
 end
 
@@ -2770,6 +2884,7 @@ function impl.build_slot_loot(slot)
 	local red_bundle = nil
 	if slot.tier == "red" then red_bundle = impl.prepare_next_red_one_time_bundle() end
 	state.loot_rng = { value = impl.slot_loot_seed(slot, "pf_stash_loot_v1") }
+	state.hydration_seed = impl.slot_loot_seed(slot, "pf_stash_hydration_target_v1")
 	local ok, loot = pcall(impl.build_loot, slot.tier)
 	if ok and red_bundle then
 		local bundle_ok, bundle_error = pcall(
@@ -2790,6 +2905,7 @@ function impl.build_slot_loot(slot)
 		end
 	end
 	state.loot_rng = nil
+	state.hydration_seed = nil
 	if not ok or type(loot) ~= "table" or #loot == 0 then
 		detector_state.red_unique_detector_stage = detector_stage
 		detector_state.detector_progression_pity = detector_pity
@@ -5223,6 +5339,7 @@ function reset()
 	next_detector_pulse = 0
 	detector_pulse_sound = nil
 	state.loot_rng = nil
+	state.hydration_seed = nil
 	state.pending_metal_detector_use = nil
 	state.pending_lore_coordinate_use = nil
 	state.pending_strange_zombied_loot = {}
