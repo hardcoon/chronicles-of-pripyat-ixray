@@ -3566,6 +3566,70 @@ function impl.discover_slot(slot, box)
 	return true
 end
 
+-- Curated containers may sit on furniture or in an x/z cell which has no AI
+-- node. Passing the invalid result from level.vertex_id to alife():create makes
+-- CGameObject::net_Spawn scan the complete level graph on the main thread.
+-- Probe only nearby graph cells, cache the result on the catalogue point and
+-- never let an invalid node reach the native spawn path.
+function impl.resolve_stash_level_vertex(slot, point, position)
+	local configured = tonumber(point.level_vertex_id)
+	if configured and level.valid_vertex_id(configured) then return configured end
+	if point.pf_level_vertex_unavailable then return nil end
+
+	local direct = level.vertex_id(position)
+	if direct and level.valid_vertex_id(direct) then
+		point.level_vertex_id = direct
+		return direct
+	end
+
+	local step = 0.7
+	local max_ring = 12
+	local sample = vector()
+	local best_id = nil
+	local best_score = math.huge
+	local best_distance_sqr = nil
+	local function consider(offset_x, offset_z)
+		sample:set(position.x + offset_x * step, position.y, position.z + offset_z * step)
+		local candidate_id = level.vertex_id(sample)
+		if not candidate_id or not level.valid_vertex_id(candidate_id) then return end
+		local candidate = level.vertex_position(candidate_id)
+		local dx = candidate.x - position.x
+		local dy = candidate.y - position.y
+		local dz = candidate.z - position.z
+		local distance_sqr = dx * dx + dz * dz
+		local score = distance_sqr + dy * dy
+		if score < best_score then
+			best_id = candidate_id
+			best_score = score
+			best_distance_sqr = distance_sqr
+		end
+	end
+
+	for ring = 1, max_ring do
+		for offset = -ring, ring do
+			consider(offset, -ring)
+			consider(offset, ring)
+		end
+		for offset = -ring + 1, ring - 1 do
+			consider(-ring, offset)
+			consider(ring, offset)
+		end
+	end
+
+	if best_id then
+		point.level_vertex_id = best_id
+		printf("[PF STASH] cached nearby AI vertex %d for slot %s (%.2f m)",
+			best_id, tostring(slot and slot.index or "?"), math.sqrt(best_distance_sqr))
+		return best_id
+	end
+
+	point.pf_level_vertex_unavailable = true
+	printf("! [PF STASH] skipped slot %s: no AI vertex within %.1f m at %.3f, %.3f, %.3f",
+		tostring(slot and slot.index or "?"), step * max_ring,
+		position.x, position.y, position.z)
+	return nil
+end
+
 function impl.spawn_slot(slot)
 	local point = slot.point
 	local loot = impl.build_slot_loot(slot)
@@ -3582,7 +3646,8 @@ function impl.spawn_slot(slot)
 	local object_point = impl.stash_object_point(point)
 	local position = vector():set(
 		object_point.position[1], object_point.position[2], object_point.position[3])
-	local level_vertex_id = point.level_vertex_id or level.vertex_id(position)
+	local level_vertex_id = impl.resolve_stash_level_vertex(slot, point, position)
+	if not level_vertex_id then return false end
 	local game_vertex_id = point.game_vertex_id or db.actor:game_vertex_id()
 	local box = alife():create(section, position, level_vertex_id, game_vertex_id)
 	if not box then return false end
