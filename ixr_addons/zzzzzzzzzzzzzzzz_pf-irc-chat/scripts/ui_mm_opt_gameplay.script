@@ -59,6 +59,13 @@ function opt_gameplay:InitControls(x, y, xml, handler)
         "tab_gameplay:check_disable_green_stash_spawning", _st
     )
     addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_gameplay:cap_spawn_discoverable_vehicles", _st)
+    self.check_spawn_discoverable_vehicles = xml:InitCheck(
+        "tab_gameplay:check_spawn_discoverable_vehicles", _st
+    )
+    addControl(_st)
 end
 
 function opt_gameplay:SetDisableGreenStashSpawningValue()
@@ -76,6 +83,24 @@ function opt_gameplay:SaveDisableGreenStashSpawningValue()
         return false
     end
     self.disable_green_stash_spawning_backup = disabled
+    return true
+end
+
+function opt_gameplay:SetSpawnDiscoverableVehiclesValue()
+    self.spawn_discoverable_vehicles_backup =
+        pf_vehicle_settings.is_discoverable_vehicle_spawning_enabled() == true
+    self.check_spawn_discoverable_vehicles:SetCheck(
+        self.spawn_discoverable_vehicles_backup
+    )
+end
+
+function opt_gameplay:SaveSpawnDiscoverableVehiclesValue()
+    local enabled = self.check_spawn_discoverable_vehicles:GetCheck() == true
+    if enabled == self.spawn_discoverable_vehicles_backup then return true end
+    if not pf_vehicle_settings.set_discoverable_vehicle_spawning_enabled(enabled) then
+        return false
+    end
+    self.spawn_discoverable_vehicles_backup = enabled
     return true
 end
 

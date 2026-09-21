@@ -120,6 +120,7 @@ function options_dialog:SetCurrentValues()
 
 	self.dlg_sound:SetMusicPackValue(pf_copyright_music.get_pack())
 	self.dlg_gameplay:SetDisableGreenStashSpawningValue()
+	self.dlg_gameplay:SetSpawnDiscoverableVehiclesValue()
 	self.dlg_gameplay:SetDeveloperAccessValue()
 
 	self:UpdateDependControls()
@@ -352,6 +353,7 @@ function options_dialog:OnApplyChanges()
     _G.b_discard_settings_shown = false
 	pf_copyright_music.set_pack(self.dlg_sound:GetMusicPackValue())
 	self.dlg_gameplay:SaveDisableGreenStashSpawningValue()
+	self.dlg_gameplay:SaveSpawnDiscoverableVehiclesValue()
 	local developer_access_saved = self.dlg_gameplay:SaveDeveloperAccessValue()
 	if developer_access_saved and self.owner.RefreshNewGameMenu then
 		self.owner:RefreshNewGameMenu()

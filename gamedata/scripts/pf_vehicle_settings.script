@@ -1,0 +1,42 @@
+local SPAWN_DISCOVERABLE_VEHICLES_SETTING_FILE =
+	"pf_spawn_discoverable_vehicles.setting"
+
+local discoverable_vehicle_spawning_enabled = nil
+
+local function setting_path()
+	return getFS():update_path(
+		"$app_data_root$", SPAWN_DISCOVERABLE_VEHICLES_SETTING_FILE
+	)
+end
+
+function is_discoverable_vehicle_spawning_enabled()
+	if discoverable_vehicle_spawning_enabled ~= nil then
+		return discoverable_vehicle_spawning_enabled
+	end
+
+	local file = io.open(setting_path(), "r")
+	if not file then
+		discoverable_vehicle_spawning_enabled = false
+		return false
+	end
+
+	local value = string.lower(file:read("*l") or "")
+	file:close()
+	value = string.gsub(value, "^%s+", "")
+	value = string.gsub(value, "%s+$", "")
+	discoverable_vehicle_spawning_enabled = value == "1" or value == "true" or
+		value == "on"
+	return discoverable_vehicle_spawning_enabled
+end
+
+function set_discoverable_vehicle_spawning_enabled(enabled)
+	local file = io.open(setting_path(), "w")
+	if not file then
+		printf("[PF VEHICLES] Unable to save the discoverable-vehicle setting")
+		return false
+	end
+	file:write(enabled == true and "1\n" or "0\n")
+	file:close()
+	discoverable_vehicle_spawning_enabled = enabled == true
+	return true
+end
