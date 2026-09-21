@@ -566,7 +566,7 @@ local minimum_reward_values = {
 	lz_nm_armor_pouch = 2000,
 	lz_nm_rubber_padding = 2400,
 	lz_nm_combat_boots = 3500,
-	lz_nm_recovered_upgrade = 7000,
+	itm_repairkit_tier_1 = 4500,
 	-- Rare, single-use weapon upgrades retain the approved scarcity premium.
 	itm_field_upgrade_kit_blue = 15700,
 	itm_field_upgrade_kit_green = 8000,
@@ -657,6 +657,12 @@ local tier_3_type_counts = {
 	mutant = 2, artefact = 1, ammo = 1
 }
 
+-- The reliability offer asks for two ordinary one-shot modules instead of one
+-- rare specialized module.
+local tier_3_item_amounts = {
+	itm_repairkit_tier_1 = 2
+}
+
 local function tier_3_items(base, base_index)
 	local category = section_category(base.items[1].section)
 	local ini = get_config()
@@ -669,7 +675,10 @@ local function tier_3_items(base, base_index)
 		local section = trim(pool[((base_index + offset - 1) % #pool) + 1])
 		if section ~= "" and not forbidden_item_section(section) and
 			get_sysini():section_exist(section) then
-			table.insert(result, { section = section, amount = 1 })
+			table.insert(result, {
+				section = section,
+				amount = tier_3_item_amounts[section] or 1
+			})
 			if #result >= target_count then break end
 		end
 	end
