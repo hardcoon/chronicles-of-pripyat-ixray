@@ -1,14 +1,20 @@
 -- Управление стандартным r2_tonemap_amount. Геометрия проверяется по таймеру LTX.
 local ADDON_DIR = "~indoor-tonemap"
 local CONFIG_PATH = ADDON_DIR .. "\\configs\\mod_script_pf_indoor_light.ltx"
-local RING = {
+local ROOF_RING = {
     {1, 0}, {0.7071068, 0.7071068}, {0, 1}, {-0.7071068, 0.7071068},
     {-1, 0}, {-0.7071068, -0.7071068}, {0, -1}, {0.7071068, -0.7071068}
+}
+local WALL_RING = {
+    {1, 0}, {0.9238795, 0.3826834}, {0.7071068, 0.7071068}, {0.3826834, 0.9238795},
+    {0, 1}, {-0.3826834, 0.9238795}, {-0.7071068, 0.7071068}, {-0.9238795, 0.3826834},
+    {-1, 0}, {-0.9238795, -0.3826834}, {-0.7071068, -0.7071068}, {-0.3826834, -0.9238795},
+    {0, -1}, {0.3826834, -0.9238795}, {0.7071068, -0.7071068}, {0.9238795, -0.3826834}
 }
 local state = {
     settings = nil, settings_source = nil, next_reload = 0, next_check = 0,
     indoor = false, ray = nil, origin = nil, direction = nil, roof_hits = 0,
-    wall_hits = 0, wall_pairs = 0, wall_map = {}, missed_checks = 0,
+    wall_hits = 0, wall_pairs = 0, wide_roof_hits = 0, wide_wall_hits = 0, wall_map = {}, missed_checks = 0,
     next_debug = 0, registered = false, base_amount = nil,
     fade_from = nil, fade_to = nil, fade_started = 0, next_fade = 0,
     release_base = false, resume_after_save = false
@@ -74,8 +80,8 @@ local function load_settings(now)
     state.settings = {
         enabled = effect.enabled ~= "false" and effect.enabled ~= "0",
         levels = levels,
-        tonemap_amount = number(effect, "tonemap_amount", 0.95, 0, 1),
-        transition = number(effect, "transition_seconds", 5, 0.1, 30),
+        tonemap_amount = number(effect, "tonemap_amount", 0.90, 0, 1),
+        transition = number(effect, "transition_seconds", 3, 0.1, 30),
         effect_interval = math.floor(number(effect,
             "effect_update_interval_ms", 50, 16, 1000)),
         interval = math.floor(number(detection, "check_interval_ms", 1000, 250, 10000)),
@@ -83,18 +89,24 @@ local function load_settings(now)
         reload_interval = reload_interval == 0 and math.huge or
             math.floor(clamp(reload_interval, 1000, 60000)),
         radius = number(detection, "roof_radius_m", 2.4, 0.5, 8),
-        roof_range = number(detection, "roof_range_m", 12, 3, 30),
+        roof_range = number(detection, "roof_range_m", 20, 3, 30),
         roof_clearance = number(detection, "roof_min_clearance_m", 1.8, 0.5, 4),
-        roof_enter = math.floor(number(detection, "roof_enter_hits", 6, 1, 9)),
-        roof_exit = math.floor(number(detection, "roof_exit_hits", 5, 1, 9)),
-        wall_range = number(detection, "wall_range_m", 8, 2, 20),
-        wall_low = number(detection, "wall_lower_height_m", 1.2, 0.5, 2.5),
-        wall_high = number(detection, "wall_upper_height_m", 2.2, 1.0, 3.5),
-        wall_enter = math.floor(number(detection, "wall_enter_hits", 5, 0, 8)),
-        wall_exit = math.floor(number(detection, "wall_exit_hits", 4, 0, 8)),
-        pair_enter = math.floor(number(detection, "wall_enter_pairs", 2, 0, 4)),
-        pair_exit = math.floor(number(detection, "wall_exit_pairs", 1, 0, 4)),
-        exit_misses = math.floor(number(detection, "exit_missed_checks", 3, 1, 10)),
+        roof_enter = math.floor(number(detection, "roof_enter_hits", 5, 1, 9)),
+        roof_exit = math.floor(number(detection, "roof_exit_hits", 4, 1, 9)),
+        wide_radius = number(detection, "roof_wide_radius_m", 6, 3, 15),
+        wide_roof_enter = math.floor(number(detection, "roof_wide_enter_hits", 6, 1, 8)),
+        wide_roof_exit = math.floor(number(detection, "roof_wide_exit_hits", 6, 1, 8)),
+        wide_wall_hits = math.floor(number(detection, "roof_wide_min_wall_hits", 2, 0, 8)),
+        wide_wall_range = number(detection, "roof_wide_wall_range_m", 30, 18, 40),
+        wall_range = number(detection, "wall_range_m", 18, 2, 30),
+        wall_low = number(detection, "wall_lower_height_m", 0.6, 0.3, 2.5),
+        wall_high = number(detection, "wall_upper_height_m", 2.4, 1.0, 3.5),
+        wall_tolerance = number(detection, "wall_height_tolerance_m", 4.0, 0.1, 10),
+        wall_enter = math.floor(number(detection, "wall_enter_hits", 5, 0, 16)),
+        wall_exit = math.floor(number(detection, "wall_exit_hits", 3, 0, 16)),
+        pair_enter = math.floor(number(detection, "wall_enter_pairs", 1, 0, 8)),
+        pair_exit = math.floor(number(detection, "wall_exit_pairs", 1, 0, 8)),
+        exit_misses = math.floor(number(detection, "exit_missed_checks", 5, 1, 10)),
         passthrough = math.floor(number(detection, "max_passthrough", 2, 0, 4)),
         ignored = ignored
     }
@@ -122,7 +134,8 @@ local function hit_static(x, y, z, dx, dy, dz, range, clearance, cfg)
         if not state.ray:query() then return false end
         local distance = state.ray:get_distance()
         if not cfg.ignored[state.ray:get_material()] then
-            return travelled + distance >= clearance
+            local total_distance = travelled + distance
+            return total_distance >= clearance, total_distance
         end
         travelled = travelled + distance + 0.025
     end
@@ -132,13 +145,13 @@ end
 local function is_indoor(position, cfg)
     local x, y, z = position.x, position.y, position.z
     local roof_y = y + 0.35
-    state.roof_hits, state.wall_hits, state.wall_pairs = 0, 0, 0
+    state.roof_hits, state.wall_hits, state.wall_pairs, state.wide_roof_hits, state.wide_wall_hits = 0, 0, 0, 0, 0
     -- Крыша прямо над героем обязательна, даже если точки окружности закрыты.
     if not hit_static(x, roof_y, z, 0, 1, 0, cfg.roof_range, cfg.roof_clearance, cfg) then
         return false
     end
     state.roof_hits = 1
-    for _, point in ipairs(RING) do
+    for _, point in ipairs(ROOF_RING) do
         if hit_static(x + point[1] * cfg.radius, roof_y, z + point[2] * cfg.radius,
             0, 1, 0, cfg.roof_range, cfg.roof_clearance, cfg) then
             state.roof_hits = state.roof_hits + 1
@@ -147,26 +160,55 @@ local function is_indoor(position, cfg)
     if state.roof_hits < (state.indoor and cfg.roof_exit or cfg.roof_enter) then
         return false
     end
-    -- Направление засчитывается только при стене на обеих высотах.
-    -- Низкий парапет балкона поэтому не закрывает открытую сторону.
-    for index, point in ipairs(RING) do
-        local hit = hit_static(x, y + cfg.wall_low, z, point[1], 0, point[2],
-            cfg.wall_range, 0.05, cfg) and
-            hit_static(x, y + cfg.wall_high, z, point[1], 0, point[2],
-                cfg.wall_range, 0.05, cfg)
+    -- Стену ищем ниже подоконника и выше окна в шестнадцати направлениях.
+    -- Оба попадания должны лежать примерно в одной плоскости: так парапет рядом
+    -- и далёкое здание напротив балкона не складываются в ложную стену.
+    for index, point in ipairs(WALL_RING) do
+        local low_hit, low_distance = hit_static(x, y + cfg.wall_low, z,
+            point[1], 0, point[2], cfg.wall_range, 0.05, cfg)
+        local high_hit, high_distance = hit_static(x, y + cfg.wall_high, z,
+            point[1], 0, point[2], cfg.wall_range, 0.05, cfg)
+        local hit = low_hit and high_hit and
+            math.abs(low_distance - high_distance) <= cfg.wall_tolerance
         state.wall_map[index] = hit
-        if hit then
-            state.wall_hits = state.wall_hits + 1
-        end
+        if hit then state.wall_hits = state.wall_hits + 1 end
     end
-    for index = 1, 4 do
-        if state.wall_map[index] and state.wall_map[index + 4] then
+    local half_ring = #WALL_RING / 2
+    for index = 1, half_ring do
+        if state.wall_map[index] and state.wall_map[index + half_ring] then
             state.wall_pairs = state.wall_pairs + 1
         end
     end
     local enough_walls = state.wall_hits >= (state.indoor and cfg.wall_exit or cfg.wall_enter)
     local enclosed = state.wall_pairs >= (state.indoor and cfg.pair_exit or cfg.pair_enter)
-    return enough_walls and enclosed
+    if enough_walls and enclosed then return true end
+
+    -- В центре большого зала стены могут быть дальше или скрыты оконными проёмами.
+    -- Широкое покрытие крыши подтверждает объём здания, но требует реальных стен.
+    for _, point in ipairs(ROOF_RING) do
+        if hit_static(x + point[1] * cfg.wide_radius, roof_y,
+            z + point[2] * cfg.wide_radius, 0, 1, 0,
+            cfg.roof_range, cfg.roof_clearance, cfg) then
+            state.wide_roof_hits = state.wide_roof_hits + 1
+        end
+    end
+    local enough_wide_roof = state.wide_roof_hits >=
+        (state.indoor and cfg.wide_roof_exit or cfg.wide_roof_enter)
+    if not enough_wide_roof then return false end
+
+    -- Дальний поиск стен включается только под широкой крышей, поэтому здания
+    -- через улицу не влияют на обычную проверку балкона.
+    for _, point in ipairs(ROOF_RING) do
+        local low_hit, low_distance = hit_static(x, y + cfg.wall_low, z,
+            point[1], 0, point[2], cfg.wide_wall_range, 0.05, cfg)
+        local high_hit, high_distance = hit_static(x, y + cfg.wall_high, z,
+            point[1], 0, point[2], cfg.wide_wall_range, 0.05, cfg)
+        if low_hit and high_hit and
+            math.abs(low_distance - high_distance) <= cfg.wall_tolerance then
+            state.wide_wall_hits = state.wide_wall_hits + 1
+        end
+    end
+    return state.wide_wall_hits >= cfg.wide_wall_hits
 end
 
 local function apply_amount(value)
@@ -225,7 +267,7 @@ function reset()
     state.settings, state.settings_source, state.next_reload = nil, nil, 0
     state.ray, state.origin, state.direction = nil, nil, nil
     state.indoor, state.next_check = false, 0
-    state.roof_hits, state.wall_hits, state.wall_pairs, state.missed_checks = 0, 0, 0, 0
+    state.roof_hits, state.wall_hits, state.wall_pairs, state.wide_roof_hits, state.wide_wall_hits, state.missed_checks = 0, 0, 0, 0, 0, 0
     state.next_debug = 0
     state.base_amount, state.fade_from, state.fade_to = nil, nil, nil
     state.fade_started, state.next_fade, state.release_base = 0, 0, false
@@ -266,9 +308,9 @@ function update()
 end
 
 function debug_dump()
-    printf("pf_indoor_light: level=%s roof=%d/9 walls=%d/8 pairs=%d/4 misses=%d indoor=%s",
-        level.name(), state.roof_hits, state.wall_hits, state.wall_pairs,
-        state.missed_checks, tostring(state.indoor))
+    printf("pf_indoor_light: level=%s roof=%d/9 wide=%d/8 walls=%d/16 wide_walls=%d/8 pairs=%d/8 misses=%d indoor=%s",
+        level.name(), state.roof_hits, state.wide_roof_hits, state.wall_hits,
+        state.wide_wall_hits, state.wall_pairs, state.missed_checks, tostring(state.indoor))
 end
 
 function on_game_start()
