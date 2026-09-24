@@ -2,6 +2,7 @@
 -- Engine callbacks are owned by the lz_new_mechanics facade.
 local state = {
 	pending_inventory_tool_action = nil,
+	pending_repair_animation = nil,
 	inventory_normalization_pending = true,
 	context_menu_dirty = true,
 	context_targets = {},
@@ -340,7 +341,7 @@ function impl.consume_one_use(item)
 end
 
 function impl.repair_animation_section(tool)
-	if not tool or not db.actor or db.actor:is_hud_animator_active() then return nil end
+	if not tool or not db.actor then return nil end
 	local section = core.canonical_item_section(tool:section())
 	local animator = section == "itm_gunsmith_toolkit" and "toolkit_weapon" or
 		(section == "itm_outfit_toolkit" and "toolkit_outfit" or nil)
@@ -1066,7 +1067,20 @@ function impl.repair_item(tool, target)
 	-- actor menu after that transition re-enters its grouped-cell rebuild and can
 	-- trip CUICellContainer::AddSimilar on an already grouped item. Let the next
 	-- ordinary inventory open rebuild the condition bars instead.
-	if animator then db.actor:start_hud_animator(animator) end
+	if animator then
+		if db.actor:is_hud_animator_active() then
+			-- The inventory backpack owns the HUD until its closing motion ends.
+			-- Keep the repair motion and start it on the first free update instead
+			-- of silently consuming the kit without showing its animation.
+			if db.actor:get_hud_animator_section() == "pf_hoc_backpack_open" then
+				state.pending_repair_animation = animator
+				local hud = get_hud()
+				if hud then hud:HideActorMenu() end
+			end
+		else
+			db.actor:start_hud_animator(animator)
+		end
+	end
 	return true
 end
 
@@ -1614,6 +1628,7 @@ end
 
 function on_game_load()
 	state.pending_inventory_tool_action = nil
+	state.pending_repair_animation = nil
 	state.inventory_normalization_pending = true
 	state.context_menu_dirty = true
 	state.context_targets = {}
@@ -1656,6 +1671,15 @@ function update_context_actions(now)
 	if state.inventory_normalization_pending and db.actor then
 		state.inventory_normalization_pending = false
 		impl.normalize_tool_charges()
+	end
+	if state.pending_repair_animation and db.actor then
+		if not db.actor:alive() then
+			state.pending_repair_animation = nil
+		elseif not db.actor:is_hud_animator_active() then
+			local animator = state.pending_repair_animation
+			state.pending_repair_animation = nil
+			db.actor:start_hud_animator(animator)
+		end
 	end
 	if state.pending_inventory_tool_action and now >= state.pending_inventory_tool_action.due then
 		local pending = state.pending_inventory_tool_action
