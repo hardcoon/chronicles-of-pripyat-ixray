@@ -15,7 +15,7 @@ local state = {
     settings = nil, settings_source = nil, next_reload = 0, next_check = 0,
     indoor = false, ray = nil, origin = nil, direction = nil, roof_hits = 0,
     wall_hits = 0, wall_pairs = 0, wide_roof_hits = 0, wide_wall_hits = 0, wall_map = {}, missed_checks = 0,
-    next_debug = 0, registered = false, base_amount = nil,
+    next_debug = 0, registered = false, actor_destroy_hook = false, base_amount = nil,
     fade_from = nil, fade_to = nil, fade_started = 0, next_fade = 0,
     release_base = false, resume_after_save = false
 }
@@ -274,7 +274,32 @@ function reset()
     state.resume_after_save = false
 end
 
+-- ¬ этой сборке динамического callback net_destroy нет. ќборачиваем штатное
+-- уничтожение актора, чтобы вернуть пользовательский tonemap до финального cfg_save.
+local function install_actor_destroy_hook()
+    local binder = bind_stalker and bind_stalker.actor_binder
+    if not binder or type(binder.net_destroy) ~= "function" then return false end
+    if binder.net_destroy == binder._pf_indoor_light_net_destroy then
+        state.actor_destroy_hook = true
+        return true
+    end
+    local previous = binder.net_destroy
+    local wrapper = function(self, ...)
+        local ok, message = pcall(reset)
+        if not ok then
+            printf("! pf_indoor_light: не удалось восстановить tonemap при выходе: [%s]",
+                tostring(message))
+        end
+        return previous(self, ...)
+    end
+    binder._pf_indoor_light_net_destroy = wrapper
+    binder.net_destroy = wrapper
+    state.actor_destroy_hook = true
+    return true
+end
+
 function update()
+    if not state.actor_destroy_hook then install_actor_destroy_hook() end
     local now = time_global()
     if state.resume_after_save and state.settings then
         state.resume_after_save = false
@@ -318,7 +343,7 @@ function on_game_start()
     RegisterScriptCallback("update", update)
     RegisterScriptCallback("save", before_game_save)
     RegisterScriptCallback("load", reset)
-    RegisterScriptCallback("net_destroy", reset)
+    install_actor_destroy_hook()
     state.registered = true
 end
 
