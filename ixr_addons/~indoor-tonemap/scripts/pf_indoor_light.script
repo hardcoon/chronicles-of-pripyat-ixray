@@ -1,0 +1,283 @@
+-- Управление стандартным r2_tonemap_amount. Геометрия проверяется по таймеру LTX.
+local ADDON_DIR = "~indoor-tonemap"
+local CONFIG_PATH = ADDON_DIR .. "\\configs\\mod_script_pf_indoor_light.ltx"
+local RING = {
+    {1, 0}, {0.7071068, 0.7071068}, {0, 1}, {-0.7071068, 0.7071068},
+    {-1, 0}, {-0.7071068, -0.7071068}, {0, -1}, {0.7071068, -0.7071068}
+}
+local state = {
+    settings = nil, settings_source = nil, next_reload = 0, next_check = 0,
+    indoor = false, ray = nil, origin = nil, direction = nil, roof_hits = 0,
+    wall_hits = 0, wall_pairs = 0, wall_map = {}, missed_checks = 0,
+    next_debug = 0, registered = false, base_amount = nil,
+    fade_from = nil, fade_to = nil, fade_started = 0, next_fade = 0,
+    release_base = false, resume_after_save = false
+}
+
+local function clamp(value, low, high)
+    return math.max(low, math.min(high, value))
+end
+
+local function decimal(value)
+    local text = string.format("%.4f", value):gsub(",", ".")
+    return text
+end
+
+local function read_ini()
+    local path = getFS():update_path("$arch_dir_addons$", CONFIG_PATH)
+    local file = io.open(path, "r")
+    local values, section = {}, nil
+    local source = nil
+    if file then
+        source = file:read("*a")
+        for line in source:gmatch("[^\r\n]+") do
+            line = line:gsub("[;#].*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local heading = line:match("^%[([^%]]+)%]$")
+            if heading then
+                section = heading
+                values[section] = values[section] or {}
+            elseif section then
+                local key, value = line:match("^([%w_]+)%s*=%s*(.-)%s*$")
+                if key then values[section][key] = value end
+            end
+        end
+        file:close()
+    else
+        printf("! pf_indoor_light: конфиг не найден, используются значения по умолчанию: %s", path)
+    end
+    return values, source
+end
+
+local function load_settings(now)
+    if state.settings and now < state.next_reload then return state.settings, false end
+    local ini, source = read_ini()
+    if state.settings and (not source or source == "") then
+        state.next_reload = now + state.settings.reload_interval
+        return state.settings, false
+    end
+    if state.settings and source == state.settings_source then
+        state.next_reload = now + state.settings.reload_interval
+        return state.settings, false
+    end
+    local effect = ini.pf_indoor_light_effect or {}
+    local detection = ini.pf_indoor_light_detection or {}
+    local function number(section, key, fallback, low, high)
+        return clamp(tonumber(section[key]) or fallback, low, high)
+    end
+    local ignored = {}
+    for token in (detection.ignored_material_indices or "6,10,13,20,23,45,47,51,52,55,58,59,60,61,62"):gmatch("%d+") do
+        ignored[tonumber(token)] = true
+    end
+    local levels = {}
+    for name in (effect.levels or "*"):gmatch("[^,%s]+") do levels[name] = true end
+    local reload_interval = tonumber(detection.settings_reload_interval_ms) or 10000
+    state.settings = {
+        enabled = effect.enabled ~= "false" and effect.enabled ~= "0",
+        levels = levels,
+        tonemap_amount = number(effect, "tonemap_amount", 0.95, 0, 1),
+        transition = number(effect, "transition_seconds", 5, 0.1, 30),
+        effect_interval = math.floor(number(effect,
+            "effect_update_interval_ms", 50, 16, 1000)),
+        interval = math.floor(number(detection, "check_interval_ms", 1000, 250, 10000)),
+        debug_interval = math.floor(number(detection, "debug_log_interval_ms", 5000, 0, 60000)),
+        reload_interval = reload_interval == 0 and math.huge or
+            math.floor(clamp(reload_interval, 1000, 60000)),
+        radius = number(detection, "roof_radius_m", 2.4, 0.5, 8),
+        roof_range = number(detection, "roof_range_m", 12, 3, 30),
+        roof_clearance = number(detection, "roof_min_clearance_m", 1.8, 0.5, 4),
+        roof_enter = math.floor(number(detection, "roof_enter_hits", 6, 1, 9)),
+        roof_exit = math.floor(number(detection, "roof_exit_hits", 5, 1, 9)),
+        wall_range = number(detection, "wall_range_m", 8, 2, 20),
+        wall_low = number(detection, "wall_lower_height_m", 1.2, 0.5, 2.5),
+        wall_high = number(detection, "wall_upper_height_m", 2.2, 1.0, 3.5),
+        wall_enter = math.floor(number(detection, "wall_enter_hits", 5, 0, 8)),
+        wall_exit = math.floor(number(detection, "wall_exit_hits", 4, 0, 8)),
+        pair_enter = math.floor(number(detection, "wall_enter_pairs", 2, 0, 4)),
+        pair_exit = math.floor(number(detection, "wall_exit_pairs", 1, 0, 4)),
+        exit_misses = math.floor(number(detection, "exit_missed_checks", 3, 1, 10)),
+        passthrough = math.floor(number(detection, "max_passthrough", 2, 0, 4)),
+        ignored = ignored
+    }
+    state.settings_source = source or ""
+    state.next_reload = now + state.settings.reload_interval
+    return state.settings, true
+end
+
+local function hit_static(x, y, z, dx, dy, dz, range, clearance, cfg)
+    if not state.ray then
+        state.ray = ray_pick()
+        state.ray:set_flags(2) -- только статическая геометрия уровня CFORM
+        state.origin = vector()
+        state.direction = vector()
+    end
+    state.direction:set(dx, dy, dz)
+    state.ray:set_direction(state.direction)
+    local travelled = 0
+    for _ = 0, cfg.passthrough do
+        local remaining = range - travelled
+        if remaining <= 0 then return false end
+        state.origin:set(x + dx * travelled, y + dy * travelled, z + dz * travelled)
+        state.ray:set_position(state.origin)
+        state.ray:set_range(remaining)
+        if not state.ray:query() then return false end
+        local distance = state.ray:get_distance()
+        if not cfg.ignored[state.ray:get_material()] then
+            return travelled + distance >= clearance
+        end
+        travelled = travelled + distance + 0.025
+    end
+    return false
+end
+
+local function is_indoor(position, cfg)
+    local x, y, z = position.x, position.y, position.z
+    local roof_y = y + 0.35
+    state.roof_hits, state.wall_hits, state.wall_pairs = 0, 0, 0
+    -- Крыша прямо над героем обязательна, даже если точки окружности закрыты.
+    if not hit_static(x, roof_y, z, 0, 1, 0, cfg.roof_range, cfg.roof_clearance, cfg) then
+        return false
+    end
+    state.roof_hits = 1
+    for _, point in ipairs(RING) do
+        if hit_static(x + point[1] * cfg.radius, roof_y, z + point[2] * cfg.radius,
+            0, 1, 0, cfg.roof_range, cfg.roof_clearance, cfg) then
+            state.roof_hits = state.roof_hits + 1
+        end
+    end
+    if state.roof_hits < (state.indoor and cfg.roof_exit or cfg.roof_enter) then
+        return false
+    end
+    -- Направление засчитывается только при стене на обеих высотах.
+    -- Низкий парапет балкона поэтому не закрывает открытую сторону.
+    for index, point in ipairs(RING) do
+        local hit = hit_static(x, y + cfg.wall_low, z, point[1], 0, point[2],
+            cfg.wall_range, 0.05, cfg) and
+            hit_static(x, y + cfg.wall_high, z, point[1], 0, point[2],
+                cfg.wall_range, 0.05, cfg)
+        state.wall_map[index] = hit
+        if hit then
+            state.wall_hits = state.wall_hits + 1
+        end
+    end
+    for index = 1, 4 do
+        if state.wall_map[index] and state.wall_map[index + 4] then
+            state.wall_pairs = state.wall_pairs + 1
+        end
+    end
+    local enough_walls = state.wall_hits >= (state.indoor and cfg.wall_exit or cfg.wall_enter)
+    local enclosed = state.wall_pairs >= (state.indoor and cfg.pair_exit or cfg.pair_enter)
+    return enough_walls and enclosed
+end
+
+local function apply_amount(value)
+    get_console():execute("r2_tonemap_amount " .. decimal(clamp(value, 0, 1)))
+end
+
+local function start_fade(target, now, cfg, release_base)
+    state.fade_from = clamp(get_console():get_float("r2_tonemap_amount"), 0, 1)
+    state.fade_to = clamp(target, 0, 1)
+    state.fade_started = now
+    state.next_fade = now
+    state.release_base = release_base
+end
+
+local function update_fade(now, cfg)
+    if state.fade_to == nil or now < state.next_fade then return end
+    local progress = clamp((now - state.fade_started) / (cfg.transition * 1000), 0, 1)
+    local smooth = progress * progress * (3 - 2 * progress)
+    apply_amount(state.fade_from + (state.fade_to - state.fade_from) * smooth)
+    state.next_fade = now + cfg.effect_interval
+    if progress >= 1 then
+        state.fade_from, state.fade_to = nil, nil
+        if state.release_base then state.base_amount = nil end
+        state.release_base = false
+    end
+end
+
+local function set_effects(inside, now, cfg, force)
+    if inside == state.indoor and not force then return end
+    if inside and state.base_amount == nil then
+        state.base_amount = clamp(get_console():get_float("r2_tonemap_amount"), 0, 1)
+    end
+    state.indoor = inside
+    if inside then
+        start_fade(cfg.tonemap_amount, now, cfg, false)
+    elseif state.base_amount ~= nil then
+        start_fade(state.base_amount, now, cfg, true)
+    end
+end
+
+-- F5 вызывает cfg_save. На время сохранения движок должен видеть значение пользователя.
+local function before_game_save()
+    if state.base_amount == nil then return end
+    if not pcall(apply_amount, state.base_amount) then return end
+    state.fade_from, state.fade_to = nil, nil
+    state.release_base = false
+    if state.indoor then
+        state.resume_after_save = true
+    else
+        state.base_amount = nil
+    end
+end
+
+function reset()
+    if state.base_amount ~= nil then pcall(apply_amount, state.base_amount) end
+    state.settings, state.settings_source, state.next_reload = nil, nil, 0
+    state.ray, state.origin, state.direction = nil, nil, nil
+    state.indoor, state.next_check = false, 0
+    state.roof_hits, state.wall_hits, state.wall_pairs, state.missed_checks = 0, 0, 0, 0
+    state.next_debug = 0
+    state.base_amount, state.fade_from, state.fade_to = nil, nil, nil
+    state.fade_started, state.next_fade, state.release_base = 0, 0, false
+    state.resume_after_save = false
+end
+
+function update()
+    local now = time_global()
+    if state.resume_after_save and state.settings then
+        state.resume_after_save = false
+        if state.indoor then start_fade(state.settings.tonemap_amount, now, state.settings, false) end
+    end
+    if state.settings then update_fade(now, state.settings) end
+    if now < state.next_check then return end
+    local cfg, changed = load_settings(now)
+    state.next_check = now + cfg.interval
+    if changed and state.indoor then set_effects(true, now, cfg, true) end
+    local actor = db.actor
+    if not actor or not actor:alive() or not cfg.enabled or
+        not (cfg.levels["*"] or cfg.levels[level.name()]) then
+        set_effects(false, now, cfg)
+        update_fade(now, cfg)
+        return
+    end
+    local inside = is_indoor(actor:position(), cfg)
+    if state.indoor then
+        state.missed_checks = inside and 0 or state.missed_checks + 1
+        inside = inside or state.missed_checks < cfg.exit_misses
+    else
+        state.missed_checks = 0
+    end
+    set_effects(inside, now, cfg)
+    update_fade(now, cfg)
+    if cfg.debug_interval > 0 and now >= state.next_debug then
+        debug_dump()
+        state.next_debug = now + cfg.debug_interval
+    end
+end
+
+function debug_dump()
+    printf("pf_indoor_light: level=%s roof=%d/9 walls=%d/8 pairs=%d/4 misses=%d indoor=%s",
+        level.name(), state.roof_hits, state.wall_hits, state.wall_pairs,
+        state.missed_checks, tostring(state.indoor))
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("save", before_game_save)
+    RegisterScriptCallback("load", reset)
+    RegisterScriptCallback("net_destroy", reset)
+    state.registered = true
+end
+
+on_game_start()

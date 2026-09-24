@@ -1,0 +1,29 @@
+![common]
+>script = pf_indoor_light
+
+[pf_indoor_light_effect]
+enabled = true
+levels = *
+tonemap_amount = 0.90      ; значение стандартного r2_tonemap_amount в помещении
+transition_seconds = 3.0   ; длительность плавного перехода
+effect_update_interval_ms = 50 ; шаг обновления только во время перехода
+
+[pf_indoor_light_detection]
+check_interval_ms = 1000   ; период проверки статической геометрии
+settings_reload_interval_ms = 10000 ; перечитывание LTX в игре; 0 = только при загрузке
+debug_log_interval_ms = 5000 ; период записи диагностики в лог; 0 = выключено
+roof_radius_m = 2.4        ; радиус проверки крыши вокруг героя
+roof_range_m = 12.0
+roof_min_clearance_m = 1.8 ; отсеивает низкий зонт или навес над героем
+roof_enter_hits = 6        ; центр и восемь точек; центр обязателен
+roof_exit_hits = 5         ; гистерезис возле дверей и краёв крыши
+wall_range_m = 8.0         ; не учитывает далёкие здания напротив балкона
+wall_lower_height_m = 1.2  ; нижняя высота проверки стены
+wall_upper_height_m = 2.2  ; верхняя высота отсекает парапеты и ограды
+wall_enter_hits = 5        ; нужное число стен из восьми направлений
+wall_exit_hits = 4
+wall_enter_pairs = 2       ; две пары надёжнее отсекают открытые балконы
+wall_exit_pairs = 1
+exit_missed_checks = 3     ; выход после трёх неудачных проверок
+max_passthrough = 2        ; пропуск тонких и прозрачных материалов
+ignored_material_indices = 6,10,13,20,23,45,47,51,52,55,58,59,60,61,62
