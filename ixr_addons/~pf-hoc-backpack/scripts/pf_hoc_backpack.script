@@ -1,0 +1,198 @@
+-- The inventory mode callback runs before the dialog is shown. Nonmodal HUD
+-- motions leave the inventory visible and hold the backpack in its idle pose.
+
+local state = { phase = "idle", hooked = false, registered = false, timeout_at = nil, open_motion_finished = false }
+local ANIMATION_TIMEOUT_MS = 8000
+
+local function actor_ready()
+    return db.actor and db.actor:alive() and
+        type(db.actor.start_hud_animator) == "function" and
+        type(db.actor.close_hud_animator) == "function" and
+        type(db.actor.stop_hud_animator) == "function" and
+        type(db.actor.set_hud_animator_force_hide_items) == "function" and
+        type(db.actor.is_hud_animator_active) == "function"
+end
+
+local function actor_menu_window()
+    return ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+end
+
+local function own_animation(actor)
+    if not actor:is_hud_animator_active() then return false end
+    local section = actor:get_hud_animator_section()
+    return section == "pf_hoc_backpack_open"
+end
+
+local function start_animation(actor, section, phase)
+    if actor:is_hud_animator_active() then return false end
+    state.phase = phase
+    state.timeout_at = time_global() + ANIMATION_TIMEOUT_MS
+    if phase == "opening" then state.open_motion_finished = false end
+    local ok, err = pcall(actor.start_hud_animator, actor, section)
+    if not ok then
+        printf("! pf_hoc_backpack: %s failed: %s", section, tostring(err))
+        state.timeout_at = nil
+        return false
+    end
+    if not actor:is_hud_animator_active() then
+        state.timeout_at = nil
+        return false
+    end
+    return true
+end
+
+-- Native ShowActorMenu calls this before rebuilding inventory cells.
+function on_inventory_open_request()
+    if not actor_ready() then return end
+
+    local menu = actor_menu_window()
+    local pda = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+    if not menu or menu:IsShown() or (pda and pda:IsShown()) then return end
+
+    local actor = db.actor
+    if type(actor.is_inventory_disabled) == "function" and actor:is_inventory_disabled() then return end
+    if own_animation(actor) and state.phase == "closing" then
+        actor:stop_hud_animator()
+    elseif actor:is_hud_animator_active() then
+        return
+    end
+
+    actor:set_hud_animator_force_hide_items(true)
+    if not start_animation(actor, "pf_hoc_backpack_open", "opening") then
+        actor:set_hud_animator_force_hide_items(false)
+    end
+end
+
+function on_open_start()
+    if db.actor and type(db.actor.set_hud_animator_force_hide_items) == "function" then
+        db.actor:set_hud_animator_force_hide_items(false)
+    end
+end
+
+function on_inventory_opened()
+    local actor = db.actor
+    local menu = actor_menu_window()
+    if not actor_ready() or not menu or menu:IsShown() then
+        state.phase = "opened"
+        return
+    end
+    if own_animation(actor) and state.phase == "opening" then return end
+    if own_animation(actor) and state.phase == "closing" then
+        actor:stop_hud_animator()
+    end
+    actor:set_hud_animator_force_hide_items(true)
+    if not start_animation(actor, "pf_hoc_backpack_open", "opening") then
+        actor:set_hud_animator_force_hide_items(false)
+        state.phase = "opened"
+    end
+end
+
+function on_inventory_closed()
+    if state.phase == "opening" or state.phase == "opened" then
+        state.phase = "pending_close"
+    end
+end
+
+function on_open_end()
+    state.open_motion_finished = true
+    state.timeout_at = nil
+    if state.phase == "opening" then
+        state.phase = "opened"
+    end
+end
+
+local function install_menu_hooks()
+    if state.hooked then return end
+    local source = actor_menu
+    if not source or type(source.inventory_wnd_opened) ~= "function" or
+        type(source.inventory_wnd_closed) ~= "function" then return end
+
+    local original_open = source.inventory_wnd_opened
+    local original_close = source.inventory_wnd_closed
+    source.inventory_wnd_opened = function(...)
+        original_open(...)
+        on_inventory_opened()
+    end
+    source.inventory_wnd_closed = function(...)
+        original_close(...)
+        on_inventory_closed()
+    end
+    state.hooked = true
+end
+
+local function recover_stalled_animation(actor)
+    if not state.timeout_at or time_global() < state.timeout_at then return end
+    local phase = state.phase
+    state.timeout_at = nil
+    if phase ~= "opening" and phase ~= "closing" then return end
+    local expected = "pf_hoc_backpack_open"
+    if actor:is_hud_animator_active() and actor:get_hud_animator_section() == expected then
+        printf("! pf_hoc_backpack: timed out %s animation", expected)
+        actor:stop_hud_animator()
+    end
+    state.phase = phase == "opening" and "opened" or "idle"
+end
+
+function update()
+    install_menu_hooks()
+    if not state.hooked or not actor_ready() then return end
+
+    local actor = db.actor
+    local menu = actor_menu_window()
+    if not menu then return end
+    recover_stalled_animation(actor)
+
+    if state.phase == "opened" then
+        if not menu:IsShown() or menu:GetMenuMode() ~= 1 then
+            state.phase = "pending_close"
+        end
+    elseif state.phase == "closing" then
+        if not own_animation(actor) then
+            state.timeout_at = nil
+            state.phase = "idle"
+        end
+    elseif state.phase == "pending_close" then
+        local pda = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
+        if menu:IsShown() or (pda and pda:IsShown()) then
+            if menu:IsShown() and menu:GetMenuMode() == 1 then
+                state.phase = "opened"
+            else
+                if own_animation(actor) then actor:stop_hud_animator() end
+                state.phase = "idle"
+            end
+        else
+            if own_animation(actor) then
+                -- Let a short opening motion finish before playing the closing one.
+                if actor:get_hud_animator_section() == "pf_hoc_backpack_open" and
+                    not state.open_motion_finished then return end
+                if actor:close_hud_animator() then
+                    state.phase = "closing"
+                    state.timeout_at = time_global() + ANIMATION_TIMEOUT_MS
+                else
+                    actor:stop_hud_animator()
+                    state.phase = "idle"
+                end
+            else
+                state.phase = "idle"
+            end
+        end
+    end
+end
+
+function on_game_load()
+    state.phase = "idle"
+    state.timeout_at = nil
+    state.open_motion_finished = false
+    if db.actor and type(db.actor.set_hud_animator_force_hide_items) == "function" then
+        db.actor:set_hud_animator_force_hide_items(false)
+    end
+end
+
+function on_game_start()
+    if state.registered or type(RegisterScriptCallback) ~= "function" then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_game_load)
+    state.registered = true
+end
+
+on_game_start()

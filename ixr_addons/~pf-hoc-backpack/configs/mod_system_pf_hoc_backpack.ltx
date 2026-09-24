@@ -1,0 +1,20 @@
+; S.T.A.L.K.E.R. 2 backpack animation by Lassie and Aphrodite_child.
+; IX-Ray adapter for https://www.moddb.com/mods/stalker-anomaly/addons/s-t-a-l-k-e-r-2-hoc-backpack
+; The source authors permit modpack use with credit.
+
+[pf_hoc_backpack_open]
+item_visual             = dynamics\hoc_tool\hoc_backpack\hoc_backpack_hud.ogf
+hands_position          = 0, 0, 0.07
+hands_orientation       = 0, 0, 0
+hands_position_16x9     = 0, 0, 0.07
+hands_orientation_16x9  = 0, 0, 0
+anm_show                = hoc_backpack_in, hoc_bkp_in
+anm_idle                = hoc_backpack_idle, idle
+anm_hide                = hoc_backpack_out, hoc_bkp_out
+nonmodal_ui             = true
+hold_after_end          = true
+defer_inventory_use     = true
+sound_1                 = interface\heart_of_chernobyl\hoc_backpack_in
+sound_hide              = interface\heart_of_chernobyl\hoc_backpack_out
+start_lua_callback      = pf_hoc_backpack.on_open_start
+end_lua_callback        = pf_hoc_backpack.on_open_end
