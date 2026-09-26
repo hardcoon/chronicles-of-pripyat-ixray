@@ -1,0 +1,210 @@
+-- Progressive overload for the 20 kg band above the vanilla hard limit.
+-- Equipment and belt artefact bonuses are added before all three thresholds,
+-- matching CActor::get_additional_weight in IX-Ray.
+
+local YELLOW_BAND_KG = 10.0
+local BONUS_REFRESH_MS = 100
+
+-- ACTOR_DEFS values exported by actor_script.cpp. Numeric constants avoid a
+-- dependency on the optional enum tables used by different script runtimes.
+local MOVEMENT_WISHFUL = 1
+local MOVEMENT_REAL = 2
+local MOVE_ANY = 15
+local MOVE_ACCEL = 32
+local MOVE_JUMP = 128
+local MOVE_CLIMB = 2048
+local MOVE_SPRINT = 4096
+
+local OUTFIT_SLOT_ID = OUTFIT_SLOT or 7
+local BACKPACK_SLOT_ID = BACKPACK_SLOT or 13
+
+local state = {
+	registered = false,
+	actor = nil,
+	actor_id = nil,
+	active = false,
+	base_run = nil,
+	base_runback = nil,
+	base_jump = nil,
+	equipment_bonus = 0.0,
+	next_bonus_refresh = 0,
+	indicator_error_reported = false
+}
+
+local settings = system_ini()
+
+local function clamp(value, minimum, maximum)
+	return math.max(minimum, math.min(maximum, value))
+end
+
+local function equipped_item_bonus(actor, slot)
+	local item = actor:item_in_slot(slot)
+	if not item then return 0.0 end
+	return tonumber(item:get_additional_max_walk_weight()) or 0.0
+end
+
+local function calculate_equipment_bonus(actor)
+	local bonus = equipped_item_bonus(actor, OUTFIT_SLOT_ID) +
+		equipped_item_bonus(actor, BACKPACK_SLOT_ID)
+
+	actor:iterate_inventory(function(_, item)
+		if not item or not actor:is_on_belt(item) or not item:cast_Artefact() then
+			return
+		end
+
+		local section = item:section()
+		if settings:line_exist(section, "additional_inventory_weight") then
+			local value = tonumber(settings:r_float(
+				section, "additional_inventory_weight")) or 0.0
+			bonus = bonus + value * (tonumber(item:condition()) or 1.0)
+		end
+	end, actor)
+
+	return bonus
+end
+
+local function restore_movement(actor)
+	if not actor or not state.active then return end
+	if state.base_run then actor:set_actor_run_coef(state.base_run) end
+	if state.base_runback then actor:set_actor_runback_coef(state.base_runback) end
+	if state.base_jump then actor:set_actor_jump_speed(state.base_jump) end
+	state.active = false
+	state.base_run = nil
+	state.base_runback = nil
+	state.base_jump = nil
+end
+
+local function bind_actor(actor)
+	local actor_id = actor:id()
+	if state.actor_id == actor_id then return end
+
+	if state.actor then pcall(restore_movement, state.actor) end
+	state.actor = actor
+	state.actor_id = actor_id
+	state.active = false
+	state.base_run = nil
+	state.base_runback = nil
+	state.base_jump = nil
+	state.equipment_bonus = 0.0
+	state.next_bonus_refresh = 0
+end
+
+local function update_equipment_bonus(actor, now)
+	if now < state.next_bonus_refresh then return end
+	state.equipment_bonus = calculate_equipment_bonus(actor)
+	state.next_bonus_refresh = now + BONUS_REFRESH_MS
+end
+
+local function thresholds(actor)
+	local bonus = state.equipment_bonus
+	local yellow_start = (tonumber(actor:get_actor_max_weight()) or 50.0) + bonus
+	local progressive_start = yellow_start + YELLOW_BAND_KG
+	local hard_stop = (tonumber(actor:get_actor_max_walk_weight()) or 80.0) + bonus
+	hard_stop = math.max(hard_stop, progressive_start + 1.0)
+	return yellow_start, progressive_start, hard_stop
+end
+
+local function update_stock_indicator(weight, yellow_start, red_start)
+	if not ActorMenu or not ActorMenu.get_maingame then return end
+	local main = ActorMenu.get_maingame()
+	local icon = main and main.m_ind_overweight
+	if not icon then return end
+
+	if weight < yellow_start then
+		icon:Show(false)
+		return
+	end
+
+	if weight >= red_start then
+		icon:InitTexture("ui_inGame2_circle_Overweight_red")
+	else
+		icon:InitTexture("ui_inGame2_circle_Overweight_yellow")
+	end
+	icon:Show(true)
+end
+
+local function update_movement(actor, weight, progressive_start, hard_stop)
+	if weight < progressive_start then
+		if state.active then restore_movement(actor) end
+		return
+	end
+
+	if not state.active then
+		state.base_run = tonumber(actor:get_actor_run_coef()) or 1.0
+		state.base_runback = tonumber(actor:get_actor_runback_coef()) or 1.0
+		state.base_jump = tonumber(actor:get_actor_jump_speed()) or 0.0
+		state.active = true
+	end
+
+	local progressive_width = hard_stop - progressive_start
+	local factor = clamp((hard_stop - weight) / progressive_width, 0.0, 1.0)
+	actor:set_actor_run_coef(state.base_run * factor)
+	actor:set_actor_runback_coef(state.base_runback * factor)
+	actor:set_actor_jump_speed(0.0)
+
+	-- In this engine mcAccel selects the slower walk branch when it is set.
+	-- Clearing it makes every movement direction use the scaled run factors.
+	actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_ACCEL, false)
+	actor:set_movement_state(MOVEMENT_REAL, MOVE_ACCEL, false)
+	actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_SPRINT, false)
+	actor:set_movement_state(MOVEMENT_REAL, MOVE_SPRINT, false)
+	actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_JUMP, false)
+	actor:set_movement_state(MOVEMENT_REAL, MOVE_JUMP, false)
+
+	-- The requested curve reaches zero at the configured maximum walk weight.
+	-- Explicitly clear input at that exact value as the engine blocks only above it.
+	if factor <= 0.0 then
+		actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_ANY, false)
+		actor:set_movement_state(MOVEMENT_REAL, MOVE_ANY, false)
+		actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_JUMP, false)
+		actor:set_movement_state(MOVEMENT_REAL, MOVE_JUMP, false)
+		actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_CLIMB, false)
+		actor:set_movement_state(MOVEMENT_REAL, MOVE_CLIMB, false)
+	end
+end
+
+local function update()
+	local actor = db.actor
+	if not actor then return end
+
+	bind_actor(actor)
+	local now = time_global()
+	update_equipment_bonus(actor, now)
+
+	local weight = tonumber(actor:get_total_weight()) or 0.0
+	local yellow_start, progressive_start, hard_stop = thresholds(actor)
+	update_movement(actor, weight, progressive_start, hard_stop)
+
+	local ok, error_message = pcall(
+		update_stock_indicator, weight, yellow_start, progressive_start)
+	if ok then
+		state.indicator_error_reported = false
+	elseif not state.indicator_error_reported then
+		printf("! pf_progressive_overweight: stock indicator update failed: [%s]",
+			tostring(error_message))
+		state.indicator_error_reported = true
+	end
+end
+
+local function reset()
+	if state.actor then pcall(restore_movement, state.actor) end
+	state.actor = nil
+	state.actor_id = nil
+	state.active = false
+	state.base_run = nil
+	state.base_runback = nil
+	state.base_jump = nil
+	state.equipment_bonus = 0.0
+	state.next_bonus_refresh = 0
+end
+
+function on_game_start()
+	if state.registered then return end
+	RegisterScriptCallback("update", update)
+	RegisterScriptCallback("load", reset)
+	RegisterScriptCallback("net_destroy", reset)
+	state.registered = true
+	printf("* pf_progressive_overweight: callbacks registered")
+end
+
+on_game_start()
