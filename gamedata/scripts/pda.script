@@ -196,9 +196,11 @@ function get_stat(index) -- index= int        return string
 	elseif(index==7) then
 		return tostring(get_stash_stat_count("cyan"))
 	elseif(index==8) then
-		return tostring(get_stash_stat_count("orange"))
+		return tostring(get_stash_stat_count("purple"))
 	elseif(index==9) then
-		return tostring(get_stash_stat_count("purple") + get_stash_stat_count("red"))
+		return tostring(get_stash_stat_count("orange"))
+	elseif(index==10) then
+		return tostring(get_stash_stat_count("red"))
 	end
 	return "Unknown"
 end
