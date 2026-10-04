@@ -1,0 +1,94 @@
+-- Read-only consumer of the existing Tank 1990 completed-level profile.
+-- No cartridge context, emulation, checkpoint, reset, migration or world pstor.
+local ROM_HASH = "ec453e7e3cc1d49d11d5860ced7f9e1235e2c7d33927bd6073b631754dc08dbb"
+local PROFILE = "pf_nes\\" .. ROM_HASH .. ".levels"
+local runtime = { crypto = nil, algorithm = nil, declared = false }
+
+local function u32(data, at)
+    local a, b, c, d = data:byte(at, at + 3)
+    return a + b * 256 + c * 65536 + d * 16777216
+end
+
+local function sha256(data)
+    local ffi = require("ffi")
+    if not runtime.declared then
+        ffi.cdef[[
+        int32_t __stdcall BCryptOpenAlgorithmProvider(void**, const wchar_t*, const wchar_t*, uint32_t);
+        int32_t __stdcall BCryptHash(void*, const uint8_t*, uint32_t, const uint8_t*, uint32_t, uint8_t*, uint32_t);
+        int32_t __stdcall BCryptCloseAlgorithmProvider(void*, uint32_t);
+        ]]
+        runtime.declared = true
+    end
+    if runtime.crypto == nil then
+        local crypto = ffi.load("bcrypt")
+        local algorithm = ffi.new("void *[1]")
+        local name = ffi.new("wchar_t[7]", {83, 72, 65, 50, 53, 54, 0})
+        if crypto.BCryptOpenAlgorithmProvider(algorithm, name, nil, 0) < 0 then return nil end
+        runtime.algorithm = ffi.gc(algorithm[0], function(handle)
+            crypto.BCryptCloseAlgorithmProvider(handle, 0)
+        end)
+        runtime.crypto = crypto
+    end
+    local digest = ffi.new("uint8_t[32]")
+    if runtime.crypto.BCryptHash(runtime.algorithm, nil, 0, data, #data, digest, 32) < 0 then
+        return nil
+    end
+    return ffi.string(digest, 32)
+end
+
+local function parse(data)
+    if type(data) ~= "string" or (#data ~= 300 and #data ~= 312) or
+            data:sub(1, 8) ~= "PFNESLV\000" then
+        return nil
+    end
+    local version = u32(data, 9)
+    if not ((version == 1 and #data == 300) or (version == 2 and #data == 312)) then
+        return nil
+    end
+    for i = 1, 32 do
+        if data:byte(12 + i) ~= tonumber(ROM_HASH:sub(i * 2 - 1, i * 2), 16) then return nil end
+    end
+    if sha256(data:sub(1, -33)) ~= data:sub(-32) then return nil end
+    if version == 2 and u32(data, 277) > 1 then return nil end
+
+    local completed = 0
+    for mode = 0, 13 do
+        local total = (mode == 6 or mode == 13) and 118 or 50
+        for byte_index = 0, 15 do
+            local mask = data:byte(45 + mode * 16 + byte_index)
+            for bit_index = 0, 7 do
+                if mask % 2 == 1 then
+                    if byte_index * 8 + bit_index >= total then return nil end
+                    completed = completed + 1
+                end
+                mask = math.floor(mask / 2)
+            end
+        end
+    end
+    return completed
+end
+
+local function read_profile(path)
+    local file = io.open(path, "rb")
+    if file == nil then return nil end
+    local data = file:read(313)
+    file:close()
+    return parse(data)
+end
+
+local function read_completed_levels()
+    if type(getFS) ~= "function" then return nil end
+    local path = getFS():update_path("$app_data_root$", PROFILE)
+    local completed = read_profile(path)
+    if completed ~= nil then return completed end
+    -- Match the native reader's primary/backup order without repairing files.
+    return read_profile(path .. ".bak")
+end
+
+function completed_levels()
+    -- Called by dialogue conditions, never by a per-frame callback. No cached
+    -- count or save-dependent unlock: 49 -> 50 and a new world see the same file.
+    local ok, completed = pcall(read_completed_levels)
+    if ok then return completed end
+    return nil
+end

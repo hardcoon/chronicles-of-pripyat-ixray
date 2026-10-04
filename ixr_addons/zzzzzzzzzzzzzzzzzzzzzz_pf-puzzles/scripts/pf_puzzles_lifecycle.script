@@ -14,7 +14,7 @@ local function destroy_native_contexts()
     local module_names = {
         "pf_puzzles_native", "pf_puzzles_unequal_native",
         "pf_puzzles_net_native", "pf_puzzles_solo_native",
-        "pf_puzzles_wordle"
+        "pf_puzzles_wordle", "pf_nes_native"
     }
     local all_ok = true
     for _, module_name in ipairs(module_names) do
@@ -139,12 +139,22 @@ local function update()
         pcall(session.reconcile_rewards, false)
     end
     local pda_ui = rawget(_G, "pf_puzzles_pda")
+    if pda_ui and pda_ui.maintain_nes_visibility then
+        pcall(pda_ui.maintain_nes_visibility)
+    end
     if pda_ui and pda_ui.refresh_after_load_selection then
         pcall(pda_ui.refresh_after_load_selection)
     end
 end
 
 local function on_save_state(root)
+    local nes = rawget(_G, "pf_nes_native")
+    if nes and nes.checkpoint then
+        local ok, saved, id, detail = pcall(nes.checkpoint)
+        if (not ok or saved == false) and type(printf) == "function" then
+            printf("! pf_nes: disk checkpoint failed: [%s]", tostring(ok and (detail or id) or saved))
+        end
+    end
     local session = rawget(_G, "pf_puzzles_session")
     if not session or type(session.on_save_state) ~= "function" then return end
     local ok, saved, detail = pcall(session.on_save_state, root)

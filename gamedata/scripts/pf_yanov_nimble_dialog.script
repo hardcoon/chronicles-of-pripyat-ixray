@@ -21,7 +21,7 @@ local VEHICLE_MATCH_DISTANCE_SQR = 1
 local VEHICLE_MARKER_REVEAL_DISTANCE_SQR = 5 * 5
 
 local function new_vehicle_sale(id, price, section, marker_hint, position, angle,
-	level_vertex_id, game_vertex_id)
+	level_vertex_id, game_vertex_id, discoverable)
 	local key_prefix = "pf_yanov_nimble_" .. id .. "_v1_"
 	return {
 		id = id,
@@ -33,6 +33,7 @@ local function new_vehicle_sale(id, price, section, marker_hint, position, angle
 		angle = angle,
 		level_vertex_id = level_vertex_id,
 		game_vertex_id = game_vertex_id,
+		discoverable = discoverable ~= false,
 		match_distance_sqr = VEHICLE_MATCH_DISTANCE_SQR,
 		marker_type = VEHICLE_MARKER_TYPE,
 		legacy_marker_type = VEHICLE_LEGACY_MARKER_TYPE,
@@ -121,7 +122,16 @@ local VEHICLE_SALES = {
 	new_vehicle_sale("kamaz_tent", 150000, "veh_dcp_kamaz_army_tent",
 		"pf_yanov_nimble_vehicle_marker_kamaz_tent",
 		{ x = -1177.843140, y = -0.006631, z = -13.014608 },
-		{ x = -0.020098, y = -2.770224, z = -0.003349 }, 1444771, 773)
+		{ x = -0.020098, y = -2.770224, z = -0.003349 }, 1444771, 773),
+	-- Armored vehicles are purchase-only. Saved parked poses are lifted by 5 cm.
+	new_vehicle_sale("brdm", 50000, "veh_dcp_brdm",
+		"pf_yanov_nimble_vehicle_marker_brdm",
+		{ x = -102.926888, y = -0.136654, z = 1529.856567 },
+		{ x = 0.002241, y = 2.882872, z = -0.000069 }, 6514508, 538, false),
+	new_vehicle_sale("btr60", 50000, "veh_dcp_btr",
+		"pf_yanov_nimble_vehicle_marker_btr60",
+		{ x = 1491.710449, y = -23.194497, z = 1194.819214 },
+		{ x = -0.048988, y = -0.004753, z = -0.003157 }, 15209094, 578, false)
 }
 local VEHICLE_SALES_BY_ID = {}
 for _, sale in ipairs(VEHICLE_SALES) do
@@ -441,9 +451,19 @@ function collect_fuel_order(first_speaker, second_speaker)
 	return true
 end
 
+function armored_vehicles_unlocked()
+	if pf_tank_progress_reader == nil or
+			type(pf_tank_progress_reader.completed_levels) ~= "function" then
+		return false
+	end
+	local ok, count = pcall(pf_tank_progress_reader.completed_levels)
+	return ok and type(count) == "number" and count >= 50
+end
+
 local function vehicle_sale_available(sale, first_speaker, second_speaker)
 	return sale ~= nil and intro_done(first_speaker, second_speaker) and
-		stored(sale.purchased_key, false) ~= true
+		stored(sale.purchased_key, false) ~= true and
+		((sale.id ~= "brdm" and sale.id ~= "btr60") or armored_vehicles_unlocked())
 end
 
 local function select_vehicle_sale(id)
@@ -564,6 +584,7 @@ local function buy_vehicle_sale(sale, first_speaker, second_speaker)
 end
 
 local function spawn_discoverable_vehicle(sale)
+	if not sale.discoverable then return end
 	if stored(sale.discoverable_spawned_key, false) == true then return end
 
 	local object, created = create_or_reuse_vehicle(sale)
@@ -629,6 +650,8 @@ function vehicle_niva_2329_available(a, b) return vehicle_sale_available(VEHICLE
 function vehicle_zil130_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.zil130, a, b) end
 function vehicle_zil131_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.zil131, a, b) end
 function vehicle_kamaz_tent_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.kamaz_tent, a, b) end
+function vehicle_brdm_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.brdm, a, b) end
+function vehicle_btr60_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.btr60, a, b) end
 
 function select_vehicle_zaz968() return select_vehicle_sale("zaz968") end
 function select_vehicle_lada_2101() return select_vehicle_sale("lada_2101") end
@@ -649,6 +672,8 @@ function select_vehicle_niva_2329() return select_vehicle_sale("niva_2329") end
 function select_vehicle_zil130() return select_vehicle_sale("zil130") end
 function select_vehicle_zil131() return select_vehicle_sale("zil131") end
 function select_vehicle_kamaz_tent() return select_vehicle_sale("kamaz_tent") end
+function select_vehicle_brdm() return select_vehicle_sale("brdm") end
+function select_vehicle_btr60() return select_vehicle_sale("btr60") end
 
 -- Compatibility entry points retained for the already released UAZ sale.
 function uaz_van_sale_available(a, b) return vehicle_uaz_van_available(a, b) end

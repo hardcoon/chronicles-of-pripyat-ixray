@@ -1,0 +1,82 @@
+Tank 1990: sixth entry in the existing PDA mini-games list.
+
+Core: libretro/QuickNES_Core nes_emu only, commit
+26bb785c9deddb66a17717b21bb4e328f03ade32, LGPL-2.1-or-later.
+Native/Lua adapter and screen bridge: LGPL-2.1-or-later.
+Corresponding editable/rebuildable source, including the pinned QuickNES core
+with its original notices:
+https://github.com/hardcoon/chronicles-of-pripyat-ixray/releases/download/dev-2026.08.26.1/cop-pf-nes-quicknes-source-26bb785c.zip
+SHA256: 0ba09924a326cbb0e5dad4152bef785cbb72df84dbedaee2d91e7e5429684644
+See LICENSE-QUICKNES-LGPL-2.1.txt. No engine binaries replaced.
+
+ROM in data/tank1990.nes is a separate gameplay asset and is not LGPL
+software. Redistribution authorization for this project was confirmed by the
+project owner on 2026-10-04.
+Source: https://github.com/infoplat/jsnes/blob/master/roms/rom1/%28Ch%29%20Tank%201990.nes
+SHA256: ec453e7e3cc1d49d11d5860ced7f9e1235e2c7d33927bd6073b631754dc08dbb
+Matches PRG/CHR hashes of MAME's tank1990 entry (marked baddump, not a certified
+cartridge dump).
+
+Controls: solo P1 WASD or arrows + Space. In a 2 PLAYERS battle only:
+P1 WASD + Space, P2 arrows + Enter. Held Enter sends NES A+B for auto fire.
+IJKL/G/H bindings removed. Menu/editor arrows always navigate with controller 1.
+Mode/main/stage menus: W/A previous, S/D next, Space confirms/starts.
+Holding a direction repeats navigation after a short delay. In battle WASD/
+arrows move and held Space automatically fires (never Start/pause). The Autofire
+button enables continuous fire without Space, only in battle. Release/toggle
+off stops the request; the original cartridge enforces fire rate/bullet limits.
+Shift/Ctrl have no NES binding. Enter is P2 fire only in a two-player battle,
+never menu confirmation or Start/pause. Read-only pinned-ROM context detection;
+release arrows/Enter before they can control a different player across screens.
+The ROM is unchanged: context-aware NES controller pulses perform navigation;
+reverse main-menu movement is two Select pulses, never a game-RAM write.
+Held confirmation/direction is blocked until release across screen transitions.
+F6 checkpoints; Main menu [F2] confirms a battle/autofire reset and returns to
+cartridge menus for a new level choice, preserving victory history.
+Esc returns to the games list and saves/freezes the battle; returning resumes it.
+Construction: WASD cursor, Space cycle/place blocks, mouse Done returns to title.
+No manual pause button or P binding: P remains available to the engine/PDA.
+PDA close/focus loss stops the cartridge; reopening/refocusing resumes it.
+Native app-deactivation latch resets held keys even if the engine suspends
+all frame updates while minimized.
+An invisible native hold guard is attached directly to the PDA by the global
+actor update, not inside the holder-less CUIScriptWnd subtree. Only NES held
+keys are consumed while this page/its overlays are visible; no global input
+disable or key unbind. X and P pass through. snd_volume_eff is applied BEFORE
+PCM enqueue (including first audio); NES music/effects share one mixed stream.
+Local volume -/+ is directly below Sound: 0-100%, steps of 10%, default 50%.
+Right sidebar groups: Progress (Save, Progress list), Sound (mute, volume),
+Controls (Autofire, contextual keys, Construction-only Done), Help (rules).
+Game menu [F2] is separated at the bottom, with an Esc games-list hint below.
+Both normal/widescreen XML layouts match; native screen size is unchanged.
+Effective gain = snd_volume_eff * local_percent/100. No engine audio settings
+are changed. Preference: $app_data_root$/pf_nes_volume.cfg, validated numeric
+text and atomic replacement, independent of world/cartridge saves.
+
+Progress: $app_data_root$/pf_nes/<ROM-SHA256>.pfnes (+ .bak and exclusive .lock).
+One cartridge-wide progress slot, independent of Stalker world saves, F5/F9,
+pf_puzzles_session and puzzle rewards. Autosave every 1200 emulated frames.
+PDA close, tab switch, focus loss, pause, world save/reload and orderly actor
+shutdown checkpoint or close it. Forced termination may lose ~20 seconds.
+Bad primary falls back to previous-good backup; two bad copies fail closed.
+
+Completed levels: checksummed atomic <ROM-SHA256>.levels (+ .bak).
+ROM-hash-pinned read-only 6502 stack/RAM observer credits only successful
+scoring after a real battle. Selection, defeat, demos and Construction excluded.
+History is per A-N mode, unique-stage masks: G/N 118, other modes 50. All 14
+selection maxima/wraps verified in the actual ROM. F2 resets only the current
+run. History starts with this update; earlier wins cannot be inferred reliably.
+Progress opens a paused scrollable list: completed green, other gray.
+Original ROM and available stages are NOT modified or locked.
+50/118 means numbered stages, not distinct map layouts. QA loaded all 836
+mode/stage choices in the original ROM and compared the initial 26x26 terrain
+grid, before combat changes: A-F/H-M each 36 distinct fields among 50 numbers;
+G/N each 108 distinct fields among 118 numbers; all modes combined 108.
+This compares starting terrain, not every possible enemy/rule/gameplay variant.
+
+Restart Stalker after installation so its addon filesystem/script registry
+reloads. User reports original gameplay/rendering works inside the PDA. New
+hold interception, WASD/arrows/Space and Progress/Done/volume/Autofire visuals
+need live QA;
+do not confuse the DLL/host/controller automated tests with an in-engine
+playthrough. Five existing games and their world-save rules remain unchanged.

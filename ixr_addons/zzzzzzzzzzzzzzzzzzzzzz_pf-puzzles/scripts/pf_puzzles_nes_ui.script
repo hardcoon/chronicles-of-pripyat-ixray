@@ -1,0 +1,393 @@
+-- SPDX-License-Identifier: LGPL-2.1-or-later
+-- Original cartridge execution. Deliberately outside pf_puzzles_session/rewards.
+local ffi = require("ffi")
+local Controller = {}
+Controller.__index = Controller
+local registered = false
+local ROOT = "zzzzzzzzzzzzzzzzzzzzzz_pf-puzzles\\"
+local function tr(id) return game.translate_string(id) end
+local function native() return pf_nes_native end
+local function address(buffer) return tonumber(ffi.cast("uintptr_t", buffer)) end
+local function button_map()
+    local keys=DIK_keys
+    if not keys then return {} end
+    return {
+        [keys.DIK_W]={1,16}, [keys.DIK_S]={1,32}, [keys.DIK_A]={1,64}, [keys.DIK_D]={1,128},
+        [keys.DIK_SPACE]={1,1},
+        [keys.DIK_UP]={1,16}, [keys.DIK_DOWN]={1,32}, [keys.DIK_LEFT]={1,64}, [keys.DIK_RIGHT]={1,128},
+        [keys.DIK_RETURN]={2,3} -- NES A+B: Enter fires; holding it repeats fire
+    }
+end
+local function player_two_key(dik)
+    local keys=DIK_keys
+    return dik==keys.DIK_UP or dik==keys.DIK_DOWN or dik==keys.DIK_LEFT or
+        dik==keys.DIK_RIGHT or dik==keys.DIK_RETURN
+end
+local function error_text(id, detail)
+    return tr(id or "pf_puzzles_error_native_call") .. (detail and " ["..tostring(detail).."]" or "")
+end
+local function register_screen()
+    if registered then return true end
+    local path = getFS():update_path("$arch_dir_addons$", ROOT.."bin\\pf_nes_ui.dll")
+    local loader, reason = package.loadlib(path, "luaopen_pf_nes_ui")
+    if not loader then return false, reason end
+    local ok, message = pcall(loader)
+    if not ok then return false, message end
+    registered = true
+    return true
+end
+function Controller:initialize(owner)
+    local ok, reason = register_screen()
+    if not ok then error(reason) end
+    self.owner, self.active, self.rules_open, self.catalog_rules = owner, false, false, false
+    self.progress_open=false
+    self.manual_pause, self.running, self.sound, self.last_frame = false, false, true, -1
+    self.volume_percent=native().load_volume()
+    self.auto_fire=false
+    self.held = {}
+    self.blocked_keys={}
+    self.frame = ffi.new("uint32_t[?]", 256*240)
+    self.audio = ffi.new("int16_t[8192]")
+    local xml = CScriptXmlInit(); xml:ParseFile("pda_puzzles_nes.xml")
+    self.root = xml:InitStatic("nes", owner)
+    self.content = xml:InitStatic("nes:content", self.root)
+    xml:InitStatic("nes:content:board", self.content)
+    xml:InitTextWnd("nes:content:name", self.content)
+    for _,id in ipairs({"progress_heading","sound_heading","controls_heading","reference_heading","exit_help"}) do
+        xml:InitTextWnd("nes:content:"..id, self.content)
+    end
+    xml:InitStatic("nes:content:menu_separator", self.content)
+    self.help = xml:InitTextWnd("nes:content:help", self.content)
+    self.status = xml:InitTextWnd("nes:content:status", self.content)
+    self.screen = PfNesScreen(); self.screen:SetAutoDelete(false)
+    self.screen:SetMuted(true)
+    self:update_volume()
+    self.bindings=button_map()
+    self.input_guard=PfNesInputGuard(); self.input_guard:SetAutoDelete(false)
+    for key in pairs(self.bindings) do self.input_guard:AddKey(key) end
+    self.input_guard:SetActive(false)
+    self.content:AttachChild(self.screen)
+    self.screen:SetWndRect(Frect():set(63,214,751,654))
+    self.back = xml:Init3tButton("nes:content:back", self.content)
+    self.save = xml:Init3tButton("nes:content:save", self.content)
+    self.reset_button = xml:Init3tButton("nes:content:reset", self.content)
+    self.sound_button = xml:Init3tButton("nes:content:sound", self.content)
+    self.volume_down = xml:Init3tButton("nes:content:volume_down", self.content)
+    self.volume_value = xml:InitTextWnd("nes:content:volume_value", self.content)
+    self.volume_up = xml:Init3tButton("nes:content:volume_up", self.content)
+    self:update_volume()
+    self.rules_button = xml:Init3tButton("nes:content:rules", self.content)
+    self.progress_button = xml:Init3tButton("nes:content:progress", self.content)
+    self.auto_fire_button = xml:Init3tButton("nes:content:auto_fire", self.content)
+    self.editor_done = xml:Init3tButton("nes:content:editor_done", self.content)
+    self.editor_done:Show(false)
+    self.rules_shade = xml:InitStatic("nes:rules_shade", self.root)
+    self.rules = xml:InitStatic("nes:rules", self.root)
+    xml:InitTextWnd("nes:rules:caption", self.rules)
+    xml:InitTextWnd("nes:rules:body", self.rules)
+    self.rules_back = xml:Init3tButton("nes:rules:back", self.rules)
+    self.progress_window=xml:InitStatic("nes:progress",self.root)
+    self.progress_caption=xml:InitTextWnd("nes:progress:caption",self.progress_window)
+    xml:InitTextWnd("nes:progress:mode_hint",self.progress_window)
+    self.progress_scroll=xml:InitScrollView("nes:progress:scroll",self.progress_window)
+    self.progress_back=xml:Init3tButton("nes:progress:back",self.progress_window)
+    self.progress_rows={}
+    self.confirm = CUIMessageBoxEx()
+    owner:Register(self.confirm, "pf_nes_confirm")
+    owner:AddCallback("pf_nes_confirm", ui_events.MESSAGE_BOX_YES_CLICKED, self.confirm_reset, self)
+    owner:AddCallback("pf_nes_confirm", ui_events.MESSAGE_BOX_NO_CLICKED, self.cancel_reset, self)
+    for _, item in ipairs({{self.back,"back",self.back_to_catalog},
+        {self.save,"save",self.checkpoint}, {self.reset_button,"reset",self.ask_reset},
+        {self.sound_button,"sound",self.toggle_sound}, {self.rules_button,"rules",function(s) s:show_rules("game") end},
+        {self.volume_down,"volume_down",function(s) s:adjust_volume(-10) end},
+        {self.volume_up,"volume_up",function(s) s:adjust_volume(10) end},
+        {self.auto_fire_button,"auto_fire",self.toggle_auto_fire},
+        {self.rules_back,"rules_back",self.hide_rules},
+        {self.progress_button,"progress",function(s) s.pending_progress=true end},
+        {self.editor_done,"editor_done",function(s) s.pending_editor_done=true end},
+        {self.progress_back,"progress_back",self.hide_progress}}) do
+        local id="pf_nes_"..item[2]; owner:Register(item[1],id)
+        owner:AddCallback(id,ui_events.BUTTON_CLICKED,item[3],self)
+    end
+    self.root:Show(false); self.rules:Show(false); self.rules_shade:Show(false)
+    self.progress_window:Show(false)
+    return self
+end
+function Controller:show_error(id, detail)
+    self.last_error = error_text(id, detail)
+    self.manual_pause = true
+    self:update_visibility()
+    self.status:SetText(self.last_error)
+    if type(printf)=="function" then printf("! pf_nes: %s",self.last_error) end
+    return false
+end
+function Controller:enter()
+    self.active, self.manual_pause, self.last_error = true, false, nil
+    self.root:Show(true); self.content:Show(true)
+    self.rules_open, self.catalog_rules, self.progress_open = false, false, false
+    self.progress_window:Show(false)
+    self.rules:Show(false); self.rules_shade:Show(false)
+    if not native().has_context() then
+        local rom = getFS():update_path("$arch_dir_addons$",ROOT.."data\\tank1990.nes")
+        local ok,id,detail=native().open(rom)
+        if not ok then return self:show_error(id,detail) end
+        self.last_frame=-1
+    end
+    self:update(true)
+    return true
+end
+function Controller:update_volume()
+    local console=get_console()
+    local effects=console and console.get_float and console:get_float("snd_volume_eff") or 0
+    self.screen:SetVolume(effects*self.volume_percent/100)
+    if self.volume_value and self.display_volume~=self.volume_percent then
+        self.display_volume=self.volume_percent
+        self.volume_value:SetText(string.format(tr("pf_nes_volume_percent"),self.volume_percent))
+        self.volume_down:Enable(self.volume_percent>0)
+        self.volume_up:Enable(self.volume_percent<100)
+    end
+end
+function Controller:adjust_volume(delta)
+    local percent=math.max(0,math.min(100,self.volume_percent+delta))
+    if percent==self.volume_percent then return true end
+    self.volume_percent=percent; self:update_volume()
+    local ok,reason=native().save_volume(percent)
+    self.volume_error=not ok and tr("pf_nes_volume_error") or nil
+    if not ok then
+        self.status:SetText(self.volume_error)
+        if type(printf)=="function" then printf("! pf_nes volume: %s",tostring(reason)) end
+    end
+    return ok
+end
+function Controller:update_auto_fire()
+    -- B is a frontend automatic-fire request. The native adapter accepts it
+    -- only during a battle; never Select/Start, never editor painting.
+    native().button(1,2,self.auto_fire and native().control_screen()==3)
+    self.auto_fire_button:TextControl():SetText(tr(self.auto_fire and "pf_nes_auto_fire_on" or "pf_nes_auto_fire_off"))
+end
+function Controller:toggle_auto_fire()
+    self.auto_fire=not self.auto_fire
+    self:update_auto_fire()
+end
+function Controller:update_visibility(attach_guard)
+    if self.screen:ConsumeFocusLoss() then
+        self.held={}; self.running=false; self.screen:SetMuted(true)
+        self.blocked_keys={}
+        local ok,id,detail=native().set_visible(false)
+        if not ok then
+            self.manual_pause=true; self.last_error=error_text(id,detail)
+            self.status:SetText(self.last_error)
+        end
+    end
+    local ok,result=pcall(function()
+        local pda=ActorMenu.get_pda_menu()
+        -- Only the global actor update may attach to the PDA: changing its
+        -- child list during a nested UI update would invalidate live iterators.
+        if attach_guard and (self.active or self.rules_open or self.progress_open) and pda then self.input_guard:AttachTo(pda) end
+        return pda and pda:IsShown() and pda:GetActiveSection()=="eptPuzzles" and
+            self.owner:IsShown() and self.screen:HostFocused()
+    end)
+    self.input_active=(self.active or self.rules_open or self.progress_open) and ok and result==true
+    self.input_guard:SetActive(self.input_active)
+    local visible=self.input_active and self.active and not self.rules_open and not self.progress_open and
+        not self.manual_pause and native().has_context()
+    if visible~=self.running then
+        self.held = {}
+        self.blocked_keys={}
+        self.editor_done_frame=nil; self.pending_editor_done=false
+        self.running=visible
+        self:update_volume()
+        self.screen:SetMuted(not visible or not self.sound)
+        local ok,id,detail=native().set_visible(visible)
+        if not ok then
+            self.manual_pause=true; self.last_error=error_text(id,detail)
+            self.running=false; self.screen:SetMuted(true)
+            self.status:SetText(self.last_error)
+        end
+    end
+    return visible and self.running
+end
+function Controller:update(force)
+    if not self.active then return end
+    self:process_pending()
+    self:update_visibility()
+    self:sync_player_controls()
+    self:update_volume()
+    self:update_auto_fire()
+    local ok,id,detail=native().update()
+    if not ok then return self:show_error(id,detail) end
+    local info=native().info()
+    if not info then return end
+    if self.editor_done_frame and info.frame>=self.editor_done_frame+4 then
+        native().button(1,8,false); self.editor_done_frame=nil
+    end
+    local control_screen=native().control_screen()
+    if control_screen~=self.last_control_screen or self.help_two_player~=self.two_player then
+        self.last_control_screen=control_screen
+        self.help_two_player=self.two_player
+        self.editor_done:Show(control_screen==6)
+        self.help:SetText(tr(control_screen==6 and "pf_nes_editor_help" or
+            (control_screen==3 and (self.two_player and "pf_nes_two_player_help" or "pf_nes_battle_help") or "pf_nes_help")))
+    end
+    if force or info.frame~=self.last_frame then
+        ok,id,detail=native().copy_frame(self.frame,256*240)
+        if not ok then return self:show_error(id,detail) end
+        self.screen:SubmitFrame(address(self.frame)); self.last_frame=info.frame
+    end
+    local count
+    ok,count,detail=native().read_audio(self.audio,8192)
+    if not ok then return self:show_error(count,detail) end
+    if count>0 and not self.screen:QueueAudio(address(self.audio),count) then
+        self.sound=false; self.screen:SetMuted(true)
+        self.audio_error=tr("pf_nes_audio_error").." ["..self.screen:AudioError().."]"
+    end
+    if not self.last_error then
+        local notice=self.saved_notice_until and tonumber(ffi.C.GetTickCount64())<self.saved_notice_until
+        local progress=native().progress()
+        local summary=progress and string.format(tr("pf_nes_progress_summary"),
+            progress.mode_name,progress.completed,progress.total) or tr("pf_nes_running")
+        self.status:SetText(self.volume_error or self.audio_error or (notice and tr("pf_nes_saved")) or
+            (self.manual_pause and tr("pf_nes_paused")) or summary)
+    end
+    self.sound_button:TextControl():SetText(tr(self.sound and "pf_nes_sound_on" or "pf_nes_sound_off"))
+end
+function Controller:leave()
+    self.active=false; self.pending_progress=false; self:hide_progress(); self:hide_rules(); self:update_visibility()
+    self.root:Show(false)
+end
+function Controller:back_to_catalog() self:leave(); self.owner:BackToCatalog() end
+function Controller:toggle_sound()
+    self.sound=not self.sound; self.screen:SetMuted(not self.sound or not self.running)
+    self.audio_error=nil
+end
+function Controller:checkpoint()
+    local ok,id,detail=native().checkpoint()
+    if not ok then return self:show_error(id,detail) end
+    self.last_error=nil; self.saved_notice_until=tonumber(ffi.C.GetTickCount64())+2000
+    self.status:SetText(tr("pf_nes_saved")); return true
+end
+function Controller:ask_reset()
+    self.pause_before_confirm=self.manual_pause; self.manual_pause=true; self:update_visibility()
+    self.confirm:InitMessageBox("message_box_yes_no"); self.confirm:SetText(tr("pf_nes_confirm_reset"))
+    self.confirm:ShowDialog(true)
+end
+function Controller:confirm_reset() self.pending_reset=true end
+function Controller:cancel_reset() self.manual_pause=self.pause_before_confirm==true; self:update_visibility() end
+function Controller:is_rules_open() return self.rules_open==true or self.progress_open==true end
+function Controller:show_progress()
+    if not self.active then return end
+    self.progress_open=true; self.content:Enable(false)
+    self.rules_shade:Show(true); self.progress_window:Show(true); self:update_visibility()
+    local progress,id,detail=native().progress()
+    if not progress then self:hide_progress(); return self:show_error(id,detail or "Progress observer unavailable") end
+    self.progress_caption:SetText(string.format(tr("pf_nes_progress_summary"),
+        progress.mode_name,progress.completed,progress.total))
+    -- Deferred by process_pending: never add/remove widgets during mouse dispatch.
+    self.progress_scroll:Clear(); self.progress_rows={}
+    local xml=CScriptXmlInit(); xml:ParseFile("pda_puzzles_nes.xml")
+    for level=1,progress.total do
+        local row=xml:InitTextWnd("nes:progress:row",nil)
+        row:SetText(string.format(tr(progress.levels[level] and "pf_nes_level_completed" or "pf_nes_level_incomplete"),level))
+        row:SetTextColor(progress.levels[level] and 0xff80c878 or 0xff929292)
+        self.progress_scroll:AddWindow(row,true); row:SetAutoDelete(false)
+        self.progress_rows[level]=row
+    end
+    self.progress_scroll:ScrollToBegin()
+end
+function Controller:hide_progress()
+    self.progress_open=false; self.progress_window:Show(false)
+    self.rules_shade:Show(self.rules_open)
+    self.content:Enable(self.active and not self.rules_open); self:update_visibility()
+end
+function Controller:show_rules(return_page)
+    self.catalog_rules=return_page=="catalog" and not self.active
+    self.rules_open=true; self.root:Show(true)
+    self.content:Show(not self.catalog_rules); self.content:Enable(false)
+    self.rules_shade:Show(true); self.rules:Show(true); self:update_visibility()
+    if self.catalog_rules then self.owner:OnControllerCatalogRulesVisible("nes",true) end
+end
+function Controller:hide_rules()
+    local catalog=self.catalog_rules
+    self.rules_open,self.catalog_rules=false,false
+    self.rules:Show(false); self.rules_shade:Show(false); self.content:Enable(self.active)
+    if catalog then self.root:Show(false); self.owner:OnControllerCatalogRulesVisible("nes",false) end
+    self:update_visibility()
+end
+function Controller:on_game_load() self:leave(); return native().close() end
+function Controller:set_key(dik,button)
+    local previous=self.held[dik]
+    self.held[dik]=button
+    local function apply(binding)
+        if not binding then return end
+        local down=false
+        for _,held in pairs(self.held) do
+            if held[1]==binding[1] and held[2]==binding[2] then down=true; break end
+        end
+        native().button(binding[1],binding[2],down)
+    end
+    if previous and previous~=button then apply(previous) end
+    if button then apply(button) end
+end
+function Controller:sync_player_controls()
+    local two_player=native().two_player_battle()==true
+    if self.two_player~=nil and self.two_player~=two_player then
+        -- A direction held through a menu/battle transition must not suddenly
+        -- move the other player. Release its original controller, preserving
+        -- any still-held WASD alias, and require a fresh arrow/Enter press.
+        local release={}
+        for dik in pairs(self.held) do if player_two_key(dik) then release[#release+1]=dik end end
+        for _,dik in ipairs(release) do self:set_key(dik,nil); self.blocked_keys[dik]=true end
+    end
+    self.two_player=two_player
+end
+function Controller:on_keyboard(dik, action)
+    local keys=DIK_keys
+    if not keys then return false end
+    local pressed=action==ui_events.WINDOW_KEY_PRESSED
+    local released=action==ui_events.WINDOW_KEY_RELEASED
+    if dik==keys.DIK_ESCAPE and pressed then
+        if self.progress_open then self:hide_progress()
+        elseif self.rules_open then self:hide_rules() else self:back_to_catalog() end
+        return true
+    end
+    if not self.active and not self.rules_open and not self.progress_open then return false end
+    self:update_visibility()
+    if not self.input_active then return false end
+    self:sync_player_controls()
+    if self.blocked_keys[dik] then
+        if released then self.blocked_keys[dik]=nil end
+        return true
+    end
+    if not self.rules_open and not self.progress_open and pressed and dik==keys.DIK_F6 then self:checkpoint(); return true end
+    if not self.rules_open and not self.progress_open and pressed and dik==keys.DIK_F2 then self:ask_reset(); return true end
+    local button=self.bindings[dik]
+    if dik==keys.DIK_RETURN and not self.two_player then button=nil
+    elseif button and player_two_key(dik) and self.two_player then button={2,button[2]} end
+    if released and self.held[dik] then button=self.held[dik] end
+    if button then
+        if self.running and (pressed or released) then
+            self:set_key(dik,pressed and (self.held[dik] or button) or nil)
+        end
+        return true
+    end
+    return false
+end
+-- Run mutations after UI event dispatch, never inside a message-box callback.
+function Controller:process_pending()
+    if self.pending_progress then self.pending_progress=false; self:show_progress() end
+    if self.pending_editor_done then
+        self.pending_editor_done=false
+        if self.running and native().control_screen()==6 then
+            local info=native().info()
+            native().button(1,8,true); self.editor_done_frame=info.frame
+        end
+    end
+    if not self.pending_reset then return end
+    self.pending_reset=false
+    self.auto_fire=false
+    local ok,id,detail=native().reset(true)
+    if not ok then return self:show_error(id,detail) end
+    self.manual_pause,self.last_error,self.last_frame=false,nil,-1
+    self.running=false; self:update_visibility()
+end
+function new(owner) return setmetatable({},Controller):initialize(owner) end

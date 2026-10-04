@@ -128,6 +128,7 @@
                 <next>122</next>
                 <next>123</next>
                 <next>124</next>
+                <next>128</next>
                 <next>125</next>
             </phrase>
             <phrase id="122">
@@ -157,7 +158,13 @@
                 <next>122</next>
                 <next>123</next>
                 <next>124</next>
+                <next>128</next>
                 <next>125</next>
+            </phrase>
+            <phrase id="128">
+                <text>pf_yanov_nimble_vehicle_category_armored</text>
+                <precondition>pf_yanov_nimble_dialog.armored_vehicles_unlocked</precondition>
+                <next>600</next>
             </phrase>
             <phrase id="200">
                 <text>pf_yanov_nimble_vehicle_list_prompt</text>
@@ -313,6 +320,28 @@
                 <next>500</next>
             </phrase>
             <phrase id="419">
+                <text>pf_yanov_nimble_vehicle_back_categories</text>
+                <next>127</next>
+            </phrase>
+            <phrase id="600">
+                <text>pf_yanov_nimble_vehicle_list_prompt</text>
+                <next>601</next>
+                <next>602</next>
+                <next>619</next>
+            </phrase>
+            <phrase id="601">
+                <text>pf_yanov_nimble_vehicle_brdm</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_brdm_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_brdm</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="602">
+                <text>pf_yanov_nimble_vehicle_btr60</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_btr60_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_btr60</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="619">
                 <text>pf_yanov_nimble_vehicle_back_categories</text>
                 <next>127</next>
             </phrase>

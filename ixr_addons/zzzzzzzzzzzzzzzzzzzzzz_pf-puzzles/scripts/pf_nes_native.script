@@ -1,0 +1,230 @@
+-- SPDX-License-Identifier: LGPL-2.1-or-later
+-- PDA frontend adapter. No NES state is ever imported from the world-save root.
+-- Loaded by the sixth PDA mini-game; no world-save state import.
+local ffi = require("ffi")
+local bit = require("bit")
+local ABI = 1
+local runtime = { library = nil, context = nil, keys = {0, 0}, visible = false,
+    accumulator = 0, tick = nil, resume_result = nil }
+ffi.cdef[[
+typedef struct pf_nes_context pf_nes_context;
+typedef struct pf_nes_info {
+    uint32_t struct_size, abi_version, width, height, sample_rate, paused;
+    uint64_t frame_number, persisted_frame_number;
+    uint32_t mapper, audio_samples, autosave_frames, reserved;
+    char rom_sha256[65]; char core_commit[41];
+} pf_nes_info;
+typedef struct pf_nes_progress {
+    uint32_t struct_size, supported, completed, total, mode, stage;
+} pf_nes_progress;
+uint32_t pf_nes_abi_version(void);
+int pf_nes_open_w(const wchar_t*, const wchar_t*, pf_nes_context**);
+int pf_nes_get_info(pf_nes_context*, pf_nes_info*);
+int pf_nes_get_progress(pf_nes_context*, pf_nes_progress*);
+int pf_nes_copy_completed(pf_nes_context*, uint32_t, uint8_t*, uint32_t);
+int pf_nes_set_paused(pf_nes_context*, uint32_t);
+int pf_nes_advance(pf_nes_context*, uint32_t, uint32_t, uint32_t);
+int pf_nes_advance_controls(pf_nes_context*, uint32_t, uint32_t, uint32_t);
+int pf_nes_get_control_screen(pf_nes_context*, uint32_t*);
+int pf_nes_get_two_player_battle(pf_nes_context*, uint32_t*);
+int pf_nes_copy_frame(pf_nes_context*, uint32_t*, uint32_t);
+int pf_nes_read_audio(pf_nes_context*, int16_t*, uint32_t, uint32_t*);
+int pf_nes_checkpoint(pf_nes_context*);
+int pf_nes_reset(pf_nes_context*);
+int pf_nes_close(pf_nes_context*);
+void pf_nes_destroy(pf_nes_context*);
+uint32_t pf_nes_last_error(char*, uint32_t);
+uint64_t __stdcall GetTickCount64(void);
+int __stdcall MultiByteToWideChar(unsigned int, unsigned long, const char*, int, wchar_t*, int);
+int __stdcall MoveFileExW(const wchar_t*, const wchar_t*, unsigned long);
+]]
+local function detail()
+    local buffer = ffi.new("char[1024]")
+    runtime.library.pf_nes_last_error(buffer, 1024)
+    return ffi.string(buffer)
+end
+local function result(code)
+    code = tonumber(code)
+    if code < 0 then return false, "pf_puzzles_error_native_call", detail() end
+    return true, code
+end
+-- Paths supplied by getFS() are in the Windows engine codepage, not UTF-8.
+local function wide_path(path)
+    assert(type(path) == "string" and path ~= "", "NES path is empty")
+    local n = ffi.C.MultiByteToWideChar(0, 0, path, -1, nil, 0)
+    assert(n > 0, "Cannot convert NES path")
+    local buffer = ffi.new("wchar_t[?]", n)
+    assert(ffi.C.MultiByteToWideChar(0, 0, path, -1, buffer, n) == n, "Cannot convert NES path")
+    return buffer
+end
+local function volume_path()
+    return getFS():update_path("$app_data_root$", "pf_nes_volume.cfg")
+end
+function load_volume()
+    -- A frontend preference, not a cartridge/world-save field. Missing or
+    -- invalid settings use a quieter default; never execute configuration text.
+    local file=io.open(volume_path(),"rb")
+    if not file then return 50 end
+    local text=file:read(64); file:close()
+    local percent=text and tonumber(text:match("^volume=(%d+)%s*$"))
+    return percent and percent<=100 and percent or 50
+end
+function save_volume(percent)
+    if type(percent)~="number" or percent~=percent or percent<0 or percent>100 or percent%1~=0 then
+        return false,"Invalid NES volume"
+    end
+    local path=volume_path(); local temp=path..".tmp"
+    local file,reason=io.open(temp,"wb")
+    if not file then return false,reason end
+    local written=file:write(string.format("volume=%d\n",percent))
+    local flushed=file:flush(); local closed=file:close()
+    if not written or not flushed or not closed then return false,"Cannot write NES volume preference" end
+    -- Flush the temporary file before an atomic replace. Never truncate the
+    -- previous preference and never touch .pfnes/.levels or Stalker's settings.
+    if ffi.C.MoveFileExW(wide_path(temp),wide_path(path),9)==0 then
+        return false,"Cannot atomically replace NES volume preference"
+    end
+    return true
+end
+function available(dll_path)
+    if runtime.library then return true end
+    if not dll_path then
+        if type(getFS) ~= "function" then return false, "pf_puzzles_error_dll_load", "No engine filesystem" end
+        dll_path = getFS():update_path("$arch_dir_addons$",
+            "zzzzzzzzzzzzzzzzzzzzzz_pf-puzzles\\bin\\pf_nes_native.dll")
+    end
+    local ok, library = pcall(ffi.load, dll_path)
+    if not ok then return false, "pf_puzzles_error_dll_load", tostring(library) end
+    local verified, version = pcall(library.pf_nes_abi_version)
+    if not verified or tonumber(version) ~= ABI or ffi.sizeof("pf_nes_info") ~= 168 then
+        return false, "pf_puzzles_error_abi_mismatch", "NES ABI"
+    end
+    if not pcall(function() return library.pf_nes_get_progress,library.pf_nes_copy_completed,
+        library.pf_nes_advance_controls,library.pf_nes_get_control_screen,library.pf_nes_get_two_player_battle end) then
+        return false,"pf_puzzles_error_abi_mismatch","NES controls/progress API: update the native DLL and restart Stalker"
+    end
+    runtime.library = library
+    return true
+end
+function has_context() return runtime.context ~= nil end
+function open(rom_path, save_dir, dll_path)
+    if has_context() then return false, "pf_puzzles_error_native_call", "Close the previous ROM first" end
+    local ok, id, message = available(dll_path)
+    if not ok then return false, id, message end
+    if not save_dir then save_dir = getFS():update_path("$app_data_root$", "pf_nes\\") end
+    local out = ffi.new("pf_nes_context *[1]")
+    local code = runtime.library.pf_nes_open_w(wide_path(rom_path), wide_path(save_dir), out)
+    if tonumber(code) < 0 then return result(code) end
+    if out[0] == nil then return false, "pf_puzzles_error_native_call", "No context returned" end
+    runtime.context = ffi.gc(out[0], runtime.library.pf_nes_destroy)
+    runtime.progress=nil
+    runtime.resume_result = tonumber(code)
+    runtime.visible, runtime.tick, runtime.accumulator = false, nil, 0
+    runtime.keys = {0, 0}
+    return true, runtime.resume_result
+end
+function info()
+    if not has_context() then return nil end
+    local out = ffi.new("pf_nes_info[1]")
+    out[0].struct_size = ffi.sizeof("pf_nes_info")
+    local ok, id, message = result(runtime.library.pf_nes_get_info(runtime.context, out))
+    if not ok then return nil, id, message end
+    return { frame = tonumber(out[0].frame_number), saved_frame = tonumber(out[0].persisted_frame_number),
+        width = tonumber(out[0].width), height = tonumber(out[0].height),
+        sample_rate = tonumber(out[0].sample_rate), paused = tonumber(out[0].paused) ~= 0,
+        rom_sha256 = ffi.string(out[0].rom_sha256), resume_result = runtime.resume_result }
+end
+function checkpoint()
+    if not has_context() then return true end
+    return result(runtime.library.pf_nes_checkpoint(runtime.context))
+end
+function control_screen()
+    if not has_context() then return 0 end
+    local out=ffi.new("uint32_t[1]")
+    local ok,id,message=result(runtime.library.pf_nes_get_control_screen(runtime.context,out))
+    if not ok then return nil,id,message end
+    return tonumber(out[0])
+end
+function two_player_battle()
+    if not has_context() then return false end
+    local out=ffi.new("uint32_t[1]")
+    local ok,id,message=result(runtime.library.pf_nes_get_two_player_battle(runtime.context,out))
+    if not ok then return nil,id,message end
+    return out[0]~=0
+end
+function progress()
+    if not has_context() then return runtime.progress end
+    local out=ffi.new("pf_nes_progress[1]"); out[0].struct_size=ffi.sizeof("pf_nes_progress")
+    local ok,id,message=result(runtime.library.pf_nes_get_progress(runtime.context,out))
+    if not ok then return nil,id,message end
+    if out[0].supported==0 then return nil end
+    local mode,total=tonumber(out[0].mode),tonumber(out[0].total)
+    local levels=ffi.new("uint8_t[?]",total)
+    ok,id,message=result(runtime.library.pf_nes_copy_completed(runtime.context,mode,levels,total))
+    if not ok then return nil,id,message end
+    local value={completed=tonumber(out[0].completed),total=total,mode=mode,
+        mode_name=string.char(65+mode),stage=tonumber(out[0].stage),levels={}}
+    for i=1,total do value.levels[i]=levels[i-1]~=0 end
+    runtime.progress=value; return value
+end
+function set_visible(visible)
+    runtime.visible = visible == true
+    runtime.keys, runtime.tick, runtime.accumulator = {0, 0}, nil, 0
+    if not has_context() then return true end
+    return result(runtime.library.pf_nes_set_paused(runtime.context, visible and 0 or 1))
+end
+function button(player, mask, pressed)
+    if not runtime.visible or not has_context() then return false end
+    if (player ~= 1 and player ~= 2) or mask < 1 or mask > 128 then return false end
+    runtime.keys[player] = pressed and bit.bor(runtime.keys[player], mask)
+        or bit.band(runtime.keys[player], bit.bnot(mask))
+    return true
+end
+function update()
+    if not runtime.visible or not has_context() then return true end
+    local tick = tonumber(ffi.C.GetTickCount64())
+    if not runtime.tick then runtime.tick = tick; return true end
+    local elapsed = tick - runtime.tick; runtime.tick = tick
+    -- Never run catch-up while alt-tabbed or after a world load stalls the host.
+    if elapsed < 0 or elapsed > 250 then runtime.accumulator = 0; return true end
+    runtime.accumulator = runtime.accumulator + elapsed * 60 / 1000
+    local frames = math.min(8, math.floor(runtime.accumulator))
+    runtime.accumulator = runtime.accumulator - frames
+    local ok, id, message = result(runtime.library.pf_nes_advance_controls(
+        runtime.context, frames, runtime.keys[1], runtime.keys[2]))
+    if not ok then set_visible(false) end
+    return ok, id, message
+end
+function copy_frame(buffer, capacity)
+    if not has_context() then return false, "pf_puzzles_error_context" end
+    return result(runtime.library.pf_nes_copy_frame(runtime.context, buffer, capacity))
+end
+function read_audio(buffer, capacity)
+    if not has_context() then return false, "pf_puzzles_error_context" end
+    local count = ffi.new("uint32_t[1]")
+    local ok, id, message = result(runtime.library.pf_nes_read_audio(runtime.context, buffer, capacity, count))
+    if not ok then return false, id, message end
+    return true, tonumber(count[0])
+end
+function reset(confirmed)
+    if not confirmed then return false, "pf_puzzles_error_native_call", "New game must be confirmed" end
+    if not has_context() then return false, "pf_puzzles_error_context" end
+    set_visible(false)
+    return result(runtime.library.pf_nes_reset(runtime.context))
+end
+function close()
+    if not has_context() then return true end
+    progress()
+    set_visible(false)
+    local context = runtime.context
+    local ok, id, message = result(runtime.library.pf_nes_close(context))
+    if not ok then return false, id, message end -- retain it so the caller can retry
+    ffi.gc(context, nil); runtime.context = nil
+    return true
+end
+function before_game_reload() return close() end
+function on_game_load() return close() end
+function destroy() return close() end
+-- Frontend must call set_visible(false) on tab switch / PDA close / focus loss,
+-- close() on reload and shutdown, checkpoint() at save_state. Do NOT add this
+-- module to pf_puzzles_session: that module deliberately follows world saves.

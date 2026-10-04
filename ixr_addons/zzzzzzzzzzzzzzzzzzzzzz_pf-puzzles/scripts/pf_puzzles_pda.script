@@ -17,7 +17,7 @@ local TILE_ORIGIN_Y = 4
 local TILE_COLUMN_STEP = 453
 local TILE_ROW_STEP = 146
 local DIFFICULTIES = { "easy", "normal", "hard" }
-local CONTROLLER_GAME_IDS = { "unequal", "net", "solo", "wordle" }
+local CONTROLLER_GAME_IDS = { "unequal", "net", "solo", "wordle", "nes" }
 local RULE_BLOCKS = {
     { "goal_heading", 6 },
     { "goal_body", 10 },
@@ -69,6 +69,15 @@ local CATALOG_GAMES = {
         preview_texture = "ui_pf_puzzles_wordle_preview",
         native_module = "pf_puzzles_wordle",
         ui_module = "pf_puzzles_wordle_ui"
+    },
+    {
+        id = "nes",
+        name_id = "pf_nes_name",
+        description_id = "pf_nes_description",
+        preview_texture = "ui_pf_nes_preview",
+        native_module = "pf_nes_native",
+        ui_module = "pf_puzzles_nes_ui",
+        persistent_cartridge = true
     }
 }
 local DIFFICULTY_TEXT = {
@@ -115,7 +124,7 @@ local function destroy_native_contexts()
     local module_names = {
         "pf_puzzles_native", "pf_puzzles_unequal_native",
         "pf_puzzles_net_native", "pf_puzzles_solo_native",
-        "pf_puzzles_wordle"
+        "pf_puzzles_wordle", "pf_nes_native"
     }
     for _, module_name in ipairs(module_names) do
         local native = rawget(_G, module_name)
@@ -684,6 +693,7 @@ function pf_puzzles_tab:QualifiedWinsText(game_id)
 end
 
 function pf_puzzles_tab:CatalogStatText(game_entry)
+    if game_entry.persistent_cartridge then return tr("pf_nes_disk_progress") end
     local wins = self:QualifiedWinsText(game_entry.id)
     if game_entry.supports_score then
         return self:BestOverallText() .. " | " .. wins
@@ -1283,6 +1293,8 @@ end
 function pf_puzzles_tab:PrepareForReload()
     self.shutting_down = true
     self.pending_ui_action = nil
+    local nes = self.controller_views and self.controller_views.nes
+    if nes then nes:leave() end
 end
 
 function pf_puzzles_tab:Update()
@@ -1294,11 +1306,19 @@ function pf_puzzles_tab:Update()
     if shell_state.page == "game" and not self:IsRulesShown() then
         local controller = self:ActiveControllerView()
         if controller then
+            if controller.process_pending then controller:process_pending() end
             controller:update(false)
         else
             self:RefreshGame(false)
         end
     end
+end
+
+-- Global update runs even while the PDA/script tab is no longer drawn.
+function maintain_nes_visibility()
+    local view = singleton and singleton.controller_views and singleton.controller_views.nes
+    if view then return view:update_visibility(true) end
+    return true
 end
 
 function pf_puzzles_tab:OnKeyboard(dik, keyboard_action)
