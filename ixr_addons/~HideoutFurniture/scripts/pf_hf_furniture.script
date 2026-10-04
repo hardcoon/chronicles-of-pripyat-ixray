@@ -1,0 +1,335 @@
+-- Shared transactional adapters and primary actions for the base furniture set.
+local catalog=pf_hf_furniture_catalog
+for _,entry in ipairs(pf_hf_expansion_catalog.entries) do
+    catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
+end
+for _,entry in ipairs(pf_hf_even_more_catalog.entries) do
+    catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
+end
+for section,entry in pairs(pf_hf_native_doors_catalog.by_object) do catalog.by_object[section]=entry end
+for section,entry in pairs(pf_hf_native_doors_catalog.by_item) do catalog.by_item[section]=entry end
+local pending={}
+local data={}
+local generation=0
+local registered=false
+local restored=false
+local function configured_light_interaction_distance()
+    local ini=type(system_ini)=="function" and system_ini() or nil
+    local section,key="pf_hf_interaction","light_interaction_distance"
+    local distance=ini and ini:section_exist(section) and ini:line_exist(section,key) and
+        tonumber(ini:r_string(section,key)) or nil
+    if not distance or distance~=distance or distance<=0 or distance>=math.huge then return 3 end
+    return distance
+end
+local light_interaction_distance=configured_light_interaction_distance()
+
+function definition(section)
+    if section=="pf_hfe_stove_storage" then return {kind="stash",capacity=100} end
+    if section=="pf_hf_test_crate" then
+        return {item="pf_hf_test_crate_item",object=section,kind="prop",title="pf_rt_crate_title"}
+    end
+    return catalog.by_object[section]
+end
+
+function in_interaction_range(object)
+    local entry=object and definition(object:section())
+    if not entry or not db.actor then return false end
+    if entry.kind=="light" then
+        -- A ceiling attachment/pivot can be far above both actor and bulb.
+        -- Use the HUD's visible surface hit, shared by USE, reload and pickup.
+        local aimed=level.get_target_obj()
+        local distance=level.get_target_dist()
+        return aimed and aimed:id()==object:id() and type(distance)=="number" and
+            distance>=0 and distance<=light_interaction_distance or false
+    end
+    return object:position():distance_to(db.actor:position())<=3.25
+end
+
+local function simulator_object(id)
+    local sim=alife()
+    return sim and sim:object(id,true)
+end
+function notify(id)
+    if db.actor then db.actor:give_game_news(game.translate_string("st_tip"),
+        game.translate_string(id),"pf_news_item_received",0,3000) end
+end
+
+function state(id)
+    local object=simulator_object(id)
+    if not object then return nil end
+    local section=object:section_name()
+    if not definition(section) and not catalog.by_item[section] then return nil end
+    local own=data[id]
+    if not own or own.section~=section then
+        own={section=section,is_on=false,condition=1,channel=1,volume=.5}
+        if definition(section) and definition(section).kind=="radio" then own.collection="yanov";own.track=1 end
+        data[id]=own
+    end
+    return own
+end
+function forget(id) data[id]=nil end
+
+function light_mode(section,id)
+    local entry=definition(section) or catalog.by_item[section]
+    if not entry or entry.kind~="light" then return nil end
+    local own=id and state(id)
+    local mode=own and own.light_mode
+    if mode~="dynamic" and mode~="static" then
+        mode=entry.light.has_shadows=="false" and "static" or "dynamic"
+        if own then own.light_mode=mode end
+    end
+    return mode
+end
+function apply_light_mode(lamp,entry,mode)
+    if not lamp or type(lamp.set_lighting_features)~="function" then return false end
+    local dynamic=mode=="dynamic"
+    local volumetric=entry.light.volumetric=="true" or
+        (entry.light.volumetric==nil and entry.light.type=="2")
+    return lamp:set_lighting_features(dynamic,dynamic and volumetric)
+end
+function toggle_light_mode(id)
+    local object=level.object_by_id(id)
+    local entry=object and definition(object:section())
+    if not object or not entry or entry.kind~="light" or not db.actor or
+        not in_interaction_range(object) then return false end
+    local mode=light_mode(entry.object,id)=="dynamic" and "static" or "dynamic"
+    if not apply_light_mode(object:get_hanging_lamp(),entry,mode) then
+        notify("pf_hf_light_mode_unavailable");return false
+    end
+    state(id).light_mode=mode
+    return true
+end
+
+function bounds(entry)
+    return {min=vector():set(unpack(entry.min)),max=vector():set(unpack(entry.max)),
+        pivot=vector():set((entry.min[1]+entry.max[1])/2,entry.min[2],(entry.min[3]+entry.max[3])/2)}
+end
+
+local function configure_light(object,entry,mode)
+    local definition=entry.light
+    local values={}
+    for value in definition.color:gmatch("[^,]+") do values[#values+1]=tonumber(value) end
+    local tint=fcolor():set(values[1],values[2],values[3],values[4] or 1)
+    -- Generic native light setup is done before the server object goes online.
+    assert(object:set_light_properties(tint,tonumber(definition.range),
+        tonumber(definition.cone_angle) or 120,definition.main_bone,
+        definition.type=="2",mode and mode=="dynamic" or
+        (not mode and definition.has_shadows=="true")),"invalid_light_properties")
+end
+
+function create_placed(pose,item_id,world_section)
+    local sim=alife()
+    local source=simulator_object(item_id)
+    local entry=source and catalog.by_item[source:section_name()]
+    if not sim or not entry or not db.actor or tonumber(source.parent_id)~=db.actor:id() then return nil,"source_lost" end
+    if world_section and world_section~=entry.object then
+        local variant=catalog.by_object[world_section]
+        if not variant or variant.item~=entry.item or not entry.variants or
+            entry.variants[variant.variant]~=world_section then return nil,"invalid_variant" end
+        entry=variant
+    end
+    if not pose or
+        not pf_runtime_editor_geometry.finite(pose.position) or
+        not pf_runtime_editor_geometry.finite(pose.rotation) then return nil,"invalid_pose" end
+    local previous=state(item_id)
+    if entry.kind=="radio" and previous then pf_hf_media.radio_selection(previous) end
+    local object
+    local ok,err=pcall(function()
+        object=sim:create(entry.object,pose.position,pose.level_vertex_id,pose.game_vertex_id)
+        if not object then error("create_failed") end
+        object:use_ai_locations(false)
+        object.position=vector():set(pose.position)
+        object.angle=vector():set(pose.rotation)
+        object.m_level_vertex_id=pose.level_vertex_id
+        object.m_game_vertex_id=pose.game_vertex_id
+        if entry.kind=="light" then configure_light(object,entry,light_mode(entry.item,item_id)) end
+        local own=state(object.id)
+        own.condition=entry.kind=="light" and 1 or (previous and previous.condition or 1)
+        own.channel=previous and previous.channel or 1
+        own.volume=previous and previous.volume or .5
+        own.track=previous and previous.track or 0
+        own.collection=previous and previous.collection or "yanov"
+        if entry.kind=="radio" then pf_hf_media.radio_copy_settings(previous,own) end
+        own.cooking_charge=previous and previous.cooking_charge or 0
+        if entry.kind=="light" then own.light_mode=light_mode(entry.item,item_id) end
+        sim:release(source,true)
+    end)
+    if not ok then
+        if object then data[object.id]=nil;pcall(function() sim:release(object,true) end) end
+        return nil,tostring(err)
+    end
+    data[item_id]=nil;pending[item_id]=nil
+    return object.id
+end
+
+function place_item(item,variant)
+    if not item or not db.actor or pf_runtime_editor.is_active() then return false end
+    local entry=catalog.by_item[item:section()]
+    if not entry then return false end
+    if variant then
+        local section=entry.variants and entry.variants[variant]
+        entry=section and catalog.by_object[section]
+        if not entry then return false end
+    end
+    if entry.kind=="workbench" then return pf_hf_workbench.place_item(item) end
+    local id=item:id()
+    if pending[id] then return false end
+    local current_generation=generation
+    pending[id]=true
+    local queued=pf_runtime_editor.defer_start(function()
+        if generation~=current_generation or not pending[id] then return end
+        local ok=pf_runtime_editor.begin({section=entry.object,title=entry.title,
+            source_item_id=id,source_section=entry.item,bounds=bounds(entry),visual=entry.visual,
+            base_rotation=entry.base_rotation,initial_distance=2,max_range=5,
+            on_confirm=function(pose,source_id) return create_placed(pose,source_id,entry.object) end,
+            on_cancel=function() pending[id]=nil end})
+        if not ok then pending[id]=nil end
+    end,function() pending[id]=nil end)
+    if not queued then pending[id]=nil end
+    return false
+end
+
+function pickup(id)
+    local sim=alife()
+    local server=simulator_object(id)
+    local object=level.object_by_id(id)
+    local entry=server and definition(server:section_name())
+    if not sim or not object or not entry or not db.actor then return false end
+    if entry.kind=="workbench" then return pf_hf_workbench.pickup(id) end
+    if entry.kind=="stash" and not object:is_inv_box_empty() then notify("pf_hf_pickup_not_empty");return false end
+    if entry.kind=="stove" and not pf_hf_stove.storage_empty(id) then notify("pf_hf_pickup_not_empty");return false end
+    local old=state(id)
+    if entry.kind=="radio" and old then pf_hf_media.radio_selection(old) end
+    local item
+    local ok,err=pcall(function()
+        item=sim:create(entry.item,db.actor:position(),db.actor:level_vertex_id(),db.actor:game_vertex_id(),db.actor:id())
+        if not item then error("create_failed") end
+        if catalog.by_item[entry.item] then
+            local own=state(item.id)
+            own.condition=entry.kind=="light" and 1 or (old and old.condition or 1)
+            own.channel=old and old.channel or 1
+            own.volume=old and old.volume or .5
+            own.track=old and old.track or 0
+            own.collection=old and old.collection or "yanov"
+            if entry.kind=="radio" then pf_hf_media.radio_copy_settings(old,own) end
+            own.cooking_charge=old and old.cooking_charge or 0
+            if entry.kind=="light" then own.light_mode=light_mode(entry.object,id) end
+        end
+        sim:release(server,true)
+    end)
+    if not ok then
+        if item then data[item.id]=nil;pcall(function() sim:release(item,true) end) end
+        notify("pf_hf_pickup_failed");return false
+    end
+    if entry.kind=="stove" then pf_hf_stove.clear_storage(id,old) end
+    data[id]=nil
+    if entry.kind=="light" then
+        local item_id=item.id
+        local expected_generation=generation
+        level.add_call(function()
+            return generation~=expected_generation or not simulator_object(item_id) or level.object_by_id(item_id)~=nil
+        end,function()
+            local client=level.object_by_id(item_id)
+            local own=state(item_id)
+            if generation==expected_generation and own and client and client:section()==entry.item then
+                client:set_condition(own.condition)
+            end
+        end)
+    end
+    if pf_hf_displays.has_profile(entry.object) then pf_hf_displays.clear(id) end
+    return true
+end
+
+function interact(id)
+    local object=level.object_by_id(id)
+    local entry=object and definition(object:section())
+    if not object or not db.actor or not entry then return false end
+    if not in_interaction_range(object) then return false end
+    if entry.kind=="workbench" then return pf_hf_workbench.open(id) end
+    if entry.kind=="bed" then ui_sleep_dialog.sleep();return true end
+    if entry.kind=="fan" then local own=state(id);own.is_on=not own.is_on;return true end
+    if entry.kind=="stove" then return false end
+    if entry.kind=="door" then return pf_hf_doors.use(object,db.actor) end
+    if entry.kind=="stash" then return object:use(db.actor) end
+    if entry.kind=="light" then
+        local own=state(id)
+        own.condition=1;own.last_time=nil
+        own.is_on=not own.is_on
+        return true
+    end
+    if entry.kind=="radio" or entry.kind=="piano" then return ui_pf_hf_media.show(id,entry.kind) end
+    return false
+end
+
+local function key_hint(binding,text)
+    return "%c[255,225,170,86]["..game.translate_string(binding).."]%c[255,225,225,250] "..text
+end
+function tip(section,id)
+    local entry=definition(section)
+    if not entry then return "" end
+    if entry.kind=="door" then
+        local storage=db.storage and db.storage[id]
+        local door=storage and storage.ph_door
+        local own=state(id)
+        local open=door and door.closed==false or (not door and
+            ((storage and storage.active_section=="ph_door@open") or (own and own.door_closed==false)))
+        return key_hint("pf_hf_key_use",game.translate_string(open and "tip_door_close" or "tip_door_open"))
+    end
+    local action=entry.kind=="stash" and "pf_hf_search" or
+        (entry.kind=="light" or entry.kind=="fan") and "pf_hf_toggle" or
+        entry.kind=="bed" and "pf_hfe_sleep" or
+        (entry.kind=="workbench" or entry.kind=="radio" or entry.kind=="piano") and "pf_hf_use"
+    if not action then return "" end
+    local text=key_hint("pf_hf_key_use",game.translate_string(action))
+    if entry.kind=="light" then
+        text=text.."\\n"..key_hint("pf_hf_key_reload",game.translate_string(
+            light_mode(section,id)=="static" and "pf_hf_light_static" or "pf_hf_light_dynamic"))
+    end
+    return text
+end
+function apply_tip(object,text)
+    if text==nil then text=tip(object:section(),object:id()) end
+    -- A null tip hides the native quick-help widget, including its key icon.
+    object:set_tip_text(text~="" and text or nil)
+end
+
+function can_store(box,item)
+    local entry=box and definition(box:section())
+    if not entry or entry.kind~="stash" then return true end
+    if not item then return false end
+    if entry.specialized_storage and not pf_hf_expansion.accepts(entry.specialized_storage,item) then return false end
+    local profile=pf_hf_displays.has_profile(entry.object) and pf_hf_display_data.profiles[entry.object]
+    if profile and not pf_hf_displays.accepts_item(item,entry.object) then return false end
+    local weight,count=0,0
+    local contains=false
+    box:iterate_inventory_box(function(_,stored)
+        weight=weight+stored:weight();count=count+1
+        if stored:id()==item:id() then contains=true end
+    end,box)
+    if contains then return true end
+    return (not entry.capacity or weight+item:weight()<=entry.capacity+.00001) and
+        (not profile or count<profile.count)
+end
+
+-- Kept only for saves or scripts that still reference the old action.
+function refuel_item(item) return false end
+
+local function on_load()
+    generation=generation+1;pending={}
+    -- CALifeStorageManager restores the sidecar before actor_binder:load.
+    if not restored then data={} end
+    restored=false
+    pf_hf_interaction.suspend()
+    ui_pf_hf_media.force_close()
+    ui_pf_hf_stove.force_close()
+end
+function save_state(storage) storage.pf_hf_furniture=data end
+function load_state(storage) data=storage.pf_hf_furniture or {};restored=true end
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("load",on_load)
+    registered=true
+end
+on_game_start()

@@ -1,0 +1,147 @@
+-- Workbench-only repair rules. Existing portable kits and the direct-use
+-- lz_nm_metal_part action remain unchanged.
+local core = lz_nm_core
+local STEP = 0.10
+
+local MATERIAL_ORDER = {
+	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
+	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_oil", "lz_nm_metal_part",
+	"pf_hf_electronics"
+}
+
+local RECIPES = {
+	light = { pf_hf_fabric = 2, pf_hf_straps = 1 },
+	sealed = { pf_hf_fabric = 1, pf_hf_rubber = 1, pf_hf_plastic = 1 },
+	medium = { pf_hf_fabric = 1, pf_hf_plastic = 1, pf_hf_scrap = 1 },
+	heavy = { pf_hf_scrap = 2, pf_hf_ceramic = 1 },
+	exo = { pf_hf_scrap = 1, pf_hf_ceramic = 1, pf_hf_electronics = 1 },
+	helmet = { pf_hf_plastic = 1, pf_hf_straps = 1 },
+	helmet_heavy = { pf_hf_scrap = 1, pf_hf_plastic = 1 },
+	helmet_sealed = { pf_hf_plastic = 1, pf_hf_rubber = 1 },
+	weapon = { pf_hf_scrap = 1, pf_hf_oil = 1 },
+	weapon_fine = {
+		lz_nm_metal_part = 1,
+		pf_hf_oil = 1,
+		pf_hf_scrap = 1
+	}
+}
+
+local function has_hint(section, hints)
+	for _, hint in ipairs(hints) do
+		if string.find(section, hint, 1, true) then return true end
+	end
+	return false
+end
+
+local function item_weight(section)
+	local ini = core.get_sysini()
+	if not ini:line_exist(section, "inv_weight") then return 0 end
+	return tonumber(ini:r_string(section, "inv_weight")) or 0
+end
+
+function profile(item)
+	if not item then return nil end
+	local section = string.lower(item:section())
+	if core.is_weapon_mechanics_target(item) then
+		-- Match the percentage shown by the UI: a weapon displayed as 90% is
+		-- already in the final repair bracket even if its float is 0.89999.
+		local percent = math.floor(math.max(0, math.min(1,
+			item:condition())) * 100 + 0.5)
+		return percent >= 90 and "weapon_fine" or "weapon"
+	end
+	if core.is_helmet(item) then
+		if has_hint(section, { "seva", "scientific", "ecolog", "sci_", "gasmask", "respirator" }) then
+			return "helmet_sealed"
+		end
+		return item_weight(section) >= 3.5 and "helmet_heavy" or "helmet"
+	end
+	if not core.is_outfit_or_helmet(item) then return nil end
+	if has_hint(section, { "exo", "nosorog" }) then return "exo" end
+	if has_hint(section, { "seva", "scientific", "ecolog", "sci_", "hazmat" }) then
+		return "sealed"
+	end
+	local weight = item_weight(section)
+	if weight >= 15 then return "heavy" end
+	if weight >= 8 then return "medium" end
+	return "light"
+end
+
+function recipe(item)
+	local kind = profile(item)
+	return kind, kind and RECIPES[kind] or nil
+end
+
+function material_order()
+	return MATERIAL_ORDER
+end
+
+function owned_items()
+	local items = {}
+	if not db.actor then return items end
+	local equipped = {}
+	for _, slot in ipairs({ 1, 2, 3, 7, 12 }) do
+		local item = db.actor:item_in_slot(slot)
+		if item then equipped[item:id()] = true end
+	end
+	db.actor:iterate_inventory(function(_, item)
+		if profile(item) then items[#items + 1] = item end
+	end, db.actor)
+	table.sort(items, function(a, b)
+		local left, right = equipped[a:id()] == true, equipped[b:id()] == true
+		if left ~= right then return left end
+		return a:id() < b:id()
+	end)
+	return items
+end
+
+function owned_materials()
+	local counts = {}
+	local items = {}
+	if not db.actor then return counts, items end
+	for _, section in ipairs(MATERIAL_ORDER) do
+		counts[section] = 0
+		items[section] = {}
+	end
+	db.actor:iterate_inventory(function(_, item)
+		local section = item:section()
+		if items[section] then
+			counts[section] = counts[section] + 1
+			items[section][#items[section] + 1] = item
+		end
+	end, db.actor)
+	return counts, items
+end
+
+function find_owned_target(id)
+	for _, item in ipairs(owned_items()) do
+		if item:id() == id and core.is_actor_owned_item(item) then return item end
+	end
+	return nil
+end
+
+function repair(id)
+	local target = find_owned_target(id)
+	if not target then return false, "pf_hf_no_selection" end
+	local condition = math.max(0, math.min(1, target:condition()))
+	if condition >= 0.9999 then return false, "pf_hf_full" end
+	local _, needed = recipe(target)
+	if not needed then return false, "pf_hf_no_selection" end
+	local counts, materials = owned_materials()
+	for section, amount in pairs(needed) do
+		if (counts[section] or 0) < amount then return false, "pf_hf_need_materials" end
+	end
+	-- Check all server objects before consuming any material. No selected
+	-- equipment item is ever transferred out of its inventory slot.
+	for section, amount in pairs(needed) do
+		for index = 1, amount do
+			if not core.server_object(materials[section][index]) then
+				return false, "pf_hf_need_materials"
+			end
+		end
+	end
+	for section, amount in pairs(needed) do
+		for index = 1, amount do core.release_item(materials[section][index]) end
+	end
+	target:set_condition(math.min(1, condition + STEP))
+	return true, "pf_hf_repaired"
+end

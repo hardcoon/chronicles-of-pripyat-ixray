@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+    <dialog id="pf_yanov_savka_dialog">
+        <phrase_list>
+            <phrase id="0">
+                <text />
+                <script_text>pf_hf_savka_dialog.greeting_text</script_text>
+                <next>1</next>
+                <next>100</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="1">
+                <text>pf_yanov_savka_intro_actor_1</text>
+                <precondition>pf_hf_savka_dialog.needs_intro</precondition>
+                <next>2</next>
+            </phrase>
+            <phrase id="2">
+                <text>pf_yanov_savka_intro_npc_1</text>
+                <next>3</next>
+            </phrase>
+            <phrase id="3">
+                <text>pf_yanov_savka_intro_actor_2</text>
+                <next>4</next>
+            </phrase>
+            <phrase id="4">
+                <text>pf_yanov_savka_intro_npc_2</text>
+                <next>5</next>
+            </phrase>
+            <phrase id="5">
+                <text>pf_yanov_savka_intro_actor_3</text>
+                <next>6</next>
+            </phrase>
+            <phrase id="6">
+                <text>pf_yanov_savka_intro_npc_3</text>
+                <next>7</next>
+            </phrase>
+            <phrase id="7">
+                <text>pf_yanov_savka_intro_actor_4</text>
+                <next>8</next>
+            </phrase>
+            <phrase id="8">
+                <text>pf_yanov_savka_intro_npc_4</text>
+                <next>9</next>
+            </phrase>
+            <phrase id="9">
+                <text>pf_yanov_savka_intro_actor_5</text>
+                <next>10</next>
+            </phrase>
+            <phrase id="10">
+                <text>pf_yanov_savka_intro_npc_5</text>
+                <next>11</next>
+            </phrase>
+            <phrase id="11">
+                <text>pf_yanov_savka_intro_actor_6</text>
+                <next>12</next>
+            </phrase>
+            <phrase id="12">
+                <text>pf_yanov_savka_intro_npc_6</text>
+                <next>13</next>
+            </phrase>
+            <phrase id="13">
+                <text>pf_yanov_savka_intro_actor_7</text>
+                <action>pf_hf_savka_dialog.complete_intro</action>
+                <action>dialogs.break_dialog</action>
+                <is_final>1</is_final>
+            </phrase>
+            <phrase id="100">
+                <text>pf_yanov_savka_exchange_actor</text>
+                <precondition>pf_hf_savka_dialog.can_exchange_workbench</precondition>
+                <action>pf_hf_savka_dialog.exchange_workbench</action>
+                <next>101</next>
+            </phrase>
+            <phrase id="101">
+                <text />
+                <script_text>pf_hf_savka_dialog.exchange_result_text</script_text>
+                <next>1</next>
+                <next>100</next>
+                <next>90</next>
+            </phrase>
+            <phrase id="90">
+                <text>pf_yanov_savka_bye</text>
+                <action>dialogs.break_dialog</action>
+                <is_final>1</is_final>
+            </phrase>
+        </phrase_list>
+    </dialog>
+</game_dialogs>

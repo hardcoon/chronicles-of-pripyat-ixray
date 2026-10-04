@@ -1,0 +1,291 @@
+-- Base-material yields for dismantling weapons, outfits, and helmets.
+-- Guaranteed bundles prevent bad rolls from breaking the salvage economy.
+-- Every percentage is an independent deterministic bonus tied to the item id.
+local core = lz_nm_core
+
+local BASE_MATERIALS = {
+	pf_hf_fabric = true,
+	pf_hf_straps = true,
+	pf_hf_rubber = true,
+	pf_hf_plastic = true,
+	pf_hf_scrap = true,
+	pf_hf_ceramic = true,
+	pf_hf_electronics = true,
+	pf_hf_dampers = true,
+	lz_nm_metal_part = true
+}
+
+local TECH_COMPONENTS = {
+	"jup_b200_tech_materials_wire",
+	"jup_b200_tech_materials_capacitor",
+	"jup_b200_tech_materials_transistor",
+	"jup_b200_tech_materials_textolite"
+}
+
+local WEAPON_PROFILES = {
+	cheap = {
+		guaranteed = {
+			{ "lz_nm_metal_part", 1 }, { "pf_hf_scrap", 1 }
+		},
+		bonus = {
+			{ "pf_hf_plastic", 1, 50, 101 },
+			{ "pf_hf_electronics", 1, 15, 102 }
+		}
+	},
+	standard = {
+		guaranteed = {
+			{ "lz_nm_metal_part", 2 }, { "pf_hf_scrap", 2 },
+			{ "pf_hf_plastic", 1 }
+		},
+		bonus = {
+			{ "pf_hf_scrap", 1, 50, 111 },
+			{ "pf_hf_electronics", 1, 30, 112 }
+		}
+	},
+	advanced = {
+		guaranteed = {
+			{ "lz_nm_metal_part", 3 }, { "pf_hf_scrap", 3 },
+			{ "pf_hf_plastic", 2 }, { "pf_hf_electronics", 1 }
+		},
+		bonus = {
+			{ "pf_hf_electronics", 1, 50, 121 },
+			{ "pf_hf_ceramic", 1, 40, 122 }
+		},
+		special = {
+			{ pool = TECH_COMPONENTS, count = 1, chance = 20, salt = 123 }
+		}
+	}
+}
+
+local EQUIPMENT_PROFILES = {
+	light = {
+		guaranteed = {
+			{ "pf_hf_fabric", 6 }, { "pf_hf_straps", 3 },
+			{ "pf_hf_rubber", 3 }
+		},
+		bonus = { { "pf_hf_fabric", 2, 40, 201 } },
+		special = { { "lz_nm_armor_pouch", 1, 20, 202 } }
+	},
+	sealed = {
+		guaranteed = {
+			{ "pf_hf_rubber", 6 }, { "pf_hf_fabric", 3 },
+			{ "pf_hf_plastic", 3 }
+		},
+		bonus = {
+			{ "pf_hf_rubber", 2, 45, 211 },
+			{ "pf_hf_electronics", 1, 25, 212 }
+		},
+		special = {
+			{ "lz_nm_rubber_padding", 1, 45, 213 },
+			{ "lz_nm_used_filter", 1, 35, 214 }
+		}
+	},
+	medium = {
+		guaranteed = {
+			{ "pf_hf_scrap", 6 }, { "pf_hf_straps", 3 },
+			{ "pf_hf_fabric", 3 }
+		},
+		bonus = {
+			{ "pf_hf_plastic", 2, 40, 221 },
+			{ "pf_hf_dampers", 1, 30, 222 }
+		},
+		special = { { "lz_nm_armor_pouch", 1, 35, 223 } }
+	},
+	heavy = {
+		guaranteed = {
+			{ "pf_hf_scrap", 8 }, { "pf_hf_fabric", 4 },
+			{ "pf_hf_ceramic", 3 }, { "pf_hf_straps", 3 }
+		},
+		bonus = {
+			{ "pf_hf_dampers", 2, 50, 231 },
+			{ "pf_hf_scrap", 2, 40, 232 }
+		},
+		special = { { "lz_nm_armor_pouch", 1, 50, 233 } }
+	},
+	exo = {
+		guaranteed = {
+			{ "pf_hf_scrap", 8 }, { "pf_hf_electronics", 6 },
+			{ "pf_hf_dampers", 4 }, { "pf_hf_ceramic", 3 },
+			{ "pf_hf_plastic", 2 }, { "pf_hf_rubber", 2 },
+			{ "pf_hf_fabric", 2 }, { "pf_hf_straps", 2 }
+		},
+		bonus = {
+			{ "pf_hf_scrap", 2, 70, 241 },
+			{ "pf_hf_electronics", 2, 70, 242 },
+			{ "pf_hf_dampers", 2, 50, 243 },
+			{ "pf_hf_ceramic", 2, 50, 244 },
+			{ "pf_hf_plastic", 2, 40, 245 },
+			{ "pf_hf_rubber", 1, 35, 246 },
+			{ "pf_hf_fabric", 1, 35, 247 },
+			{ "pf_hf_straps", 1, 35, 248 }
+		},
+		special = {
+			{ "lz_nm_armor_pouch", 1, 75, 249 },
+			{ "lz_nm_rubber_padding", 1, 50, 250 },
+			{ pool = TECH_COMPONENTS, count = 1, chance = 40, salt = 251 }
+		}
+	},
+	helmet = {
+		guaranteed = {
+			{ "pf_hf_plastic", 5 }, { "pf_hf_straps", 3 },
+			{ "pf_hf_fabric", 2 }
+		},
+		bonus = { { "pf_hf_plastic", 1, 35, 301 } }
+	},
+	helmet_heavy = {
+		guaranteed = {
+			{ "pf_hf_scrap", 6 }, { "pf_hf_plastic", 3 },
+			{ "pf_hf_straps", 2 }, { "pf_hf_ceramic", 2 }
+		},
+		bonus = {
+			{ "pf_hf_scrap", 2, 40, 311 },
+			{ "pf_hf_ceramic", 1, 50, 312 }
+		}
+	},
+	helmet_sealed = {
+		guaranteed = {
+			{ "pf_hf_rubber", 5 }, { "pf_hf_plastic", 3 },
+			{ "pf_hf_fabric", 2 }, { "pf_hf_electronics", 2 }
+		},
+		bonus = {
+			{ "pf_hf_electronics", 1, 40, 321 },
+			{ "pf_hf_rubber", 1, 35, 322 }
+		},
+		special = { { "lz_nm_used_filter", 1, 60, 323 } }
+	}
+}
+
+local COMPONENT_MATERIAL_ORDER = {
+	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
+	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_electronics", "pf_hf_dampers"
+}
+
+local COMPONENT_PROFILES = {
+	lz_nm_armor_pouch = {
+		profile = "component_pouch",
+		craft_output = "lz_nm_armor_pouch",
+		return_fraction = 0.5
+	},
+	lz_nm_rubber_padding = {
+		profile = "component_lead_insert",
+		craft_output = "lz_nm_rubber_padding",
+		return_fraction = 0.5
+	},
+	lz_nm_combat_boots = {
+		profile = "component_boots",
+		guaranteed = {
+			{ "pf_hf_rubber", 2 }, { "pf_hf_fabric", 1 }
+		}
+	}
+}
+
+local function deterministic_value(item_id, salt)
+	local value = ((tonumber(item_id) or 0) + salt * 104729) % 2147483647
+	for _ = 1, 2 do
+		value = (value * (48271 + salt) + 12345 + salt * 69621) % 2147483647
+	end
+	return value
+end
+
+local function succeeds(item_id, salt, chance)
+	return deterministic_value(item_id, salt) % 100 < chance
+end
+
+local function item_cost(section)
+	local ini = core.get_sysini()
+	if not ini:line_exist(section, "cost") then return 0 end
+	return tonumber(ini:r_string(section, "cost")) or 0
+end
+
+local function weapon_profile(target)
+	local cost = item_cost(target:section())
+	if cost <= 12000 then return "cheap" end
+	if cost <= 35000 then return "standard" end
+	return "advanced"
+end
+
+local function append_reward(rewards, counts, section, amount)
+	if not section or not amount or amount < 1 then return end
+	rewards[#rewards + 1] = { section = section, count = amount }
+	counts[section] = (counts[section] or 0) + amount
+end
+
+local function append_entries(rewards, counts, entries, item_id, rolled)
+	for _, entry in ipairs(entries or {}) do
+		local section, amount = entry[1], entry[2]
+		local chance = entry.pool and entry.chance or entry[3]
+		local salt = entry.pool and entry.salt or entry[4]
+		if not rolled or succeeds(item_id, salt, chance) then
+			if entry.pool then
+				local index = deterministic_value(item_id, entry.salt + 500) %
+					#entry.pool + 1
+				section, amount = entry.pool[index], entry.count
+			end
+			append_reward(rewards, counts, section, amount)
+		end
+	end
+end
+
+local function item_section(item_or_section)
+	if type(item_or_section) == "string" then
+		return core.canonical_item_section(item_or_section)
+	end
+	return item_or_section and core.canonical_item_section(item_or_section:section()) or nil
+end
+
+function is_component(item_or_section)
+	return COMPONENT_PROFILES[item_section(item_or_section)] ~= nil
+end
+
+local function component_definition(target)
+	local definition = COMPONENT_PROFILES[item_section(target)]
+	if not definition or not definition.craft_output then return definition end
+	local recipe = pf_hf_workbench_craft.recipe(definition.craft_output)
+	if not recipe or not recipe.materials then return nil end
+
+	local guaranteed = {}
+	for _, section in ipairs(COMPONENT_MATERIAL_ORDER) do
+		local amount = math.floor((recipe.materials[section] or 0) *
+			definition.return_fraction)
+		if amount > 0 then guaranteed[#guaranteed + 1] = { section, amount } end
+	end
+	return { profile = definition.profile, guaranteed = guaranteed }
+end
+
+function rewards(target)
+	if not target then return nil end
+	local profile
+	local definition
+	if is_component(target) then
+		definition = component_definition(target)
+		profile = definition and definition.profile or nil
+	elseif core.is_weapon_mechanics_target(target) then
+		profile = weapon_profile(target)
+		definition = WEAPON_PROFILES[profile]
+	else
+		profile = pf_hf_workbench_repair.profile(target)
+		definition = EQUIPMENT_PROFILES[profile]
+	end
+	if not definition then return nil end
+
+	local item_id = target:id()
+	local result, counts = {}, {}
+	append_entries(result, counts, definition.guaranteed, item_id, false)
+	append_entries(result, counts, definition.bonus, item_id, true)
+	append_entries(result, counts, definition.special, item_id, true)
+
+	local base_total, special_total = 0, 0
+	for section, amount in pairs(counts) do
+		if BASE_MATERIALS[section] then
+			base_total = base_total + amount
+		else
+			special_total = special_total + amount
+		end
+	end
+	return result, {
+		profile = profile,
+		counts = counts,
+		base_total = base_total,
+		special_total = special_total
+	}
+end

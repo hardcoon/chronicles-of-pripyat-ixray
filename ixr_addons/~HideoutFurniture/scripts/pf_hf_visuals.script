@@ -1,0 +1,35 @@
+-- Client render visibility only. No ALife, physics, bones, inventory or saved state.
+local function configured_distance()
+    local ini=type(system_ini)=="function" and system_ini() or nil
+    local section,key="pf_hf_performance","visual_cull_distance"
+    local distance=ini and ini:section_exist(section) and ini:line_exist(section,key) and
+        tonumber(ini:r_string(section,key)) or nil
+    if not distance or distance~=distance or distance<=0 or distance>=math.huge then return 200 end
+    return distance
+end
+local distance=configured_distance()
+local hide_sq=distance*distance
+local return_sq=(distance*.95)^2
+
+function update(binder,reference)
+    local object=binder.object
+    -- Only the installed furniture/proxy binders call this helper. Inventory
+    -- ownership is checked again by the native setter before any change.
+    if type(object.parent)=="function" and object:parent() then return true end
+    if type(object.set_render_visible)~="function" or type(object.get_render_visible)~="function" then return true end
+    local hidden=true
+    if db.actor then
+        local a=db.actor:position()
+        local b=(reference or object):position()
+        local dx,dy,dz=a.x-b.x,a.y-b.y,a.z-b.z
+        local range_sq=dx*dx+dy*dy+dz*dz
+        hidden=range_sq>(binder.render_culled and return_sq or hide_sq)
+    end
+    if binder.render_culled~=hidden then
+        if binder.render_base_visible==nil then binder.render_base_visible=object:get_render_visible() end
+        if object:set_render_visible(not hidden and binder.render_base_visible) then
+            binder.render_culled=hidden
+        end
+    end
+    return not binder.render_culled
+end

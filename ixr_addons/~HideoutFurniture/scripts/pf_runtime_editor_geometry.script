@@ -1,0 +1,123 @@
+-- Geometry shared by every placement adapter. Coordinates remain in metres.
+edges = {{1,2},{1,3},{2,4},{3,4},{5,6},{5,7},{6,8},{7,8},{1,5},{3,7},{4,8},{2,6}}
+collision_pairs = {{1,2},{1,3},{2,4},{3,4},{5,6},{5,7},{6,8},{7,8},{1,5},{3,7},{4,8},{2,6},
+    {1,4},{2,3},{6,7},{5,8},{3,8},{4,7},{1,6},{2,5},{2,8},{4,6},{1,7},{3,5}}
+faces = {{1,2,5,6},{3,4,7,8},{1,3,5,7},{2,4,6,8},{5,6,7,8},{1,2,3,4}}
+
+function copy(v) return vector():set(v.x,v.y,v.z) end
+function add(a,b) return vector():set(a.x+b.x,a.y+b.y,a.z+b.z) end
+function sub(a,b) return vector():set(a.x-b.x,a.y-b.y,a.z-b.z) end
+function scale(v,n) return vector():set(v.x*n,v.y*n,v.z*n) end
+function dot(a,b) return a.x*b.x+a.y*b.y+a.z*b.z end
+function cross(a,b) return vector():set(a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x) end
+function length(v) return math.sqrt(dot(v,v)) end
+function unit(v)
+    local n=length(v)
+    if n < 1e-8 then return nil end
+    return scale(v,1/n)
+end
+function finite(v)
+    if not v then return false end
+    for _,k in ipairs({"x","y","z"}) do
+        local n=v[k]
+        if type(n)~="number" or n~=n or math.abs(n)>1e7 then return false end
+    end
+    return true
+end
+
+function cast(ray,origin,direction,range,ignore)
+    local dir=unit(direction)
+    if not dir or range<=0 then return nil end
+    ray:set_position(copy(origin))
+    ray:set_direction(dir)
+    ray:set_range(range)
+    ray:set_flags(3)
+    ray:set_ignore_object(ignore)
+    if not ray:query() then return nil end
+    local distance=ray:get_distance()
+    if distance~=distance or distance<0 or distance>range+0.001 then return nil end
+    return {position=add(origin,scale(dir,distance)),distance=distance,
+        object=ray:get_object(),element=ray:get_element()}
+end
+
+-- demonized_geometry_ray.get_surface_normal: the same three parallel rays.
+-- A missed side ray ends at ray_range, as geometry_ray:get does in the donor.
+function surface_normal(ray,origin,direction,range,ignore,hit)
+    local dir=copy(direction)
+    if not unit(dir) or not hit then return nil end
+    local up=vector():set(0,1,0)
+    local tangent=unit(sub(up,scale(dir,dot(up,dir))))
+    -- Avoid IX-Ray's zero-vector normalization assertion on a vertical view.
+    if not tangent then tangent=unit(cross(dir,vector():set(1,0,0))) end
+    if not tangent then return nil end
+    local second=cross(dir,tangent)
+    local origin1=add(origin,scale(tangent,0.01))
+    local origin2=add(origin,scale(second,0.01))
+    local h1=cast(ray,origin1,dir,range,ignore)
+    local h2=cast(ray,origin2,dir,range,ignore)
+    local pos1=h1 and h1.position or add(origin1,scale(dir,range))
+    local pos2=h2 and h2.position or add(origin2,scale(dir,range))
+    local normal=unit(cross(sub(hit.position,pos1),sub(hit.position,pos2)))
+    if normal and dot(normal,dir)>0 then normal=scale(normal,-1) end
+    return normal
+end
+
+function corners(bounds,position,rotation,collision)
+    local lo,hi=bounds.min,bounds.max
+    local bottom=lo.y
+    if collision then
+        -- Planar posters can be thinner than 1 mm. The old fixed gap put
+        -- their bottom below the model and falsely intersected the floor.
+        bottom=math.min(lo.y+0.02,hi.y-math.min(0.001,(hi.y-lo.y)*0.5))
+    end
+    local local_vertices={
+        vector():set(lo.x,bottom,lo.z),vector():set(hi.x,bottom,lo.z),
+        vector():set(lo.x,bottom,hi.z),vector():set(hi.x,bottom,hi.z),
+        vector():set(lo.x,hi.y,lo.z),vector():set(hi.x,hi.y,lo.z),
+        vector():set(lo.x,hi.y,hi.z),vector():set(hi.x,hi.y,hi.z)}
+    local result={}
+    for i,v in ipairs(local_vertices) do result[i]=add(position,rotation:rotate_vector(v)) end
+    return result
+end
+
+function collides(ray,vertices,ignore)
+    for _,pair in ipairs(collision_pairs) do
+        for pass=1,2 do
+            local a,b=vertices[pair[pass]],vertices[pair[3-pass]]
+            local delta=sub(b,a)
+            local distance=length(delta)
+            if distance>0.004 then
+                -- aol_bshape: test both directions, including the far endpoint.
+                local hit=cast(ray,a,delta,4,ignore)
+                if hit and hit.distance<=distance then return true end
+            end
+        end
+    end
+    return false
+end
+
+function contacts(ray,vertices,ignore)
+    local result={}
+    for side,face in ipairs(faces) do
+        local a,b,c,d=vertices[face[1]],vertices[face[2]],vertices[face[3]],vertices[face[4]]
+        local center=scale(add(a,d),0.5)
+        local normal=unit(cross(sub(b,a),sub(c,a)))
+        local box_center=scale(add(vertices[1],vertices[8]),0.5)
+        if normal and dot(normal,sub(center,box_center))<0 then normal=scale(normal,-1) end
+        local contact=false
+        for point,origin in ipairs({a,b,c,d,center}) do
+            -- aol_bshape contact rays begin on the vertex and extend one metre.
+            local hit=normal and cast(ray,origin,normal,1,ignore)
+            if hit and hit.distance<0.5 then
+                result[#result+1]={side=side,point=point,a=origin,b=hit.position}
+                contact=true
+            end
+        end
+        if contact then
+            result[#result+1]={side=side,point=6,a=a,b=d}
+            result[#result+1]={side=side,point=7,a=b,b=c}
+        end
+    end
+    return result
+end
+

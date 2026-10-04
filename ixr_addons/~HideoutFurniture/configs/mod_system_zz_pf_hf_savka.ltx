@@ -1,0 +1,666 @@
+; Savka belongs to the optional furniture addon; no all.spawn dependency.
+![dialogs]
+>files = dialogs_pf_yanov_savka
+
+![profiles]
+>files = npc_profile_pf_yanov_savka
+>specific_characters_files = character_desc_pf_yanov_savka
+
+[pf_yanov_savka]:stalker
+$spawn = "respawn\pf_yanov_savka"
+character_profile = pf_yanov_savka
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_yanov_savka.ltx
+immunities_sect = pf_hf_savka_immortal_immunities
+can_select_items = off
+; A complete furniture shelf exceeds the ordinary stalker inventory limit.
+inv_max_weight = 10000
+
+[pf_hf_savka_immortal_immunities]
+burn_immunity = 0.0
+strike_immunity = 0.0
+shock_immunity = 0.0
+wound_immunity = 0.0
+radiation_immunity = 0.0
+telepatic_immunity = 0.0
+chemical_burn_immunity = 0.0
+explosion_immunity = 0.0
+fire_wound_immunity = 0.0
+
+; Fixed retail prices. Trade is allowed for sale and furniture buy-back only.
+![pf_hf_case_item]
+cost = 400
+can_trade = true
+
+![pf_hf_blue_box_item]
+cost = 600
+can_trade = true
+
+![pf_hf_exo_repair_kit_item]
+cost = 400
+can_trade = true
+
+![pf_hf_sumka6_item]
+cost = 200
+can_trade = true
+
+![pf_hf_metal_torch_item]
+cost = 500
+can_trade = true
+
+![pf_hf_gas_lamp_item]
+cost = 500
+can_trade = true
+
+![pf_hf_light_altar_item]
+cost = 500
+can_trade = true
+
+![pf_hf_piano_item]
+cost = 1000
+can_trade = true
+
+![pf_hf_radio_item]
+cost = 700
+can_trade = true
+
+![pf_hf_weapon_rack_item]
+cost = 600
+can_trade = true
+
+![pf_hf_pistol_shelf_item]
+cost = 600
+can_trade = true
+
+![pf_hf_workbench_item]
+cost = 7500
+can_trade = true
+
+![pf_hfe_bed_1_item]
+cost = 4500
+can_trade = true
+
+![pf_hfe_bed_2_item]
+cost = 5000
+can_trade = true
+
+![pf_hfe_bed_3_item]
+cost = 5500
+can_trade = true
+
+![pf_hfe_board_map_item]
+cost = 600
+can_trade = true
+
+![pf_hfe_cans_tuna_item]
+cost = 800
+can_trade = true
+
+![pf_hfe_couch_1_item]
+cost = 800
+can_trade = true
+
+![pf_hfe_counter_1_item]
+cost = 350
+can_trade = true
+
+![pf_hfe_laptop_item]
+cost = 1000
+can_trade = true
+
+![pf_hfe_poster_vertical_item]
+cost = 100
+can_trade = true
+
+![pf_hfe_table_1_item]
+cost = 450
+can_trade = true
+
+![pf_hfe_table_2_item]
+cost = 500
+can_trade = true
+
+![pf_hfe_bong_item]
+cost = 500
+can_trade = true
+
+![pf_hfe_pccase_item]
+cost = 500
+can_trade = true
+
+![pf_hfe_chair_item]
+cost = 300
+can_trade = true
+
+![pf_hfe_dish1_item]
+cost = 100
+can_trade = true
+
+![pf_hfe_dish2_item]
+cost = 100
+can_trade = true
+
+![pf_hfe_fan_item]
+cost = 400
+can_trade = true
+
+![pf_hfe_fridge_item]
+cost = 800
+can_trade = true
+
+![pf_hfe_keyboard_item]
+cost = 150
+can_trade = true
+
+![pf_hfe_mice_pad_item]
+cost = 100
+can_trade = true
+
+![pf_hfe_monitor_item]
+cost = 500
+can_trade = true
+
+![pf_hfe_mug_item]
+cost = 150
+can_trade = true
+
+![pf_hfe_stove1_item]
+cost = 700
+can_trade = true
+
+![pf_hfe_stove2_item]
+cost = 1000
+can_trade = true
+
+![pf_hfe_tv_item]
+cost = 700
+can_trade = true
+
+![pf_hfe_shelf_1_item]
+cost = 700
+can_trade = true
+
+![pf_hfe_shelf_2_item]
+cost = 700
+can_trade = true
+
+![pf_hfe_clock_1_item]
+cost = 400
+can_trade = true
+
+![pf_hfe_med_case_1_item]
+cost = 600
+can_trade = true
+
+![pf_hfe_ammo_box_item]
+cost = 800
+can_trade = true
+
+![pf_hfe_lamp1_item]
+cost = 400
+can_trade = true
+
+![pf_hfe_lamp2_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_documents_1_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_cabinet_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_ashtray_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_barrel_metal_item]
+cost = 450
+can_trade = true
+
+![pf_hfm_pot_item]
+cost = 300
+can_trade = true
+
+![pf_hfm_countertop_item]
+cost = 350
+can_trade = true
+
+![pf_hfm_cuttingboard_item]
+cost = 150
+can_trade = true
+
+![pf_hfm_fchair_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_game_item]
+cost = 300
+can_trade = true
+
+![pf_hfm_fuel_item]
+cost = 450
+can_trade = true
+
+![pf_hfm_shooting_target_1_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_bidon_item]
+cost = 450
+can_trade = true
+
+![pf_hfm_gaz_balon_item]
+cost = 450
+can_trade = true
+
+![pf_hfm_radiola_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_kartina03_item]
+cost = 200
+can_trade = true
+
+![pf_hfm_dev_guitar_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_stool_item]
+cost = 200
+can_trade = true
+
+![pf_hfm_metal_table1_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_metal_table2_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_clinic_equipments_item]
+cost = 800
+can_trade = true
+
+![pf_hfm_rug_item]
+cost = 200
+can_trade = true
+
+![pf_hfm_stalker_outfit_item]
+cost = 800
+can_trade = true
+
+![pf_hfm_merc_outfit_item]
+cost = 800
+can_trade = true
+
+![pf_hfm_exoskelet_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_stretcher_item]
+cost = 800
+can_trade = true
+
+![pf_hfm_gun_parts_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_teapot_item]
+cost = 300
+can_trade = true
+
+![pf_hfm_psi_helmet_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_documents_2_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_notes_writing_book_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_survivalguide_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_guidebook1_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_guidebook2_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_lead_box_open_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_suit_item]
+cost = 800
+can_trade = true
+
+![pf_hfm_poster1_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_poster2_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_poster3_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_poster4_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_poster5_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_poster6_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_poster7_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_sink_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_sidetable1_item]
+cost = 350
+can_trade = true
+
+![pf_hfm_sidetable2_item]
+cost = 350
+can_trade = true
+
+![pf_hfm_shelves_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_box_wood_item]
+cost = 300
+can_trade = true
+
+![pf_hfm_trophie1_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie2_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie3_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie4_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie5_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie6_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie7_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie8_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_trophie9_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_box_paper_item]
+cost = 200
+can_trade = true
+
+![pf_hfm_microscope_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_map1_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_map2_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_grave1_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_grave2_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_junk_item]
+cost = 100
+can_trade = true
+
+![pf_hfm_money_5000_item]
+cost = 200
+can_trade = true
+
+![pf_hfm_plant2_item]
+cost = 250
+can_trade = true
+
+![pf_hfm_plant3_item]
+cost = 250
+can_trade = true
+
+![pf_hfm_plant4_item]
+cost = 250
+can_trade = true
+
+![pf_hfm_biliard_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_shelves_b_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_wall_divider_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_storage01_item]
+cost = 900
+can_trade = true
+
+![pf_hfm_storage02_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_storage03_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_storage04_item]
+cost = 800
+can_trade = true
+
+![pf_hfm_storage05_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_storage06_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_storage07_item]
+cost = 900
+can_trade = true
+
+![pf_hfm_storage08_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_wooden_board_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_wooden_plank_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_metal_plate_item]
+cost = 500
+can_trade = true
+
+![pf_hfm_shield_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_toilet_item]
+cost = 600
+can_trade = true
+
+![pf_hfm_shower_item]
+cost = 800
+can_trade = true
+
+![pf_hfm_tv_box_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_light1_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_light2_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_light3_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_light4_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_light5_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_light6_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_light7_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_light8_item]
+cost = 400
+can_trade = true
+
+![pf_hfm_door_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_door02_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_door03_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_door04_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_door05_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_wall_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_wall_metal_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_wall02_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_wall02_metal_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_wall_doorway_item]
+cost = 700
+can_trade = true
+
+![pf_hfm_wall_doorway_metal_item]
+cost = 1000
+can_trade = true
+
+![pf_hfm_arti_display_item]
+cost = 1000
+can_trade = true
+
+; Newly added native doors: two of each type on Savka's shelf.
+![pf_hfn_door_wood_120x240_item]
+cost = 700
+can_trade = true
+
+![pf_hfn_door_wood_130x245_item]
+cost = 700
+can_trade = true
+
+![pf_hfn_door_wood_130x250_item]
+cost = 700
+can_trade = true
+
+![pf_hfn_door_wood_200x250_item]
+cost = 700
+can_trade = true
+
+![pf_hfn_door_metal_145x230_item]
+cost = 900
+can_trade = true
+
+![pf_hfn_door_metal_150x260_01_item]
+cost = 900
+can_trade = true
+
+![pf_hfn_door_metal_150x260_02_item]
+cost = 900
+can_trade = true
+
+![pf_hfn_door_metal_220x260_item]
+cost = 900
+can_trade = true
+
+![pf_hfn_door_trader_item]
+cost = 1000
+can_trade = true
+
+![pf_hfn_door_ship_high_item]
+cost = 1000
+can_trade = true

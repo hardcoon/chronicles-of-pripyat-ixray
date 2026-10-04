@@ -1,0 +1,63 @@
+local active=nil
+local function tr(id) return game.translate_string(id) end
+class "pf_hfe_stove_dialog" (CUIScriptWnd)
+function pf_hfe_stove_dialog:__init(id) super()
+    self.id=id;self.index=1;self.recipes=pf_hf_stove.recipes()
+    local xml=CScriptXmlInit();xml:ParseFile("ui_pf_hf_stove.xml");xml:InitWindow("main",0,self)
+    xml:InitStatic("main:panel",self)
+    self.title=xml:InitTextWnd("main:title",self)
+    self.recipe=xml:InitTextWnd("main:recipe",self)
+    self.status=xml:InitTextWnd("main:status",self)
+    self.result=xml:InitTextWnd("main:result",self)
+    self.hint=xml:InitTextWnd("main:hint",self)
+    self.hint:SetText(tr("pf_hfe_cooking_hint"))
+    self.buttons={}
+    local callbacks={close=function() self:Close() end,
+        previous=function() self:change(-1) end,next=function() self:change(1) end,
+        cook=function() self:action(pf_hf_stove.cook) end,
+        refuel=function() self:action(pf_hf_stove.refuel) end,
+        storage=function() local id=self.id;self:Close();pf_hf_stove.open_storage(id) end}
+    for name,fn in pairs(callbacks) do
+        local button=xml:Init3tButton("main:"..name,self)
+        self:Register(button,name);self:AddCallback(name,ui_events.BUTTON_CLICKED,fn,self)
+        self.buttons[name]=button
+    end
+    self.buttons.storage:Show(level.object_by_id(id):section()=="pf_hfe_stove2")
+    self:refresh()
+end
+function pf_hfe_stove_dialog:refresh()
+    local object=level.object_by_id(self.id)
+    if not object then return end
+    self.title:SetText(tr(pf_hf_furniture.definition(object:section()).title))
+    local recipe=self.recipes[self.index]
+    self.recipe:SetText(recipe and pf_hf_stove.item_name(recipe.raw).." -> "..pf_hf_stove.item_name(recipe.cooked) or tr("pf_hfe_no_recipes"))
+    local own=pf_hf_furniture.state(self.id)
+    self.status:SetText(string.format(tr("pf_hfe_cooking_status"),recipe and pf_hf_stove.count(recipe.raw) or 0,own.cooking_charge or 0))
+    self.buttons.cook:Enable(recipe~=nil and pf_hf_stove.count(recipe.raw)>0 and (own.cooking_charge or 0)>0)
+    self.buttons.previous:Enable(#self.recipes>1);self.buttons.next:Enable(#self.recipes>1)
+end
+function pf_hfe_stove_dialog:change(step)
+    if #self.recipes>0 then self.index=(self.index-1+step)%#self.recipes+1 end
+    self.result:SetText("");self:refresh()
+end
+function pf_hfe_stove_dialog:action(fn)
+    local recipe=self.recipes[self.index]
+    local _,message=fn(self.id,recipe and recipe.raw)
+    self.result:SetText(tr(message));self:refresh()
+end
+function pf_hfe_stove_dialog:OnKeyboard(key,action)
+    if key==DIK_keys.DIK_ESCAPE and action==ui_events.WINDOW_KEY_PRESSED then self:Close() end
+    return true
+end
+function pf_hfe_stove_dialog:Update()
+    CUIScriptWnd.Update(self)
+    local object=level.object_by_id(self.id)
+    if not object or not db.actor or not db.actor:alive() or object:position():distance_to(db.actor:position())>3.25 then self:Close();return end
+    self:refresh()
+end
+function pf_hfe_stove_dialog:Close()
+    self:HideDialog();if active==self then active=nil end
+end
+function force_close() if active then active:Close() end end
+-- Stove interaction is reserved for a later mechanic; keep old storage cleanup.
+function show(id) return false end

@@ -1,0 +1,80 @@
+function init(object) object:bind_object(pf_hf_display_visual(object)) end
+class "pf_hf_display_visual" (object_binder)
+function pf_hf_display_visual:__init(object) super(object)
+    self.frozen=false
+    self.particles={}
+    object:set_tip_text("")
+end
+function pf_hf_display_visual:clear_particles()
+    for _,particle in ipairs(self.particles) do particle.effect:stop() end
+    self.particles={}
+    self.particle_section=nil
+end
+function pf_hf_display_visual:update_particles(section)
+    if self.particle_section~=section then
+        self:clear_particles()
+        self.particle_section=section
+        local ini=system_ini()
+        local function field(key)
+            if ini:line_exist(section,key) then return ini:r_string(section,key) end
+        end
+        local path=field("particles")
+        if path and path~="" then
+            local bones=field("particles_bones") or field("particles_bone") or ""
+            local function add(bone)
+                local id=bone and self.object:get_bone_id(bone)
+                if not id or id==65535 then bone=nil end
+                self.particles[#self.particles+1]={effect=particles_object(path),bone=bone}
+            end
+            for bone in bones:gmatch("[^,]+") do add(bone:match("^%s*(.-)%s*$")) end
+            if #self.particles==0 then add(nil) end
+        end
+    end
+    for _,particle in ipairs(self.particles) do
+        -- bone_position is world-space, including the shelf's saved rotation.
+        local position=particle.bone and self.object:bone_position(particle.bone) or self.object:position()
+        if not particle.effect:playing() then particle.effect:play_at_pos(position) end
+        particle.effect:move_to(position,vector():set(0,0,0))
+    end
+end
+function pf_hf_display_visual:update(delta)
+    object_binder.update(self,delta)
+    if not self.frozen then
+        local shell=self.object:get_physics_shell()
+        if shell and shell:get_elements_number()>0 then
+            shell:get_element_by_order(0):fix();self.frozen=true
+        end
+    end
+    local record,case_id,item_id=pf_hf_displays.proxy_record(self.object:id())
+    local case=case_id and level.object_by_id(case_id)
+    if case and not self.tip_set then
+        self.object:set_tip_text(pf_hf_furniture.tip(case:section(),case:id()));self.tip_set=true
+    end
+    -- Use the cabinet's origin for the same cull/return boundary as its model.
+    -- The source inventory item and proxy record are never changed by culling.
+    local rendered=pf_hf_visuals.update(self,case)
+    if not rendered then self:clear_particles();return end
+    local source=item_id and level.object_by_id(item_id)
+    local profile=case and pf_hf_display_data.profiles[case:section()]
+    if profile and profile.kind=="artifact" then
+        local server=item_id and alife():object(item_id,true)
+        if server and server.parent_id==case_id then
+            self:update_particles(server:section_name())
+        else self:clear_particles() end
+    else
+        self:clear_particles()
+    end
+    if source and profile and profile.kind~="artifact" then
+        for _,bone in ipairs({"wpn_silencer","wpn_launcher","wpn_scope"}) do
+            local id=source:get_bone_id(bone)
+            if id and id~=65535 and self.object:get_bone_id(bone)~=65535 then
+                self.object:set_bone_visible(bone,source:bone_visible(bone),true)
+            end
+        end
+    end
+end
+function pf_hf_display_visual:net_destroy()
+    self:clear_particles()
+    object_binder.net_destroy(self)
+end
+function pf_hf_display_visual:net_save_relevant() return true end

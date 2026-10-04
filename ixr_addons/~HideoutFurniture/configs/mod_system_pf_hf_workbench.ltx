@@ -1,0 +1,36 @@
+; Workbench visual with a separate IX-Ray repair binder.
+; Hideout Furniture's workshop, stash, pickup and placement hooks stay disabled.
+[pf_hf_workbench_dev]:physic_object
+damage_immune = true
+visual = dynamics\placeable\pf_hf_portable_workbench.ogf
+fixed_bones = link
+inv_weight = 5
+script_binding = pf_hf_workbench_binder.init
+
+; Portable inventory form created by the workbench UI. The custom context
+; action creates the physical section above and consumes this exact instance.
+[pf_hf_workbench_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_workbench_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\placeable\pf_hf_portable_workbench.ogf
+inv_name = pf_hf_workbench_item_name
+inv_name_short = pf_hf_workbench_item_name
+description = pf_hf_workbench_item_desc
+inv_weight = 5
+cost = 7500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 0
+inv_grid_y = 2
+icons_texture = ui\ui_pf_hf_placeable_devices
+use1_text = pf_hf_workbench_place
+use1_functor = pf_hf_workbench.place_item

@@ -1,0 +1,12 @@
+-- Compatibility binder for existing portable lamps; fuel mechanics are disabled.
+function init(object) object:bind_object(pf_hf_portable_lamp(object)) end
+class "pf_hf_portable_lamp" (object_binder)
+function pf_hf_portable_lamp:__init(object) super(object) end
+function pf_hf_portable_lamp:update(delta)
+    object_binder.update(self,delta)
+    local own=pf_hf_furniture.state(self.object:id())
+    if own and math.abs(self.object:condition()-1)>.00001 then
+        self.object:set_condition(1)
+    end
+end
+function pf_hf_portable_lamp:net_save_relevant() return true end

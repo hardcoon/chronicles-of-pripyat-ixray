@@ -1,0 +1,12 @@
+-- Keep storage at the stove's position: IX-Ray closes boxes over 3 m away.
+-- The source box has one root bone. Hiding it removes the auxiliary visual.
+function init(object) object:bind_object(pf_hfe_hidden_storage(object)) end
+class "pf_hfe_hidden_storage" (object_binder)
+function pf_hfe_hidden_storage:__init(object) super(object) end
+function pf_hfe_hidden_storage:net_spawn(server)
+    if not object_binder.net_spawn(self,server) then return false end
+    self.object:set_bone_visible("link",false,true)
+    self.object:set_tip_text(nil)
+    return true
+end
+function pf_hfe_hidden_storage:net_save_relevant() return true end

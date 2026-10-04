@@ -1,0 +1,388 @@
+-- Workbench view of the native technician's outfit and helmet trees.
+-- The engine's scripted installation path bypasses branch/material checks,
+-- so both are checked here before invoking it.
+local core = lz_nm_core
+local TREE_CACHE = {}
+
+local BASE = { 6, 10, 14 }
+local HALF = { 3, 5, 7 }
+local RARE = { 1, 1, 2 }
+
+local MATERIAL_ORDER = {
+	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
+	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_electronics", "pf_hf_dampers",
+	"lz_nm_armor_pouch", "lz_nm_rubber_padding",
+	"lz_nm_used_filter", "jup_b200_tech_materials_wire",
+	"jup_b200_tech_materials_capacitor",
+	"jup_b200_tech_materials_transistor",
+	"jup_b200_tech_materials_textolite",
+	"jup_b200_tech_materials_acetone"
+}
+
+local function require_at_least(recipe, section, amount)
+	recipe[section] = math.max(recipe[section] or 0, amount)
+end
+
+local function cost_for_property(recipe, property, tier, effect_section)
+	local upgrades_ini = core.get_sysini()
+	local basic, half, rare = BASE[tier], HALF[tier], RARE[tier]
+	local add = function(section, amount) require_at_least(recipe, section, amount) end
+	if property == "prop_armor" then
+		add("pf_hf_scrap", basic)
+		add("pf_hf_straps", half)
+		add("jup_b200_tech_materials_acetone", rare)
+		if tier > 1 then add("pf_hf_ceramic", tier - 1) end
+	elseif property == "prop_strike" then
+		add("pf_hf_dampers", basic)
+		add("pf_hf_rubber", half)
+		add("pf_hf_fabric", half)
+	elseif property == "prop_damage" or property == "prop_wound" or
+		property == "prop_explo" then
+		add("pf_hf_scrap", basic)
+		add("pf_hf_fabric", half)
+		add("pf_hf_ceramic", tier)
+		add("jup_b200_tech_materials_acetone", rare)
+	elseif property == "prop_durability" then
+		add("pf_hf_fabric", basic)
+		add("pf_hf_straps", half)
+		add("pf_hf_rubber", half)
+	elseif property == "prop_chem" then
+		add("pf_hf_rubber", basic)
+		add("pf_hf_fabric", half)
+		add("lz_nm_used_filter", rare)
+	elseif property == "prop_radio" then
+		add("pf_hf_rubber", basic)
+		add("pf_hf_plastic", half)
+		add("lz_nm_rubber_padding", tier)
+	elseif property == "prop_electro" then
+		add("pf_hf_plastic", basic)
+		add("pf_hf_rubber", half)
+		add("jup_b200_tech_materials_textolite", rare)
+	elseif property == "prop_thermo" then
+		add("pf_hf_fabric", basic)
+		add("pf_hf_ceramic", half)
+	elseif property == "prop_tonnage" then
+		add("pf_hf_straps", basic)
+		add("pf_hf_fabric", half)
+		local weight = upgrades_ini:line_exist(effect_section, "additional_inventory_weight") and
+			math.abs(tonumber(upgrades_ini:r_string(effect_section,
+				"additional_inventory_weight")) or 0) or 0
+		add("lz_nm_armor_pouch", math.max(1, math.ceil(weight / 2)))
+	elseif property == "prop_weightoutfit" or property == "prop_weighthelm" then
+		add("pf_hf_fabric", basic)
+		add("pf_hf_plastic", half)
+		add("pf_hf_straps", half)
+	elseif property == "prop_power" then
+		add("pf_hf_electronics", basic)
+		add("pf_hf_dampers", half)
+		add("jup_b200_tech_materials_capacitor", rare)
+	elseif property == "prop_sprint" then
+		add("pf_hf_dampers", basic)
+		add("pf_hf_scrap", half)
+		add("jup_b200_tech_materials_wire", tier)
+	elseif property == "prop_artefact" then
+		add("pf_hf_straps", basic)
+		add("pf_hf_electronics", half)
+		add("jup_b200_tech_materials_wire", rare)
+	elseif property == "prop_night_vision" or property == "prop_scanner" then
+		add("pf_hf_electronics", basic)
+		add("pf_hf_plastic", half)
+		add("jup_b200_tech_materials_transistor", rare)
+		add("jup_b200_tech_materials_capacitor", rare)
+	elseif property == "prop_psy" then
+		add("pf_hf_electronics", basic)
+		add("pf_hf_plastic", half)
+		add("jup_b200_tech_materials_textolite", rare)
+	elseif property == "prop_restore_health" or property == "prop_restore_bleeding" then
+		add("pf_hf_fabric", basic)
+		add("pf_hf_electronics", half)
+		add("jup_b200_tech_materials_capacitor", rare)
+	else
+		return false
+	end
+	return true
+end
+
+function recipe(effect_section)
+	local upgrades_ini = core.get_sysini()
+	if not effect_section or not upgrades_ini:section_exist(effect_section) then return nil end
+	local upgrade_id = string.gsub(effect_section, "^up_sect_", "up_", 1)
+	if upgrade_id == effect_section or not upgrades_ini:section_exist(upgrade_id) or
+		not upgrades_ini:line_exist(upgrade_id, "property") then return nil end
+	local index = upgrades_ini:line_exist(upgrade_id, "scheme_index") and
+		upgrades_ini:r_string(upgrade_id, "scheme_index") or "0,0"
+	local column = tonumber(string.match(index, "^%s*(%d+)")) or 0
+	local tier = math.max(1, math.min(3, column + 1))
+	local result = {}
+	local properties = upgrades_ini:r_string(upgrade_id, "property")
+	local found_property = false
+	for property in string.gmatch(properties, "[^,%s]+") do
+		found_property = true
+		if not cost_for_property(result, property, tier, effect_section) then
+			return nil -- unknown effects must never become free upgrades
+		end
+	end
+	return found_property and next(result) and result or nil
+end
+
+local function inventory_materials()
+	local counts, objects = {}, {}
+	for _, section in ipairs(MATERIAL_ORDER) do
+		counts[section], objects[section] = 0, {}
+	end
+	if db.actor then
+		db.actor:iterate_inventory(function(_, item)
+			local section = item:section()
+			if objects[section] and core.is_actor_owned_item(item) then
+				counts[section] = counts[section] + 1
+				objects[section][#objects[section] + 1] = item
+			end
+		end, db.actor)
+	end
+	return counts, objects
+end
+
+local function enough(recipe, counts)
+	if not recipe then return false end
+	for section, amount in pairs(recipe) do
+		if (counts[section] or 0) < amount then return false end
+	end
+	return true
+end
+
+local function material_name(section)
+	if section == "lz_nm_rubber_padding" then return game.translate_string("lz_nm_rubber_padding_name") end
+	if section == "lz_nm_armor_pouch" then return game.translate_string("lz_nm_armor_pouch_name") end
+	if section == "lz_nm_used_filter" then return game.translate_string("lz_nm_used_filter_name") end
+	local ini = core.get_sysini()
+	if ini:line_exist(section, "inv_name") then
+		return game.translate_string(ini:r_string(section, "inv_name"))
+	end
+	return section
+end
+
+local function material_lines(effect_section, missing_only)
+	local needed = recipe(effect_section)
+	if not needed then return game.translate_string("pf_hf_upgrade_unsupported") end
+	local counts = inventory_materials()
+	local lines = {}
+	for _, section in ipairs(MATERIAL_ORDER) do
+		local amount = needed[section]
+		if amount and (not missing_only or (counts[section] or 0) < amount) then
+			lines[#lines + 1] = string.format("%s %d/%d", material_name(section),
+				counts[section] or 0, amount)
+		end
+	end
+	return table.concat(lines, "\n")
+end
+
+function material_order()
+	return MATERIAL_ORDER
+end
+
+function material_label(section)
+	return material_name(section)
+end
+
+function material_counts()
+	return inventory_materials()
+end
+
+local KG_PROPERTIES = {
+	prop_tonnage = true,
+	prop_weightoutfit = true,
+	prop_weighthelm = true
+}
+
+local COUNT_PROPERTIES = {
+	prop_artefact = true,
+	prop_night_vision = true,
+	prop_scanner = true,
+	prop_sprint = true
+}
+
+local function signed_value(value)
+	local number = tonumber(value)
+	if not number then return tostring(value or "") end
+	local formatted = math.floor(number) == number and string.format("%d", number) or
+		string.format("%.2f", number):gsub("0+$", ""):gsub("%.$", "")
+	return number > 0 and "+" .. formatted or formatted
+end
+
+local function highlighted_value(value)
+	return "%c[255,132,210,113]" .. value .. "%c[default]"
+end
+
+function property_effects(node)
+	if not node then return "" end
+	local ini = core.get_sysini()
+	local value = ini:section_exist(node.effect) and
+		ini:line_exist(node.effect, "value") and
+		ini:r_string(node.effect, "value") or ""
+	local lines = {}
+	for property in string.gmatch(node.property or "", "[^,%s]+") do
+		local label_id = "pf_hf_effect_" .. property
+		local label = game.translate_string(label_id)
+		if label == label_id and ini:section_exist(property) and
+			ini:line_exist(property, "name") then
+			label = game.translate_string(ini:r_string(property, "name"))
+		end
+		if value == "" then
+			-- Boolean technician upgrades (sprint/scanner) have no numeric
+			-- value in their native effect section.
+			lines[#lines + 1] = label
+		else
+			local suffix = KG_PROPERTIES[property] and " " ..
+				game.translate_string("pf_hf_effect_unit_kg") or
+				COUNT_PROPERTIES[property] and "" or "%"
+			lines[#lines + 1] = highlighted_value(signed_value(value) .. suffix) ..
+				" " .. label
+		end
+	end
+	-- Complex-mode text consumes the same literal newline marker as localized
+	-- XML strings. A raw Lua newline gets flattened by this UI control.
+	return table.concat(lines, "\\n")
+end
+
+function exclusive_peer(graph, hovered_id, candidate_id)
+	if not graph or not hovered_id or not candidate_id or
+		hovered_id == candidate_id then return false end
+	local hovered = graph.nodes[hovered_id]
+	local candidate = graph.nodes[candidate_id]
+	return hovered ~= nil and candidate ~= nil and
+		hovered.group == candidate.group
+end
+
+function cost_text(effect_section)
+	return material_lines(effect_section, false)
+end
+
+local function tokens(value)
+	local result = {}
+	for token in string.gmatch(value or "", "[^,%s]+") do
+		result[#result + 1] = token
+	end
+	return result
+end
+
+local function field(ini, section, key)
+	return ini:section_exist(section) and ini:line_exist(section, key) and
+		ini:r_string(section, key) or nil
+end
+
+-- Traverse the actual root groups, group elements and dependent groups from
+-- system.ltx. This is the same graph the native upgrade manager constructs.
+function tree(item)
+	if not item then return nil end
+	local section = item:section()
+	if TREE_CACHE[section] ~= nil then return TREE_CACHE[section] or nil end
+	local ini = core.get_sysini()
+	local roots = tokens(field(ini, section, "upgrades"))
+	if #roots == 0 then TREE_CACHE[section] = false return nil end
+	local graph = { nodes = {}, order = {}, coordinates = {},
+		group_members = {}, group_parents = {} }
+	local visited = {}
+	local function visit(group_id, parent_id)
+		local members = tokens(field(ini, group_id, "elements"))
+		if #members == 0 then return false end
+		graph.group_parents[group_id] = graph.group_parents[group_id] or {}
+		graph.group_parents[group_id][parent_id] = true
+		if visited[group_id] then return true end
+		visited[group_id] = true
+		graph.group_members[group_id] = members
+		for _, id in ipairs(members) do
+			local effect = field(ini, id, "section")
+			local x, y = string.match(field(ini, id, "scheme_index") or "",
+				"^%s*(%d+)%s*,%s*(%d+)")
+			x, y = tonumber(x), tonumber(y)
+			if not effect or not ini:section_exist(effect) or not x or not y or
+				x > 2 or y > 8 then return false end
+			local coordinate = x .. ":" .. y
+			if graph.coordinates[coordinate] and graph.coordinates[coordinate] ~= id then
+				return false
+			end
+			local node = graph.nodes[id]
+			if node and node.group ~= group_id then return false end
+			if not node then
+				node = { id = id, effect = effect, x = x, y = y,
+					group = group_id, name = field(ini, id, "name") or id,
+					description = field(ini, id, "description") or "",
+					icon = field(ini, id, "icon"),
+					property = field(ini, id, "property") or "" }
+				graph.nodes[id] = node
+				graph.order[#graph.order + 1] = node
+				graph.coordinates[coordinate] = id
+			end
+			for _, child in ipairs(tokens(field(ini, id, "effects"))) do
+				if not visit(child, id) then return false end
+			end
+		end
+		return true
+	end
+	for _, group in ipairs(roots) do
+		if not visit(group, section) then TREE_CACHE[section] = false return nil end
+	end
+	table.sort(graph.order, function(a, b)
+		return a.y == b.y and a.x < b.x or a.y < b.y
+	end)
+	TREE_CACHE[section] = graph
+	return graph
+end
+
+function state(item, node, graph, counts)
+	if not item or not node or not graph or not core.is_actor_owned_item(item) then
+		return "unavailable"
+	end
+	if item:has_upgrade(node.id) then return "installed" end
+	for _, peer in ipairs(graph.group_members[node.group] or {}) do
+		if peer ~= node.id and item:has_upgrade(peer) then return "exclusive" end
+	end
+	for parent_id in pairs(graph.group_parents[node.group] or {}) do
+		if parent_id ~= item:section() then
+			local parent = graph.nodes[parent_id]
+			if not parent then return "unavailable" end
+			local satisfied = false
+			for _, sibling in ipairs(graph.group_members[parent.group] or {}) do
+				if item:has_upgrade(sibling) then satisfied = true break end
+			end
+			if not satisfied then return "locked" end
+		end
+	end
+	local needed = recipe(node.effect)
+	if not needed then return "unavailable" end
+	counts = counts or inventory_materials()
+	return enough(needed, counts) and "available" or "materials"
+end
+
+function install(item, node_id)
+	if not item or not core.is_actor_owned_item(item) then
+		return false, "pf_hf_no_selection"
+	end
+	local graph = tree(item)
+	local node = graph and graph.nodes[node_id]
+	if not node then return false, "pf_hf_upgrade_unavailable" end
+	local counts, objects = inventory_materials()
+	local current = state(item, node, graph, counts)
+	if current ~= "available" then
+		return false, "pf_hf_upgrade_state_" .. current
+	end
+	local needed = recipe(node.effect)
+	for section, amount in pairs(needed) do
+		for index = 1, amount do
+			if not core.server_object(objects[section][index]) then
+				return false, "pf_hf_need_materials"
+			end
+		end
+	end
+	-- The native manager installs the exact node and effect with loading=true.
+	-- Money is untouched. Its group checks are fatal on invalid input, so the
+	-- graph validation above must run before this call.
+	if not item:install_upgrade(node_id) then
+		return false, "pf_hf_upgrade_unavailable"
+	end
+	for section, amount in pairs(needed) do
+		for index = 1, amount do core.release_item(objects[section][index]) end
+	end
+	return true, "pf_hf_upgrade_installed"
+end
+

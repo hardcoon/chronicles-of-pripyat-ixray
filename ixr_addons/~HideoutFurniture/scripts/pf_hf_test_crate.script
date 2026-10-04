@@ -1,0 +1,84 @@
+-- Phase-one adapter. No stash, crafting, trade or furniture gameplay.
+local ITEM="pf_hf_test_crate_item"
+local OBJECT="pf_hf_test_crate"
+local pending={}
+local registered=false
+local generation=0
+
+-- OGF_HEADER, box_wood_01.ogf. Keep visual and collision bounds distinct.
+function model_bounds()
+    return {min=vector():set(-0.421167493,-0.000000305175774,-0.439715415),
+        max=vector():set(0.421167463,0.806355894,0.439715385),
+        pivot=vector():set(-0.0000000149011612,-0.000000305175774,-0.0000000149011612)}
+end
+
+function create_object(pose,item_id)
+    local sim=alife()
+    local actor=db.actor
+    local source=sim and sim:object(item_id,true)
+    if not actor or not source or source:section_name()~=ITEM or tonumber(source.parent_id)~=actor:id() then
+        return nil,"source_lost"
+    end
+    if not pose or
+        not pf_runtime_editor_geometry.finite(pose.position) or not pf_runtime_editor_geometry.finite(pose.rotation) then
+        return nil,"invalid_pose"
+    end
+    local created
+    local ok,err=pcall(function()
+        created=sim:create(OBJECT,pose.position,pose.level_vertex_id,pose.game_vertex_id)
+        if not created then error("create_failed") end
+        created:use_ai_locations(false)
+        created.position=vector():set(pose.position)
+        created.angle=vector():set(pose.rotation)
+        created.m_level_vertex_id=pose.level_vertex_id
+        created.m_game_vertex_id=pose.game_vertex_id
+        -- Native ALife release is synchronous. Pay only after pose assignment.
+        sim:release(source,true)
+    end)
+    if not ok then
+        if created then pcall(function() sim:release(created,true) end) end
+        return nil,tostring(err)
+    end
+    pending[item_id]=nil
+    return created.id
+end
+
+local function start(item_id)
+    local ok,err=pf_runtime_editor.begin({section=OBJECT,title="pf_rt_crate_title",
+        source_item_id=item_id,source_section=ITEM,bounds=model_bounds(),
+        visual="dynamics\\box\\box_wood_01.ogf",
+        initial_distance=2,max_range=5,
+        on_confirm=create_object,on_cancel=function() pending[item_id]=nil end})
+    if not ok then
+        pending[item_id]=nil
+        printf("[pf_hf_test_crate] start failed: %s",tostring(err))
+    end
+end
+
+function place_item(item)
+    if not item or not db.actor or item:section()~=ITEM or pending[item:id()] then return false end
+    if pf_runtime_editor.is_active() then return false end
+    local id=item:id()
+    local queued_generation=generation
+    pending[id]=true
+    -- Let the inventory context menu finish before acquiring modal input.
+    local queued=pf_runtime_editor.defer_start(function()
+        if generation==queued_generation and pending[id] then start(id) end
+    end,function() pending[id]=nil end)
+    if not queued then pending[id]=nil end
+    return false
+end
+
+-- Console: run_script pf_hf_test_crate.give()
+function give()
+    local actor=db.actor
+    local sim=alife()
+    if not actor or not sim then return false end
+    return sim:create(ITEM,actor:position(),actor:level_vertex_id(),actor:game_vertex_id(),actor:id())~=nil
+end
+function on_load() pending={};generation=generation+1 end
+function on_game_start()
+    if not registered then RegisterScriptCallback("load",on_load);registered=true end
+end
+
+on_game_start()

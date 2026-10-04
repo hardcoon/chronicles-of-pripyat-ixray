@@ -1,0 +1,117 @@
+-- Furniture trader promoted from the latest NPC Editor authoring point.
+-- pf_yanov_station owns discovery, spawning, binding and stationary placement.
+-- Only session caches are used: F9 deliberately replenishes the complete shelf.
+local trade_config = "misc\\trade\\trade_pf_yanov_savka.ltx"
+local state_name = "pf_yanov_savka_sit_fixed"
+local stocked_ids = {}
+local configured_storage = setmetatable({}, { __mode = "v" })
+local trade_ini = nil
+local restricted_ini = nil
+local registered = false
+local yaw = 3.1062677824798066
+local direction = vector():set(math.sin(yaw), 0, math.cos(yaw))
+local resident_data = {
+    section = "pf_yanov_savka",
+    visual = "actors\\stalker_bandit\\stalker_bandit_3_mask",
+    position = vector():set(-947.888, 0.080, -1360.562),
+    yaw = yaw,
+    direction = direction,
+    look = vector():set(-947.888 + direction.x * 10,
+        1.580, -1360.562 + direction.z * 10),
+    level_vertex_id = 2481407,
+    game_vertex_id = 376,
+    state = state_name,
+    fixed_direction = true,
+    placement_animstate = "sit_ass",
+    logic_section = "remark@pf_yanov_savka",
+}
+
+function resident()
+    return resident_data
+end
+
+function ensure_registered()
+    if registered then return true end
+    local states = state_lib.states
+    local animstates = state_mgr_animstate_list.animations
+    if type(states) ~= "table" or type(animstates) ~= "table" or
+            type(states.sit_ass) ~= "table" or
+            type(animstates.sit_ass) ~= "table" then return false end
+    -- Use Trapper's native seated body state, including its normal entry/idle.
+    -- Keep the resident's own name without modifying the shared sit_ass state.
+    local seated = {}
+    for key, value in pairs(states.sit_ass) do seated[key] = value end
+    states[state_name] = seated
+    registered = true
+    return true
+end
+
+local function restricted_trade_ini()
+    if restricted_ini ~= nil then return restricted_ini end
+    local whitelist = {}
+    -- Furniture buyback also includes pieces removed from the sale shelf.
+    for index = 0, trade_ini:line_count("savka_buy") - 1 do
+        local _, section = trade_ini:r_line("savka_buy", index, "", "")
+        whitelist[section] = true
+    end
+    local buy, sell = { "[savka_buy]" }, { "[savka_sell]" }
+    local settings = system_ini()
+    -- Native CInventoryItem::Load requires inv_weight. Include inv_name too
+    -- to deny abstract/item variants. This resolves all installed addons once,
+    -- rather than leaving unknown sections on the engine's default factors.
+    settings:section_for_each(function(section)
+        if settings:line_exist(section, "inv_weight") or
+                settings:line_exist(section, "inv_name") then
+            if whitelist[section] then
+                buy[#buy + 1] = section .. " = " .. trade_ini:r_string("savka_buy", section)
+                sell[#sell + 1] = section .. " = " .. (trade_ini:r_string("savka_sell", section) or "")
+            else
+                -- Empty values explicitly disable native buy/sell conditions.
+                buy[#buy + 1] = section
+                sell[#sell + 1] = section
+            end
+        end
+        return false
+    end)
+    restricted_ini = create_ini_file(table.concat(buy, "\n") .. "\n\n" .. table.concat(sell, "\n"))
+    return restricted_ini
+end
+
+function update(npc)
+    local actor = db.actor
+    local storage = db.storage[npc:id()]
+    if actor == nil or storage == nil or storage.state_mgr == nil or
+            storage.active_section ~= resident_data.logic_section then return end
+
+    -- Personal neutrality preserves the bandit faction's global relationships.
+    npc:set_relation(game_object.neutral, actor)
+    npc:force_set_goodwill(0, actor)
+    actor:set_relation(game_object.neutral, npc)
+
+    if actor:is_talking() or npc:is_talking() then return end
+    if trade_ini == nil then trade_ini = ini_file(trade_config) end
+    if configured_storage[npc:id()] ~= storage then
+        trade_manager.trade_init(npc, trade_config)
+        trade_manager.update(npc)
+        local policy = restricted_trade_ini()
+        npc:buy_condition(policy, "savka_buy")
+        npc:sell_condition(policy, "savka_sell")
+        -- db.storage is a Lua table, recreated after offline/online binding.
+        -- Reapply the policy then, preserving this session's depleted shelf.
+        configured_storage[npc:id()] = storage
+    end
+    if stocked_ids[npc:id()] then return end
+    -- Native CPurchaseList destroys the old inventory before spawning supplies.
+    -- Keep this outside binding hooks and run exactly once per ID after load.
+    npc:buy_supplies(trade_ini, "savka_supplies")
+    npc:give_money(20000 - npc:money())
+    stocked_ids[npc:id()] = true
+    printf("~ [pf_hf_savka] stocked id=%s types=158 units=329", tostring(npc:id()))
+end
+
+function reset()
+    stocked_ids = {}
+    configured_storage = setmetatable({}, { __mode = "v" })
+    trade_ini = nil
+    restricted_ini = nil
+end

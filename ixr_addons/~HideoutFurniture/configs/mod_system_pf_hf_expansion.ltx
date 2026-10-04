@@ -1,0 +1,1087 @@
+; Hideout Furniture Expansion 1.0.2; shared IX-Ray adapters.
+
+[pf_hfe_bed_1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_bed_1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_bed_1.ogf
+inv_name = pf_hfe_bed_1_name
+inv_name_short = pf_hfe_bed_1_name
+description = pf_hfe_bed_1_desc
+inv_weight = 5.0
+cost = 2000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 1
+inv_grid_y = 0
+inv_grid_width = 4
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_bed_1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_bed_1.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 5.0
+
+[pf_hfe_bed_2_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_bed_2_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_bed_2.ogf
+inv_name = pf_hfe_bed_2_name
+inv_name_short = pf_hfe_bed_2_name
+description = pf_hfe_bed_2_desc
+inv_weight = 10.0
+cost = 3500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 6
+inv_grid_y = 0
+inv_grid_width = 4
+inv_grid_height = 3
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_bed_2]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_bed_2.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 10.0
+fixed_bones = link1, link2, link3
+
+[pf_hfe_bed_3_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_bed_3_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_bed_3.ogf
+inv_name = pf_hfe_bed_3_name
+inv_name_short = pf_hfe_bed_3_name
+description = pf_hfe_bed_3_desc
+inv_weight = 15.0
+cost = 5000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 0
+inv_grid_y = 2
+inv_grid_width = 4
+inv_grid_height = 3
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_bed_3]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_bed_3.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 15.0
+fixed_bones = link1, link2, link3
+
+[pf_hfe_board_map_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_board_map_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_board_map.ogf
+inv_name = pf_hfe_board_map_name
+inv_name_short = pf_hfe_board_map_name
+description = pf_hfe_board_map_desc
+inv_weight = 4.25
+cost = 4000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 0
+inv_grid_y = 5
+inv_grid_width = 3
+inv_grid_height = 3
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_board_map]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_board_map.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 4.25
+fixed_bones = link1, link2, link3, link4, link5, link6, link7, link8, link9, link10, link11
+
+[pf_hfe_cans_tuna_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_cans_tuna_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_cans_tuna.ogf
+inv_name = pf_hfe_cans_tuna_name
+inv_name_short = pf_hfe_cans_tuna_name
+description = pf_hfe_cans_tuna_desc
+inv_weight = 1.5
+cost = 1000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 0
+inv_grid_y = 1
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_cans_tuna]:inventory_box
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_cans_tuna.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1.5
+capacity = 150
+radius = 1
+
+[pf_hfe_couch_1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_couch_1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_couch_1.ogf
+inv_name = pf_hfe_couch_1_name
+inv_name_short = pf_hfe_couch_1_name
+description = pf_hfe_couch_1_desc
+inv_weight = 15.0
+cost = 5000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 0
+inv_grid_y = 8
+inv_grid_width = 4
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_couch_1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_couch_1.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 15.0
+fixed_bones = link1, link2, link3
+
+[pf_hfe_counter_1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_counter_1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_counter_1.ogf
+inv_name = pf_hfe_counter_1_name
+inv_name_short = pf_hfe_counter_1_name
+description = pf_hfe_counter_1_desc
+inv_weight = 2.0
+cost = 1500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 4
+inv_grid_y = 2
+inv_grid_width = 2
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_counter_1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_counter_1.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 2.0
+fixed_bones = link1, link2, link3, link4, link5
+
+[pf_hfe_laptop_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_laptop_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_laptop.ogf
+inv_name = pf_hfe_laptop_name
+inv_name_short = pf_hfe_laptop_name
+description = pf_hfe_laptop_desc
+inv_weight = 1.25
+cost = 15250
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 0
+inv_grid_y = 0
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_laptop]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_laptop.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1.25
+fixed_bones = link1
+
+[pf_hfe_poster_vertical_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_poster_vertical_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_poster_vertical.ogf
+inv_name = pf_hfe_poster_vertical_name
+inv_name_short = pf_hfe_poster_vertical_name
+description = pf_hfe_poster_vertical_desc
+inv_weight = 0.01
+cost = 500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 3
+inv_grid_y = 5
+inv_grid_width = 1
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_poster_vertical]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_poster_vertical.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.01
+
+[pf_hfe_table_1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_table_1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_table_1.ogf
+inv_name = pf_hfe_table_1_name
+inv_name_short = pf_hfe_table_1_name
+description = pf_hfe_table_1_desc
+inv_weight = 2.75
+cost = 3000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 4
+inv_grid_y = 4
+inv_grid_width = 3
+inv_grid_height = 3
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_table_1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_table_1.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 2.75
+fixed_bones = link1, link2, link3, link4, link5, link6, link7, link8
+
+[pf_hfe_table_2_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_table_2_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_table_2.ogf
+inv_name = pf_hfe_table_2_name
+inv_name_short = pf_hfe_table_2_name
+description = pf_hfe_table_2_desc
+inv_weight = 1.25
+cost = 1250
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 4
+inv_grid_y = 7
+inv_grid_width = 3
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_table_2]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_table_2.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1.25
+fixed_bones = link1, link2, link3, link4, link5
+
+[pf_hfe_bong_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_bong_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_bong.ogf
+inv_name = pf_hfe_bong_name
+inv_name_short = pf_hfe_bong_name
+description = pf_hfe_bong_desc
+inv_weight = 0.7
+cost = 1000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 5
+inv_grid_y = 0
+inv_grid_width = 1
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_bong]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_bong.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.7
+fixed_bones = link1, link2
+
+[pf_hfe_pccase_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_pccase_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_case.ogf
+inv_name = pf_hfe_pccase_name
+inv_name_short = pf_hfe_pccase_name
+description = pf_hfe_pccase_desc
+inv_weight = 1.5
+cost = 1500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 9
+inv_grid_y = 8
+inv_grid_width = 1
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_pccase]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_case.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1.5
+
+[pf_hfe_chair_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_chair_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_chair.ogf
+inv_name = pf_hfe_chair_name
+inv_name_short = pf_hfe_chair_name
+description = pf_hfe_chair_desc
+inv_weight = 1.35
+cost = 500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 8
+inv_grid_y = 8
+inv_grid_width = 1
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_chair]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_chair.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1.35
+fixed_bones = link1
+
+[pf_hfe_dish1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_dish1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_dish1.ogf
+inv_name = pf_hfe_dish1_name
+inv_name_short = pf_hfe_dish1_name
+description = pf_hfe_dish1_desc
+inv_weight = 0.1
+cost = 100
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 4
+inv_grid_y = 9
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_dish1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_dish1.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.1
+
+[pf_hfe_dish2_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_dish2_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_dish2.ogf
+inv_name = pf_hfe_dish2_name
+inv_name_short = pf_hfe_dish2_name
+description = pf_hfe_dish2_desc
+inv_weight = 0.1
+cost = 125
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 6
+inv_grid_y = 3
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_dish2]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_dish2.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.1
+
+[pf_hfe_fan_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_fan_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_fan.ogf
+inv_name = pf_hfe_fan_name
+inv_name_short = pf_hfe_fan_name
+description = pf_hfe_fan_desc
+inv_weight = 0.4
+cost = 425
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 3
+inv_grid_y = 7
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_fan]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_fan.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.4
+startup_animation = fan_static
+physics_config_on_load = true
+
+[pf_hfe_fridge_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_fridge_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_fridge.ogf
+inv_name = pf_hfe_fridge_name
+inv_name_short = pf_hfe_fridge_name
+description = pf_hfe_fridge_desc
+inv_weight = 35.0
+cost = 12500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 7
+inv_grid_y = 3
+inv_grid_width = 2
+inv_grid_height = 3
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_fridge]:inventory_box
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_fridge.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 35.0
+capacity = 150
+radius = 1
+
+[pf_hfe_keyboard_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_keyboard_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_keyboard.ogf
+inv_name = pf_hfe_keyboard_name
+inv_name_short = pf_hfe_keyboard_name
+description = pf_hfe_keyboard_desc
+inv_weight = 0.65
+cost = 425
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 5
+inv_grid_y = 9
+inv_grid_width = 2
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_keyboard]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_keyboard.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.65
+
+[pf_hfe_mice_pad_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_mice_pad_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_mice_pad.ogf
+inv_name = pf_hfe_mice_pad_name
+inv_name_short = pf_hfe_mice_pad_name
+description = pf_hfe_mice_pad_desc
+inv_weight = 0.1
+cost = 100
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 7
+inv_grid_y = 8
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_mice_pad]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_mice_pad.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.1
+
+[pf_hfe_monitor_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_monitor_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_monitor.ogf
+inv_name = pf_hfe_monitor_name
+inv_name_short = pf_hfe_monitor_name
+description = pf_hfe_monitor_desc
+inv_weight = 1.5
+cost = 1000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 7
+inv_grid_y = 6
+inv_grid_width = 2
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_monitor]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_monitor.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1.5
+fixed_bones = link1
+
+[pf_hfe_mug_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_mug_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_mug.ogf
+inv_name = pf_hfe_mug_name
+inv_name_short = pf_hfe_mug_name
+description = pf_hfe_mug_desc
+inv_weight = 0.15
+cost = 150
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 9
+inv_grid_y = 7
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_mug]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_mug.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.15
+
+[pf_hfe_stove1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_stove1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_stove1.ogf
+inv_name = pf_hfe_stove1_name
+inv_name_short = pf_hfe_stove1_name
+description = pf_hfe_stove1_desc
+inv_weight = 0.15
+cost = 1750
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 10
+inv_grid_y = 0
+inv_grid_width = 2
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_stove1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_stove1.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.15
+
+[pf_hfe_stove2_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_stove2_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_stove2.ogf
+inv_name = pf_hfe_stove2_name
+inv_name_short = pf_hfe_stove2_name
+description = pf_hfe_stove2_desc
+inv_weight = 25.0
+cost = 3500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 9
+inv_grid_y = 3
+inv_grid_width = 2
+inv_grid_height = 3
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_stove2]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_stove2.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 25.0
+fixed_bones = link1, link2, link3, link4, link5
+
+[pf_hfe_tv_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_tv_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_tv.ogf
+inv_name = pf_hfe_tv_name
+inv_name_short = pf_hfe_tv_name
+description = pf_hfe_tv_desc
+inv_weight = 4.0
+cost = 2000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 10
+inv_grid_y = 1
+inv_grid_width = 2
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_tv]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_tv.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 4.0
+
+[pf_hfe_shelf_1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_shelf_1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_shelf_1.ogf
+inv_name = pf_hfe_shelf_1_name
+inv_name_short = pf_hfe_shelf_1_name
+description = pf_hfe_shelf_1_desc
+inv_weight = 3.5
+cost = 2250
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 11
+inv_grid_y = 3
+inv_grid_width = 2
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_shelf_1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_shelf_1.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 3.5
+fixed_bones = link1, link2, link3, link4, link5
+
+[pf_hfe_shelf_2_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_shelf_2_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_shelf_2.ogf
+inv_name = pf_hfe_shelf_2_name
+inv_name_short = pf_hfe_shelf_2_name
+description = pf_hfe_shelf_2_desc
+inv_weight = 6.5
+cost = 3250
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 12
+inv_grid_y = 0
+inv_grid_width = 2
+inv_grid_height = 3
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_shelf_2]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_shelf_2.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 6.5
+fixed_bones = link1, link2, link3, link4, link5, link6, link7, link8, link9
+
+[pf_hfe_clock_1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_clock_1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_clock.ogf
+inv_name = pf_hfe_clock_1_name
+inv_name_short = pf_hfe_clock_1_name
+description = pf_hfe_clock_1_desc
+inv_weight = 0.3
+cost = 1750
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 9
+inv_grid_y = 6
+inv_grid_width = 2
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_clock_1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_clock.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.3
+
+[pf_hfe_med_case_1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_med_case_1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_med_case.ogf
+inv_name = pf_hfe_med_case_1_name
+inv_name_short = pf_hfe_med_case_1_name
+description = pf_hfe_med_case_1_desc
+inv_weight = 0.3
+cost = 3500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 10
+inv_grid_y = 8
+inv_grid_width = 2
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_med_case_1]:inventory_box
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_med_case.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.3
+capacity = 75
+radius = 1
+
+[pf_hfe_ammo_box_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_ammo_box_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_ammo_box.ogf
+inv_name = pf_hfe_ammo_box_name
+inv_name_short = pf_hfe_ammo_box_name
+description = pf_hfe_ammo_box_desc
+inv_weight = 4
+cost = 6500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 11
+inv_grid_y = 5
+inv_grid_width = 3
+inv_grid_height = 2
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_ammo_box]:inventory_box
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_ammo_box.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 4
+capacity = 150
+radius = 1
+
+[pf_hfe_lamp1_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_lamp1_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_lamp.ogf
+inv_name = pf_hfe_lamp1_name
+inv_name_short = pf_hfe_lamp1_name
+description = pf_hfe_lamp1_desc
+inv_weight = 0.6
+cost = 1250
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 10
+inv_grid_y = 7
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_lamp1]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_lamp.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.6
+class = SO_HLAMP
+fixed_bones =
+
+[pf_hfe_lamp2_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfe_lamp2_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_expansion\dynamics\efp_props\prop_lamp_2.ogf
+inv_name = pf_hfe_lamp2_name
+inv_name_short = pf_hfe_lamp2_name
+description = pf_hfe_lamp2_desc
+inv_weight = 0.6
+cost = 1450
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_x = 11
+inv_grid_y = 7
+inv_grid_width = 1
+inv_grid_height = 1
+icons_texture = pf_hf_expansion\ui\ui_maid_efp_props
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfe_lamp2]:physic_object
+damage_immune = true
+visual = pf_hf_expansion\dynamics\efp_props\prop_lamp_2.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.6
+class = SO_HLAMP
+fixed_bones =
+
+![inventory_sort_registry]
+pf_hfe_bed_1_item = furniture
+pf_hfe_bed_2_item = furniture
+pf_hfe_bed_3_item = furniture
+pf_hfe_board_map_item = furniture
+pf_hfe_cans_tuna_item = furniture
+pf_hfe_couch_1_item = furniture
+pf_hfe_counter_1_item = furniture
+pf_hfe_laptop_item = furniture
+pf_hfe_poster_vertical_item = furniture
+pf_hfe_table_1_item = furniture
+pf_hfe_table_2_item = furniture
+pf_hfe_bong_item = furniture
+pf_hfe_pccase_item = furniture
+pf_hfe_chair_item = furniture
+pf_hfe_dish1_item = furniture
+pf_hfe_dish2_item = furniture
+pf_hfe_fan_item = furniture
+pf_hfe_fridge_item = furniture
+pf_hfe_keyboard_item = furniture
+pf_hfe_mice_pad_item = furniture
+pf_hfe_monitor_item = furniture
+pf_hfe_mug_item = furniture
+pf_hfe_stove1_item = furniture
+pf_hfe_stove2_item = furniture
+pf_hfe_tv_item = furniture
+pf_hfe_shelf_1_item = furniture
+pf_hfe_shelf_2_item = furniture
+pf_hfe_clock_1_item = furniture
+pf_hfe_med_case_1_item = furniture
+pf_hfe_ammo_box_item = furniture
+pf_hfe_lamp1_item = furniture
+pf_hfe_lamp2_item = furniture

@@ -1,0 +1,234 @@
+local active=nil
+local piano_keys={"Z","S","X","D","C","V","G","B","H","N","J","M",
+    "Q","2","W","3","E","R","5","T","6","Y","7","U"}
+local function translate(id) return game.translate_string(id) end
+class "pf_hf_media_dialog" (CUIScriptWnd)
+function pf_hf_media_dialog:__init(id,kind) super()
+    self.id=id;self.kind=kind;self.octave=4;self.instrument=1
+    self.keys={};self.buttons={}
+    local xml=CScriptXmlInit();xml:ParseFile(kind=="radio" and "ui_pf_hf_radio.xml" or "ui_pf_hf_media.xml");xml:InitWindow("main",0,self)
+    self.panel=xml:InitStatic("main:panel",self)
+    self.title=xml:InitTextWnd("main:title",self)
+    self.status=xml:InitTextWnd("main:status",self)
+    self.hint=xml:InitTextWnd("main:hint",self)
+    local callbacks={close=function() self:Close() end,
+        toggle=function() local own=pf_hf_furniture.state(self.id);own.is_on=not own.is_on;self:refresh() end,
+        previous=function() self:change(-1) end,next=function() self:change(1) end,
+        quieter=function() self:volume(-.1) end,louder=function() self:volume(.1) end,
+        lower=function() self.octave=math.max(1,self.octave-1);self:refresh() end,
+        higher=function() self.octave=math.min(7,self.octave+1);self:refresh() end}
+    if kind=="radio" then
+        callbacks.lower=nil;callbacks.higher=nil
+        callbacks.yanov=function() pf_hf_media.radio_set_collection(self.id,"yanov");self:refresh() end
+        callbacks.zonefm=function() pf_hf_media.radio_set_collection(self.id,"zonefm");self:refresh() end
+        callbacks.ordered=function() pf_hf_media.radio_set_order(self.id,"ordered");self:refresh() end
+        callbacks.shuffle=function() pf_hf_media.radio_set_order(self.id,"shuffle");self:refresh() end
+        callbacks.repeat_track=function() pf_hf_media.radio_toggle_repeat(self.id);self:refresh() end
+    end
+    for name,fn in pairs(callbacks) do
+        local button=xml:Init3tButton("main:"..name,self)
+        self:Register(button,name);self:AddCallback(name,ui_events.BUTTON_CLICKED,fn,self)
+        self.buttons[name]=button
+    end
+    if kind=="radio" then
+        self.icons={};self.selected={}
+        self.controls_divider=xml:InitStatic("main:controls_divider",self)
+        self.controls_divider:Enable(false)
+        self.volume_divider=xml:InitStatic("main:volume_divider",self)
+        self.volume_divider:Enable(false)
+        for _,name in ipairs({"previous","toggle","next","ordered","shuffle","repeat_track","quieter","louder","close"}) do
+            if name=="ordered" or name=="shuffle" or name=="repeat_track" then
+                local selected=xml:InitStatic("main:"..name.."_selected",self.buttons[name])
+                selected:Enable(false);self.selected[name]=selected
+            end
+            local icon=xml:InitStatic("main:"..name.."_icon",self.buttons[name])
+            icon:Enable(false);self.icons[name]=icon
+        end
+        for _,name in ipairs({"yanov","zonefm"}) do
+            local selected=xml:InitStatic("main:"..name.."_selected",self.buttons[name])
+            selected:Enable(false);self.selected[name]=selected
+        end
+        self.track=xml:InitTextWnd("main:track",self)
+        self.power=xml:InitTextWnd("main:power",self)
+        self.volume_text=xml:InitTextWnd("main:volume_text",self)
+        -- A radio-only slider: the stock trackbar uses global backend textures
+        -- and a thumb whose size cannot be changed through the Lua API.
+        self.volume_slider=xml:Init3tButton("main:volume_slider",self)
+        self:Register(self.volume_slider,"volume_slider")
+        self:AddCallback("volume_slider",ui_events.BUTTON_DOWN,function()
+            self.volume_drag=true;self:volume_from_cursor();self:refresh()
+        end,self)
+        self:AddCallback("volume_slider",ui_events.BUTTON_CLICKED,function()
+            self:volume_from_cursor();self.volume_drag=false;self:refresh()
+        end,self)
+        self.volume_fill=xml:InitStatic("main:volume_fill",self.volume_slider)
+        self.volume_thumb=xml:InitStatic("main:volume_thumb",self.volume_slider)
+        self.volume_fill:Enable(false);self.volume_thumb:Enable(false)
+    end
+    if kind=="piano" then
+    for index=0,23 do
+        local name="note_"..index
+        local button=xml:Init3tButton("main:"..name,self)
+        self:Register(button,name)
+        self:AddCallback(name,ui_events.BUTTON_CLICKED,function() self:play(index) end,self)
+        self.keys[index+1]=button
+        button:Show(kind=="piano")
+    end
+    end
+    self.buttons.toggle:Show(kind=="radio")
+    if kind=="radio" then self:fit_radio_aspect() end
+    self:refresh()
+end
+function pf_hf_media_dialog:fit_radio_aspect()
+    local screen=device()
+    local width=math.max(1,tonumber(screen.width) or 1024)
+    local height=math.max(1,tonumber(screen.height) or 768)
+    local kx=(4/3)/(width/height)
+    if self.radio_kx==kx then return end
+    if not self.radio_rects then
+        self.radio_rects={}
+        local function keep(window,child)
+            local p=window:GetWndPos()
+            self.radio_rects[#self.radio_rects+1]={window=window,x=p.x,y=p.y,
+                width=window:GetWidth(),height=window:GetHeight(),child=child}
+        end
+        for _,window in ipairs({self.panel,self.title,self.status,self.hint,self.track,self.power,
+            self.volume_text,self.volume_slider,self.controls_divider,self.volume_divider}) do keep(window,false) end
+        for _,window in pairs(self.buttons) do keep(window,false) end
+        for _,window in pairs(self.icons) do keep(window,true) end
+        for _,window in pairs(self.selected) do keep(window,true) end
+        keep(self.volume_fill,true);keep(self.volume_thumb,true)
+    end
+    for _,rect in ipairs(self.radio_rects) do
+        local x=rect.child and rect.x*kx or 512+(rect.x-512)*kx
+        rect.window:SetWndPos(vector2():set(x,rect.y))
+        -- SetWndSize's Lua wrapper bypasses virtual methods. SetWidth/Height
+        -- also resize the CUI3tButton background, keeping drawing and hitboxes equal.
+        rect.window:SetWidth(rect.width*kx)
+        rect.window:SetHeight(rect.height)
+    end
+    self.radio_kx=kx
+    self:refresh_radio_volume()
+end
+local function contains(window,cursor)
+    local p=window:GetWndPos()
+    return cursor.x>=p.x and cursor.x<=p.x+window:GetWidth() and
+        cursor.y>=p.y and cursor.y<=p.y+window:GetHeight()
+end
+function pf_hf_media_dialog:volume_from_cursor()
+    local p=self.volume_slider:GetWndPos()
+    local thumb=self.volume_thumb:GetWidth()
+    local value=(GetCursorPosition().x-p.x-thumb/2)/(self.volume_slider:GetWidth()-thumb)
+    pf_hf_furniture.state(self.id).volume=math.max(0,math.min(1,math.floor(value*20+.5)/20))
+end
+function pf_hf_media_dialog:refresh_radio_volume()
+    local value=pf_hf_furniture.state(self.id).volume
+    local thumb=self.volume_thumb:GetWidth()
+    local x=(self.volume_slider:GetWidth()-thumb)*value
+    self.volume_thumb:SetWndPos(vector2():set(x,0))
+    self.volume_fill:SetWidth(math.max(.01,x+thumb/2-self.radio_kx))
+    self.volume_fill:Show(value>0);self.volume_fill:Enable(false)
+end
+function pf_hf_media_dialog:refresh_radio_hint()
+    local cursor=GetCursorPosition()
+    local hint="pf_hf_radio_hint"
+    for name,button in pairs(self.buttons) do
+        if name~="yanov" and name~="zonefm" and contains(button,cursor) then
+            hint="pf_hf_radio_hint_"..name;break
+        end
+    end
+    if contains(self.volume_slider,cursor) then hint="pf_hf_radio_hint_volume" end
+    self.hint:SetText(translate(hint))
+end
+function pf_hf_media_dialog:refresh()
+    local object=level.object_by_id(self.id)
+    if not object then return end
+    self.title:SetText(translate(self.kind=="radio" and "pf_hf_radio_title" or
+        pf_hf_furniture.definition(object:section()).title))
+    local own=pf_hf_furniture.state(self.id)
+    local status
+    if self.kind=="radio" then
+        local collection,track=pf_hf_media.radio_selection(own)
+        status=string.format("%d / %d",own.track,#collection.tracks)
+        self.track:SetText(track.title and translate(track.title) or track.name)
+        self.power:SetText(translate(own.is_on and "pf_hf_on" or "pf_hf_off"))
+        self.volume_text:SetText(string.format("%d%%",math.floor(own.volume*100+.5)))
+        self:refresh_radio_volume()
+        self.icons.toggle:InitTexture(own.is_on and "ui_pf_hf_radio_stop" or "ui_pf_hf_radio_play")
+        local selected={ordered=own.play_order=="ordered",shuffle=own.play_order=="shuffle",
+            repeat_track=own.repeat_track,yanov=own.collection=="yanov",zonefm=own.collection=="zonefm"}
+        for name,icon in pairs(self.icons) do
+            icon:SetTextureColor(selected[name] and GetARGB(255,205,146,44) or GetARGB(255,205,197,178))
+        end
+        for name,mark in pairs(self.selected) do mark:Show(selected[name]);mark:Enable(false) end
+        self.buttons.ordered:Enable(not selected.ordered)
+        self.buttons.shuffle:Enable(not selected.shuffle)
+        self.buttons.yanov:Enable(own.collection~="yanov")
+        self.buttons.zonefm:Enable(own.collection~="zonefm")
+        self:refresh_radio_hint()
+    else
+        status=translate(pf_hf_media.instrument_name(self.instrument)).." | "..
+            translate("pf_hf_octave").." "..self.octave.." | "..math.floor(own.volume*100+.5).."%"
+        self.hint:SetText(translate("pf_hf_piano_hint"))
+        for index,button in ipairs(self.keys) do
+            local note=pf_hf_media.piano_note((self.octave-1)*12+index-1)
+            button:SetText((note or "").."\n"..piano_keys[index]);button:Enable(note~=nil)
+        end
+    end
+    self.status:SetText(status)
+end
+function pf_hf_media_dialog:change(step)
+    if self.kind=="radio" then
+        pf_hf_media.radio_change_track(self.id,step)
+    else
+        self.instrument=(self.instrument-1+step)%pf_hf_media.instrument_count()+1
+    end
+    self:refresh()
+end
+function pf_hf_media_dialog:volume(amount)
+    local own=pf_hf_furniture.state(self.id)
+    own.volume=math.max(0,math.min(1,own.volume+amount));self:refresh()
+end
+function pf_hf_media_dialog:play(index)
+    local own=pf_hf_furniture.state(self.id)
+    pf_hf_media.play_note(self.id,self.instrument,(self.octave-1)*12+index,own.volume)
+end
+function pf_hf_media_dialog:OnKeyboard(dik,action)
+    if self.kind=="radio" and dik==DIK_keys.MOUSE_1 then
+        if action==ui_events.WINDOW_KEY_PRESSED and contains(self.volume_slider,GetCursorPosition()) then
+            self.volume_drag=true;self:volume_from_cursor();self:refresh()
+        elseif action==ui_events.WINDOW_KEY_RELEASED then self.volume_drag=false end
+        return true
+    end
+    if action==ui_events.WINDOW_KEY_PRESSED then
+        if dik==DIK_keys.DIK_ESCAPE then self:Close();return true end
+        if self.kind=="piano" then
+            for index,key in ipairs(piano_keys) do if dik==DIK_keys["DIK_"..key] then self:play(index-1);return true end end
+        end
+    end
+    return true
+end
+function pf_hf_media_dialog:Update()
+    CUIScriptWnd.Update(self)
+    local object=level.object_by_id(self.id)
+    if not object or not db.actor or not db.actor:alive() or object:position():distance_to(db.actor:position())>3.25 then self:Close();return end
+    if self.kind=="radio" then
+        self:fit_radio_aspect()
+        if self.volume_drag then
+            if contains(self.volume_slider,GetCursorPosition()) then self:volume_from_cursor()
+            else self.volume_drag=false end
+        end
+        self:refresh()
+    end
+end
+function pf_hf_media_dialog:Close()
+    self.volume_drag=false
+    self:HideDialog();pf_hf_media.stop_notes()
+    if active==self then active=nil end
+end
+function force_close() if active then active:Close() end end
+function show(id,kind)
+    if active or level.main_input_receiver() then return false end
+    active=pf_hf_media_dialog(id,kind);active:ShowDialog(true)
+    return true
+end

@@ -1,0 +1,12 @@
+; Furniture rendering performance. Restart the game after editing.
+[pf_hf_performance]
+; Maximum actor-to-furniture distance in metres; must be greater than zero.
+; Only installed models and display-proxy particles are hidden, not the objects.
+; Restore at 95% of this distance; positions, contents and door physics persist.
+visual_cull_distance = 200
+
+; Maximum actor-to-light distance in metres; must be greater than zero.
+; Beyond this distance native lighting, shadows, hum and flame are disabled.
+; Restore at 95% of this distance to avoid flicker near the boundary.
+; The saved on/off state and the furniture model are preserved.
+light_cull_distance = 100

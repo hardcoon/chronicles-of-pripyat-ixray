@@ -1,0 +1,125 @@
+-- Keep physics inert and restore lamp/radio state after save/load or respawn.
+local function configured_light_distance()
+    local ini=type(system_ini)=="function" and system_ini() or nil
+    local section,key="pf_hf_performance","light_cull_distance"
+    local distance=ini and ini:section_exist(section) and ini:line_exist(section,key) and
+        tonumber(ini:r_string(section,key)) or nil
+    if not distance or distance~=distance or distance<=0 or distance>=math.huge then return 100 end
+    return distance
+end
+local light_distance=configured_light_distance()
+local light_distance_sq=light_distance*light_distance
+local light_return_sq=(light_distance*.95)^2
+local function light_in_range(binder)
+    if not db.actor then binder.light_culled=true;return false end
+    local a=db.actor:position()
+    local b=binder.object:bone_position(binder.entry.light.main_bone)
+    local dx,dy,dz=a.x-b.x,a.y-b.y,a.z-b.z
+    local distance_sq=dx*dx+dy*dy+dz*dz
+    if binder.light_culled then
+        if distance_sq<=light_return_sq then binder.light_culled=false end
+    else binder.light_culled=distance_sq>light_distance_sq end
+    return not binder.light_culled
+end
+function init(object) object:bind_object(pf_hf_static_furniture(object)) end
+class "pf_hf_static_furniture" (object_binder)
+function pf_hf_static_furniture:__init(object) super(object)
+    self.frozen=false
+    self.last_on=nil
+    pf_hf_furniture.apply_tip(object)
+end
+function pf_hf_static_furniture:net_spawn(server)
+    if not object_binder.net_spawn(self,server) then return false end
+    self.entry=pf_hf_furniture.definition(self.object:section())
+    self.object:set_callback(callback.use_object,self.use_callback,self)
+    return true
+end
+function pf_hf_static_furniture:use_callback(object,who)
+    -- Primary USE is dispatched on release by the shared gesture controller.
+    -- Script callers may still invoke the object's normal interaction.
+    if self.entry.kind~="stash" and db.actor and who and who:id()==db.actor:id() then
+        pf_hf_furniture.interact(self.object:id())
+    end
+end
+function pf_hf_static_furniture:update(delta)
+    object_binder.update(self,delta)
+    if not self.tip_set then
+        pf_hf_furniture.apply_tip(self.object);self.tip_set=true
+    end
+    if not self.frozen and self.entry.kind~="stash" then
+        local shell=self.object:get_physics_shell()
+        if shell and shell:get_elements_number()>0 then
+            local root=shell:get_element_by_order(0)
+            if root and root.fix then root:fix();self.frozen=true end
+        end
+    end
+    local rendered=pf_hf_visuals.update(self)
+    -- Bone-only presentation (clock digits/cans) resumes from current data.
+    -- Fan animation and radio playback keep their existing simulation state.
+    if rendered or self.entry.kind=="fan" then pf_hf_expansion.update_object(self,self.entry) end
+    if self.entry.kind=="light" then
+        local own=pf_hf_furniture.state(self.object:id())
+        local lamp=self.object:get_hanging_lamp()
+        if not own or not lamp then return end
+        local mode=pf_hf_furniture.light_mode(self.entry.object,self.object:id())
+        if self.last_light_mode~=mode and pf_hf_furniture.apply_light_mode(lamp,self.entry,mode) then
+            self.last_light_mode=mode
+        end
+        own.condition=1;own.last_time=nil -- All lights have unlimited power.
+        local in_range=light_in_range(self)
+        local emitting=own.is_on and in_range and rendered
+        local changed=emitting~=lamp:is_on()
+        if changed then if emitting then lamp:turn_on() else lamp:turn_off() end end
+        -- TurnOff unregisters the native light/ambient/glow but also hides its
+        -- bone. Restore the model for distance culling without enabling light.
+        if changed or self.last_on~=own.is_on then
+            self.object:set_bone_visible(self.entry.light.main_bone,own.is_on,true)
+        end
+        if self.last_on~=own.is_on then
+            if self.entry.hide_bone then self.object:set_bone_visible(self.entry.hide_bone,own.is_on,true) end
+            local path=own.is_on and self.entry.snd_turn_on or self.entry.snd_turn_off
+            if path and self.last_on~=nil then
+                pcall(function() sound_object(path):play_no_feedback(self.object,sound_object.s3d,0,self.object:position(),.6*(self.entry.sound_scale or 1)) end)
+            end
+            self.last_on=own.is_on
+        end
+        if not emitting and self.hum then self.hum:stop();self.hum=nil end
+        if emitting and self.entry.snd_on then
+            if not self.hum or not self.hum:playing() then
+                local path=self.entry.snd_on
+                self.hum=sound_object(path)
+                self.hum:play_at_pos(self.object,self.object:position(),0,sound_object.s3d)
+                self.hum.volume=.25*(self.entry.sound_scale or 1)
+            end
+            self.hum:set_position(self.object:position())
+        end
+        if self.entry.particle then
+            if emitting then
+                if not self.flame then self.flame=particles_object(self.entry.particle) end
+                local position=self.object:bone_position("bone_light")
+                if not self.flame:playing() then self.flame:play_at_pos(position) end
+                self.flame:move_to(position,vector():set(0,0,0))
+            elseif self.flame then
+                self.flame:stop();self.flame=nil
+            end
+        end
+    elseif self.entry.kind=="radio" then
+        pf_hf_media.update_radio(self.object,self)
+    elseif pf_hf_displays.has_profile(self.object:section()) then
+        if not self.display_due or time_global()>=self.display_due then
+            pf_hf_displays.sync(self.object);self.display_due=time_global()+250
+        end
+    end
+end
+function pf_hf_static_furniture:net_destroy()
+    self.object:set_callback(callback.use_object,nil)
+    pf_hf_expansion.cleanup(self)
+    if self.radio_sound then self.radio_sound:stop();self.radio_sound=nil end
+    if self.hum then self.hum:stop();self.hum=nil end
+    if self.flame then self.flame:stop();self.flame=nil end
+    if pf_hf_displays.has_profile(self.object:section()) and not alife():object(self.object:id(),true) then
+        pf_hf_displays.clear(self.object:id())
+    end
+    object_binder.net_destroy(self)
+end
+function pf_hf_static_furniture:net_save_relevant() return true end

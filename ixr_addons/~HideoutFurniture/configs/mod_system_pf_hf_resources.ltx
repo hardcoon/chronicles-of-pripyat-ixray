@@ -1,0 +1,179 @@
+; Ten workbench supplies share one inventory atlas. The existing
+; lz_nm_metal_part section keeps its direct +2% repair behavior.
+[pf_hf_fabric]:jup_b200_tech_materials_textolite
+$spawn = "devices\\pf_hf_fabric"
+inv_name = pf_hf_fabric_name
+inv_name_short = pf_hf_fabric_name
+description = pf_hf_fabric_desc
+visual = dynamics\equipments\quest\materials_textolite.ogf
+inv_weight = 0.1
+cost = 120
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_straps]:jup_b200_tech_materials_wire
+$spawn = "devices\\pf_hf_straps"
+inv_name = pf_hf_straps_name
+inv_name_short = pf_hf_straps_name
+description = pf_hf_straps_desc
+visual = dynamics\equipments\quest\materials_wire.ogf
+inv_weight = 0.1
+cost = 150
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 1
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_rubber]:jup_b200_tech_materials_textolite
+$spawn = "devices\\pf_hf_rubber"
+inv_name = pf_hf_rubber_name
+inv_name_short = pf_hf_rubber_name
+description = pf_hf_rubber_desc
+visual = dynamics\equipments\quest\materials_textolite.ogf
+inv_weight = 0.1
+cost = 180
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_plastic]:jup_b200_tech_materials_textolite
+$spawn = "devices\\pf_hf_plastic"
+inv_name = pf_hf_plastic_name
+inv_name_short = pf_hf_plastic_name
+description = pf_hf_plastic_desc
+visual = dynamics\equipments\quest\materials_textolite.ogf
+inv_weight = 0.1
+cost = 180
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 3
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_scrap]:jup_b200_tech_materials_wire
+$spawn = "devices\\pf_hf_scrap"
+inv_name = pf_hf_scrap_name
+inv_name_short = pf_hf_scrap_name
+description = pf_hf_scrap_desc
+visual = dynamics\equipments\quest\materials_wire.ogf
+inv_weight = 0.1
+cost = 150
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 1
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_ceramic]:jup_b200_tech_materials_textolite
+$spawn = "devices\\pf_hf_ceramic"
+inv_name = pf_hf_ceramic_name
+inv_name_short = pf_hf_ceramic_name
+description = pf_hf_ceramic_desc
+visual = dynamics\equipments\quest\materials_textolite.ogf
+inv_weight = 0.1
+cost = 350
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 1
+inv_grid_y = 1
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_oil]:jup_b200_tech_materials_acetone
+$spawn = "devices\\pf_hf_oil"
+inv_name = pf_hf_oil_name
+inv_name_short = pf_hf_oil_name
+description = pf_hf_oil_desc
+visual = dynamics\equipments\quest\box_kanifol.ogf
+inv_weight = 0.1
+cost = 250
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 1
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_electronics]:jup_b200_tech_materials_transistor
+$spawn = "devices\\pf_hf_electronics"
+inv_name = pf_hf_electronics_name
+inv_name_short = pf_hf_electronics_name
+description = pf_hf_electronics_desc
+visual = dynamics\equipments\quest\box_transistors.ogf
+inv_weight = 0.1
+cost = 500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 3
+inv_grid_y = 1
+icons_texture = ui\ui_pf_hf_resources
+
+[pf_hf_dampers]:jup_b200_tech_materials_wire
+$spawn = "devices\\pf_hf_dampers"
+inv_name = pf_hf_dampers_name
+inv_name_short = pf_hf_dampers_name
+description = pf_hf_dampers_desc
+; Temporary world model until a dedicated pair of shock absorbers is authored.
+visual = dynamics\equipments\quest\box_toolkit_1.ogf
+inv_weight = 0.1
+cost = 420
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 4
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_resources
+
+; Keep the existing item section and direct +2% action, but use the approved
+; weapon-parts image from the shared workbench resource atlas.
+![lz_nm_metal_part]
+inv_name = pf_hf_weapon_part_item_name
+inv_name_short = pf_hf_weapon_part_item_name
+inv_weight = 0.1
+can_trade = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 4
+inv_grid_y = 1
+icons_texture = ui\ui_pf_hf_resources
+
+![inventory_sort_registry]
+pf_hf_fabric = materials
+pf_hf_straps = materials
+pf_hf_rubber = materials
+pf_hf_plastic = materials
+pf_hf_scrap = materials
+pf_hf_ceramic = materials
+pf_hf_oil = materials
+pf_hf_electronics = materials
+pf_hf_dampers = materials

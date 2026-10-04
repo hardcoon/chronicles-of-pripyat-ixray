@@ -1,0 +1,39 @@
+; Wooden crate; internal section names retained for existing saves.
+[pf_hf_test_crate]:physic_object
+damage_immune = true
+visual = dynamics\box\box_wood_01.ogf
+fixed_bones = link
+script_binding = pf_hf_test_crate_binder.init
+
+[pf_hf_test_crate_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_test_crate_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\box\box_wood_01.ogf
+inv_name = pf_rt_crate_name
+inv_name_short = pf_rt_crate_name
+description = pf_rt_crate_desc
+inv_weight = 5
+cost = 0
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_test_crate
+use1_text = pf_rt_place
+use1_functor = pf_hf_test_crate.place_item
+
+![inventory_sort_registry]
+pf_hf_test_crate_item = furniture
+pf_hf_workbench_item = furniture
+
+![inventory_sort_groups]
+furniture = 135

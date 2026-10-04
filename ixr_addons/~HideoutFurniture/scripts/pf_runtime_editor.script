@@ -1,0 +1,592 @@
+-- Shared runtime placement service. Object adapters own creation and payment.
+local geometry=pf_runtime_editor_geometry
+local donor=pf_runtime_editor_donor
+local session=nil
+local pending_start=nil
+local start_dispatcher=nil -- Strong reference: CDialogHolder stores a raw pointer.
+local serial=0
+local registered=false
+local default_collision=true
+local default_surface=false
+local placement_sound=nil
+local KEY_SIMPLE=DIK_keys.DIK_1
+local KEY_ADVANCED=DIK_keys.DIK_2
+local KEY_ALIGN=DIK_keys.DIK_CAPITAL or DIK_keys.DIK_CAPSLOCK
+local KEY_COLLISION=DIK_keys.DIK_TAB
+
+local function report(message,...)
+    local text="[pf_runtime_editor] "..string.format(message,...)
+    -- ixray_global disables log/printf even in otherwise useful game logs.
+    if type(SemiLog)=="function" then SemiLog(text) else printf("%s",text) end
+    pcall(function()
+        local file=io.open(getFS():update_path("$logs$","pf_runtime_editor_runtime.log"),"a")
+        if file then file:write(text.."\n");file:close() end
+    end)
+end
+local function notify(id)
+    if db.actor then db.actor:give_game_news(game.translate_string("st_tip"),
+        game.translate_string(id),"pf_news_item_received",0,3000) end
+end
+local function color(r,g,b) return fcolor():set(r,g,b,1) end
+local function target_distance(s)
+    local distance=level.get_target_dist()
+    return distance and distance>0 and distance or s.spec.initial_distance
+end
+local function use_key()
+    -- bind_to_dik belongs to Anomaly; IX-Ray exports the reverse lookup.
+    for key=1,DIK_keys.MOUSE_5 or 517 do
+        if dik_to_bind(key)==key_bindings.kUSE then return key end
+    end
+    return DIK_keys.DIK_F
+end
+local function key_label(key)
+    local names={HOME="Home",CAPITAL="CapsLock",TAB="Tab",ESCAPE="Esc",
+        LSHIFT="Shift",LCONTROL="Ctrl",LMENU="Alt",RSHIFT="RShift",RCONTROL="RCtrl",RMENU="RAlt",SPACE="Space",RETURN="Enter"}
+    if key==DIK_keys.MOUSE_1 then return game.translate_string("pf_rt_key_lmb") end
+    if key==DIK_keys.MOUSE_2 then return game.translate_string("pf_rt_key_rmb") end
+    for n=3,5 do if key==DIK_keys["MOUSE_"..n] then return "Mouse"..n end end
+    for name,label in pairs(names) do if DIK_keys["DIK_"..name]==key then return label end end
+    for n=65,90 do local letter=string.char(n);if DIK_keys["DIK_"..letter]==key then return letter end end
+    for n=0,9 do if DIK_keys["DIK_"..n]==key then return tostring(n) end end
+    return tostring(key)
+end
+local function configured_keys(overrides)
+    local result={place=use_key(),move=DIK_keys.MOUSE_1,rotate=DIK_keys.MOUSE_2,
+        height=DIK_keys.DIK_LSHIFT,fine=DIK_keys.DIK_LCONTROL,snap=DIK_keys.DIK_LMENU,
+        collision=KEY_COLLISION,align=KEY_ALIGN,simple=KEY_SIMPLE,advanced=KEY_ADVANCED,cancel=DIK_keys.DIK_ESCAPE}
+    local defaults={};for name,key in pairs(result) do defaults[name]=key end
+    local uses_binding=true
+    local ini=type(system_ini)=="function" and system_ini() or nil
+    for name in pairs(result) do
+        if ini and ini:section_exist("pf_runtime_editor_controls") and ini:line_exist("pf_runtime_editor_controls",name) then
+            local value=ini:r_string("pf_runtime_editor_controls",name):upper():gsub("^DIK_","")
+            local key=name=="place" and value=="USE" and use_key() or DIK_keys[value] or DIK_keys["DIK_"..value]
+            if key then
+                result[name]=key
+                if name=="place" then uses_binding=value=="USE" end
+            else report("unknown control %s=%s; using default",name,value) end
+        end
+        if overrides and overrides[name] then
+            result[name]=overrides[name]
+            if name=="place" then uses_binding=false end
+        end
+    end
+    local used={}
+    for name,key in pairs(result) do
+        if used[key] then
+            report("conflicting controls %s/%s; using defaults",name,used[key])
+            return defaults,true
+        end
+        used[key]=name
+    end
+    return result,uses_binding
+end
+function control_labels()
+    local keys=session and session.keys or configured_keys()
+    return {key_interact=key_label(keys.place),key_collision=key_label(keys.collision),
+        key_align=key_label(keys.align),key_simple=key_label(keys.simple),key_mode=key_label(keys.advanced),key_escape=key_label(keys.cancel),
+        key_lmb=key_label(keys.move),key_rmb=key_label(keys.rotate),
+        key_mouse=game.translate_string("pf_rt_key_mouse"),key_shift=key_label(keys.height),
+        key_ctrl=key_label(keys.fine),key_alt=key_label(keys.snap)}
+end
+
+function available()
+    local native=rawget(_G,"debug_render")
+    return native and type(native.api_version)=="function" and native.api_version()==1 and
+        native.available() and type(level.capture_editor_input)=="function"
+end
+function is_active() return session~=nil or pending_start~=nil end
+function get_state() return session and session.state or "IDLE" end
+function get_pose()
+    local p=session and session.pose
+    if not p then return nil end
+    return {position=geometry.copy(p.position),rotation=geometry.copy(p.rotation),
+        level_vertex_id=p.level_vertex_id,game_vertex_id=p.game_vertex_id}
+end
+
+local function source_exists(s)
+    if not db.actor or not db.actor:alive() or db.actor:id()~=s.actor_id then return false end
+    if not s.spec.source_item_id then return true end
+    local simulator=alife()
+    local item=simulator and simulator:object(s.spec.source_item_id,true)
+    return item and tonumber(item.parent_id)==s.actor_id and
+        (not s.spec.source_section or item:section_name()==s.spec.source_section)
+end
+
+local function cleanup(reason,confirmed)
+    local old=session
+    if not old then return false end
+    session=nil -- callbacks can re-enter; cleanup itself remains idempotent.
+    if old.input_token then pcall(level.release_editor_input,old.input_token) end
+    if old.controls then pcall(function() old.controls:HideDialog() end) end
+    if old.hud then pcall(level.remove_dialog_to_render,old.hud) end
+    if old.prefix then pcall(debug_render.clear_owner,old.prefix) end
+    if db.actor and db.actor:id()==old.actor_id and old.saved_slot then
+        pcall(function() db.actor:activate_slot(old.saved_slot) end)
+    end
+    if not confirmed and old.spec.on_cancel then
+        local ok,err=pcall(old.spec.on_cancel,reason or "cancel")
+        if not ok then report("cancel callback failed: %s",tostring(err)) end
+    end
+    report("session finished: %s",reason or "cancel")
+    return true
+end
+local function detach_start_dispatcher()
+    if start_dispatcher then
+        -- Also hide explicitly: RemoveDialogToRender can miss a pending addition.
+        start_dispatcher:Show(false)
+        level.remove_dialog_to_render(start_dispatcher)
+    end
+end
+function cancel(reason)
+    local queued=pending_start
+    if queued then
+        pending_start=nil
+        detach_start_dispatcher()
+        if queued.on_cancel then pcall(queued.on_cancel,reason or "cancel") end
+    end
+    return cleanup(reason or "cancel",false) or queued~=nil
+end
+
+-- level.add_call runs in CLevel::script_gc, which can overlap UI rendering.
+-- Inventory factories call this from the input handler; only the UI's next
+-- Update may close inventory, acquire input and allocate a placement preview.
+function defer_start(callback,on_cancel)
+    if is_active() then return false,"busy" end
+    if type(callback)~="function" then return false,"bad_callback" end
+    local ok,err=xpcall(function()
+        start_dispatcher=start_dispatcher or ui_pf_runtime_editor.create_dispatcher()
+        pending_start={run=callback,on_cancel=on_cancel}
+        start_dispatcher:Show(true)
+        level.add_dialog_to_render(start_dispatcher)
+    end,debug.traceback)
+    if not ok then
+        cancel("queue_failed")
+        report("queue failed: %s",tostring(err))
+        return false,tostring(err)
+    end
+    return true
+end
+function flush_start()
+    local queued=pending_start
+    pending_start=nil
+    detach_start_dispatcher()
+    if not queued then return end
+    local ok,err=xpcall(queued.run,debug.traceback)
+    if not ok then
+        cancel("start_failed")
+        if queued.on_cancel then pcall(queued.on_cancel,"start_failed") end
+        report("deferred start failed: %s",tostring(err))
+        notify("pf_rt_start_failed")
+    end
+end
+
+local function line(s,name)
+    return debug_render.add_object(s.prefix..name,DBG_ScriptObject.line):cast_dbg_line()
+end
+local function allocate_preview(s)
+    s.lines={}
+    for i=1,12 do s.lines[i]=line(s,"edge_"..i) end
+    s.contacts={}
+    for i=1,42 do s.contacts[i]=line(s,"contact_"..i) end
+    s.pivot=debug_render.add_object(s.prefix.."pivot",DBG_ScriptObject.sphere):cast_dbg_sphere()
+    if s.spec.visual then
+        if type(debug_render.add_model)~="function" then error("preview_model_api_missing") end
+        local path=s.spec.visual:gsub("%.ogf$",".hfpm")
+        s.model=debug_render.add_model(s.prefix.."model",path)
+        if not s.model:valid() then error("preview_model_missing: "..path) end
+    end
+end
+local function draw_line(handle,a,b,tint)
+    handle.point_a=a;handle.point_b=b;handle.color=tint;handle.visible=true
+end
+local function render_preview(s,vertices,quaternion)
+    if s.model then
+        local transform=matrix():identity()
+        transform.i=quaternion:rotate_vector(vector():set(1,0,0))
+        transform.j=quaternion:rotate_vector(vector():set(0,1,0))
+        transform.k=quaternion:rotate_vector(vector():set(0,0,1))
+        transform.c=geometry.copy(s.pose.position)
+        s.model.matrix=transform
+        s.model.color=fcolor():set(1,1,1,.42)
+        s.model.visible=true
+    end
+    local green,front,red=color(.3,.7,1),color(.55,.82,1),color(1,0,0)
+    for i,pair in ipairs(geometry.edges) do
+        local is_front=i==1 or i==5 or i==9 or i==12
+        draw_line(s.lines[i],vertices[pair[1]],vertices[pair[2]],
+            s.colliding and red or (is_front and front or green))
+    end
+    for _,handle in ipairs(s.contacts) do handle.visible=false end
+    if not s.colliding then
+        local contacts=geometry.contacts(s.collision_ray,s.collision_vertices,nil)
+        for i,c in ipairs(contacts) do
+            if s.contacts[i] then draw_line(s.contacts[i],c.a,c.b,c.point>5 and color(0.5,0.5,0.5) or color(1,1,0)) end
+        end
+    end
+    -- Donor hf_bbox crosshair vertex: centre of the bottom plane, lifted 2 cm.
+    local pivot=geometry.add(s.anchor,quaternion:rotate_vector(vector():set(0,0.02,0)))
+    local transform=matrix():identity()
+    -- IX-Ray exports basis fields, but not Anomaly's matrix:scale method.
+    transform.i=vector():set(0.02,0,0)
+    transform.j=vector():set(0,0.02,0)
+    transform.k=vector():set(0,0,0.02)
+    transform.c=geometry.copy(pivot)
+    s.pivot.matrix=transform;s.pivot.color=color(0,1,0);s.pivot.visible=true
+end
+
+local function update_pose(s,confirming)
+    local cam_pos,cam_dir,freeze_distance
+    if s.state=="HOLDING" then
+        cam_pos,cam_dir=geometry.copy(device().cam_pos),geometry.copy(device().cam_dir)
+    else
+        cam_pos,cam_dir,freeze_distance=s.camera_position,s.camera_direction,s.camera_distance
+    end
+    -- The donor uses HUD's current target distance, including distant targets.
+    -- Only confirmation is limited to five metres; preview follows every frame.
+    local distance=freeze_distance or target_distance(s)
+    local hit=geometry.cast(s.target_ray,cam_pos,cam_dir,1000,db.actor)
+    local align_surface=s.align_surface and s.spec.orientation_mode~="local_minus_z_front"
+    local normal=align_surface and geometry.surface_normal(s.target_ray,cam_pos,cam_dir,1000,db.actor,hit) or nil
+    local anchor,quaternion=donor.calculate_pose(s.offset,s.rotation_offset,s.spec.base_rotation,
+        cam_pos,cam_dir,distance,align_surface,normal)
+    local valid=true
+    s.error=nil
+    if not anchor or not quaternion then
+        -- The donor retains the last preview when a surface normal is unavailable.
+        s.valid=false;s.error="pf_rt_no_surface"
+        if s.hud then s.hud:refresh(s) end
+        return false
+    end
+    local position=geometry.sub(anchor,quaternion:rotate_vector(s.spec.bounds.pivot))
+    local rotation=quaternion:to_euler_angles()
+    if not geometry.finite(position) or not geometry.finite(rotation) then valid=false;s.error="pf_rt_no_surface" end
+    if target_distance(s)>s.spec.max_range then valid=false;s.error="pf_rt_too_far" end
+    -- Furniture does not navigate. The actor supplies ALife bookkeeping IDs;
+    -- the chosen pose may be indoors, upstairs or entirely outside the AI grid.
+    -- Match the donor: never derive placement permission or height from a node.
+    local vertex=db.actor:level_vertex_id()
+    local vertices=geometry.corners(s.spec.bounds,position,quaternion,false)
+    s.collision_vertices=geometry.corners(s.spec.bounds,position,quaternion,true)
+    local colliding=s.check_collision and geometry.collides(s.collision_ray,s.collision_vertices,nil) or false
+    if colliding then valid=false;s.error="pf_rt_collision" end
+    s.valid,s.colliding,s.anchor=valid,colliding,anchor
+    s.pose={position=position,rotation=rotation,level_vertex_id=vertex,game_vertex_id=db.actor:game_vertex_id()}
+    if s.state=="HOLDING" then s.last_distance=distance end
+    if not confirming then
+        render_preview(s,vertices,quaternion)
+        if s.hud then s.hud:refresh(s) end
+    end
+    return valid
+end
+
+function confirm()
+    local s=session
+    if not s or s.confirming then return false end
+    if not source_exists(s) then cancel("source_lost");return false end
+    if not update_pose(s,true) then
+        notify(s.error or "pf_rt_no_surface")
+        if s.hud then s.hud:refresh(s) end
+        return false
+    end
+    s.confirming=true
+    local ok,id,err=pcall(s.spec.on_confirm,get_pose(),s.spec.source_item_id)
+    s.confirming=false
+    if not ok or type(id)~="number" or id~=id or id<0 or id>=65535 or id~=math.floor(id) then
+        s.error="pf_rt_create_failed"
+        report("placement failed: %s",tostring(ok and err or id))
+        if s.hud then s.hud:refresh(s) end
+        return false
+    end
+    local placed_position=geometry.copy(s.pose.position)
+    cleanup("confirmed",true)
+    pcall(function()
+        placement_sound=placement_sound or sound_object("interface\\place_object")
+        placement_sound:play_no_feedback(db.actor,sound_object.s3d,0,placed_position,1)
+    end)
+    return true,id
+end
+
+local function set_state(s,new_state,preserve_transform)
+    local old_state=s.state
+    s.state=new_state
+    -- placeable_furniture.transition_functors, with session-owned storage.
+    if old_state=="HOLDING" and new_state=="ADV_CTRL" then
+        s.camera_position=geometry.copy(device().cam_pos)
+        s.camera_direction=geometry.copy(device().cam_dir)
+        s.camera_distance=target_distance(s)
+    elseif not preserve_transform and new_state=="HOLDING" and (old_state=="ADV_CTRL" or old_state=="PREVIEW" or old_state=="IDLE") then
+        s.offset=geometry.copy(s.spec.initial_offset)
+        s.rotation_offset=0
+    end
+    if s.hud then s.hud:refresh(s) end
+end
+local function close_controls(s)
+    s.controls_shown=false
+    if s.controls then s.controls:HideDialog() end
+end
+local function toggle_collision(s)
+    s.check_collision=not s.check_collision
+    default_collision=s.check_collision
+    notify(s.check_collision and "pf_rt_collision_on" or "pf_rt_collision_off")
+end
+local function toggle_surface(s)
+    if s.spec.orientation_mode=="local_minus_z_front" then s.error="pf_rt_upright_only";notify(s.error)
+    else
+        s.align_surface=not s.align_surface;default_surface=s.align_surface
+        notify(s.align_surface and "pf_rt_surface" or "pf_rt_actor")
+    end
+end
+local function controller_access(s)
+    return {keys=s.keys,
+        get_offset=function() return s.offset end,set_offset=function(v) s.offset=v end,
+        get_rotation=function() return s.rotation_offset end,set_rotation=function(v) s.rotation_offset=v end,
+        confirm=confirm,toggle_collision=function() toggle_collision(s) end,
+        toggle_surface=function() toggle_surface(s) end,
+        set_state=function(state) set_state(s,state) end,close=function() close_controls(s) end}
+end
+function key_down(key)
+    -- Lua input events export legacy mouse codes (337..344), but this IX-Ray
+    -- build polls SDL scancodes (512+100..107). Keyboard codes stay unchanged.
+    for index=1,8 do
+        if key==DIK_keys["MOUSE_"..index] and key<512 then
+            return level.editor_key_down(512+99+index)
+        end
+    end
+    return level.editor_key_down(key)
+end
+local function read_modifiers(controller)
+    local keys=controller.access.keys
+    controller.shift=key_down(keys.height)
+    controller.fine_control=key_down(keys.fine)
+    controller.snap=key_down(keys.snap)
+end
+local function finish_direct_drag(s)
+    if not s.direct_key then return end
+    s.direct_controller:KeyPress(s.direct_key,ui_events.WINDOW_KEY_RELEASED)
+    s.direct_key=nil
+    s.direct_cancelled=false
+end
+local function begin_direct_drag(s,key)
+    s.direct_cursor={x=0,y=0}
+    if not s.direct_controller then
+        local access=controller_access(s)
+        access.get_cursor=function() return s.direct_cursor end
+        s.direct_controller=donor.create(access)
+    end
+    local controller=s.direct_controller
+    controller:Reset()
+    read_modifiers(controller)
+    controller:KeyPress(key,ui_events.WINDOW_KEY_PRESSED)
+    controller:Update() -- Anchor before the first raw mouse event, without a UI window.
+    s.direct_key=key
+    s.direct_cancelled=false
+    local sensitivity=type(get_console)=="function" and get_console():get_float("mouse_sens_ui") or 1
+    local dev=device()
+    -- Match CUICursor's pixel-to-1024x768 conversion and UI mouse sensitivity.
+    s.direct_scale_x=sensitivity*1024/(dev.width or 1024)
+    s.direct_scale_y=sensitivity*768/(dev.height or 768)
+end
+local function rollback_direct_drag(s)
+    local controller=s.direct_controller
+    s.offset=geometry.copy(controller.prev_offset)
+    s.rotation_offset=controller.prev_rot
+    controller.state=controller.states.IDLE
+    s.direct_cancelled=true -- Consume motion until the physical button is released.
+end
+local function open_controls(s)
+    finish_direct_drag(s)
+    if s.state=="HOLDING" or s.state=="PREVIEW" then set_state(s,"ADV_CTRL") end
+    if s.controls_shown then return end
+    s.controls=s.controls or ui_pf_runtime_editor.create_controls()
+    if not s.controller then
+        s.controller=donor.create(controller_access(s))
+    end
+    s.controller:Reset()
+    read_modifiers(s.controller)
+    -- In Anomaly OnKeyboard discards the opening Home event. Our native
+    -- capture has already consumed it, so the next real gesture must work.
+    s.controller.init=true
+    s.controls_shown=true
+    s.controls:ShowDialog(true)
+end
+
+function handle_input(event,key,action,dx,dy)
+    local s=session
+    if not s then return false end
+    local place=key==s.keys.place or (s.place_uses_binding and action==key_bindings.kUSE)
+    if event==3 then
+        if s.direct_key then
+            if not s.direct_cancelled then
+                s.direct_cursor.x=s.direct_cursor.x+dx*s.direct_scale_x
+                s.direct_cursor.y=s.direct_cursor.y+dy*s.direct_scale_y
+                s.direct_controller:Update()
+            end
+            return true
+        end
+        return s.controls_shown or false
+    end
+    if event==4 then return s.controls_shown or false end
+    if key==s.keys.simple or key==s.keys.advanced then
+        if event==0 then
+            if key==s.keys.simple then
+                finish_direct_drag(s);close_controls(s);set_state(s,"HOLDING",true)
+            else open_controls(s) end
+        end
+        return true -- Consume press, hold and release before weapon-slot input.
+    end
+    if s.controls_shown then
+        if event==0 or event==2 then
+            local mapped_key=place and s.keys.place or key
+            s.controller:OnKeyboard(mapped_key,event==0 and ui_events.WINDOW_KEY_PRESSED or ui_events.WINDOW_KEY_RELEASED)
+        end
+        return true
+    end
+    if (s.state=="HOLDING" or s.state=="PREVIEW") and not place then
+        if key==s.keys.move or key==s.keys.rotate then
+            if event==0 and not s.direct_key then begin_direct_drag(s,key)
+            elseif event==2 and key==s.direct_key then finish_direct_drag(s) end
+            return true
+        end
+        if key==s.keys.height or key==s.keys.fine or key==s.keys.snap then
+            if s.direct_key and (event==0 or event==2) then
+                s.direct_controller:KeyPress(key,event==0 and ui_events.WINDOW_KEY_PRESSED or ui_events.WINDOW_KEY_RELEASED)
+                s.direct_controller:Update()
+            end
+            return s.direct_key~=nil
+        end
+    end
+    if event==2 or event==1 then
+        return action==key_bindings.kWPN_FIRE or action==key_bindings.kWPN_ZOOM or action==key_bindings.kUSE or
+            place or key==s.keys.advanced or key==s.keys.align or key==s.keys.collision or key==s.keys.cancel
+    end
+    if event~=0 then return false end
+    if place then confirm();return true end
+    if action==key_bindings.kUSE then return true end
+    if key==s.keys.advanced then open_controls(s);return true end
+    if key==s.keys.collision then toggle_collision(s);return true end
+    if key==s.keys.align then toggle_surface(s);return true end
+    if action==key_bindings.kQUIT or key==s.keys.cancel then
+        if s.direct_key and not s.direct_cancelled then rollback_direct_drag(s);return true end
+        cancel("cancel")
+        return true
+    end
+    if action==key_bindings.kWPN_FIRE or action==key_bindings.kWPN_ZOOM then return true end
+    local allowed=action==key_bindings.kFWD or action==key_bindings.kBACK or
+        action==key_bindings.kL_STRAFE or action==key_bindings.kR_STRAFE or
+        action==key_bindings.kCROUCH or action==key_bindings.kACCEL or
+        action==key_bindings.kJUMP or action==key_bindings.kL_LOOKOUT or action==key_bindings.kR_LOOKOUT or
+        action==key_bindings.kCONSOLE or action==7
+    if not allowed then cancel("other_action") end
+    return false
+end
+
+function begin(spec)
+    if is_active() then return false,"busy" end
+    if not available() then
+        local native=rawget(_G,"debug_render")
+        local version,renderer="missing","missing"
+        if native and type(native.api_version)=="function" then
+            local ok,value=pcall(native.api_version)
+            version=ok and tostring(value) or "error"
+        end
+        if native and type(native.available)=="function" then
+            local ok,value=pcall(native.available)
+            renderer=ok and tostring(value) or "error"
+        end
+        report("API unavailable: version=%s renderer=%s capture_type=%s",version,renderer,type(level.capture_editor_input))
+        notify("pf_rt_engine_missing");return false,"engine_api_missing"
+    end
+    if not db.actor or not alife() then return false,"actor_missing" end
+    if type(spec)~="table" or type(spec.section)~="string" or spec.section=="" or
+        type(spec.on_confirm)~="function" or (spec.on_cancel and type(spec.on_cancel)~="function") then return false,"bad_spec" end
+    local b=spec.bounds
+    if not b or not geometry.finite(b.min) or not geometry.finite(b.max) or
+        b.max.x<=b.min.x or b.max.y<=b.min.y or b.max.z<=b.min.z then return false,"bad_bounds" end
+    local own={}
+    for k,v in pairs(spec) do own[k]=v end
+    own.bounds={min=geometry.copy(b.min),max=geometry.copy(b.max),pivot=geometry.copy(b.pivot or vector():set(0,0,0))}
+    if not geometry.finite(own.bounds.pivot) then return false,"bad_bounds" end
+    own.initial_distance=tonumber(spec.initial_distance) or 2
+    own.max_range=tonumber(spec.max_range) or 5
+    own.base_rotation=tonumber(spec.base_rotation) or 0
+    own.initial_offset=geometry.copy(spec.initial_offset or vector():set(0,0,0))
+    if not geometry.finite(own.initial_offset) then return false,"bad_offset" end
+    if own.max_range~=own.max_range or own.initial_distance~=own.initial_distance or
+        own.base_rotation~=own.base_rotation or math.abs(own.base_rotation)==math.huge or own.max_range<=0 or own.max_range>20 or own.initial_distance<=0 or own.initial_distance>own.max_range then return false,"bad_range" end
+    serial=serial+1
+    local controls=spec.controls or {}
+    local keys,place_uses_binding=configured_keys(controls)
+    local s={spec=own,actor_id=db.actor:id(),level_name=level.name(),state="IDLE",
+        offset=vector():set(0,0,0),rotation_offset=0,
+        check_collision=spec.check_collision==true or (spec.check_collision==nil and default_collision),
+        align_surface=(spec.align_surface==true or (spec.align_surface==nil and default_surface)) and spec.orientation_mode~="local_minus_z_front",
+        keys=keys,place_uses_binding=place_uses_binding,
+        prefix="pf_runtime_editor_"..serial.."_",target_ray=ray_pick(),collision_ray=ray_pick()}
+    if not source_exists(s) then return false,"source_lost" end
+    local hud=get_hud()
+    if hud then hud:HideActorMenu() end
+    if level.main_input_receiver() then return false,"modal_ui_active" end
+    local interaction=rawget(_G,"pf_hf_interaction")
+    if interaction then interaction.suspend() end
+    session=s
+    set_state(s,"HOLDING")
+    local stage="input"
+    local ok,err=xpcall(function()
+        s.input_token=level.capture_editor_input(handle_input)
+        if not s.input_token or s.input_token==0 then error("input_busy") end
+        stage="active_slot"
+        s.saved_slot=db.actor:active_slot()
+        db.actor:activate_slot(0)
+        stage="primitives"
+        allocate_preview(s)
+        stage="hud"
+        s.hud=ui_pf_runtime_editor.create_hud()
+        stage="hud_registration"
+        level.add_dialog_to_render(s.hud)
+        stage="first_pose"
+        update_pose(s,false)
+    end,debug.traceback)
+    if not ok then
+        cleanup("initialization_failed",false)
+        report("start failed at %s: %s",stage,tostring(err))
+        notify("pf_rt_start_failed")
+        return false,tostring(err)
+    end
+    report("started %s",own.section)
+    return true
+end
+
+function update()
+    local s=session
+    if not s then return end
+    if not source_exists(s) or level.name()~=s.level_name then cancel("owner_lost");return end
+    if level.editor_input_owner()~=s.input_token then cancel("capture_lost");return end
+    local receiver=level.main_input_receiver()
+    if receiver and (s.state~="ADV_CTRL" or receiver:WindowName()~="pf_runtime_editor_controls") then
+        cancel("modal_ui");return
+    end
+    local ok,err=pcall(function()
+        if s.controls_shown then s.controller:Update() end
+        if s.direct_key then
+            if not s.direct_cancelled then s.direct_controller:Update() end
+            if not key_down(s.direct_key) then finish_direct_drag(s) end
+        end
+        if db.actor:active_slot()~=0 then db.actor:activate_slot(0) end
+        update_pose(s,false)
+    end)
+    if not ok then report("update failed: %s",tostring(err));cancel("runtime_error") end
+end
+
+function on_load() cancel("load") end
+function on_game_start()
+    if not registered then
+        -- Only HUD::Update drives preview/UI work. Actor/script callbacks can
+        -- run in parallel with rendering when multithreaded scripts are enabled.
+        RegisterScriptCallback("load",on_load)
+        registered=true
+    end
+end
+
+-- IX-Ray common scripts are imported; on_game_start is not invoked for them.
+on_game_start()

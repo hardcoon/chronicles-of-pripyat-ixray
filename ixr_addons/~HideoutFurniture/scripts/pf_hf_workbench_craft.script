@@ -1,0 +1,282 @@
+-- Workbench crafting is kept inside HideoutFurniture so the portable bench,
+-- its recipes and its transaction rules can be moved as one addon.
+local core = lz_nm_core
+
+local MATERIAL_ORDER = {
+	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
+	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_electronics", "pf_hf_dampers",
+	"pf_hf_oil", "lz_nm_metal_part", "jup_b200_tech_materials_wire",
+	"jup_b200_tech_materials_textolite", "jup_b200_tech_materials_transistor",
+	"jup_b200_tech_materials_capacitor", "lz_ph_reflash_module"
+}
+
+local EFFECT_BY_OUTPUT = {
+	itm_repairkit_tier_1 = "pf_hf_craft_effect_rough",
+	itm_repairkit_tier_2 = "pf_hf_craft_effect_fine",
+	itm_repairkit_tier_soft = "pf_hf_craft_effect_soft",
+	itm_repairkit_tier_3 = "pf_hf_craft_effect_calibration",
+	itm_field_upgrade_kit_blue = "pf_hf_craft_effect_magazine",
+	itm_field_upgrade_kit_red = "pf_hf_craft_effect_reload",
+	itm_field_upgrade_kit_yellow = "pf_hf_craft_effect_caliber",
+	itm_field_upgrade_kit_green = "pf_hf_craft_effect_weight",
+	lz_nm_armor_pouch = "pf_hf_craft_effect_pouch",
+	lz_nm_rubber_padding = "pf_hf_craft_effect_lead_insert",
+	pda_hack_usb_3 = "pf_hf_craft_effect_usb_3",
+	lz_nm_radio_beacon = "pf_hf_craft_effect_radio_beacon",
+	pf_anomaly_scanner = "pf_hf_craft_effect_anomaly_scanner"
+}
+
+-- The first eight outputs cover every ordinary field upgrade module. Six are
+-- the modules assembled by Azot; the reload and caliber kits complete the
+-- standard set. The remaining recipes assemble armor components, top-tier
+-- hacking software and field devices.
+local RECIPES = {
+	{
+		output = "itm_repairkit_tier_1",
+		materials = {
+			lz_nm_metal_part = 5,
+			jup_b200_tech_materials_wire = 3,
+			pf_hf_scrap = 3,
+			pf_hf_oil = 2
+		}
+	},
+	{
+		output = "itm_repairkit_tier_2",
+		materials = {
+			lz_nm_metal_part = 5,
+			pf_hf_scrap = 4,
+			pf_hf_ceramic = 2,
+			pf_hf_oil = 2
+		}
+	},
+	{
+		output = "itm_repairkit_tier_soft",
+		materials = {
+			lz_nm_metal_part = 3,
+			pf_hf_dampers = 4,
+			pf_hf_rubber = 3,
+			pf_hf_oil = 2
+		}
+	},
+	{
+		output = "itm_repairkit_tier_3",
+		materials = {
+			lz_nm_metal_part = 3,
+			jup_b200_tech_materials_textolite = 2,
+			pf_hf_electronics = 3,
+			pf_hf_scrap = 2,
+			pf_hf_oil = 2
+		}
+	},
+	{
+		output = "itm_field_upgrade_kit_blue",
+		materials = {
+			lz_nm_metal_part = 5,
+			jup_b200_tech_materials_wire = 3,
+			pf_hf_plastic = 4,
+			pf_hf_scrap = 2,
+			pf_hf_oil = 2
+		}
+	},
+	{
+		output = "itm_field_upgrade_kit_red",
+		materials = {
+			pf_hf_straps = 10,
+			pf_hf_oil = 10
+		}
+	},
+	{
+		output = "itm_field_upgrade_kit_yellow",
+		materials = {
+			lz_nm_metal_part = 7,
+			pf_hf_scrap = 5,
+			pf_hf_dampers = 2,
+			pf_hf_oil = 3
+		}
+	},
+	{
+		output = "itm_field_upgrade_kit_green",
+		materials = {
+			lz_nm_metal_part = 6,
+			pf_hf_plastic = 6,
+			pf_hf_straps = 3,
+			pf_hf_ceramic = 2,
+			pf_hf_oil = 2
+		}
+	},
+	{
+		output = "lz_nm_armor_pouch",
+		materials = {
+			pf_hf_fabric = 8,
+			pf_hf_straps = 5,
+			pf_hf_rubber = 2,
+			pf_hf_plastic = 2
+		}
+	},
+	{
+		output = "lz_nm_rubber_padding",
+		materials = {
+			pf_hf_scrap = 6,
+			pf_hf_rubber = 2,
+			pf_hf_plastic = 2
+		}
+	},
+	{
+		output = "pda_hack_usb_3",
+		materials = {
+			lz_ph_reflash_module = 3,
+			pf_hf_electronics = 18,
+			jup_b200_tech_materials_textolite = 8,
+			jup_b200_tech_materials_transistor = 8,
+			jup_b200_tech_materials_capacitor = 6,
+			jup_b200_tech_materials_wire = 6,
+			pf_hf_plastic = 7
+		}
+	},
+	{
+		output = "lz_nm_radio_beacon",
+		materials = {
+			pf_hf_electronics = 8,
+			jup_b200_tech_materials_wire = 5,
+			jup_b200_tech_materials_transistor = 3,
+			jup_b200_tech_materials_capacitor = 3,
+			pf_hf_plastic = 5,
+			pf_hf_scrap = 3,
+			pf_hf_straps = 2
+		}
+	},
+	{
+		output = "pf_anomaly_scanner",
+		materials = {
+			pf_hf_electronics = 12,
+			jup_b200_tech_materials_wire = 6,
+			jup_b200_tech_materials_textolite = 5,
+			jup_b200_tech_materials_transistor = 5,
+			jup_b200_tech_materials_capacitor = 5,
+			pf_hf_plastic = 6,
+			pf_hf_ceramic = 4
+		}
+	}
+}
+
+local RECIPE_BY_OUTPUT = {}
+for _, recipe in ipairs(RECIPES) do
+	RECIPE_BY_OUTPUT[recipe.output] = recipe
+end
+
+local function inventory_materials()
+	local counts, objects = {}, {}
+	for _, section in ipairs(MATERIAL_ORDER) do
+		counts[section], objects[section] = 0, {}
+	end
+	if not db.actor then return counts, objects end
+	db.actor:iterate_inventory(function(_, item)
+		local section = item:section()
+		if objects[section] and core.is_actor_owned_item(item) then
+			counts[section] = counts[section] + 1
+			objects[section][#objects[section] + 1] = item
+		end
+	end, db.actor)
+	for _, entries in pairs(objects) do
+		table.sort(entries, function(left, right) return left:id() < right:id() end)
+	end
+	return counts, objects
+end
+
+local function enough(recipe, counts)
+	if not recipe then return false end
+	for section, amount in pairs(recipe.materials) do
+		if (counts[section] or 0) < amount then return false end
+	end
+	return true
+end
+
+local function recipe_category(recipe)
+	local output = recipe and recipe.output or ""
+	if string.find(output, "itm_repairkit_", 1, true) == 1 or
+		string.find(output, "itm_field_upgrade_kit_", 1, true) == 1 then
+		return "upgrades"
+	end
+	return "misc"
+end
+
+function recipes(category)
+	if not category or category == "all" then return RECIPES end
+	local filtered = {}
+	for _, entry in ipairs(RECIPES) do
+		if recipe_category(entry) == category then
+			filtered[#filtered + 1] = entry
+		end
+	end
+	return filtered
+end
+
+function recipe(output)
+	return RECIPE_BY_OUTPUT[output]
+end
+
+function material_order()
+	return MATERIAL_ORDER
+end
+
+function material_counts()
+	return inventory_materials()
+end
+
+function item_label(section)
+	local ini = core.get_sysini()
+	if ini:section_exist(section) and ini:line_exist(section, "inv_name") then
+		return game.translate_string(ini:r_string(section, "inv_name"))
+	end
+	return section
+end
+
+function item_description(section)
+	local ini = core.get_sysini()
+	if ini:section_exist(section) and ini:line_exist(section, "description") then
+		return game.translate_string(ini:r_string(section, "description"))
+	end
+	return ""
+end
+
+function item_effect(section)
+	local text_id = EFFECT_BY_OUTPUT[section]
+	return text_id and game.translate_string(text_id) or ""
+end
+
+function can_craft(output)
+	local selected = recipe(output)
+	local counts = inventory_materials()
+	return enough(selected, counts)
+end
+
+function craft(output)
+	local selected = recipe(output)
+	if not selected or not db.actor then return false, "pf_hf_craft_failed" end
+	local counts, objects = inventory_materials()
+	if not enough(selected, counts) then
+		return false, "pf_hf_need_materials"
+	end
+
+	-- Resolve every source server object before changing inventory. A failed
+	-- lookup leaves both the materials and the result untouched.
+	for section, amount in pairs(selected.materials) do
+		for index = 1, amount do
+			if not core.server_object(objects[section][index]) then
+				return false, "pf_hf_craft_failed"
+			end
+		end
+	end
+
+	local simulation = alife()
+	local result = simulation and simulation:create(output, db.actor:position(),
+		db.actor:level_vertex_id(), db.actor:game_vertex_id(), db.actor:id())
+	if not result then return false, "pf_hf_craft_failed" end
+
+	for section, amount in pairs(selected.materials) do
+		for index = 1, amount do
+			core.release_item(objects[section][index])
+		end
+	end
+	return true, "pf_hf_crafted"
+end

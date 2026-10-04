@@ -135,6 +135,7 @@ function effect_disassemble_item(section, condition, partner_profile_name)
 	return lz_nm_equipment.effect_disassemble_item(section, condition, partner_profile_name)
 end
 function disassemble_detector(item) return lz_nm_equipment.disassemble_detector(item) end
+function disassemble_component(item) return lz_nm_equipment.disassemble_component(item) end
 function on_item_focus_receive(item)
 	local result = lz_nm_equipment.on_item_focus_receive(item)
 	local hacking = rawget(_G, "lz_pda_hacking")

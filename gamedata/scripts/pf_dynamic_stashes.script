@@ -266,6 +266,37 @@ local attachment_migration = {
 -- quest artefacts, multiplayer items and technical scene objects are excluded
 -- deliberately: a random stash must never advance or break a scripted task.
 local loot_pools = {
+	-- Optional workbench overlay: independent of ordinary loot and its RNG.
+	workbench_resources = {
+		basic = {
+			"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber",
+			"pf_hf_plastic", "pf_hf_scrap", "pf_hf_oil"
+		},
+		mid = {
+			"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber",
+			"pf_hf_plastic", "pf_hf_scrap", "pf_hf_oil",
+			"pf_hf_ceramic", "lz_nm_metal_part"
+		},
+		all = {
+			"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber",
+			"pf_hf_plastic", "pf_hf_scrap", "pf_hf_oil",
+			"pf_hf_ceramic", "lz_nm_metal_part",
+			"pf_hf_electronics", "pf_hf_dampers"
+		},
+		advanced = {
+			"pf_hf_ceramic", "lz_nm_metal_part", "pf_hf_electronics", "pf_hf_dampers"
+		},
+		-- About 30% fewer units; selection/drop probabilities stay unchanged.
+		green = { pool = "basic", chance = 40, min = 1, max = 1 },
+		cyan = { pool = "mid", chance = 60, min = 3, max = 4,
+			extra_chance = 15, extra_min = 1, extra_max = 3 },
+		purple = { pool = "all", chance = 100, min = 6, max = 7,
+			extra_chance = 35, extra_min = 6, extra_max = 8 },
+		orange = { pool = "advanced", chance = 100, min = 6, max = 7,
+			extra_pool = "all", extra_chance = 100, extra_min = 6, extra_max = 7, distinct = true },
+		red = { pool = "advanced", chance = 100, min = 8, max = 11,
+			extra_pool = "all", extra_chance = 100, extra_min = 8, extra_max = 11, distinct = true }
+	},
 	provisions = {
 		{ section = "conserva", chance = 20 },
 		{ section = "bread", chance = 30 },
@@ -1681,6 +1712,7 @@ function impl.initialize_slots()
 					conditions_applied = false,
 					loot_materialized = false
 				}
+				impl.ensure_workbench_resources(slots[index])
 			end
 		end
 	end
@@ -2837,6 +2869,100 @@ function impl.build_red_loot()
 	return loot
 end
 
+-- A bundle contains one material, not a different roll for every unit.
+function impl.add_workbench_resource_bundle(loot, pool, count_min, count_max, excluded)
+	local candidates = {}
+	for _, section in ipairs(pool) do
+		if section ~= excluded then candidates[#candidates + 1] = section end
+	end
+	if #candidates == 0 then return nil end
+	local section = impl.random_from(candidates)
+	local count = impl.loot_random(count_min, count_max)
+	for _ = 1, count do impl.add_loot(loot, section) end
+	return section
+end
+
+function impl.add_workbench_resource_bundles(loot, rules)
+	local pools = loot_pools.workbench_resources
+	local first = nil
+	if rules.chance == 100 or impl.roll(rules.chance) then
+		first = impl.add_workbench_resource_bundle(loot, pools[rules.pool], rules.min, rules.max)
+	end
+	-- The cyan/purple second roll is independent of the first.
+	if rules.extra_chance and (rules.extra_chance == 100 or impl.roll(rules.extra_chance)) then
+		impl.add_workbench_resource_bundle(loot, pools[rules.extra_pool or rules.pool],
+			rules.extra_min, rules.extra_max, rules.distinct and first or nil)
+	end
+end
+
+function impl.add_workbench_resources(loot, tier)
+	-- Scripted corpses and raw QA loot are not logical stash slots.
+	if not state.workbench_resource_seed then return false end
+	local pools = loot_pools.workbench_resources
+	local rules = pools[tier]
+	if not rules then return false end
+	local ini = system_ini()
+	-- Soft dependency: disabling the furniture addon must not break stashes.
+	for _, section in ipairs(pools.all) do
+		if not ini:section_exist(section) then return false end
+	end
+	local previous_rng = state.loot_rng
+	state.loot_rng = { value = state.workbench_resource_seed }
+	local ok, result = pcall(impl.add_workbench_resource_bundles, loot, rules)
+	state.loot_rng = previous_rng
+	if not ok then error(result) end
+	return true
+end
+
+-- A private, replayable roll: never advance ordinary loot or reward queues.
+function impl.roll_workbench_resources(slot)
+	local previous_seed = state.workbench_resource_seed
+	state.workbench_resource_seed = impl.slot_loot_seed(slot, "pf_stash_workbench_resources_v1")
+	local bonus = {}
+	local ok, applied = pcall(impl.add_workbench_resources, bonus, slot.tier)
+	state.workbench_resource_seed = previous_seed
+	if not ok then error(applied) end
+	return applied and bonus or nil
+end
+
+-- Adopt the first local patch's unversioned bundles instead of adding them twice.
+function impl.manifest_has_workbench_resources(loot, bonus)
+	local needed, present = {}, {}
+	for _, entry in ipairs(bonus) do
+		needed[entry.section] = (needed[entry.section] or 0) + 1
+	end
+	for _, entry in ipairs(loot) do
+		present[entry.section] = (present[entry.section] or 0) + 1
+	end
+	for section, count in pairs(needed) do
+		if (present[section] or 0) < count then return false end
+	end
+	return true
+end
+
+-- Per-save, per-rotation compatibility; discovered is not the same as searched.
+-- A zero-hit roll is committed too. No save file or global migration flag is used.
+function impl.ensure_workbench_resources(slot)
+	if not slot or not slot.state then return false end
+	local saved = slot.state
+	if saved.workbench_resources_rolled then return true end
+	if saved.hint_checked or saved.depleted then
+		saved.workbench_resources_rolled = true
+		saved.workbench_resources_pending = nil
+		return true
+	end
+	local loot = saved.loot_manifest
+	if type(loot) ~= "table" or #loot == 0 then return false end
+	local bonus = impl.roll_workbench_resources(slot)
+	if not bonus then return false end
+	if not impl.manifest_has_workbench_resources(loot, bonus) then
+		for _, entry in ipairs(bonus) do loot[#loot + 1] = entry end
+		saved.workbench_resources_pending = bonus
+	end
+	saved.workbench_resources_rolled = true
+	return true
+end
+
 function impl.build_loot(tier)
 	local loot = {}
 	if tier == "green" then loot = impl.build_green_loot()
@@ -2871,12 +2997,17 @@ end
 function impl.build_slot_loot(slot)
 	if not slot or not slot.state then return {} end
 	if type(slot.state.loot_manifest) == "table" and #slot.state.loot_manifest > 0 then
+		impl.ensure_workbench_resources(slot)
 		return slot.state.loot_manifest
 	end
 	if type(slot.state.loot_manifest) == "table" then
 		printf("[PF STASH] rebuilding empty loot manifest for slot %s (%s)",
 			tostring(slot.index or "?"), tostring(slot.tier or "?"))
 		slot.state.loot_manifest = nil
+	end
+	local resources = {}
+	if not slot.state.hint_checked and not slot.state.depleted then
+		resources = impl.roll_workbench_resources(slot)
 	end
 	local detector_state = impl.get_persistent_state()
 	local detector_stage = detector_state.red_unique_detector_stage
@@ -2915,7 +3046,10 @@ function impl.build_slot_loot(slot)
 	end
 	impl.add_lore_coordinate_note(loot, slot)
 	local hunter_boots_state = impl.add_hunter_boots_reward(loot, slot.tier)
+	for _, entry in ipairs(resources or {}) do loot[#loot + 1] = entry end
 	slot.state.loot_manifest = loot
+	slot.state.workbench_resources_rolled = resources ~= nil or nil
+	slot.state.workbench_resources_pending = nil
 	if hunter_boots_state then hunter_boots_state.hunter_boots_awarded = true end
 	if jump_isolator_state then jump_isolator_state.jump_isolator_awarded = true end
 	return loot
@@ -3355,14 +3489,49 @@ end
 -- already materialized legacy box can reach this function with defer_loot set.
 function impl.materialize_slot_loot(slot, box)
 	if not slot or not box then return false end
-	if slot.loot_materialized then return true end
+	impl.ensure_workbench_resources(slot)
+	if slot.loot_materialized then return impl.materialize_workbench_resources(slot, box) end
 	local loot = impl.build_slot_loot(slot)
 	local materialized, spawn_error = impl.try_spawn_complete_slot_loot(box.id, slot, loot)
 	if spawn_error then error(spawn_error) end
 	if not materialized then return false end
 	slot.loot_materialized = true
 	slot.state.defer_loot = nil
+	slot.state.workbench_resources_pending = nil
 	slot.conditions_applied = false
+	return true
+end
+
+-- Existing physical boxes receive only the saved supplement, atomically.
+-- Do not opt old containers into different wear/protection rules or refill empties.
+function impl.materialize_workbench_resources(slot, box)
+	local saved = slot and slot.state
+	local pending = saved and saved.workbench_resources_pending
+	if not pending then return true end
+	if saved.hint_checked or saved.depleted then
+		saved.workbench_resources_pending = nil
+		return true
+	end
+	if not box or not slot.loot_materialized then return false end
+	if not impl.has_items(box) then
+		saved.workbench_resources_pending = nil
+		return true
+	end
+	local created_ids = {}
+	for _, entry in ipairs(pending) do
+		local ok, spawned = pcall(impl.spawn_item, entry, box.id, created_ids)
+		if not ok or not spawned then
+			impl.rollback_spawned_items(created_ids)
+			if not slot.workbench_resources_spawn_error then
+				printf("[PF STASH] workbench supplement pending in slot %s: %s",
+					tostring(slot.index), tostring(entry.section))
+				slot.workbench_resources_spawn_error = true
+			end
+			return false
+		end
+	end
+	saved.workbench_resources_pending = nil
+	slot.workbench_resources_spawn_error = nil
 	return true
 end
 
@@ -3668,6 +3837,7 @@ function impl.spawn_slot(slot)
 	slot.conditions_applied = false
 	slot.loot_materialized = true
 	slot.state.defer_loot = nil
+	slot.state.workbench_resources_pending = nil
 	impl.add_tier_marker(slot)
 	impl.ensure_hacking_usb(slot, box)
 	impl.ensure_ghost_city_note(slot, box)
@@ -5182,6 +5352,9 @@ function impl.rotate_slot(slot)
 	slot.state.loot_generation = math.max(
 		0, math.floor(tonumber(slot.state.loot_generation) or 0)) + 1
 	slot.state.loot_manifest = nil
+	slot.state.workbench_resources_rolled = nil
+	slot.state.workbench_resources_pending = nil
+	slot.workbench_resources_spawn_error = nil
 	slot.conditions_applied = false
 	slot.loot_materialized = false
 	impl.add_slot_to_grid(slot)
@@ -5214,6 +5387,9 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 		impl.ensure_purple_discovery_reward(slot, box)
 	end
 	if box and not slot.state.depleted then
+		if allow_materialize and should_materialize and slot.state.workbench_resources_pending then
+			materialized = impl.materialize_workbench_resources(slot, box) or materialized
+		end
 		impl.ensure_hacking_usb(slot, box)
 		impl.ensure_ghost_city_note(slot, box)
 		impl.ensure_pripyat_city_note(slot, box)
@@ -5405,6 +5581,7 @@ function reset()
 	detector_pulse_sound = nil
 	state.loot_rng = nil
 	state.hydration_seed = nil
+	state.workbench_resource_seed = nil
 	state.pending_metal_detector_use = nil
 	state.pending_lore_coordinate_use = nil
 	state.pending_strange_zombied_loot = {}

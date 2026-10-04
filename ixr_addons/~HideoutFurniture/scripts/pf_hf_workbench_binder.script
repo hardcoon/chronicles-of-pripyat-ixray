@@ -1,0 +1,44 @@
+-- Freeze the bench and route F interaction to our own repair UI.
+function init(object)
+	object:bind_object(pf_hf_workbench_static(object))
+end
+
+class "pf_hf_workbench_static" (object_binder)
+
+function pf_hf_workbench_static:__init(object) super(object)
+	pf_hf_furniture.apply_tip(object)
+	self.frozen = false
+end
+
+function pf_hf_workbench_static:net_spawn(server_object)
+	if not object_binder.net_spawn(self, server_object) then return false end
+	self.object:set_callback(callback.use_object, pf_hf_workbench_static.use_callback, self)
+	return true
+end
+
+function pf_hf_workbench_static:update(delta)
+	object_binder.update(self, delta)
+	pf_hf_visuals.update(self)
+	if not self.frozen then
+		local shell = self.object:get_physics_shell()
+		if shell and shell:get_elements_number() > 0 then
+			local root = shell:get_element_by_order(0)
+			if root and root.fix then root:fix() self.frozen = true end
+		end
+	end
+	self.object:set_callback(callback.use_object, pf_hf_workbench_static.use_callback, self)
+end
+
+function pf_hf_workbench_static:net_destroy()
+	self.object:set_callback(callback.use_object, nil)
+	object_binder.net_destroy(self)
+end
+
+function pf_hf_workbench_static:use_callback(object, who)
+	if not db.actor or not who or who:id() ~= db.actor:id() then return end
+	pf_hf_workbench.open(self.object:id())
+end
+
+function pf_hf_workbench_static:net_save_relevant()
+	return true
+end

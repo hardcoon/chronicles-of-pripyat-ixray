@@ -1,0 +1,387 @@
+; Base Hideout Furniture items use the shared IX-Ray placement service.
+
+[pf_hf_case_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_case_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\equipments\case.ogf
+inv_name = pf_hf_case_name
+inv_name_short = pf_hf_case_name
+description = pf_hf_case_desc
+inv_weight = 4
+cost = 3500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 3
+inv_grid_y = 1
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_case]:inventory_box
+damage_immune = true
+visual = pf_hf_furniture\dynamics\equipments\case.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 4
+capacity = 50
+radius = 1
+
+[pf_hf_blue_box_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_blue_box_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\equipments\blue_box.ogf
+inv_name = pf_hf_blue_box_name
+inv_name_short = pf_hf_blue_box_name
+description = pf_hf_blue_box_desc
+inv_weight = 8
+cost = 5000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 3
+inv_grid_y = 2
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_blue_box]:inventory_box
+damage_immune = true
+visual = pf_hf_furniture\dynamics\equipments\blue_box.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 8
+capacity = 100
+radius = 1
+
+[pf_hf_exo_repair_kit_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_exo_repair_kit_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\repair\exo_repair_kit.ogf
+inv_name = pf_hf_exo_repair_kit_name
+inv_name_short = pf_hf_exo_repair_kit_name
+description = pf_hf_exo_repair_kit_desc
+inv_weight = 1.4
+cost = 1000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 5
+inv_grid_y = 0
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_exo_repair_kit]:inventory_box
+damage_immune = true
+visual = pf_hf_furniture\dynamics\repair\exo_repair_kit.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1.4
+capacity = 35
+radius = 1
+
+[pf_hf_sumka6_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_sumka6_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\equipments\sumka6.ogf
+inv_name = pf_hf_sumka6_name
+inv_name_short = pf_hf_sumka6_name
+description = pf_hf_sumka6_desc
+inv_weight = 0.4
+cost = 200
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 4
+inv_grid_y = 3
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_sumka6]:inventory_box
+damage_immune = true
+visual = pf_hf_furniture\dynamics\equipments\sumka6.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.4
+capacity = 10
+radius = 1
+
+[pf_hf_metal_torch_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_metal_torch_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\placeable\metal_torch.ogf
+inv_name = pf_hf_metal_torch_name
+inv_name_short = pf_hf_metal_torch_name
+description = pf_hf_metal_torch_desc
+inv_weight = 0.6
+cost = 3660
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 1
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_metal_torch]:physic_object
+damage_immune = true
+visual = pf_hf_furniture\dynamics\placeable\metal_torch.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.6
+class = SO_HLAMP
+fixed_bones =
+
+[pf_hf_gas_lamp_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_gas_lamp_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\placeable\gas_lamp.ogf
+inv_name = pf_hf_gas_lamp_name
+inv_name_short = pf_hf_gas_lamp_name
+description = pf_hf_gas_lamp_desc
+inv_weight = 0.2
+cost = 6000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 2
+inv_grid_y = 0
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_gas_lamp]:physic_object
+damage_immune = true
+visual = pf_hf_furniture\dynamics\placeable\gas_lamp.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.2
+class = SO_HLAMP
+fixed_bones =
+
+[pf_hf_light_altar_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_light_altar_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\placeable\light_altar.ogf
+inv_name = pf_hf_light_altar_name
+inv_name_short = pf_hf_light_altar_name
+description = pf_hf_light_altar_desc
+inv_weight = 5.0
+cost = 50000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_light_altar]:physic_object
+damage_immune = true
+visual = pf_hf_furniture\dynamics\placeable\light_altar.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 5.0
+class = SO_HLAMP
+fixed_bones =
+
+[pf_hf_piano_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_piano_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\placeable\portable_piano.ogf
+inv_name = pf_hf_piano_name
+inv_name_short = pf_hf_piano_name
+description = pf_hf_piano_desc
+inv_weight = 4
+cost = 8000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 7
+inv_grid_y = 0
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_piano]:physic_object
+damage_immune = true
+visual = pf_hf_furniture\dynamics\placeable\portable_piano.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 4
+fixed_bones = link
+
+[pf_hf_radio_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_radio_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\equipments\trade\radio.ogf
+inv_name = pf_hf_radio_name
+inv_name_short = pf_hf_radio_name
+description = pf_hf_radio_desc
+inv_weight = 0.4
+cost = 1500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 1
+inv_grid_x = 3
+inv_grid_y = 0
+icons_texture = pf_hf_furniture\ui\placeable_devices
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_radio]:physic_object
+damage_immune = true
+visual = pf_hf_furniture\dynamics\equipments\trade\radio.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.4
+fixed_bones = bone01
+physics_config_on_load = true
+
+[pf_hf_weapon_rack_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_weapon_rack_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\equipments\weapon_rack.ogf
+inv_name = pf_hf_weapon_rack_name
+inv_name_short = pf_hf_weapon_rack_name
+description = pf_hf_weapon_rack_desc
+inv_weight = 5
+cost = 1500
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 1
+icons_texture = pf_hf_furniture\ui\weapon_display_icons
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_weapon_rack]:inventory_box
+damage_immune = true
+visual = pf_hf_furniture\dynamics\equipments\weapon_rack.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 5
+capacity = 50
+radius = 1
+
+[pf_hf_pistol_shelf_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hf_pistol_shelf_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_furniture\dynamics\equipments\pistol_shelf.ogf
+inv_name = pf_hf_pistol_shelf_name
+inv_name_short = pf_hf_pistol_shelf_name
+description = pf_hf_pistol_shelf_desc
+inv_weight = 3
+cost = 1000
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 3
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = pf_hf_furniture\ui\weapon_display_icons
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hf_pistol_shelf]:inventory_box
+damage_immune = true
+visual = pf_hf_furniture\dynamics\equipments\pistol_shelf.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 3
+capacity = 25
+radius = 1
+
+![inventory_sort_registry]
+pf_hf_case_item = furniture
+pf_hf_blue_box_item = furniture
+pf_hf_exo_repair_kit_item = furniture
+pf_hf_sumka6_item = furniture
+pf_hf_metal_torch_item = furniture
+pf_hf_gas_lamp_item = furniture
+pf_hf_light_altar_item = furniture
+pf_hf_piano_item = furniture
+pf_hf_radio_item = furniture
+pf_hf_weapon_rack_item = furniture
+pf_hf_pistol_shelf_item = furniture

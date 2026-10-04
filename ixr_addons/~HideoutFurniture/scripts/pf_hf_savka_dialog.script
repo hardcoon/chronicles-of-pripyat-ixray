@@ -1,0 +1,91 @@
+-- Savka's introduction and one-time workbench barter. No actor-update polling.
+local intro_key = "pf_hf_savka_intro_v1"
+local exchanged_key = "pf_hf_savka_workbench_exchanged_v1"
+local food_section = "conserva"
+local workbench_section = "pf_hf_workbench_item"
+local required_cans = 10
+
+local function exchanged()
+    return db.actor ~= nil and
+        xr_logic.pstor_retrieve(db.actor, exchanged_key, false) == true
+end
+
+local function savka_from_speakers(first_speaker, second_speaker)
+    if first_speaker ~= nil and first_speaker:section() == "pf_yanov_savka" then
+        return first_speaker
+    end
+    if second_speaker ~= nil and second_speaker:section() == "pf_yanov_savka" then
+        return second_speaker
+    end
+    return nil
+end
+
+local function collect_cans()
+    local cans = {}
+    if db.actor == nil then return cans end
+    -- Snapshot before transfer: changing the inventory inside its iterator can
+    -- invalidate the iterator or skip members of a displayed stack.
+    db.actor:iterate_inventory(function(_, item)
+        if #cans < required_cans and item:section() == food_section then
+            cans[#cans + 1] = item
+        end
+    end, nil)
+    return cans
+end
+
+function intro_done(first_speaker, second_speaker)
+    return db.actor ~= nil and
+        xr_logic.pstor_retrieve(db.actor, intro_key, false) == true
+end
+
+function needs_intro(first_speaker, second_speaker)
+    return not intro_done(first_speaker, second_speaker)
+end
+
+function complete_intro(first_speaker, second_speaker)
+    if db.actor == nil then return false end
+    xr_logic.pstor_store(db.actor, intro_key, true)
+    return true
+end
+
+function greeting_text(first_speaker, second_speaker)
+    if not intro_done(first_speaker, second_speaker) then return "" end
+    return game.translate_string("pf_yanov_savka_greeting_repeat")
+end
+
+function can_exchange_workbench(first_speaker, second_speaker)
+    return intro_done(first_speaker, second_speaker) and not exchanged() and
+        savka_from_speakers(first_speaker, second_speaker) ~= nil and
+        #collect_cans() == required_cans
+end
+
+function exchange_workbench(first_speaker, second_speaker)
+    if not intro_done(first_speaker, second_speaker) or exchanged() then return false end
+    local npc = savka_from_speakers(first_speaker, second_speaker)
+    local sim = alife()
+    if npc == nil or sim == nil then return false end
+    local actor = db.actor
+    local cans = collect_cans()
+    if #cans ~= required_cans then return false end
+    -- Create the promised reward first. A failed creation must not cost food.
+    local reward = sim:create(workbench_section, actor:position(),
+        actor:level_vertex_id(), actor:game_vertex_id(), actor:id())
+    if reward == nil then
+        printf("! [pf_hf_savka_dialog] cannot create barter workbench")
+        return false
+    end
+    xr_logic.pstor_store(actor, exchanged_key, true)
+    for _, item in ipairs(cans) do actor:transfer_item(item, npc) end
+    if news_manager ~= nil and type(news_manager.relocate_item) == "function" then
+        news_manager.relocate_item(actor, "out", food_section, required_cans)
+        news_manager.relocate_item(actor, "in", workbench_section, 1)
+    end
+    printf("~ [pf_hf_savka_dialog] exchanged %d cans for workbench id=%s",
+        required_cans, tostring(reward.id))
+    return true
+end
+
+function exchange_result_text(first_speaker, second_speaker)
+    return game.translate_string(exchanged() and "pf_yanov_savka_exchange_npc" or
+        "pf_yanov_savka_exchange_failed")
+end

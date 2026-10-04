@@ -1,0 +1,65 @@
+-- HFE 1.0.2 model behavior (HarukaSai): native IX-Ray animation, bones and sound.
+local canned={beans=true,chili=true,conserva=true,corn=true,tomato=true,tushonka=true}
+local medical={medkit=true,medkit_army=true,medkit_scientic=true,bandage=true,antirad=true,
+    drug_booster=true,drug_coagulant=true,drug_psy_blockade=true,drug_antidot=true,
+    drug_radioprotector=true,drug_anabiotic=true}
+local function field(section,name)
+    local ini=system_ini()
+    return ini:section_exist(section) and ini:line_exist(section,name) and ini:r_string(section,name) or ""
+end
+function accepts(kind,item)
+    local section=item:section()
+    if kind=="canned_food" then return canned[section] or false end
+    if kind=="ammo" then return (type(IsAmmo)=="function" and IsAmmo(item)) or field(section,"class")=="AMMO" end
+    if kind=="meds" then
+        return medical[section] or field(section,"kind")=="i_medical" or
+            field("inventory_sort_registry",section)=="medicine"
+    end
+    return true
+end
+function update_object(binder,entry)
+    local object=binder.object
+    if entry.kind=="clock" then
+        local time=string.format("%02d%02d",level.get_time_hours(),level.get_time_minutes())
+        if binder.clock_time==time then return end
+        for index,prefix in ipairs({"h_1","h_2","m_1","m_2"}) do
+            local digit=tonumber(time:sub(index,index))
+            for n=0,9 do object:set_bone_visible("digit_"..prefix.."_"..n,n==digit,false) end
+        end
+        binder.clock_time=time
+    elseif entry.kind=="fan" then
+        local own=pf_hf_furniture.state(object:id())
+        if not own then return end
+        if binder.fan_on~=own.is_on then
+            object:play_cycle(own.is_on and "fan_movement" or "fan_static")
+            if binder.fan_on~=nil then
+                sound_object("pf_hf_expansion\\efp_props\\fan_switch"):play_no_feedback(
+                    object,sound_object.s3d,0,object:position(),.5)
+            end
+            binder.fan_due=time_global()+(binder.fan_on~=nil and 2000 or 0)
+            binder.fan_on=own.is_on
+        end
+        if not own.is_on and binder.fan_sound then binder.fan_sound:stop();binder.fan_sound=nil end
+        if own.is_on then
+            if not binder.fan_sound or not binder.fan_sound:playing() then
+                binder.fan_sound=sound_object("pf_hf_expansion\\efp_props\\fan_idle")
+                binder.fan_sound:play_at_pos(object,object:position(),0,sound_object.s3d+sound_object.looped)
+            end
+            binder.fan_sound.volume=.5*math.max(0,math.min(1,1-(binder.fan_due-time_global())/2000))
+            binder.fan_sound:set_position(object:position())
+        end
+    elseif entry.specialized_storage=="canned_food" then
+        if binder.cans_due and time_global()<binder.cans_due then return end
+        local count=0
+        object:iterate_inventory_box(function() count=count+1 end,object)
+        local visible=count>=48 and 3 or count>=24 and 2 or count>=12 and 1 or 0
+        if binder.cans_visible~=visible then
+            for n=1,3 do object:set_bone_visible("tuna_"..n,n<=visible,false) end
+            binder.cans_visible=visible
+        end
+        binder.cans_due=time_global()+250
+    end
+end
+function cleanup(binder)
+    if binder.fan_sound then binder.fan_sound:stop();binder.fan_sound=nil end
+end

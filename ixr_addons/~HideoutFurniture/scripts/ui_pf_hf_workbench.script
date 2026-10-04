@@ -1,0 +1,1070 @@
+-- Transparent workbench overlay: the real table remains visible behind it.
+local MAX_DISTANCE = 3.25
+local CAMERA_EFFECT_ID = 73241
+local CAMERA_EFFECT = "camera_effects\\pf_hf_workbench_view.anm"
+local CAMERA_BASE_HEIGHT = 1.64
+local UPGRADE_ITEM_Y = 69
+local UPGRADE_NODE_BASE_Y = 211
+local REPAIR_MATERIAL_ICON_Y = 244
+local UPGRADE_MATERIAL_ICON_Y = 283
+local CRAFT_FILTERS = {
+	{ id = "all", text = "pf_hf_craft_filter_all" },
+	{ id = "upgrades", text = "pf_hf_craft_filter_upgrades" },
+	{ id = "misc", text = "pf_hf_craft_filter_misc" }
+}
+local active_dialog = nil
+
+local function tr(id)
+	return game.translate_string(id)
+end
+
+local function section_name(section)
+	local ini = system_ini()
+	if ini:line_exist(section, "inv_name") then
+		return tr(ini:r_string(section, "inv_name"))
+	end
+	return section
+end
+
+local function item_name(item)
+	return section_name(item:section())
+end
+
+local function fit_section_icon(control, section, box_x, box_y, box_width,
+	box_height, allow_enlarge)
+	if not section then control:Show(false) return end
+	local ini = system_ini()
+	local function number(key, fallback)
+		return ini:line_exist(section, key) and
+			(tonumber(ini:r_string(section, key)) or fallback) or fallback
+	end
+	local gx, gy = number("inv_grid_x", 0), number("inv_grid_y", 0)
+	local gw, gh = number("inv_grid_width", 1), number("inv_grid_height", 1)
+	local scale = math.max(number("inv_scale", 1), 0.01)
+	local width, height = math.max(gw * 50 * scale, 1), math.max(gh * 50 * scale, 1)
+	local texture = ini:line_exist(section, "icons_texture") and
+		ini:r_string(section, "icons_texture") or "ui\\ui_icon_equipment"
+	if not pcall(function() control:InitTexture(texture) end) then
+		control:InitTexture("ui\\ui_icon_equipment")
+	end
+	control:SetTextureRect(Frect():set(gx * 50 * scale, gy * 50 * scale,
+		gx * 50 * scale + width, gy * 50 * scale + height))
+	local factor = math.min(box_width / width, box_height / height,
+		allow_enlarge and math.huge or 1)
+	local draw_width, draw_height = width * factor, height * factor
+	control:SetStretchTexture(true)
+	control:SetWndPos(vector2():set(box_x + (box_width - draw_width) * 0.5,
+		box_y + (box_height - draw_height) * 0.5))
+	control:SetWndSize(vector2():set(draw_width, draw_height))
+	control:Show(true)
+end
+
+local function section_description(section)
+	if not section then return "" end
+	local ini = system_ini()
+	return ini:line_exist(section, "description") and
+		tr(ini:r_string(section, "description")) or ""
+end
+
+local function craft_description(section)
+	local description = section_description(section):gsub("\\n", "\n")
+	-- Inventory descriptions may contain installation instructions and complete
+	-- parameter tables. The craft column has seven material rows, so it shows
+	-- the first descriptive sentence and leaves the full text to the inventory.
+	local paragraph = description:match("^(.-)\n%s*\n") or description
+	return paragraph:match("^(.-[%.%!%?])") or paragraph
+end
+
+local function item_description(item)
+	return item and section_description(item:section()) or ""
+end
+
+local function tint_selected_tab(button, selected)
+	-- The underline remains visible on engines without button text tinting.
+	pcall(function()
+		button:SetTextColor(selected and GetARGB(255, 225, 170, 86) or
+			GetARGB(255, 175, 175, 169))
+	end)
+end
+
+local function distance_to_bench(bench)
+	if not db.actor or not bench then return math.huge end
+	local a, b = db.actor:position(), bench:position()
+	local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+	return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function bench_front(id)
+	local sim = alife()
+	local server = sim and sim:object(id, true)
+	local yaw = server and server.angle and tonumber(server.angle.y) or nil
+	if not yaw then return nil end
+	-- The workbench camera always uses the persisted object orientation. The
+	-- actor's approach side and the client physics transform cannot move it.
+	-- X-Ray applies world-object yaw with the opposite mathematical sign.
+	-- The authored model faces local -Z, whose world direction is therefore
+	-- (sin(yaw), -cos(yaw)).
+	-- Always anchor the actor on that side, regardless of where interaction
+	-- started.
+	return math.sin(yaw), -math.cos(yaw)
+end
+
+local function camera_angles(direction)
+	-- CCameraFirstEye stores the inverse of the direction's world yaw.
+	return -direction:getH()
+end
+
+local function equipped_ids()
+	local ids = {}
+	if not db.actor then return ids end
+	for _, slot in ipairs({ 1, 2, 3, 7, 12 }) do
+		local item = db.actor:item_in_slot(slot)
+		if item then ids[item:id()] = true end
+	end
+	return ids
+end
+
+class "pf_hf_workbench_item_row" (CUIScriptWnd)
+
+function pf_hf_workbench_item_row:__init(owner, item, recipe, selected) super()
+	self.owner = owner
+	self.item_id = item and item:id() or nil
+	self.recipe_output = recipe and recipe.output or nil
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_hf_workbench.xml")
+	xml:InitWindow("item_row", 0, self)
+	self.selected = xml:InitStatic("item_row:selected", self)
+	self.button = xml:Init3tButton("item_row:button", self)
+	self.track = xml:InitStatic("item_row:track", self)
+	self.percent = xml:InitTextWnd("item_row:percent", self)
+	self.icon = xml:InitStatic("item_row:icon", self)
+	self.bar = xml:InitProgressBar("item_row:bar", self)
+	self.selected:Enable(false)
+	self.track:Enable(false)
+	self.icon:Enable(false)
+	self.bar:Enable(false)
+	self:Register(self.button, "select")
+	self:AddCallback("select", ui_events.BUTTON_CLICKED, self.Select, self)
+	self.selected:Show(selected == true)
+	if item then
+		local condition = math.floor(item:condition() * 100 + 0.5)
+		self.button:SetText(item_name(item))
+		self.percent:SetText(string.format("%d%%", condition))
+		self.bar:SetProgressPos(condition)
+		fit_section_icon(self.icon, item:section(), 4, 6, 46, 38, false)
+	else
+		self.button:SetText(pf_hf_workbench_craft.item_label(recipe.output))
+		self.percent:Show(false)
+		self.track:Show(false)
+		self.bar:Show(false)
+		fit_section_icon(self.icon, recipe.output, 4, 6, 46, 38, false)
+	end
+	self:SetAutoDelete(false)
+	self:Show(true)
+	self:Enable(true)
+end
+
+function pf_hf_workbench_item_row:__finalize()
+end
+
+function pf_hf_workbench_item_row:Select()
+	self.owner:OnSelectEntry(self.item_id, self.recipe_output)
+end
+
+class "pf_hf_workbench_dialog" (CUIScriptWnd)
+
+function pf_hf_workbench_dialog:__init() super()
+	self:SetAutoDelete(false)
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	self.items = {}
+	self.item_rows = {}
+	self.list_scroll_reset = true
+	self.selected_id = nil
+	self.selected_upgrade_id = nil
+	self.selected_recipe = nil
+	self.tab = "repair"
+	self.source = "equipped"
+	self.craft_filter_id = "all"
+	self.craft_filter_open = false
+	self.bench_id = nil
+	self.saved_position = nil
+	self.saved_camera_direction = nil
+	self.saved_active_slot = nil
+	self.hovered_upgrade_id = nil
+	self:InitControls()
+end
+
+function pf_hf_workbench_dialog:InitControls()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_hf_workbench.xml")
+	xml:InitWindow("main", 0, self)
+	self.repair_fade = xml:InitStatic("main:repair_fade", self)
+	self.repair_fade:Enable(false)
+	self.repair_title = xml:InitTextWnd("main:repair_title", self)
+	self.repair_title_rule = xml:InitStatic("main:repair_title_rule", self)
+	self.item_panel = xml:InitStatic("main:item_panel", self)
+	self.item_icon = xml:InitStatic("main:item_icon", self)
+	self.item_caption = xml:InitTextWnd("main:item_caption", self)
+	self.item_description = xml:InitTextWnd("main:item_description", self)
+	self.tree_panel = xml:InitStatic("main:tree", self)
+	self.tree_accent = xml:InitStatic("main:tree:accent", self.tree_panel)
+	self.tree_heading = xml:InitTextWnd("main:tree:heading", self.tree_panel)
+	self.tree_item_icon = xml:InitStatic("main:tree:upgrade_item_icon", self.tree_panel)
+	self.tree_item_icon:Enable(false)
+	self.tree_buttons = {}
+	self.tree_icons = {}
+	self.tree_bars = {}
+	self.tree_icon_texture = {}
+	for column = 0, 2 do
+		local column_label = xml:InitTextWnd("main:tree:column_" .. column,
+			self.tree_panel)
+		column_label:Show(false)
+		for row = 0, 8 do
+			local name = "node_" .. column .. "_" .. row
+			local key = column .. ":" .. row
+			local icon = xml:InitStatic("main:tree:" .. name .. "_icon",
+				self.tree_panel)
+			icon:Enable(false) -- Keep the visible texture from stealing button clicks.
+			icon:SetStretchTexture(true)
+			self.tree_icons[key] = icon
+			-- Create the transparent button after the icon so its native focus
+			-- strip is rendered above the upgrade picture, as at a technician.
+			local button = xml:Init3tButton("main:tree:" .. name, self.tree_panel)
+			self.tree_buttons[key] = button
+			local bar = xml:InitStatic("main:tree:" .. name .. "_bar",
+				self.tree_panel)
+			bar:Enable(false)
+			self.tree_bars[key] = bar
+			self:Register(button, name)
+			local x, y = column, row
+			self:AddCallback(name, ui_events.BUTTON_CLICKED,
+				function(dialog) dialog:OnUpgradeNode(x, y) end, self)
+		end
+	end
+	self.left = xml:InitStatic("main:left", self)
+	self.right = xml:InitStatic("main:right", self)
+	self.footer = xml:InitStatic("main:footer", self)
+	self.title = xml:InitTextWnd("main:footer:title", self.footer)
+	self.source_equipped_selected = xml:InitStatic("main:left:source_equipped_selected", self.left)
+	self.source_inventory_selected = xml:InitStatic("main:left:source_inventory_selected", self.left)
+	self.footer_selected_tabs = {
+		repair = xml:InitStatic("main:footer:tab_repair_selected", self.footer),
+		upgrade = xml:InitStatic("main:footer:tab_upgrade_selected", self.footer),
+		craft = xml:InitStatic("main:footer:tab_craft_selected", self.footer)
+	}
+	for _, mark in pairs(self.footer_selected_tabs) do mark:Enable(false) end
+	self.source_equipped_selected:Enable(false)
+	self.source_inventory_selected:Enable(false)
+	-- The outer scroll view is a 178 px clipping window with a same-height
+	-- ordinary child, so it never needs its own bar. The real 210 px scroll
+	-- view sits inside that child; its bar is outside the outer scissor while
+	-- wheel input still reaches it through the wrapper.
+	self.item_clip = xml:InitScrollView("main:left:item_clip", self.left)
+	self.item_clip:SetFixedScrollBar(false)
+	self.item_scroll_wrapper = CUIWindow()
+	xml:InitWindow("main:left:item_scroll_wrapper", 0, self.item_scroll_wrapper)
+	self.item_clip:AddWindow(self.item_scroll_wrapper, true)
+	self.item_scroll_wrapper:SetAutoDelete(false)
+	self.item_scroll = xml:InitScrollView(
+		"main:left:item_scroll", self.item_scroll_wrapper)
+	self.item_scroll:SetFixedScrollBar(false)
+	for _, panel in ipairs({ { "left", self.left },
+		{ "right", self.right }, { "footer", self.footer } }) do
+		xml:InitStatic("main:" .. panel[1] .. ":accent", panel[2])
+	end
+	xml:InitStatic("main:left:divider", self.left)
+	self.right_divider_01 = xml:InitStatic("main:right:divider_01", self.right)
+	self.right_divider_02 = xml:InitStatic("main:right:divider_02", self.right)
+	self.left_heading = xml:InitTextWnd("main:left:heading", self.left)
+	self.group = xml:InitTextWnd("main:left:group", self.left)
+	self.right_heading = xml:InitTextWnd("main:right:heading", self.right)
+	self.craft_note = xml:InitTextWnd("main:left:craft_note", self.left)
+	self.craft_detail = xml:InitTextWnd("main:right:craft_detail", self.right)
+	self.hint = xml:InitTextWnd("main:footer:hint", self.footer)
+	self.selected_name = xml:InitTextWnd("main:right:selected_name", self.right)
+	self.selected_source = xml:InitTextWnd("main:right:selected_source", self.right)
+	self.selected_profile = xml:InitTextWnd("main:right:selected_profile", self.right)
+	self.condition_title = xml:InitTextWnd("main:right:condition_title", self.right)
+	self.condition = xml:InitTextWnd("main:right:condition", self.right)
+	self.condition_track = xml:InitStatic("main:right:condition_track", self.right)
+	self.condition_bar = xml:InitProgressBar("main:right:condition_bar", self.right)
+	self.right_heading_rule = xml:InitStatic("main:right:heading_rule", self.right)
+	self.cost_title = xml:InitTextWnd("main:right:cost_title", self.right)
+	self.status = xml:InitTextWnd("main:right:status", self.right)
+	self.upgrade_name = xml:InitTextWnd("main:right:upgrade_name", self.right)
+	self.upgrade_description = xml:InitTextWnd("main:right:upgrade_description", self.right)
+	self.upgrade_effect = xml:InitTextWnd("main:right:upgrade_effect", self.right)
+	self.upgrade_state = xml:InitTextWnd("main:right:upgrade_state", self.right)
+	self.upgrade_cost_title = xml:InitTextWnd("main:right:upgrade_cost_title", self.right)
+	self.empty = xml:InitTextWnd("main:left:empty", self.left)
+	self.material_lines = {}
+	self.material_counts = {}
+	self.material_icons = {}
+	self.material_backgrounds = {}
+	for index = 1, 3 do
+		self.material_backgrounds[index] = xml:InitStatic(
+			string.format("main:right:material_bg_%02d", index), self.right)
+		self.material_lines[index] = xml:InitTextWnd(
+			string.format("main:right:material_%02d", index), self.right)
+		self.material_counts[index] = xml:InitTextWnd(
+			string.format("main:right:material_count_%02d", index), self.right)
+		self.material_icons[index] = xml:InitStatic(
+			string.format("main:right:material_icon_%02d", index), self.right)
+		self.material_lines[index]:SetEllipsis(true)
+	end
+	self.upgrade_material_lines = {}
+	self.upgrade_material_counts = {}
+	self.upgrade_material_icons = {}
+	self.upgrade_material_backgrounds = {}
+	for index = 1, 7 do
+		local suffix = string.format("%02d", index)
+		self.upgrade_material_backgrounds[index] = xml:InitStatic(
+			"main:right:upgrade_material_bg_" .. suffix, self.right)
+		self.upgrade_material_lines[index] = xml:InitTextWnd(
+			"main:right:upgrade_material_" .. suffix, self.right)
+		self.upgrade_material_counts[index] = xml:InitTextWnd(
+			"main:right:upgrade_material_count_" .. suffix, self.right)
+		self.upgrade_material_icons[index] = xml:InitStatic(
+			"main:right:upgrade_material_icon_" .. suffix, self.right)
+		self.upgrade_material_lines[index]:SetEllipsis(true)
+	end
+	-- A normal button-based popup follows the workbench atlas and remains below
+	-- the engine cursor. Native combo boxes render their list in a late overlay.
+	self.craft_filter_button_bg = xml:InitStatic(
+		"main:left:craft_filter_button_bg", self.left)
+	for _, edge in ipairs({ "top", "bottom", "left", "right" }) do
+		local border = xml:InitStatic(
+			"main:left:craft_filter_button_bg:" .. edge,
+			self.craft_filter_button_bg)
+		border:Enable(false)
+	end
+	self.craft_filter_button = xml:Init3tButton(
+		"main:left:craft_filter_button", self.left)
+	self.craft_filter_arrow = xml:InitTextWnd(
+		"main:left:craft_filter_arrow", self.left)
+	self.craft_filter_arrow:Enable(false)
+	self.craft_filter_panel = xml:InitStatic(
+		"main:left:craft_filter_panel", self.left)
+	self.craft_filter_blocker = xml:Init3tButton(
+		"main:left:craft_filter_panel:blocker", self.craft_filter_panel)
+	for _, edge in ipairs({ "border_top", "border_bottom",
+		"border_left", "border_right" }) do
+		local border = xml:InitStatic(
+			"main:left:craft_filter_panel:" .. edge, self.craft_filter_panel)
+		border:Enable(false)
+	end
+	self.craft_filter_options = {}
+	for _, entry in ipairs(CRAFT_FILTERS) do
+		local control_name = "craft_filter_" .. entry.id
+		local button = xml:Init3tButton(
+			"main:left:craft_filter_panel:" .. entry.id, self.craft_filter_panel)
+		button:SetText(tr(entry.text))
+		self.craft_filter_options[entry.id] = button
+		self:Register(button, control_name)
+		local filter_id = entry.id
+		self:AddCallback(control_name, ui_events.BUTTON_CLICKED,
+			function(dialog) dialog:SetCraftFilter(filter_id) end, self)
+	end
+	self:Register(self.craft_filter_button, "craft_filter_toggle")
+	self:AddCallback("craft_filter_toggle", ui_events.BUTTON_CLICKED,
+		self.OnCraftFilterToggle, self)
+	local buttons = {
+		{ "main:footer:pickup", self.footer, "pickup", self.OnPickup },
+		{ "main:footer:tab_repair", self.footer, "tab_repair", self.OnRepairTab },
+		{ "main:footer:tab_upgrade", self.footer, "tab_upgrade", self.OnUpgradeTab },
+		{ "main:footer:tab_craft", self.footer, "tab_craft", self.OnCraftTab },
+		{ "main:footer:close", self.footer, "close", self.OnClose },
+		{ "main:left:source_equipped", self.left, "source_equipped", self.OnEquipped },
+		{ "main:left:source_inventory", self.left, "source_inventory", self.OnInventory },
+		{ "main:right:repair", self.right, "repair", self.OnRepair },
+		{ "main:right:upgrade_action", self.right, "upgrade_action", self.OnInstallUpgrade }
+	}
+	for _, entry in ipairs(buttons) do
+		local button = xml:Init3tButton(entry[1], entry[2])
+		self:Register(button, entry[3])
+		self:AddCallback(entry[3], ui_events.BUTTON_CLICKED, entry[4], self)
+		self[entry[3]] = button
+	end
+	-- Pickup is the common held world USE gesture.
+	self.pickup:Show(false)
+end
+
+function pf_hf_workbench_dialog:Open(bench_id)
+	if self.bench_id then return false end
+	if not level.add_cam_effector_at or not level.remove_cam_effector_at then
+		printf("[HideoutFurniture] workbench requires anchored camera API (COP-ENG-HF-005)")
+		return false
+	end
+	local bench = level.object_by_id(bench_id)
+	if not db.actor or not bench or distance_to_bench(bench) > MAX_DISTANCE then
+		return false
+	end
+	self.bench_id = bench_id
+	self.tab = "repair"
+	self.source = "equipped"
+	self.craft_filter_id = "all"
+	self.craft_filter_open = false
+	self.craft_filter_button:SetText(tr(CRAFT_FILTERS[1].text))
+	self.list_scroll_reset = true
+	self.selected_id = nil
+	self.selected_upgrade_id = nil
+	self.selected_recipe = nil
+	self.hovered_upgrade_id = nil
+	self.status:SetText("")
+	local actor = db.actor
+	local equipped = equipped_ids()
+	local has_equipped = false
+	for _, item in ipairs(pf_hf_workbench_repair.owned_items()) do
+		if equipped[item:id()] then has_equipped = true break end
+	end
+	if not has_equipped then self.source = "inventory" end
+	local old_position = actor:position()
+	self.saved_position = vector():set(old_position)
+	self.saved_camera_direction = vector():set(device().cam_dir)
+	local position = bench:position()
+	local front_x, front_z = bench_front(bench_id)
+	if not front_x then
+		self.bench_id = nil
+		return false
+	end
+	-- The tool case projects beyond the front edge. Keep the actor capsule
+	-- clear of it and let the camera effector supply the close view.
+	local near = vector():set(position.x + front_x * 1.50,
+		position.y, position.z + front_z * 1.50)
+	-- Furniture and its camera use the placed world pose, even outside the
+	-- AI grid. SetActorPosition moves the physics capsule without an AI node.
+	actor:set_actor_position(near)
+	local direction = vector():set(position.x - near.x, 0, position.z - near.z)
+	actor:set_actor_direction(camera_angles(direction))
+	self.saved_active_slot = tonumber(actor:active_slot()) or 0
+	-- Anchor the animation to the table itself. Actor collision, crouching,
+	-- camera inertia and the USE release frame cannot shift this world frame.
+	local camera_position = vector():set(near.x, position.y + CAMERA_BASE_HEIGHT, near.z)
+	local duration = level.add_cam_effector_at(CAMERA_EFFECT, CAMERA_EFFECT_ID,
+		false, "", camera_position, direction)
+	if not duration or duration <= 0 then
+		self:OnClose()
+		return false
+	end
+	level.show_weapon(false)
+	if self.saved_active_slot ~= 0 then actor:activate_slot(0) end
+	local hud = get_hud()
+	if hud then hud:HideActorMenu() end
+	self:Refresh()
+	self:ShowDialog(true)
+	return true
+end
+
+function pf_hf_workbench_dialog:OnClose()
+	self:HideDialog()
+	if level.remove_cam_effector_at then level.remove_cam_effector_at(CAMERA_EFFECT_ID) end
+	local actor = db.actor
+	if actor and self.saved_position then
+		actor:set_actor_position(self.saved_position)
+		-- SetActorDirection resets the view without a closing camera animation.
+		if self.saved_camera_direction then
+			local direction = self.saved_camera_direction
+			actor:set_actor_direction(camera_angles(direction))
+		end
+		level.show_weapon(true)
+		if self.saved_active_slot and self.saved_active_slot ~= 0 and
+			actor:item_in_slot(self.saved_active_slot) then
+			actor:activate_slot(self.saved_active_slot)
+		end
+	end
+	self.saved_position = nil
+	self.saved_camera_direction = nil
+	self.saved_active_slot = nil
+	self.hovered_upgrade_id = nil
+	self.bench_id = nil
+end
+
+function pf_hf_workbench_dialog:OnPickup()
+	local id = self.bench_id
+	if not id then return end
+	self:OnClose()
+	level.add_call(function() return true end, function()
+		pf_hf_workbench.pickup(id)
+	end)
+end
+
+function pf_hf_workbench_dialog:Update()
+	CUIScriptWnd.Update(self)
+	if not self.bench_id then return end
+	local bench = level.object_by_id(self.bench_id)
+	if not db.actor or not bench or distance_to_bench(bench) > MAX_DISTANCE then
+		self:OnClose()
+		return
+	end
+	if self.tab == "upgrade" then
+		local hovered = nil
+		local item = self.selected_id and
+			pf_hf_workbench_repair.find_owned_target(self.selected_id)
+		local graph = item and pf_hf_workbench_upgrade.tree(item)
+		if graph then
+			for key, button in pairs(self.tree_buttons) do
+				local over = false
+				pcall(function() over = button:IsCursorOverWindow() end)
+				if over and graph.coordinates[key] then
+					hovered = graph.coordinates[key]
+					break
+				end
+			end
+		end
+		if hovered ~= self.hovered_upgrade_id then
+			self.hovered_upgrade_id = hovered
+			self:RefreshUpgrade(item)
+		end
+	elseif self.hovered_upgrade_id then
+		self.hovered_upgrade_id = nil
+	end
+end
+
+function pf_hf_workbench_dialog:Refresh()
+	-- Repair is the layout reference for every tab. Switching modes must not
+	-- move the inventory, detail column, title or footer by a single pixel.
+	self.left:SetWndPos(vector2():set(34, 138))
+	self.left:SetWndSize(vector2():set(178, 560))
+	self.right:SetWndPos(vector2():set(816, 73))
+	self.right:SetWndSize(vector2():set(180, 624))
+	self.repair_fade:Show(true)
+	self.repair_title:Show(true)
+	self.repair_title_rule:Show(true)
+	self.right_heading_rule:Show(true)
+	self.title:Show(false)
+	self.hint:Show(false)
+	self.left_heading:Show(false)
+	self.group:Show(false)
+	self.selected_source:Show(false)
+	self.selected_profile:Show(false)
+	self.right_divider_01:Show(self.tab == "repair")
+	self.right_divider_02:Show(self.tab == "repair")
+	self.source_equipped_selected:Show(self.tab ~= "craft" and self.source == "equipped")
+	self.source_inventory_selected:Show(self.tab ~= "craft" and self.source == "inventory")
+	self.craft_filter_button_bg:Show(self.tab == "craft")
+	self.craft_filter_button:Show(self.tab == "craft")
+	self.craft_filter_arrow:Show(self.tab == "craft")
+	local filter_open = self.tab == "craft" and self.craft_filter_open
+	self.craft_filter_panel:Show(filter_open)
+	self.craft_filter_panel:Enable(filter_open)
+	self.item_scroll:Enable(not filter_open)
+	for _, entry in ipairs(CRAFT_FILTERS) do
+		if entry.id == self.craft_filter_id then
+			self.craft_filter_button:SetText(tr(entry.text))
+		end
+		tint_selected_tab(self.craft_filter_options[entry.id],
+			entry.id == self.craft_filter_id)
+	end
+	for name, mark in pairs(self.footer_selected_tabs) do mark:Show(name == self.tab) end
+	self.items = {}
+	self.craft_recipes = pf_hf_workbench_craft.recipes(self.craft_filter_id)
+	if self.tab ~= "craft" then
+		local equipped = equipped_ids()
+		for _, item in ipairs(pf_hf_workbench_repair.owned_items()) do
+			if (equipped[item:id()] == true) == (self.source == "equipped") and
+				(self.tab ~= "upgrade" or
+					(lz_nm_core.is_outfit_or_helmet(item) and pf_hf_workbench_upgrade.tree(item))) then
+				self.items[#self.items + 1] = item
+			end
+		end
+	end
+	self.left_heading:SetText(tr(self.tab == "craft" and "pf_hf_tab_craft" or "pf_hf_items_title"))
+	self.group:SetText(tr(self.tab == "craft" and "pf_hf_recipe_list" or
+		self.tab == "upgrade" and "pf_hf_upgrade_groups" or "pf_hf_item_groups"))
+	self.right_heading:SetText(tr(self.tab == "repair" and "pf_hf_details_title" or
+		self.tab == "upgrade" and "pf_hf_tab_upgrade" or "pf_hf_craft_details_title"))
+	self.source_equipped:SetText(tr("pf_hf_source_equipped"))
+	self.source_inventory:SetText(tr("pf_hf_source_inventory"))
+	self.tab_repair:SetText(tr("pf_hf_tab_repair"))
+	self.tab_upgrade:SetText(tr("pf_hf_tab_upgrade"))
+	self.tab_craft:SetText(tr("pf_hf_tab_craft"))
+	self.pickup:SetText(tr("pf_hf_workbench_pickup"))
+	tint_selected_tab(self.source_equipped, self.source == "equipped")
+	tint_selected_tab(self.source_inventory, self.source == "inventory")
+	tint_selected_tab(self.tab_repair, self.tab == "repair")
+	tint_selected_tab(self.tab_upgrade, self.tab == "upgrade")
+	tint_selected_tab(self.tab_craft, self.tab == "craft")
+	self.hint:SetText(tr(self.tab == "repair" and "pf_hf_controls_hint" or
+		self.tab == "upgrade" and "pf_hf_controls_hint_upgrade" or
+		"pf_hf_controls_hint_craft"))
+	local entry_count = self.tab == "craft" and #self.craft_recipes or #self.items
+	local selection_exists = false
+	for index = 1, entry_count do
+		if self.tab == "craft" then
+			if self.craft_recipes[index].output == self.selected_recipe then
+				selection_exists = true
+				break
+			end
+		elseif self.items[index]:id() == self.selected_id then
+			selection_exists = true
+			break
+		end
+	end
+	if not selection_exists then
+		if self.tab == "craft" then
+			self.selected_recipe = self.craft_recipes[1] and
+				self.craft_recipes[1].output or nil
+		else
+			self.selected_id = self.items[1] and self.items[1]:id() or nil
+			self.selected_upgrade_id = nil
+		end
+	end
+	local scroll_position = self.list_scroll_reset and 0 or
+		self.item_scroll:GetCurrentScrollPos()
+	self.item_scroll:Clear()
+	self.item_rows = {}
+	for index = 1, entry_count do
+		local item = self.tab ~= "craft" and self.items[index] or nil
+		local recipe = self.tab == "craft" and self.craft_recipes[index] or nil
+		local selected = item and item:id() == self.selected_id or
+			recipe and recipe.output == self.selected_recipe
+		local row = pf_hf_workbench_item_row(self, item, recipe, selected)
+		self.item_scroll:AddWindow(row, true)
+		row:SetAutoDelete(false)
+		self.item_rows[#self.item_rows + 1] = row
+	end
+	self.item_clip:Show(entry_count > 0)
+	self.item_scroll:Show(entry_count > 0)
+	self.item_scroll:SetScrollPos(scroll_position)
+	self.list_scroll_reset = false
+	self.source_equipped:Show(self.tab ~= "craft")
+	self.source_inventory:Show(self.tab ~= "craft")
+	self.group:Show(false)
+	self.selected_name:Show(self.tab == "repair")
+	self.selected_source:Show(false)
+	self.selected_profile:Show(false)
+	self.condition_title:Show(self.tab == "repair" and self.selected_id ~= nil)
+	self.condition:Show(self.tab == "repair" and self.selected_id ~= nil)
+	self.condition_track:Show(self.tab == "repair" and self.selected_id ~= nil)
+	self.condition_bar:Show(self.tab == "repair" and self.selected_id ~= nil)
+	self.cost_title:Show(self.tab == "repair" and self.selected_id ~= nil)
+	self.status:Show(self.tab == "repair")
+	for index, line in ipairs(self.material_lines) do
+		local visible = self.tab == "repair" and self.selected_id ~= nil
+		line:Show(visible)
+		self.material_counts[index]:Show(visible)
+		self.material_icons[index]:Show(visible)
+		self.material_backgrounds[index]:Show(visible)
+	end
+	self.craft_note:Show(self.tab == "craft" and entry_count == 0)
+	self.craft_detail:Show(self.tab == "craft" and entry_count == 0)
+	self.empty:Show(self.tab ~= "craft" and #self.items == 0)
+	self.empty:SetText(tr(self.tab == "upgrade" and "pf_hf_no_upgrade_items" or "pf_hf_no_items"))
+	self.tree_panel:Show(self.tab == "upgrade")
+	local details_visible = self.tab == "upgrade" or self.tab == "craft"
+	self.upgrade_name:Show(details_visible)
+	self.upgrade_description:Show(details_visible)
+	self.upgrade_effect:Show(details_visible)
+	self.upgrade_state:Show(details_visible)
+	self.upgrade_cost_title:Show(details_visible)
+	for index, line in ipairs(self.upgrade_material_lines) do
+		local visible = (self.tab == "upgrade" and self.selected_id ~= nil) or
+			(self.tab == "craft" and self.selected_recipe ~= nil)
+		line:Show(visible)
+		self.upgrade_material_counts[index]:Show(visible)
+		self.upgrade_material_icons[index]:Show(visible)
+		self.upgrade_material_backgrounds[index]:Show(visible)
+	end
+	self:RefreshSelected()
+end
+
+function pf_hf_workbench_dialog:RefreshSelected()
+	local item = self.tab ~= "craft" and self.selected_id and
+		pf_hf_workbench_repair.find_owned_target(self.selected_id)
+	local craft_recipe = self.tab == "craft" and self.selected_recipe and
+		pf_hf_workbench_craft.recipe(self.selected_recipe) or nil
+	local preview_section = self.tab == "repair" and item and item:section() or
+		craft_recipe and craft_recipe.output or nil
+	self.item_panel:Show(preview_section ~= nil)
+	self.item_caption:Show(preview_section ~= nil)
+	self.item_caption:SetText(preview_section and section_name(preview_section) or "")
+	self.item_description:Show(preview_section ~= nil and self.tab == "repair")
+	self.item_description:SetText(preview_section and
+		section_description(preview_section) or "")
+	fit_section_icon(self.item_icon, preview_section,
+		455, 354, 120, 76, false)
+	if self.tab == "upgrade" then
+		self.repair:Show(false)
+		self:RefreshUpgrade(item)
+		return
+	end
+	if self.tab == "craft" then
+		self.repair:Show(false)
+		self:RefreshCraft(craft_recipe)
+		return
+	end
+	self.upgrade_action:Show(false)
+	self.cost_title:Show(self.tab == "repair" and item ~= nil)
+	self.condition_bar:Show(self.tab == "repair" and item ~= nil)
+	self.condition_track:Show(self.tab == "repair" and item ~= nil)
+	self.repair:Show(self.tab == "repair" and item ~= nil and item:condition() < 0.9999)
+	if not item then
+		self.selected_name:SetText(tr("pf_hf_no_selection"))
+		self.selected_source:SetText("")
+		self.selected_profile:SetText("")
+		self.condition:SetText("")
+		for index, line in ipairs(self.material_lines) do
+			line:SetText("")
+			self.material_counts[index]:SetText("")
+			self.material_icons[index]:Show(false)
+			self.material_backgrounds[index]:Show(false)
+		end
+		return
+	end
+	self.selected_name:SetText(item_name(item))
+	self.selected_source:SetText(tr(self.source == "equipped" and
+		"pf_hf_on_actor" or "pf_hf_in_inventory"))
+	local profile, recipe = pf_hf_workbench_repair.recipe(item)
+	self.selected_profile:SetText(tr("pf_hf_profile_" .. profile))
+	self.condition:SetText(string.format("%d%%  ->  %d%%",
+		math.floor(item:condition() * 100 + 0.5),
+		math.floor(math.min(1, item:condition() + 0.10) * 100 + 0.5)))
+	self.condition_bar:SetProgressPos(math.floor(item:condition() * 100 + 0.5))
+	local counts = pf_hf_workbench_repair.owned_materials()
+	local line_index = 1
+	for _, material in ipairs(pf_hf_workbench_repair.material_order()) do
+		local required = recipe[material]
+		if required then
+			local line = self.material_lines[line_index]
+			local name = material == "lz_nm_metal_part" and tr("pf_hf_weapon_part_name") or
+				tr(material .. "_name")
+			line:SetText(name)
+			self.material_counts[line_index]:SetText(string.format("%d/%d",
+				counts[material] or 0, required))
+			line:SetTextColor((counts[material] or 0) >= required and
+				GetARGB(255, 207, 223, 194) or GetARGB(255, 231, 121, 104))
+			self.material_counts[line_index]:SetTextColor((counts[material] or 0) >= required and
+				GetARGB(255, 207, 223, 194) or GetARGB(255, 231, 121, 104))
+			fit_section_icon(self.material_icons[line_index], material,
+				2, REPAIR_MATERIAL_ICON_Y + (line_index - 1) * 32,
+				27, 26, false)
+			self.material_backgrounds[line_index]:Show(true)
+			line_index = line_index + 1
+		end
+	end
+	for index = line_index, #self.material_lines do
+		self.material_lines[index]:SetText("")
+		self.material_counts[index]:SetText("")
+		self.material_icons[index]:Show(false)
+		self.material_backgrounds[index]:Show(false)
+	end
+end
+
+function pf_hf_workbench_dialog:RefreshCraft(recipe)
+	local output = recipe and recipe.output or nil
+	local counts = pf_hf_workbench_craft.material_counts()
+	local available = output and pf_hf_workbench_craft.can_craft(output) or false
+	self.upgrade_name:SetText(output and
+		pf_hf_workbench_craft.item_label(output) or tr("pf_hf_no_selection"))
+	self.upgrade_description:SetText(output and craft_description(output) or "")
+	self.upgrade_effect:SetText(output and pf_hf_workbench_craft.item_effect(output) or "")
+	self.upgrade_state:SetText(output and tr(available and
+		"pf_hf_craft_state_available" or "pf_hf_craft_state_materials") or "")
+	self.upgrade_state:SetTextColor(available and GetARGB(255, 178, 222, 154) or
+		GetARGB(255, 231, 121, 104))
+	self.upgrade_cost_title:SetText(output and tr("pf_hf_upgrade_cost_title") or "")
+
+	local line_index = 1
+	for _, material in ipairs(pf_hf_workbench_craft.material_order()) do
+		local required = recipe and recipe.materials[material]
+		if required and line_index <= #self.upgrade_material_lines then
+			local owned = counts[material] or 0
+			local color = owned >= required and GetARGB(255, 207, 223, 194) or
+				GetARGB(255, 231, 121, 104)
+			self.upgrade_material_lines[line_index]:SetText(
+				pf_hf_workbench_craft.item_label(material))
+			self.upgrade_material_lines[line_index]:SetTextColor(color)
+			self.upgrade_material_counts[line_index]:SetText(string.format("%d/%d",
+				owned, required))
+			self.upgrade_material_counts[line_index]:SetTextColor(color)
+			self.upgrade_material_backgrounds[line_index]:Show(true)
+			fit_section_icon(self.upgrade_material_icons[line_index], material,
+				2, UPGRADE_MATERIAL_ICON_Y + (line_index - 1) * 34,
+				32, 30, false)
+			line_index = line_index + 1
+		end
+	end
+	for index = line_index, #self.upgrade_material_lines do
+		self.upgrade_material_lines[index]:SetText("")
+		self.upgrade_material_counts[index]:SetText("")
+		self.upgrade_material_icons[index]:Show(false)
+		self.upgrade_material_backgrounds[index]:Show(false)
+	end
+	self.upgrade_action:SetText(tr("pf_hf_craft_action"))
+	self.upgrade_action:Show(output ~= nil)
+	self.upgrade_action:Enable(available)
+end
+
+function pf_hf_workbench_dialog:RefreshUpgrade(item)
+	local graph = item and pf_hf_workbench_upgrade.tree(item)
+	local counts = pf_hf_workbench_upgrade.material_counts()
+	local scheme = nil
+	if item then
+		local ini, section = system_ini(), item:section()
+		if ini:line_exist(section, "upgrade_scheme") then
+			scheme = ini:r_string(section, "upgrade_scheme")
+		end
+	end
+	local native_layout = scheme and pf_hf_workbench_upgrade_layout.has_scheme(scheme)
+	if graph and self.selected_upgrade_id and
+		not graph.nodes[self.selected_upgrade_id] then
+		self.selected_upgrade_id = nil
+	end
+	if not graph then self.selected_upgrade_id = nil end
+	self.tree_heading:Show(false)
+	self.tree_accent:Show(false)
+	fit_section_icon(self.tree_item_icon, graph and item:section() or nil,
+		64, UPGRADE_ITEM_Y, 249, 135, true)
+	for column = 0, 2 do
+		for row = 0, 8 do
+			local key = column .. ":" .. row
+			local button = self.tree_buttons[key]
+			local id = graph and graph.coordinates[key]
+			local node = id and graph.nodes[id]
+			local place = native_layout and
+				pf_hf_workbench_upgrade_layout.position(scheme, column, row)
+			local visible = node ~= nil and place ~= nil
+			button:Show(visible)
+			local icon = self.tree_icons[key]
+			local bar = self.tree_bars[key]
+			icon:Show(visible)
+			bar:Show(false)
+			if visible then
+				-- These are the exact cell and anchor coordinates used by the
+				-- technician's native inventory upgrade window.
+				local cell_x, cell_y = 71 + place.x,
+					UPGRADE_NODE_BASE_Y + place.y
+				button:SetWndPos(vector2():set(cell_x, cell_y))
+				button:SetWndSize(vector2():set(72, 44))
+				icon:SetWndPos(vector2():set(cell_x, cell_y))
+				icon:SetWndSize(vector2():set(72, 44))
+				bar:SetWndPos(vector2():set(cell_x + 2, cell_y + 3))
+				bar:SetWndSize(vector2():set(5, 38))
+				local state = pf_hf_workbench_upgrade.state(item, node, graph, counts)
+				button:SetText("")
+				local selected = node.id == self.selected_upgrade_id
+				local preview_exclusive = pf_hf_workbench_upgrade.exclusive_peer(
+					graph, self.hovered_upgrade_id, node.id)
+				local disabled = state == "exclusive" or state == "unavailable"
+				local show_bar = selected or state == "installed" or disabled or
+					preview_exclusive
+				local bar_texture = state == "installed" and
+					"ui\\ui_pf_upgrade_bar_selected" or
+					preview_exclusive and "ui\\ui_pf_upgrade_bar_disabled" or
+					selected and "ui\\ui_pf_upgrade_bar_focus" or
+					"ui\\ui_pf_upgrade_bar_disabled"
+				bar:Show(show_bar)
+				if show_bar then bar:InitTexture(bar_texture) end
+				if self.tree_icon_texture[key] ~= node.icon then
+					if not node.icon or not pcall(function() icon:InitTexture(node.icon) end) then
+						icon:InitTexture("ui_pf_hf_row")
+					end
+					self.tree_icon_texture[key] = node.icon
+				end
+			else
+				button:SetText("")
+			end
+		end
+	end
+	local node = graph and graph.nodes[self.selected_upgrade_id]
+	self.upgrade_name:SetText(node and tr(node.name) or tr("pf_hf_no_selection"))
+	self.upgrade_description:SetText(node and tr(node.description) or "")
+	-- Concatenating the translated Cyrillic heading here makes this engine
+	-- decode that fragment twice. The native property labels are already
+	-- localized, so show them directly.
+	self.upgrade_effect:SetText(node and
+		pf_hf_workbench_upgrade.property_effects(node) or "")
+	local state = node and pf_hf_workbench_upgrade.state(item, node, graph, counts)
+	self.upgrade_state:SetText(state and tr("pf_hf_upgrade_state_" .. state) or "")
+	self.upgrade_state:SetTextColor(GetARGB(255, 220, 187, 126))
+	self.upgrade_cost_title:SetText(node and tr("pf_hf_upgrade_cost_title") or "")
+	local recipe = node and pf_hf_workbench_upgrade.recipe(node.effect) or {}
+	local line_index = 1
+	for _, material in ipairs(pf_hf_workbench_upgrade.material_order()) do
+		local required = recipe and recipe[material]
+		if required and line_index <= #self.upgrade_material_lines then
+			local available = counts[material] or 0
+			local color = available >= required and GetARGB(255, 207, 223, 194) or
+				GetARGB(255, 231, 121, 104)
+			self.upgrade_material_lines[line_index]:SetText(
+				pf_hf_workbench_upgrade.material_label(material))
+			self.upgrade_material_lines[line_index]:SetTextColor(color)
+			self.upgrade_material_counts[line_index]:SetText(string.format("%d/%d",
+				available, required))
+			self.upgrade_material_counts[line_index]:SetTextColor(color)
+			self.upgrade_material_backgrounds[line_index]:Show(true)
+			fit_section_icon(self.upgrade_material_icons[line_index], material,
+				2, UPGRADE_MATERIAL_ICON_Y + (line_index - 1) * 34,
+				32, 30, false)
+			line_index = line_index + 1
+		end
+	end
+	for index = line_index, #self.upgrade_material_lines do
+		self.upgrade_material_lines[index]:SetText("")
+		self.upgrade_material_counts[index]:SetText("")
+		self.upgrade_material_icons[index]:Show(false)
+		self.upgrade_material_backgrounds[index]:Show(false)
+	end
+	self.upgrade_action:Show(state == "available")
+	self.upgrade_action:Enable(state == "available")
+	self.upgrade_action:SetText(tr("pf_hf_upgrade_action"))
+end
+
+function pf_hf_workbench_dialog:OnUpgradeNode(column, row)
+	if self.tab ~= "upgrade" then return end
+	local item = self.selected_id and
+		pf_hf_workbench_repair.find_owned_target(self.selected_id)
+	local graph = item and pf_hf_workbench_upgrade.tree(item)
+	local id = graph and graph.coordinates[column .. ":" .. row]
+	if not id then return end
+	self.selected_upgrade_id = id
+	self.hovered_upgrade_id = nil
+	self:RefreshUpgrade(item)
+end
+
+function pf_hf_workbench_dialog:OnInstallUpgrade()
+	if self.tab == "craft" then
+		self:OnCraft()
+		return
+	end
+	if self.tab ~= "upgrade" or not self.selected_upgrade_id then return end
+	local item = self.selected_id and
+		pf_hf_workbench_repair.find_owned_target(self.selected_id)
+	local ok, message_id = pf_hf_workbench_upgrade.install(item, self.selected_upgrade_id)
+	self:RefreshUpgrade(item)
+	self.upgrade_state:SetText(tr(message_id))
+	self.upgrade_state:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
+		GetARGB(255, 231, 121, 104))
+end
+
+function pf_hf_workbench_dialog:OnSelectEntry(item_id, recipe_output)
+	if self.tab == "craft" then
+		if not recipe_output then return end
+		self.selected_recipe = recipe_output
+		self:Refresh()
+		return
+	end
+	if not item_id then return end
+	self.selected_id = item_id
+	self.selected_upgrade_id = nil
+	self.hovered_upgrade_id = nil
+	self.status:SetText("")
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnEquipped()
+	self.source = "equipped"
+	self.list_scroll_reset = true
+	self.selected_id = nil
+	self.selected_upgrade_id = nil
+	self.hovered_upgrade_id = nil
+	self.status:SetText("")
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnInventory()
+	self.source = "inventory"
+	self.list_scroll_reset = true
+	self.selected_id = nil
+	self.selected_upgrade_id = nil
+	self.hovered_upgrade_id = nil
+	self.status:SetText("")
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnCraftFilterToggle()
+	if self.tab ~= "craft" then return end
+	self.craft_filter_open = not self.craft_filter_open
+	self.craft_filter_panel:Show(self.craft_filter_open)
+	self.craft_filter_panel:Enable(self.craft_filter_open)
+	self.item_scroll:Enable(not self.craft_filter_open)
+end
+
+function pf_hf_workbench_dialog:SetCraftFilter(filter_id)
+	if self.tab ~= "craft" then return end
+	self.craft_filter_open = false
+	self.craft_filter_panel:Show(false)
+	self.craft_filter_panel:Enable(false)
+	self.item_scroll:Enable(true)
+	if filter_id == self.craft_filter_id then return end
+	self.craft_filter_id = filter_id
+	self.list_scroll_reset = true
+	self.selected_recipe = nil
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnRepairTab()
+	if self.tab ~= "repair" then self.list_scroll_reset = true end
+	self.tab = "repair"
+	self.craft_filter_open = false
+	self.hovered_upgrade_id = nil
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnCraftTab()
+	if self.tab ~= "craft" then self.list_scroll_reset = true end
+	self.tab = "craft"
+	self.craft_filter_open = false
+	self.hovered_upgrade_id = nil
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnUpgradeTab()
+	if not self.bench_id then return end
+	if self.tab ~= "upgrade" then self.list_scroll_reset = true end
+	self.tab = "upgrade"
+	self.craft_filter_open = false
+	self.selected_upgrade_id = nil
+	self.hovered_upgrade_id = nil
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnRepair()
+	if not self.selected_id or self.tab ~= "repair" then return end
+	local ok, message_id = pf_hf_workbench_repair.repair(self.selected_id)
+	self.status:SetText(tr(message_id))
+	self.status:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
+		GetARGB(255, 231, 121, 104))
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnCraft()
+	if self.tab ~= "craft" or not self.selected_recipe then return end
+	local ok, message_id = pf_hf_workbench_craft.craft(self.selected_recipe)
+	self:Refresh()
+	self.upgrade_state:SetText(tr(message_id))
+	self.upgrade_state:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
+		GetARGB(255, 231, 121, 104))
+end
+
+function pf_hf_workbench_dialog:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		local binding = dik_to_bind(dik)
+		if dik == DIK_keys.DIK_F5 or dik == DIK_keys.DIK_F9 or
+			binding == key_bindings.kQUICK_SAVE or
+			binding == key_bindings.kQUICK_LOAD then return true end
+		if binding == key_bindings.kQUIT then
+			self:OnClose()
+			return true
+		end
+		if dik == DIK_keys.DIK_F then
+			if self.tab == "repair" then self:OnRepair()
+			elseif self.tab == "upgrade" then self:OnInstallUpgrade()
+			else self:OnCraft() end
+			return true
+		end
+		if dik == DIK_keys.DIK_1 then self:OnRepairTab() return true end
+		if dik == DIK_keys.DIK_2 then self:OnUpgradeTab() return true end
+		if dik == DIK_keys.DIK_3 then self:OnCraftTab() return true end
+	end
+	return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+function show(bench_id)
+	if not active_dialog then active_dialog = pf_hf_workbench_dialog() end
+	return active_dialog:Open(bench_id)
+end
+
+function force_close()
+	if active_dialog and active_dialog.bench_id then active_dialog:OnClose() end
+end

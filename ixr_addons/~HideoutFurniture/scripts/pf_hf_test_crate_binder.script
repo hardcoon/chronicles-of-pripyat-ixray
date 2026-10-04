@@ -1,0 +1,22 @@
+function init(object) object:bind_object(pf_hf_test_crate_static(object)) end
+class "pf_hf_test_crate_static" (object_binder)
+function pf_hf_test_crate_static:__init(object) super(object)
+    self.frozen=false
+    pf_hf_furniture.apply_tip(object)
+end
+function pf_hf_test_crate_static:net_spawn(server)
+    if not object_binder.net_spawn(self,server) then return false end
+    pf_hf_furniture.apply_tip(self.object)
+    return true
+end
+function pf_hf_test_crate_static:update(delta)
+    object_binder.update(self,delta)
+    pf_hf_visuals.update(self)
+    if self.frozen then return end
+    local shell=self.object:get_physics_shell()
+    if shell and shell:get_elements_number()>0 then
+        local root=shell:get_element_by_order(0)
+        if root then root:fix();self.frozen=true end
+    end
+end
+function pf_hf_test_crate_static:net_save_relevant() return true end

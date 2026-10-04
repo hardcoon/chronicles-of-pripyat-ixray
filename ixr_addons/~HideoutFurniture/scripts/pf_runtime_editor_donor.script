@@ -1,0 +1,287 @@
+-- Direct port of Hideout Furniture 2.3.2 (Aoldri), placeable_furniture.script.
+-- UIAdvancedControls methods are copied; access replaces donor module globals.
+-- The IX-Ray input bridge consumes the opening key before this controller sees it.
+class "RuntimeEditorDonorControls"
+
+function RuntimeEditorDonorControls:__init(access)
+    self.access = access
+	self:InitControls()
+
+
+    self.states = {
+        IDLE = 1, -- idle
+        XZ_DRAG_LOC = 2, -- Horizontal Plane
+        Y_DRAG_LOC = 3, -- Up/Down
+        Y_DRAG_ROT = 4, -- Rotate about upward axis
+    }
+    self.state = self.states.IDLE
+    self.snap = false
+    self.shift = false
+
+    self.pos = {x=0, y=0}
+    self.prev_pos = nil
+    self.prev_offset = vector():set(self.access.get_offset())
+
+    self.init = false
+end
+
+function RuntimeEditorDonorControls:__finalize()
+end
+
+function RuntimeEditorDonorControls:KeyPress(dik, kb_action)
+    local funcs = self.key_to_functor[dik]
+    if funcs then
+        local func = funcs[kb_action]
+        if func then func() end
+    end
+end
+
+function RuntimeEditorDonorControls:InitControls()
+
+
+
+    -- Questionable table, but i got tired of if-elses
+    self.key_to_functor = {
+        -- XZ Displacement
+        [self.access.keys.move or DIK_keys.MOUSE_1] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                if self.shift then
+                    self.state = self.state == self.states.IDLE and self.states.Y_DRAG_LOC or self.state
+                else
+                    self.state = self.state == self.states.IDLE and self.states.XZ_DRAG_LOC or self.state
+                end
+            end,
+            [ui_events.WINDOW_KEY_RELEASED] = function()
+                self.prev_offset = vector():set(self.access.get_offset())
+                self.state = self.states.IDLE
+                self.prev_pos = nil
+            end
+        },
+        -- Y Displacement
+        [self.access.keys.height or DIK_keys.DIK_LSHIFT] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.shift = true
+            end,
+            [ui_events.WINDOW_KEY_RELEASED] = function()
+                self.shift = false
+            end
+        },
+        -- Y Rotation
+        [self.access.keys.rotate or DIK_keys.MOUSE_2] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.state = self.state == self.states.IDLE and self.states.Y_DRAG_ROT or self.state
+            end,
+            [ui_events.WINDOW_KEY_RELEASED] = function()
+                self.prev_rot = self.access.get_rotation()
+                self.state = self.states.IDLE
+                self.prev_pos = nil
+            end
+        },
+        -- Finer control, adjust at 1/10th speed
+        [self.access.keys.fine or DIK_keys.DIK_LCONTROL] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.fine_control = true
+            end,
+            [ui_events.WINDOW_KEY_RELEASED] = function()
+                self.fine_control = false
+            end
+        },
+        -- SNAP
+        [self.access.keys.snap or DIK_keys.DIK_LMENU] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.snap = true
+            end,
+            [ui_events.WINDOW_KEY_RELEASED] = function()
+                self.snap = false
+            end
+        },
+        -- Place
+        [self.access.keys.place] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.access.confirm()
+                self:Close()
+            end
+        },
+        -- Toggle Collision
+        [self.access.keys.collision] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.access.toggle_collision()
+            end
+        },
+        -- Toggle Alignment mode
+        [self.access.keys.align] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.access.toggle_surface()
+            end
+        },
+        -- Swap to PREVIEW mode
+        [self.access.keys.advanced] = {
+            [ui_events.WINDOW_KEY_PRESSED] = function()
+                self.access.set_state("PREVIEW")
+                self:Close()
+            end
+        }
+    }
+end
+
+function RuntimeEditorDonorControls:InitCallBacks()
+end
+
+function RuntimeEditorDonorControls:Reset()
+    self.state = self.states.IDLE
+    self.snap = false
+
+    self.pos = {x=0, y=0}
+    self.prev_pos = nil
+
+    self.prev_offset = vector():set(self.access.get_offset())
+    self.location_offset_copy = vector():set(self.access.get_offset())
+
+    self.prev_rot = self.access.get_rotation()
+    self.prev_rot_copy = self.access.get_rotation()
+
+    self.init = false
+end
+
+function RuntimeEditorDonorControls:Update()
+
+    if self.state == self.states.IDLE then return end
+
+    -- Cursorless gestures supply the same UI-coordinate deltas as the window.
+    local get_cursor = self.access.get_cursor or GetCursorPosition
+    if self.prev_pos == nil then
+        local position = get_cursor()
+        self.prev_pos = {x=position.x, y=position.y}
+    end
+
+    local mouse_pos = get_cursor()
+    local diff_x = (mouse_pos.x - self.prev_pos.x)
+    local diff_y = -(mouse_pos.y - self.prev_pos.y)
+
+    if self.fine_control then
+        diff_x = diff_x / 10
+        diff_y = diff_y / 10
+    end
+
+    if self.state == self.states.XZ_DRAG_LOC then
+        diff_x = diff_x / 200
+        diff_y = diff_y / 200
+
+        if self.snap then
+            if math.abs(diff_x) > math.abs(diff_y) then
+                diff_y = 0
+            else
+                diff_x = 0
+            end
+        end
+		self.access.set_offset(vector():set(self.prev_offset.x+diff_x, self.prev_offset.y, self.prev_offset.z+diff_y))
+    elseif self.state == self.states.Y_DRAG_LOC then
+        diff_y = diff_y / 200
+
+		self.access.set_offset(vector():set(self.prev_offset.x, self.prev_offset.y+diff_y, self.prev_offset.z))
+    elseif self.state == self.states.Y_DRAG_ROT then
+        diff_x = diff_x/2
+        self.access.set_rotation(self.prev_rot + diff_x)
+
+        if self.snap then
+            local n = 15
+            self.access.set_rotation((self.access.get_rotation() % n) > n/2 and self.access.get_rotation() + n - self.access.get_rotation()%n or self.access.get_rotation() - self.access.get_rotation()%n)
+        end
+    end
+end
+
+function RuntimeEditorDonorControls:OnKeyboard(dik, keyboard_action)
+	local res = false -- Native consuming input already bypasses the window dispatcher.
+    if not self.init then
+        self.init = true
+        return
+    end
+	if (res == false) then
+        self:KeyPress(dik, keyboard_action)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+            if dik == (self.access.keys.cancel or DIK_keys.DIK_ESCAPE) then
+                if self.state == self.states.IDLE then
+                    self.access.set_offset(vector():set(self.location_offset_copy))
+                    self.access.set_rotation(self.prev_rot_copy)
+                    self.access.set_state("HOLDING")
+                    self:Close()
+                else
+                    self.access.set_offset(vector():set(self.prev_offset))
+                    self.access.set_rotation(self.prev_rot)
+                    self.state = self.states.IDLE
+                end
+            end
+        end
+	end
+	return res
+end
+
+function RuntimeEditorDonorControls:Close()
+	self.access.close()
+end
+
+function create(access) return RuntimeEditorDonorControls(access) end
+
+-- actor_on_update pose calculation, copied from the same donor file.
+-- Only vector:mad and access to the surface normal differ at the API boundary.
+function calculate_pose(location_offset,rotation_offset,base_rot,cam_pos,cam_dir,dist,align_surface,normal)
+    local rotations=pf_runtime_editor_math
+    local bbox={}
+    -- get position of point that the player is looking at
+    local pos = vector()
+    pos:set(cam_pos):add(vector():set(cam_dir):mul(dist)) -- IX-Ray has no vector:mad export.
+    
+    -- rotate to point towards player + offset
+    if not align_surface then
+        local rot = cam_dir:getH() + (((base_rot+rotation_offset) * math.pi) / 180)
+        local q0 = rotations.get_rotation_around(vector():set(0, 1, 0), rot)
+        
+        bbox.rotation = q0
+
+        local angle = cam_dir:getH()
+    
+        -- Rotate vector about y
+        local c = math.cos (angle)
+        local s = math.sin (angle)
+        local rotated_x = location_offset.x * c - location_offset.z * s
+        local rotated_z = location_offset.x * s + location_offset.z * c
+        pos:add(vector():set(rotated_x,
+                                location_offset.y,
+                                rotated_z))
+        
+        -- automatic alignment to surface
+    else
+        -- Rotation
+        local rot_z = ((base_rot+rotation_offset) * math.pi) / 180
+        local u = vector():set(0, 1, 0)
+        local v = normal
+        if not v then return end
+        
+        -- rotate from upwards vector to normal vector on surface
+        local q0 = rotations.get_rotation_between(u, v)
+        
+        -- rotate to point downwards + offset
+        local angle_to_downwards = 0
+        local similarity_to_upwards_axis = v:dotproduct(vector():set(0,1,0))
+        if similarity_to_upwards_axis > 0.9999 then -- pointing upwards
+            angle_to_downwards = cam_dir:getH()
+        elseif similarity_to_upwards_axis < -0.9999 then -- pointing downwards
+            angle_to_downwards = math.pi - cam_dir:getH()
+        else
+            angle_to_downwards = angle_to_downwards + v:getH() + math.pi
+        end
+        local q1 = rotations.get_rotation_around(v, angle_to_downwards + rot_z)
+        
+        -- perform each rotation in succession
+        local q = rotations.RuntimeEditorQuaternion():multiply(q0):multiply(q1)
+        
+        -- Location
+        local q1_2 = rotations.get_rotation_around(v, angle_to_downwards)
+        local q_loc = rotations.RuntimeEditorQuaternion():multiply(q0):multiply(q1_2)
+        local rotated_loc_offset = q_loc:rotate_vector(location_offset)
+        
+        bbox.rotation = q
+        pos:add(rotated_loc_offset)
+    end
+    return pos,bbox.rotation
+end

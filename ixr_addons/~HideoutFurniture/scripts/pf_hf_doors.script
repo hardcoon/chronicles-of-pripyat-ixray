@@ -1,0 +1,124 @@
+-- Native ph_door controls the authored hinge and persists its logic state.
+-- Only the root is fixed; the ordinary furniture binder would freeze the leaf.
+local binders={}
+local function failure_trace(error_value)
+    return debug.traceback(tostring(error_value),2)
+end
+
+local function initialize(binder)
+    if binder.initialized then return true end
+    if not db.actor then return false end
+    if binder.retry_at and time_global()<binder.retry_at then return false end
+    local object=binder.object
+    local shell=object:get_physics_shell()
+    if not shell or not shell:get_joint_by_bone_name("door") then return false end
+    local st=binder.st or db.storage[object:id()]
+    if not st then return false end
+    binder.st=st
+    -- Offline/new objects can have no saved logic strings. Stock initialize_obj
+    -- otherwise treats loaded=true as success without creating a door action.
+    local ini=object:spawn_ini()
+    if not ini or not ini:section_exist("logic") then return false end
+    local loaded=binder.loaded and st.loaded_ini_filename~=nil and
+        st.loaded_active_section~=nil and st.loaded_active_section~="nil" and
+        ini:section_exist(st.loaded_active_section)
+    local own=pf_hf_furniture.state(object:id())
+    if not loaded and own and type(own.door_closed)=="boolean" then
+        local section=own.door_closed and ini:r_string("logic","active") or "ph_door@open"
+        st.loaded_ini_filename="<customdata>"
+        st.loaded_section_logic="logic"
+        st.loaded_active_section=section
+        st.loaded_gulag_name=""
+        loaded=true
+    end
+    -- Stock marks initialized before calling Lua. Only mark it after both the
+    -- scheme and hinge action exist; never leave a permanently inert binder.
+    local ok,err=xpcall(function()
+        xr_logic.initialize_obj(object,st,loaded,db.actor,modules.stype_item)
+    end,failure_trace)
+    if not ok then
+        binder.retry_at=time_global()+1000
+        if binder.initialization_error~=err then
+            printf("[pf_hf_doors] initialize failed: id=%s section=%s loaded=%s active=%s\n%s",
+                tostring(object:id()),object:section(),tostring(loaded),
+                tostring(st.loaded_active_section),err)
+            binder.initialization_error=err
+        end
+        return false
+    end
+    local action=st.ph_door and st.ph_door.door_action
+    if not action or not action.initialized then return false end
+    binder.initialized=true
+    binder.retry_at,binder.initialization_error=nil,nil
+    return true
+end
+
+function use(object,actor)
+    local binder=object and binders[object:id()]
+    if not binder or not initialize(binder) then return false end
+    local st=binder.st
+    local action=st.ph_door.door_action
+    -- Use the same ph_door action as the NPC callback. A stale/missing engine
+    -- use callback must not turn a visible furniture hint into a dead button.
+    action:use_callback(object,actor or db.actor)
+    local own=pf_hf_furniture.state(object:id())
+    if own then own.door_closed=st.ph_door.closed end
+    return true
+end
+
+function init(object)
+    db.storage[object:id()]={}
+    object:bind_object(pf_hfm_door(object))
+end
+class "pf_hfm_door" (bind_physic_object.generic_physics_binder)
+function pf_hfm_door:__init(object) super(object)
+    binders[object:id()]=self
+end
+function pf_hfm_door:reinit()
+    bind_physic_object.generic_physics_binder.reinit(self)
+    self.initialized=false
+end
+function pf_hfm_door:save(packet)
+    local st=self.st or db.storage[self.object:id()]
+    local action=st and st.ph_door and st.ph_door.door_action
+    local own=pf_hf_furniture.state(self.object:id())
+    if own and action then own.door_closed=action.st.closed end
+    bind_physic_object.generic_physics_binder.save(self,packet)
+end
+function pf_hfm_door:load(reader)
+    bind_physic_object.generic_physics_binder.load(self,reader)
+    self.initialized=false
+end
+function pf_hfm_door:net_spawn(server)
+    if not bind_physic_object.generic_physics_binder.net_spawn(self,server) then return false end
+    db.level_doors[self.object:id()]=self.object:position()
+    return true
+end
+function pf_hfm_door:update(delta)
+    if not initialize(self) then return end
+    -- The original binder still advances ph_door/NPC logic and persists the hinge.
+    bind_physic_object.generic_physics_binder.update(self,delta)
+    -- Stock ph_door releases the leaf on opening, but not on closing. A fixed
+    -- body restored away from the closed stop cannot obey its closing motor.
+    -- Keep the saved transform; release only a leaf that still has to close.
+    local storage=db.storage[self.object:id()]
+    local action=storage and storage.ph_door and storage.ph_door.door_action
+    if action and action.initialized and action.block and not action.st.no_force and
+        not action:is_closed() then
+        local shell=self.object:get_physics_shell()
+        local leaf=shell and shell:get_element_by_bone_name("door")
+        if leaf and leaf:is_fixed() then
+            leaf:release_fixed()
+            action.joint:set_max_force_and_velocity(200,3,0)
+        end
+    end
+    pf_hf_visuals.update(self)
+    local own=pf_hf_furniture.state(self.object:id())
+    if own and action then own.door_closed=action.st.closed end
+end
+function pf_hfm_door:net_destroy()
+    binders[self.object:id()]=nil
+    db.level_doors[self.object:id()]=nil
+    bind_physic_object.generic_physics_binder.net_destroy(self)
+    if not alife():object(self.object:id(),true) then pf_hf_furniture.forget(self.object:id()) end
+end

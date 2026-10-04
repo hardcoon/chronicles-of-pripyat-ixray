@@ -1,0 +1,124 @@
+-- Native project cooking. Fuel is committed separately, so failed cooking
+-- keeps both the raw ingredient and every prepaid portion.
+local busy={}
+local registered=false
+local generation=0
+local function server(id) return alife() and alife():object(id,true) end
+local function stove(id)
+    local object=level.object_by_id(id)
+    local entry=object and pf_hf_furniture.definition(object:section())
+    if not object or not entry or entry.kind~="stove" or not db.actor or not db.actor:alive() or
+        object:position():distance_to(db.actor:position())>3.25 then return nil end
+    return object,pf_hf_furniture.state(id)
+end
+function recipes()
+    local ini=system_ini();local result={}
+    if not ini:section_exist("pf_hfe_cooking_recipes") then return result end
+    for index=0,ini:line_count("pf_hfe_cooking_recipes")-1 do
+        local _,raw,cooked=ini:r_line("pf_hfe_cooking_recipes",index)
+        if ini:section_exist(raw) and ini:section_exist(cooked) then
+            result[#result+1]={raw=raw,cooked=cooked}
+        end
+    end
+    table.sort(result,function(a,b) return a.raw<b.raw end)
+    return result
+end
+function item_name(section)
+    return game.translate_string(system_ini():r_string(section,"inv_name"))
+end
+local function inventory(section)
+    local found
+    db.actor:iterate_inventory(function(_,item)
+        if not found and item:section()==section then
+            local own=server(item:id())
+            if own and tonumber(own.parent_id)==db.actor:id() then found=own end
+        end
+    end,db.actor)
+    return found
+end
+function count(section)
+    local total=0
+    if db.actor then db.actor:iterate_inventory(function(_,item)
+        if item:section()==section then total=total+1 end
+    end,db.actor) end
+    return total
+end
+function refuel(id)
+    local object,own=stove(id)
+    if not object or busy[id] then return false,"pf_hfe_cook_failed" end
+    local ini=system_ini()
+    local fuel
+    for section in ini:r_string("pf_hfe_cooking","fuel_sections"):gmatch("[^,%s]+") do
+        fuel=inventory(section);if fuel then break end
+    end
+    if not fuel then return false,"pf_hfe_fuel_missing" end
+    busy[id]=true
+    local ok=pcall(function() alife():release(fuel,true) end)
+    if ok then own.cooking_charge=(own.cooking_charge or 0)+math.max(1,math.floor(ini:r_float("pf_hfe_cooking","portions_per_fuel"))) end
+    busy[id]=nil
+    return ok,ok and "pf_hfe_refueled" or "pf_hfe_cook_failed"
+end
+function cook(id,raw)
+    local object,own=stove(id)
+    if not object or busy[id] then return false,"pf_hfe_cook_failed" end
+    local recipe
+    for _,r in ipairs(recipes()) do if r.raw==raw then recipe=r end end
+    if not recipe then return false,"pf_hfe_cook_failed" end
+    if (own.cooking_charge or 0)<1 then return false,"pf_hfe_fuel_empty" end
+    local source=inventory(raw)
+    if not source then return false,"pf_hfe_ingredient_missing" end
+    busy[id]=true
+    local result
+    local ok=pcall(function()
+        result=alife():create(recipe.cooked,db.actor:position(),db.actor:level_vertex_id(),db.actor:game_vertex_id(),db.actor:id())
+        if not result then error("create_failed") end
+        alife():release(source,true)
+    end)
+    if ok then own.cooking_charge=own.cooking_charge-1
+    elseif result then pcall(function() alife():release(result,true) end) end
+    busy[id]=nil
+    return ok,ok and "pf_hfe_cooked" or "pf_hfe_cook_failed"
+end
+function storage_empty(id)
+    local own=pf_hf_furniture.state(id)
+    if not own or not own.stove_storage then return true end
+    local box=server(own.stove_storage)
+    if not box then own.stove_storage=nil;return true end
+    -- Server children also cover the frame before a hidden box comes online.
+    for _,child in alife():objects() do if tonumber(child.parent_id)==box.id then return false end end
+    return true
+end
+function clear_storage(id,own)
+    own=own or pf_hf_furniture.state(id)
+    local box=own and own.stove_storage and server(own.stove_storage)
+    if box then alife():release(box,true) end
+    if own then own.stove_storage=nil end
+end
+function open_storage(id)
+    local object,own=stove(id)
+    if not object or object:section()~="pf_hfe_stove2" then return false end
+    local box=own.stove_storage and server(own.stove_storage)
+    if not box then
+        local position=vector():set(object:position())
+        box=alife():create("pf_hfe_stove_storage",position,db.actor:level_vertex_id(),db.actor:game_vertex_id())
+        if not box then return false end
+        box:use_ai_locations(false)
+        own.stove_storage=box.id
+    end
+    alife():set_switch_online(box.id,true);alife():set_switch_offline(box.id,false)
+    local box_id=box.id;local actor_id=db.actor:id();local started=time_global();local epoch=generation
+    level.add_call(function()
+        return epoch~=generation or not stove(id) or not server(box_id) or level.object_by_id(box_id)~=nil or time_global()-started>3000
+    end,function()
+        local current=pf_hf_furniture.state(id)
+        local client=level.object_by_id(box_id)
+        if epoch==generation and stove(id) and db.actor:id()==actor_id and current and current.stove_storage==box_id and client then client:use(db.actor) end
+    end)
+    return true
+end
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("load",function() busy={};generation=generation+1 end)
+    registered=true
+end
+on_game_start()

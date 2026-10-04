@@ -1,0 +1,133 @@
+-- The stored weapon/artifact remains the only inventory item. Its displayed model is
+-- an inert physic_object: neither the actor nor NPCs can pick up a duplicate.
+local profiles=pf_hf_display_data
+for _,entry in ipairs(pf_hf_even_more_catalog.entries) do
+    if entry.display_profile then profiles.profiles[entry.object]=entry.display_profile end
+end
+local data={}
+local registered=false
+local restored=false
+local SECTION="pf_hf_weapon_display_visual"
+
+local function simulator_object(id) return alife():object(id,true) end
+local function ini_value(section,key)
+    local ini=system_ini()
+    if ini:line_exist(section,key) then return ini:r_string(section,key) end
+end
+local function vec(values) return vector():set(unpack(values or {0,0,0})) end
+local function text_vector(text)
+    local values={}
+    for value in (text or "0,0,0"):gmatch("[^,]+") do values[#values+1]=tonumber(value) or 0 end
+    return vec(values)
+end
+function has_profile(section) return profiles.profiles[section]~=nil end
+function valid_weapon(section,case_section)
+    local class=ini_value(section,"class") or ""
+    local profile=profiles.profiles[case_section]
+    if profile and profile.kind=="artifact" then
+        -- CoP/IX-Ray uses ARTEFACT and SCRPTART; older content can use AF_*.
+        -- Inert display proxies do not inherit detector visibility or radiation.
+        return class=="ARTEFACT" or class=="SCRPTART" or class:sub(1,3)=="AF_"
+    end
+    if case_section=="pf_hf_pistol_shelf" then
+        return class=="WP_PM" or class=="WP_HPSA"
+    end
+    return class:sub(1,3)=="WP_" and class~="WP_PM" and class~="WP_HPSA" and
+        class~="WP_KNIFE" and class~="WP_GRENA" and class~="WP_BINOC"
+end
+local function display_visual(item,profile)
+    local visual=item:get_visual_name()
+    if profile.kind=="artifact" then
+        return pf_hf_artifact_display_data.visuals[visual:lower():gsub("/","\\")]
+    end
+    return visual
+end
+function accepts_item(item,case_section)
+    if not valid_weapon(item:section(),case_section) then return false end
+    local profile=profiles.profiles[case_section]
+    return profile.kind~="artifact" or display_visual(item,profile)~=nil
+end
+local function release(record)
+    local object=simulator_object(record.id)
+    if object and object:section_name()==SECTION then alife():release(object,true) end
+end
+function clear(case_id)
+    for _,record in pairs(data[case_id] or {}) do release(record) end
+    data[case_id]=nil
+end
+function proxy_record(id)
+    for case_id,records in pairs(data) do
+        for item_id,record in pairs(records) do
+            if record.id==id then return record,case_id,item_id end
+        end
+    end
+end
+
+function sync(case)
+    local profile=profiles.profiles[case:section()]
+    if not profile then return end
+    local case_id=case:id()
+    local server=simulator_object(case_id)
+    if not server then return end
+    local items={}
+    case:iterate_inventory_box(function(_,item)
+        if accepts_item(item,case:section()) then items[item:id()]=item end
+    end,case)
+    local records=data[case_id] or {}
+    data[case_id]=records
+    local slots={}
+    for item_id,record in pairs(records) do
+        local proxy=simulator_object(record.id)
+        local item=items[item_id]
+        if not item or not proxy or proxy:section_name()~=SECTION or record.visual~=item:get_visual_name() then
+            release(record);records[item_id]=nil
+        else slots[record.slot]=true end
+    end
+    local ids={}
+    for id in pairs(items) do ids[#ids+1]=id end
+    table.sort(ids)
+    local math=pf_runtime_editor_math
+    local case_q=math.RuntimeEditorQuaternion(server.angle)
+    for _,id in ipairs(ids) do
+        if not records[id] then
+            local slot
+            for i=1,profile.count do if not slots[i] then slot=i;break end end
+            if not slot then break end
+            local item=items[id]
+            local section=ini_value(item:section(),"parent_section") or item:section()
+            local angle=vec(profile.angles[slot]):add(vec(profiles.angle_offsets[section])):mul(0.017453292519943295)
+            local offset_q=math.RuntimeEditorQuaternion(angle)
+            local offset=text_vector(ini_value(item:section(),"position"))
+            if profile.kind~="artifact" then offset.x=0 end
+            offset:add(vec(profiles.position_offsets[section]))
+            offset=offset_q:rotate_vector(offset):add(vec(profile.positions[slot]))
+            local position=case_q:rotate_vector(offset):add(server.position)
+            local proxy
+            local ok=pcall(function()
+                proxy=alife():create(SECTION,position,server.m_level_vertex_id,server.m_game_vertex_id)
+                assert(proxy and proxy:set_visual(display_visual(item,profile)),"display_visual_failed")
+                proxy:use_ai_locations(false)
+                proxy.angle=offset_q:multiply(case_q):to_euler_angles()
+            end)
+            if ok then
+                records[id]={id=proxy.id,slot=slot,visual=item:get_visual_name()}
+                slots[slot]=true
+            elseif proxy then release({id=proxy.id}) end
+        end
+    end
+end
+
+function save_state(storage) storage.pf_hf_displays=data end
+function load_state(storage) data=storage.pf_hf_displays or {};restored=true end
+local function on_load()
+    if not restored then data={} end
+    restored=false
+end
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("load",on_load)
+    registered=true
+end
+on_game_start()

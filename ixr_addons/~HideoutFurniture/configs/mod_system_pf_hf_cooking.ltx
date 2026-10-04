@@ -1,0 +1,8 @@
+#include "plugins\pf_hf_expansion.ltx"
+
+; HFE large stove's hidden 100 kg storage; never offered by the spawner.
+[pf_hfe_stove_storage]:inventory_box
+damage_immune = true
+visual = pf_hf_furniture\dynamics\equipments\blue_box.ogf
+script_binding = pf_hf_stove_storage_binder.init
+capacity = 100

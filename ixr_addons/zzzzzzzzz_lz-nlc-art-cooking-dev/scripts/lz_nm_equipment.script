@@ -393,6 +393,7 @@ function effect_disassemble_item(section, condition, partner_profile_name)
 		"lz_new_mechanics: disassembled [%s], created [%s] salvage parts",
 		tostring(section), tostring(created)
 	)
+	core.message(string.format(game.translate_string("pf_hf_salvage_component_result"), created))
 end
 
 -- Ordinary inventory context-menu action. Salvage is created first and the
@@ -407,6 +408,17 @@ function disassemble_detector(item)
 	return false
 end
 
+-- Direct component action. Like detector dismantling, this operates on the
+-- exact selected stack object and does not require a separate tool.
+function disassemble_component(item)
+	if not item or not db.actor or db.actor:is_talking() then return false end
+	if not pf_hf_salvage.is_component(item) or not core.require_actor_owned_item(item) then
+		return false
+	end
+	impl.queue_inventory_tool_action(item, item, "disassemble_component")
+	return false
+end
+
 function impl.complete_detector_disassembly(item)
 	if not item or not core.is_actor_owned_item(item) then return false end
 	local section = item:section()
@@ -415,6 +427,34 @@ function impl.complete_detector_disassembly(item)
 	impl.release_item(item)
 	return true
 end
+
+function impl.complete_component_disassembly(item)
+	if not item or not core.is_actor_owned_item(item) or
+		not pf_hf_salvage.is_component(item) then
+		return false
+	end
+	local rewards, salvage = pf_hf_salvage.rewards(item)
+	if not rewards then
+		core.message("lz_nm_disassemble_armor_failed")
+		return false
+	end
+	local created, reason = impl.create_disassembly_rewards(rewards)
+	if not created then
+		core.message("lz_nm_disassemble_armor_failed")
+		printf("! [salvage] component salvage rolled back: %s", tostring(reason))
+		return false
+	end
+
+	local target_section = item:section()
+	impl.release_item(item)
+	core.message(string.format(
+		game.translate_string("pf_hf_salvage_component_result"), #created
+	))
+	printf("lz_new_mechanics: disassembled component [%s], profile [%s], base materials [%s]",
+		tostring(target_section), tostring(salvage.profile), tostring(salvage.base_total))
+	return true
+end
+
 
 
 function impl.write_context_action(section, index, label, functor)
@@ -459,25 +499,42 @@ function impl.update_context_menu_actions(force)
 		if core.is_outfit_or_helmet(item) then table.insert(outfit_targets, item) end
 	end
 	local disassembly_targets = {}
-	for _, item in ipairs(weapon_targets) do table.insert(disassembly_targets, item) end
-	for _, item in ipairs(outfit_targets) do table.insert(disassembly_targets, item) end
+	local equipped_ids = {}
+	for _, item in ipairs(weapon_targets) do equipped_ids[item:id()] = true end
+	for _, item in ipairs(outfit_targets) do equipped_ids[item:id()] = true end
 	local inventory_weapon_targets = {}
 	local detector_targets = {}
 	db.actor:iterate_inventory(function(_, item)
 		if core.is_weapon_mechanics_target(item) then table.insert(inventory_weapon_targets, item) end
+		if core.is_weapon_mechanics_target(item) or core.is_outfit_or_helmet(item) then
+			table.insert(disassembly_targets, item)
+		end
 		if impl.is_chargeable_detector(item:section()) and item:condition() < 0.9999 then
 			table.insert(detector_targets, item)
 		end
 	end, db.actor)
+	-- Spare gear comes first; IDs keep identical items and menu order stable.
+	table.sort(disassembly_targets, function(left, right)
+		local left_equipped = equipped_ids[left:id()] == true
+		local right_equipped = equipped_ids[right:id()] == true
+		if left_equipped ~= right_equipped then return not left_equipped end
+		return left:id() < right:id()
+	end)
 	local repair_kit_weapon_targets = {}
 	for _, item in ipairs(inventory_weapon_targets) do
 		table.insert(repair_kit_weapon_targets, item)
 	end
+	local weapon_repair_min = core.get_sysini():r_float(
+		"itm_gunsmith_toolkit", "repair_min_condition")
+	local weapon_repair_max = core.get_sysini():r_float(
+		"itm_gunsmith_toolkit", "repair_max_condition")
 	table.sort(repair_kit_weapon_targets, function(left, right)
 		local left_condition = left:condition()
 		local right_condition = right:condition()
-		local left_repairable = left_condition >= 0.20 and left_condition < 0.90
-		local right_repairable = right_condition >= 0.20 and right_condition < 0.90
+		local left_repairable = left_condition >= weapon_repair_min and
+			left_condition < weapon_repair_max
+		local right_repairable = right_condition >= weapon_repair_min and
+			right_condition < weapon_repair_max
 		if left_repairable ~= right_repairable then return left_repairable end
 		return left:id() < right:id()
 	end)
@@ -512,6 +569,11 @@ function impl.update_context_menu_actions(force)
 	end
 	table.insert(signature_parts, "/inventory/")
 	for _, item in ipairs(inventory_weapon_targets) do
+		table.insert(signature_parts,
+			tostring(item:id()) .. "@" .. tostring(impl.item_condition_percent(item)))
+	end
+	table.insert(signature_parts, "/disassembly/")
+	for _, item in ipairs(disassembly_targets) do
 		table.insert(signature_parts,
 			tostring(item:id()) .. "@" .. tostring(impl.item_condition_percent(item)))
 	end
@@ -1148,60 +1210,37 @@ function impl.create_recovered_upgrade(upgrade_id)
 	return object
 end
 
--- Equipment salvage is bound to the persistent object id instead of the global
--- random-number generator. The rolls are therefore decided for this exact item
--- before it is dismantled and remain unchanged after save/load.
-function impl.deterministic_salvage_succeeds(target_id, multiplier, offset, chance)
-	local value = tonumber(target_id) or 0
-	for _ = 1, 2 do
-		value = (value * multiplier + offset) % 2147483647
-	end
-	return (value % 100) < chance
-end
-
-local armor_salvage = {
-	{ section = "lz_nm_armor_pouch", bit = 1, multiplier = 48271, offset = 1013904223, multiple = true },
-	{ section = "lz_nm_rubber_padding", bit = 2, multiplier = 69621, offset = 1664525, multiple = true },
-	{ section = "lz_nm_combat_boots", bit = 4, multiplier = 16807, offset = 12345, multiple = false }
-}
-
--- Cost is used as an automatic rarity proxy so addon outfits also receive an
--- appropriate yield without maintaining a brittle section-name whitelist.
--- Exoskeletons are the only armor allowed to reach five pouches/composites.
-local armor_salvage_tiers = {
-	{ max_cost = 7500, max_count = 1, chance = 30 },
-	{ max_cost = 15000, max_count = 2, chance = 40 },
-	{ max_cost = 30000, max_count = 3, chance = 50 },
-	{ max_cost = math.huge, max_count = 4, chance = 60 }
-}
-
-function impl.armor_salvage_profile(section)
-	if string.find(section, "exo", 1, true) then
-		return 5, 70
-	end
-
-	local cost = 0
-	local ini = core.get_sysini()
-	if ini:line_exist(section, "cost") then
-		cost = ini:r_float(section, "cost")
-	end
-	for _, tier in ipairs(armor_salvage_tiers) do
-		if cost <= tier.max_cost then return tier.max_count, tier.chance end
-	end
-	return 1, 30
-end
-
-function impl.deterministic_salvage_count(target_id, salvage, maximum, chance)
-	local count = 0
-	for roll_index = 1, maximum do
-		if impl.deterministic_salvage_succeeds(
-			target_id, salvage.multiplier + roll_index * 997,
-			salvage.offset + roll_index * 104729, chance
-		) then
-			count = count + 1
+function impl.rollback_disassembly_rewards(created)
+	local storage = db.actor and db.storage[db.actor:id()] or nil
+	for _, entry in ipairs(created or {}) do
+		if entry.pstor_key and storage and storage.pstor then
+			storage.pstor[entry.pstor_key] = nil
 		end
+		alife():release(entry.object, true)
 	end
-	return count
+end
+
+-- Create the complete result before consuming either source item. A failed
+-- section creation rolls every new object back, so dismantling is atomic.
+function impl.create_disassembly_rewards(rewards)
+	local created = {}
+	local ok, reason = pcall(function()
+		for _, reward in ipairs(rewards or {}) do
+			for _ = 1, math.max(1, tonumber(reward.count) or 1) do
+				local object = core.create_for_actor(reward.section)
+				if not object then error("cannot create " .. tostring(reward.section)) end
+				local entry = { object = object }
+				table.insert(created, entry)
+				if reward.section == "lz_nm_recovered_upgrade" and reward.id then
+					entry.pstor_key = RECOVERED_UPGRADE_KEY_PREFIX .. tostring(object.id)
+					xr_logic.pstor_store(db.actor, entry.pstor_key, reward.id)
+				end
+			end
+		end
+	end)
+	if ok then return created end
+	impl.rollback_disassembly_rewards(created)
+	return nil, reason
 end
 
 function impl.disassemble_equipment(tool, target)
@@ -1210,7 +1249,6 @@ function impl.disassemble_equipment(tool, target)
 	end
 	if not disassembly_tools[core.canonical_item_section(tool:section())] then return false end
 	if core.is_weapon_mechanics_target(target) then
-
 		-- Keep every unique module once, plus the last non-unique native upgrade.
 		-- The native iterator retains installation order across saves/transfers.
 		if type(target.iterate_installed_upgrades) ~= "function" then
@@ -1235,32 +1273,18 @@ function impl.disassemble_equipment(tool, target)
 			end)
 		end
 		if last_regular then table.insert(upgrade_ids, last_regular) end
-		local rewards = { { section = "lz_nm_metal_part" } }
+		local rewards, salvage = pf_hf_salvage.rewards(target)
+		if not rewards then
+			core.message("lz_nm_disassemble_weapon_failed")
+			return false
+		end
 		for _, id in ipairs(upgrade_ids) do
 			table.insert(rewards, {
 				section = impl.recovered_field_tool(id) or "lz_nm_recovered_upgrade", id = id
 			})
 		end
-		local created = {}
-		local ok, reason = pcall(function()
-			for _, reward in ipairs(rewards) do
-				local object = core.create_for_actor(reward.section)
-				if not object then error("cannot create " .. reward.section) end
-				table.insert(created, object)
-				if reward.section == "lz_nm_recovered_upgrade" then
-					xr_logic.pstor_store(db.actor,
-						RECOVERED_UPGRADE_KEY_PREFIX .. tostring(object.id), reward.id)
-				end
-			end
-		end)
-		if not ok then
-			for _, object in ipairs(created) do
-				local storage = db.storage[db.actor:id()]
-				if storage and storage.pstor then
-					storage.pstor[RECOVERED_UPGRADE_KEY_PREFIX .. tostring(object.id)] = nil
-				end
-				alife():release(object, true)
-			end
+		local created, reason = impl.create_disassembly_rewards(rewards)
+		if not created then
 			core.message("lz_nm_disassemble_weapon_failed")
 			printf("! [field_upgrade] weapon salvage rolled back: %s", tostring(reason))
 			return false
@@ -1268,77 +1292,39 @@ function impl.disassemble_equipment(tool, target)
 		local target_section = target:section()
 		impl.release_item(target)
 		impl.consume_one_use(tool)
-		core.message(#upgrade_ids > 0 and "lz_nm_disassemble_weapon_complete_upgrade" or
-			"lz_nm_disassemble_weapon_complete_plain")
-		printf("lz_new_mechanics: disassembled weapon [%s], recovered upgrades [%s]",
-			tostring(target_section), table.concat(upgrade_ids, ", "))
-		return true
-	elseif core.is_helmet(target) then
-		local target_id = target:id()
-		local recovered_filter = impl.deterministic_salvage_succeeds(
-			target_id, 40699, 1103515245, 50
-		)
-		if recovered_filter then
-			local filter = core.create_for_actor("lz_nm_used_filter")
-			if not filter then
-				core.message("lz_nm_disassemble_helmet_failed")
-				return false
-			end
-		end
-
-		local target_section = target:section()
-		impl.release_item(target)
-		impl.consume_one_use(tool)
-		core.message(recovered_filter and "lz_nm_disassemble_helmet_result_1" or
-			"lz_nm_disassemble_helmet_result_0")
-		printf(
-			"lz_new_mechanics: disassembled helmet [%s:%s], deterministic filter salvage [%s]",
-			tostring(target_section), tostring(target_id), tostring(recovered_filter)
-		)
+		core.message(string.format(
+			game.translate_string("pf_hf_salvage_weapon_result"),
+			#created
+		))
+		printf("lz_new_mechanics: disassembled weapon [%s], profile [%s], materials [%s], recovered upgrades [%s]",
+			tostring(target_section), tostring(salvage.profile),
+			tostring(salvage.base_total + salvage.special_total), table.concat(upgrade_ids, ", "))
 		return true
 	elseif core.is_outfit_or_helmet(target) then
-		local recovered = {}
-		local result_mask = 0
-		local target_id = target:id()
-		local target_section = target:section()
-		local maximum, chance = impl.armor_salvage_profile(target_section)
-		local result_counts = { pouch = 0, composite = 0, boots = 0 }
-		for _, salvage in ipairs(armor_salvage) do
-			local salvage_maximum = salvage.multiple and maximum or 1
-			local count = impl.deterministic_salvage_count(
-				target_id, salvage, salvage_maximum, chance
-			)
-			for _ = 1, count do
-				local item = core.create_for_actor(salvage.section)
-				if not item then
-					for _, created in ipairs(recovered) do alife():release(created, true) end
-					core.message("lz_nm_disassemble_armor_failed")
-					return false
-				end
-				table.insert(recovered, item)
-			end
-			if count > 0 then result_mask = result_mask + salvage.bit end
-			if salvage.bit == 1 then
-				result_counts.pouch = count
-			elseif salvage.bit == 2 then
-				result_counts.composite = count
-			else
-				result_counts.boots = count
-			end
+		local rewards, salvage = pf_hf_salvage.rewards(target)
+		if not rewards then
+			core.message(core.is_helmet(target) and "lz_nm_disassemble_helmet_failed" or
+				"lz_nm_disassemble_armor_failed")
+			return false
+		end
+		local created, reason = impl.create_disassembly_rewards(rewards)
+		if not created then
+			core.message(core.is_helmet(target) and "lz_nm_disassemble_helmet_failed" or
+				"lz_nm_disassemble_armor_failed")
+			printf("! [salvage] equipment salvage rolled back: %s", tostring(reason))
+			return false
 		end
 
+		local target_section = target:section()
 		impl.release_item(target)
 		impl.consume_one_use(tool)
 		core.message(string.format(
-			game.translate_string("lz_nm_disassemble_armor_result_counts"),
-			result_counts.boots, result_counts.pouch, result_counts.composite
+			game.translate_string("pf_hf_salvage_equipment_result"),
+			#created
 		))
-		printf(
-			"lz_new_mechanics: disassembled armor [%s:%s], rarity yield [%s%%, max %s], salvage mask [%s], boots/pouches/composites [%s/%s/%s]",
-			tostring(target_section), tostring(target_id), tostring(chance), tostring(maximum),
-			tostring(result_mask), tostring(result_counts.boots), tostring(result_counts.pouch),
-			tostring(result_counts.composite)
-		)
+		printf("lz_new_mechanics: disassembled equipment [%s], profile [%s], base materials [%s], special components [%s]",
+			tostring(target_section), tostring(salvage.profile), tostring(salvage.base_total),
+			tostring(salvage.special_total))
 		return true
 	end
 	core.message("lz_nm_disassemble_wrong_target")
@@ -1689,6 +1675,8 @@ function update_context_actions(now)
 		if tool and target and core.is_actor_owned_item(tool) and core.is_actor_owned_item(target) then
 			if pending.action == "disassemble_detector" then
 				impl.complete_detector_disassembly(tool)
+			elseif pending.action == "disassemble_component" then
+				impl.complete_component_disassembly(tool)
 			elseif pending.action == "charge_detector" then
 				impl.charge_detector_with_battery(tool, target)
 			elseif pending.action == "upgrade" then

@@ -1,0 +1,559 @@
+local level_name = "pripyat_full"
+local station_center = vector():set(-959.607440, 0.071490, -1344.736800)
+local activation_distance_sqr = 150 * 150
+local update_interval = 500
+local spawn_settle_delay = 1000
+local cleanup_delay = 5000
+local cleanup_interval = 1000
+local direction_dot_threshold = 0.995
+local direction_retry_interval = 2000
+local passive_sound_threshold = 1000000
+local no_smart_terrain_id = 65535
+local greeting_distance_sqr = 3 * 3
+local greeting_release_distance_sqr = 4 * 4
+local greeting_height_delta = 1.5
+local nimble_section = "pf_yanov_nimble"
+local nimble_release_distance_sqr = 50 * 50
+
+-- The Yanov building is an exact rigid copy of stock Jupiter geometry. Every
+-- resident starts from a stock authoring point transformed by the accepted
+-- +62 degree building rotation. Online placement is performed only once: a
+-- periodic teleport would fight the character controller near furniture.
+local residents = {
+    {
+        section = "pf_yanov_hawaiian",
+        visual = "actors\\stalker_neutral\\stalker_neutral_2_face_3",
+        position = vector():set(-975.788909, 0.001500, -1360.716258),
+        yaw = 1.867502300,
+        direction = vector():set(0.956304756, 0, -0.292371705),
+        look = vector():set(-966.225861, 1.501500, -1363.639975),
+        level_vertex_id = 2358185,
+        game_vertex_id = 377,
+        state = "pf_yanov_hawaiian_barman_fixed",
+        logic_section = "remark@pf_yanov_hawaiian",
+    },
+    {
+        section = "pf_yanov_nitro",
+        visual = "actors\\stalker_neutral\\pf_yanov_nitro",
+        -- The low workshop chair was rejected during visual QA. Keep the NPC
+        -- root on the rug/floor collision: the stock high seated pose itself
+        -- raises the pelvis onto the table while preserving the accepted yaw.
+        position = vector():set(-952.124964, 0.015195, -1373.581532),
+        yaw = -1.167625974,
+        direction = vector():set(-0.919821774, 0, 0.392336469),
+        look = vector():set(-961.323182, 1.515195, -1369.658167),
+        level_vertex_id = 2474848,
+        game_vertex_id = 376,
+        state = "pf_yanov_nitro_sit_fixed",
+        logic_section = "remark@pf_yanov_nitro",
+        settle_after_spawn = true,
+    },
+    {
+        section = "pf_yanov_trapper",
+        visual = "actors\\stalker_neutral\\stalker_neutral_2_face_7",
+        -- Exported from the in-game NPC editor. The basement point is outside
+        -- the AI mesh by design, so its last valid vertices are only ALife
+        -- anchors. A static remark and sit_ass keep the exact authored root.
+        position = vector():set(-968.446533, -4.003554, -1357.370483),
+        yaw = 3.065793004,
+        direction = vector():set(0.075727085, 0, -0.997128582),
+        look = vector():set(-967.689262, -2.503554, -1367.341769),
+        level_vertex_id = 2383770,
+        game_vertex_id = 377,
+        state = "sit_ass",
+        greeting_hello = "jup_b220_trapper_greeting",
+        greeting_bye = "jup_b220_trapper_farewell",
+        logic_section = "remark@pf_yanov_trapper",
+    },
+    {
+        section = "pf_yanov_nimble",
+        visual = "actors\\stalker_neutral\\pf_yanov_nimble",
+        -- Promoted from NPC Editor record pf_ne_npc_0381. The point is
+        -- intentionally off the AI mesh; its recorded vertices are ALife
+        -- anchors while the stationary remark owns the exact world position.
+        -- The later authoring screenshot supersedes the earlier export yaw.
+        -- Visual QA: after the backward bench adjustments, move 0.15 m
+        -- forward to the seat edge, then rotate 10 degrees left in two
+        -- 5-degree passes without changing ALife anchors.
+        position = vector():set(-973.012189, -0.000023, -1347.560052),
+        yaw = -3.045332314,
+        direction = vector():set(-0.096111750, 0, -0.995370550),
+        look = vector():set(-973.973306, 1.499977, -1357.513757),
+        level_vertex_id = 2431110,
+        game_vertex_id = 377,
+        state = "pf_yanov_nimble_sit_fixed",
+        logic_section = "remark@pf_yanov_nimble",
+        settle_after_spawn = true,
+    },
+}
+
+-- Optional furniture resident shares this lifecycle with all Yanov inhabitants.
+local savka = getFS():exist("$game_scripts$", "pf_hf_savka.script") and pf_hf_savka or nil
+if savka ~= nil then
+    residents[#residents + 1] = savka.resident()
+end
+
+local resident_by_section = {}
+for _, resident in ipairs(residents) do
+    resident_by_section[resident.section] = resident
+end
+
+local function resident_should_be_present(resident)
+    if resident.section ~= nimble_section then return true end
+    if pf_yanov_nimble_dialog == nil or
+            type(pf_yanov_nimble_dialog.nimble_should_be_present) ~= "function" then
+        return true
+    end
+    return pf_yanov_nimble_dialog.nimble_should_be_present() == true
+end
+
+local resident_ids = {}
+local prepared_online = {}
+local placement_ready_due = {}
+local pose_applied = {}
+local greeting_inside = {}
+local next_direction_retry = {}
+local spawn_settle_pending = {}
+local spawn_settle_due = {}
+local cleanup_ids = {}
+local cleanup_due = nil
+local scanned = false
+local next_update = 0
+
+local function copy_vector(value)
+    return vector():set(value.x, value.y, value.z)
+end
+
+local function actor_is_near()
+    local actor = db.actor
+    if actor == nil then
+        return false
+    end
+    local position = actor:position()
+    local x = position.x - station_center.x
+    local z = position.z - station_center.z
+    return x * x + z * z <= activation_distance_sqr
+end
+
+local function pin_server_object(server_object, resident)
+    if server_object == nil then
+        return
+    end
+    server_object.position = copy_vector(resident.position)
+    server_object.angle = vector():set(0, resident.yaw, 0)
+    server_object.m_level_vertex_id = resident.level_vertex_id
+    server_object.m_game_vertex_id = resident.game_vertex_id
+    server_object.m_smart_terrain_id = no_smart_terrain_id
+    server_object:visible_for_map(true)
+end
+
+local function disable_stationary_perception(object)
+    object:set_visual_memory_enabled(false)
+    object:set_sound_threshold(passive_sound_threshold)
+    local enemy = object:best_enemy()
+    if enemy ~= nil then
+        object:enable_memory_object(enemy, false)
+    end
+end
+
+local function update_greeting(object, resident)
+    local actor = db.actor
+    if actor == nil or resident.greeting_hello == nil then
+        return
+    end
+
+    local id = object:id()
+    -- A seated animation can shift the object's runtime root. The authored
+    -- resident point is the stable basement-floor reference for both radius
+    -- and height checks.
+    local object_position = resident.position
+    local actor_position = actor:position()
+    local height_delta = math.abs(actor_position.y - object_position.y)
+
+    -- Yanov has walkable floors directly above the basement. Use the same
+    -- proximity greeting as the bunker residents, but measure the radius in
+    -- the horizontal plane and reject actors standing on another floor.
+    if height_delta > greeting_height_delta then
+        greeting_inside[id] = nil
+        return
+    end
+
+    local x = actor_position.x - object_position.x
+    local z = actor_position.z - object_position.z
+    local distance_sqr = x * x + z * z
+    if not greeting_inside[id] then
+        if distance_sqr <= greeting_distance_sqr then
+            greeting_inside[id] = true
+            xr_sound.set_sound_play(id, resident.greeting_hello)
+        end
+    elseif distance_sqr >= greeting_release_distance_sqr then
+        greeting_inside[id] = nil
+        if resident.greeting_bye ~= nil then
+            xr_sound.set_sound_play(id, resident.greeting_bye)
+        end
+    end
+end
+
+local function apply_state(object, resident)
+    local storage = db.storage[object:id()]
+    if storage == nil or storage.state_mgr == nil then
+        return false
+    end
+
+    object:set_desired_direction(copy_vector(resident.direction))
+    storage.state_mgr:set_state(
+        resident.state,
+        nil,
+        nil,
+        { look_position = copy_vector(resident.look) },
+        nil
+    )
+
+    -- A saved remark/meet action can retain another sight request after bind.
+    -- Fixed residents restore the native direction too, without replaying idle.
+    if resident.fixed_direction then
+        object:set_sight(look.direction, copy_vector(resident.direction), true)
+    end
+
+    local id = object:id()
+    pose_applied[id] = true
+    next_direction_retry[id] = time_global() + direction_retry_interval
+    return true
+end
+
+local function restore_pose(object, resident, storage)
+    local id = object:id()
+    local current_state = state_mgr.get_state(object)
+    if not pose_applied[id] or current_state ~= resident.state then
+        if not apply_state(object, resident) then
+            return
+        end
+    end
+
+    local current_direction = object:direction()
+    local dot = current_direction.x * resident.direction.x +
+        current_direction.z * resident.direction.z
+    local look_position = storage.state_mgr.look_position
+    local target_lost = resident.fixed_direction and
+        (storage.state_mgr.look_object ~= nil or look_position == nil or
+        math.abs(look_position.x - resident.look.x) > 0.01 or
+        math.abs(look_position.y - resident.look.y) > 0.01 or
+        math.abs(look_position.z - resident.look.z) > 0.01)
+    if target_lost or dot < direction_dot_threshold then
+        local now = time_global()
+        local retry_due = next_direction_retry[id]
+        if target_lost or retry_due == nil or now >= retry_due then
+            -- remark initialization may erase look_position after the first
+            -- actor update. Restore a lost target even before the body turns.
+            apply_state(object, resident)
+        end
+    else
+        next_direction_retry[id] = nil
+    end
+end
+
+local function apply_online_object(object, resident, force_position)
+    local id = object:id()
+    local storage = db.storage[id]
+    if storage == nil or storage.state_mgr == nil or
+            storage.active_section ~= resident.logic_section then
+        return
+    end
+
+    -- Greeting is independent from the current planner action. In particular,
+    -- xr_meet may replace remark as the actor approaches, and must not suppress
+    -- the proximity transition.
+    update_greeting(object, resident)
+
+    -- The remark scheme must own the first state transition. Binding hooks are
+    -- intentionally identity-only; placement starts after both planners are
+    -- initialized and xr_remark is the active top-level action.
+    local top_planner = object:motivation_action_manager()
+    if not top_planner:initialized() or top_planner:current_action_id() ~=
+            xr_actions_id.zmey_remark_base + 1 then
+        return
+    end
+
+    if object:get_visual_name() ~= resident.visual then
+        object:set_visual_name(resident.visual, true)
+        pose_applied[id] = nil
+        next_direction_retry[id] = nil
+    end
+
+    if force_position and resident.placement_animstate ~= nil then
+        -- A restored/first-bound remark can be active before the seated body
+        -- state has entered its idle. Let the native pose finish first, then
+        -- perform this bind's sole placement; no later drift teleports.
+        disable_stationary_perception(object)
+        restore_pose(object, resident, storage)
+        local animstate = storage.state_mgr.animstate
+        local pose = animstate ~= nil and animstate.states or nil
+        if pose == nil or pose.current_state ~= resident.placement_animstate or
+                pose.anim_marker ~= 3 then -- native MARKER_IDLE
+            placement_ready_due[id] = nil
+            return
+        end
+        local now = time_global()
+        if placement_ready_due[id] == nil then
+            -- The idle is queued during its entry callback. Allow one update
+            -- for the engine to start it before assigning the final transform.
+            placement_ready_due[id] = now + update_interval
+            return
+        end
+        if now < placement_ready_due[id] then return end
+    end
+
+    -- Place every resident only once after bind/online. Repeated correction
+    -- would fight the character controller when a narrow capsule overlaps
+    -- authored furniture and would make the NPC jump between two positions.
+    if force_position then
+        object:set_npc_position(copy_vector(resident.position))
+        placement_ready_due[id] = nil
+        pose_applied[id] = nil
+        next_direction_retry[id] = nil
+        if resident.settle_after_spawn and spawn_settle_pending[id] then
+            spawn_settle_due[id] = time_global() + spawn_settle_delay
+        else
+            spawn_settle_due[id] = nil
+        end
+        spawn_settle_pending[id] = nil
+    elseif spawn_settle_due[id] ~= nil and
+            time_global() >= spawn_settle_due[id] then
+        -- A newly spawned NPC may acquire the seated pose while the character
+        -- controller is still resolving its first position. Existing objects
+        -- found after F9 never arm this timer. Repeat once, then stop.
+        object:set_npc_position(copy_vector(resident.position))
+        spawn_settle_due[id] = nil
+    end
+
+    disable_stationary_perception(object)
+    prepared_online[id] = true
+
+    restore_pose(object, resident, storage)
+end
+
+local function queue_cleanup(id, section)
+    cleanup_ids[id] = section
+    if cleanup_due == nil then
+        cleanup_due = time_global() + cleanup_delay
+    end
+end
+
+local function scan_existing_objects()
+    local sim = alife()
+    if sim == nil then
+        return
+    end
+
+    resident_ids = {}
+    for _, server_object in sim:objects() do
+        local section = server_object:section_name()
+        local resident = resident_by_section[section]
+        if resident ~= nil then
+            if resident_ids[section] == nil then
+                resident_ids[section] = server_object.id
+                if level.object_by_id(server_object.id) == nil then
+                    pin_server_object(server_object, resident)
+                end
+            else
+                queue_cleanup(server_object.id, section)
+            end
+        end
+    end
+    scanned = true
+end
+
+local function spawn_missing_objects()
+    local sim = alife()
+    if sim == nil then
+        return
+    end
+
+    for _, resident in ipairs(residents) do
+        local id = resident_ids[resident.section]
+        local server_object = id ~= nil and sim:object(id) or nil
+        if server_object == nil and resident_should_be_present(resident) then
+            server_object = sim:create(
+                resident.section,
+                copy_vector(resident.position),
+                resident.level_vertex_id,
+                resident.game_vertex_id
+            )
+            if server_object ~= nil then
+                resident_ids[resident.section] = server_object.id
+                if resident.settle_after_spawn then
+                    spawn_settle_pending[server_object.id] = true
+                end
+                pin_server_object(server_object, resident)
+                printf("~ [pf_yanov_station] spawned [%s], id [%s]",
+                    resident.section, tostring(server_object.id))
+            end
+        end
+    end
+end
+
+local function release_absent_resident(sim, server_object, resident)
+    local id = server_object.id
+    local object = level.object_by_id(id)
+    if object ~= nil and db.actor ~= nil then
+        if db.actor:is_talking() then return false end
+        local actor_position = db.actor:position()
+        local x = actor_position.x - resident.position.x
+        local z = actor_position.z - resident.position.z
+        if x * x + z * z < nimble_release_distance_sqr then return false end
+    end
+
+    resident_ids[resident.section] = nil
+    prepared_online[id] = nil
+    placement_ready_due[id] = nil
+    pose_applied[id] = nil
+    greeting_inside[id] = nil
+    next_direction_retry[id] = nil
+    spawn_settle_pending[id] = nil
+    spawn_settle_due[id] = nil
+    sim:release(server_object, true)
+    printf("~ [pf_yanov_station] released absent resident [%s], id [%s]",
+        resident.section, tostring(id))
+    return true
+end
+
+local function cleanup_one_object(now)
+    if cleanup_due == nil or now < cleanup_due then
+        return
+    end
+    local sim = alife()
+    if sim == nil then
+        cleanup_due = now + cleanup_interval
+        return
+    end
+
+    for id, section in pairs(cleanup_ids) do
+        local server_object = sim:object(id)
+        if server_object == nil then
+            cleanup_ids[id] = nil
+        elseif level.object_by_id(id) ~= nil then
+            -- Never release a live client object from an actor update. Generic
+            -- schemes may still refer to its storage later in the same frame.
+            cleanup_due = now + cleanup_interval
+            return
+        else
+            cleanup_ids[id] = nil
+            prepared_online[id] = nil
+            placement_ready_due[id] = nil
+            pose_applied[id] = nil
+            greeting_inside[id] = nil
+            next_direction_retry[id] = nil
+            spawn_settle_pending[id] = nil
+            spawn_settle_due[id] = nil
+            sim:release(server_object, true)
+            printf("~ [pf_yanov_station] removed duplicate [%s], id [%s]",
+                section, tostring(id))
+            cleanup_due = now + cleanup_interval
+            return
+        end
+    end
+    cleanup_due = nil
+end
+
+function reset()
+    resident_ids = {}
+    prepared_online = {}
+    placement_ready_due = {}
+    pose_applied = {}
+    greeting_inside = {}
+    next_direction_retry = {}
+    spawn_settle_pending = {}
+    spawn_settle_due = {}
+    cleanup_ids = {}
+    cleanup_due = nil
+    scanned = false
+    next_update = 0
+    if savka ~= nil then savka.reset() end
+    if pf_yanov_nimble_dialog ~= nil and
+            type(pf_yanov_nimble_dialog.reset_vehicle_sales_runtime) == "function" then
+        pf_yanov_nimble_dialog.reset_vehicle_sales_runtime()
+    end
+end
+
+function update()
+    if db.actor == nil or level.name() ~= level_name then
+        return
+    end
+    if not pf_yanov_nimble_pose.ensure_registered() then
+        return
+    end
+
+    if savka ~= nil and not savka.ensure_registered() then return end
+
+    local now = time_global()
+    if not scanned then
+        scan_existing_objects()
+    end
+
+    cleanup_one_object(now)
+    if now < next_update then
+        return
+    end
+    next_update = now + update_interval
+
+    if pf_yanov_nimble_dialog ~= nil and
+            type(pf_yanov_nimble_dialog.update_vehicle_sales) == "function" then
+        pf_yanov_nimble_dialog.update_vehicle_sales()
+    end
+
+    if actor_is_near() then
+        spawn_missing_objects()
+    end
+
+    local sim = alife()
+    if sim == nil then
+        return
+    end
+
+    for _, resident in ipairs(residents) do
+        local id = resident_ids[resident.section]
+        local server_object = id ~= nil and sim:object(id) or nil
+        if server_object ~= nil and not resident_should_be_present(resident) then
+            release_absent_resident(sim, server_object, resident)
+        elseif server_object ~= nil then
+            local object = level.object_by_id(id)
+            if object ~= nil then
+                apply_online_object(object, resident, not prepared_online[id])
+                if savka ~= nil and resident.section == "pf_yanov_savka" then
+                    savka.update(object)
+                end
+            else
+                pin_server_object(server_object, resident)
+                prepared_online[id] = nil
+                placement_ready_due[id] = nil
+                pose_applied[id] = nil
+                greeting_inside[id] = nil
+                next_direction_retry[id] = nil
+                spawn_settle_due[id] = nil
+            end
+        end
+    end
+end
+
+function before_npc_bind(object)
+    local resident = resident_by_section[object:section()]
+    if resident == nil then
+        return false
+    end
+
+    -- CScriptBinder::reload reaches this hook before db.storage, state_mgr and
+    -- the main action planner exist. Only record identity at this stage.
+    resident_ids[resident.section] = object:id()
+    return true
+end
+
+function after_npc_bind(object)
+    local resident = resident_by_section[object:section()]
+    if resident == nil then
+        return
+    end
+
+    -- AddToMotivator has only installed the binder here. reinit/net_spawn may
+    -- still be incomplete, so the regular update owns all placement/state work.
+    resident_ids[resident.section] = object:id()
+end

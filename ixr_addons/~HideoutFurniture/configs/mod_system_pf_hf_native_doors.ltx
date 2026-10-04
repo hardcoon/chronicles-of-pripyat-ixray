@@ -1,0 +1,396 @@
+; Native QA doors; one inventory item per type, authored left/right hinges.
+
+[pf_hfn_door_wood_120x240_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_wood_120x240_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_wood_120x240_01.ogf
+inv_name = pf_hfn_door_wood_120x240_name
+inv_name_short = pf_hfn_door_wood_120x240_name
+description = pf_hfn_door_wood_120x240_desc
+inv_weight = 6
+cost = 1200
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 0
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfn_door_wood_120x240]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_wood_120x240_01.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 6
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_wood_small_ignore_static.ltx
+
+[pf_hfn_door_wood_130x245_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_wood_130x245_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_wood_130x245_01.ogf
+inv_name = pf_hfn_door_wood_130x245_name
+inv_name_short = pf_hfn_door_wood_130x245_name
+description = pf_hfn_door_wood_130x245_desc
+inv_weight = 6
+cost = 1200
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 2
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfn_door_wood_130x245]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_wood_130x245_01.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 6
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_wood_small_ignore_static.ltx
+
+[pf_hfn_door_wood_130x250_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_wood_130x250_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_wood_130x250_01.ogf
+inv_name = pf_hfn_door_wood_130x250_name
+inv_name_short = pf_hfn_door_wood_130x250_name
+description = pf_hfn_door_wood_130x250_desc
+inv_weight = 6
+cost = 1200
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 4
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfn_door_wood_130x250]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_wood_130x250_01.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 6
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_wood_small_ignore_static.ltx
+
+[pf_hfn_door_wood_200x250_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_wood_200x250_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_wood_200x250_01_l.ogf
+inv_name = pf_hfn_door_wood_200x250_name
+inv_name_short = pf_hfn_door_wood_200x250_name
+description = pf_hfn_door_wood_200x250_desc
+inv_weight = 6
+cost = 1200
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 6
+inv_grid_y = 0
+use1_text = pf_hfn_place_left
+use1_functor = pf_hf_native_doors.place_left
+use2_text = pf_hfn_place_right
+use2_functor = pf_hf_native_doors.place_right
+
+[pf_hfn_door_wood_200x250_l]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_wood_200x250_01_l.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 6
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_wood_large_ignore_static.ltx
+
+[pf_hfn_door_wood_200x250_r]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_wood_200x250_01_r.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 6
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_wood_large_ignore_static.ltx
+
+[pf_hfn_door_metal_145x230_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_metal_145x230_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_metal_145_230_01.ogf
+inv_name = pf_hfn_door_metal_145x230_name
+inv_name_short = pf_hfn_door_metal_145x230_name
+description = pf_hfn_door_metal_145x230_desc
+inv_weight = 10
+cost = 1800
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 8
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfn_door_metal_145x230]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_metal_145_230_01.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 10
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_small_ignore_static.ltx
+
+[pf_hfn_door_metal_150x260_01_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_metal_150x260_01_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_metal_150x260_01.ogf
+inv_name = pf_hfn_door_metal_150x260_01_name
+inv_name_short = pf_hfn_door_metal_150x260_01_name
+description = pf_hfn_door_metal_150x260_01_desc
+inv_weight = 10
+cost = 1800
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 0
+inv_grid_y = 3
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfn_door_metal_150x260_01]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_metal_150x260_01.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 10
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_small_ignore_static.ltx
+
+[pf_hfn_door_metal_150x260_02_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_metal_150x260_02_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_metal_150x260_02.ogf
+inv_name = pf_hfn_door_metal_150x260_02_name
+inv_name_short = pf_hfn_door_metal_150x260_02_name
+description = pf_hfn_door_metal_150x260_02_desc
+inv_weight = 10
+cost = 1800
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 2
+inv_grid_y = 3
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfn_door_metal_150x260_02]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_metal_150x260_02.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 10
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_small_ignore_static.ltx
+
+[pf_hfn_door_metal_220x260_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_metal_220x260_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_metal_220x260_01_l.ogf
+inv_name = pf_hfn_door_metal_220x260_name
+inv_name_short = pf_hfn_door_metal_220x260_name
+description = pf_hfn_door_metal_220x260_desc
+inv_weight = 10
+cost = 1800
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 4
+inv_grid_y = 3
+use1_text = pf_hfn_place_left
+use1_functor = pf_hf_native_doors.place_left
+use2_text = pf_hfn_place_right
+use2_functor = pf_hf_native_doors.place_right
+
+[pf_hfn_door_metal_220x260_l]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_metal_220x260_01_l.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 10
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_large_ignore_static.ltx
+
+[pf_hfn_door_metal_220x260_r]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_metal_220x260_01_r.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 10
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_large_ignore_static.ltx
+
+[pf_hfn_door_trader_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_trader_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_trader.ogf
+inv_name = pf_hfn_door_trader_name
+inv_name_short = pf_hfn_door_trader_name
+description = pf_hfn_door_trader_desc
+inv_weight = 12
+cost = 2500
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 6
+inv_grid_y = 3
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfn_door_trader]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_trader.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 12
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_large_ignore_static.ltx
+
+[pf_hfn_door_ship_high_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfn_door_ship_high_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_native_doors\dynamics\door\door_ship_high_l.ogf
+inv_name = pf_hfn_door_ship_high_name
+inv_name_short = pf_hfn_door_ship_high_name
+description = pf_hfn_door_ship_high_desc
+inv_weight = 10
+cost = 2000
+can_trade = false
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_native_doors
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 8
+inv_grid_y = 3
+use1_text = pf_hfn_place_left
+use1_functor = pf_hf_native_doors.place_left
+use2_text = pf_hfn_place_right
+use2_functor = pf_hf_native_doors.place_right
+
+[pf_hfn_door_ship_high_l]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_ship_high_l.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 10
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_large_ignore_static.ltx
+
+[pf_hfn_door_ship_high_r]:physic_door
+visual = pf_hf_native_doors\dynamics\door\door_ship_high_r.ogf
+script_binding = pf_hf_doors.init
+inv_weight = 10
+startup_animation =
+damage_immune = true
+fixed_bones = link
+custom_data = scripts\pf_hfn_door_metal_large_ignore_static.ltx
+
+![inventory_sort_registry]
+pf_hfn_door_wood_120x240_item = furniture
+pf_hfn_door_wood_130x245_item = furniture
+pf_hfn_door_wood_130x250_item = furniture
+pf_hfn_door_wood_200x250_item = furniture
+pf_hfn_door_metal_145x230_item = furniture
+pf_hfn_door_metal_150x260_01_item = furniture
+pf_hfn_door_metal_150x260_02_item = furniture
+pf_hfn_door_metal_220x260_item = furniture
+pf_hfn_door_trader_item = furniture
+pf_hfn_door_ship_high_item = furniture

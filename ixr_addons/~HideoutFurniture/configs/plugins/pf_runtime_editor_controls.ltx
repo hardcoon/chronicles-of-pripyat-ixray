@@ -1,0 +1,23 @@
+; Shared furniture editor controls; no MCM required.
+; Restart the game after editing. Use DIK names without the DIK_ prefix.
+; Examples: HOME, TAB, CAPITAL, G, RSHIFT, RCONTROL, RMENU, MOUSE_1, MOUSE_2.
+; Each action must have a different key. The HUD displays the chosen keys.
+; USE follows the game's Use binding (F by default); it may also be a fixed key.
+
+[pf_runtime_editor_controls]
+place = USE
+move = MOUSE_1
+rotate = MOUSE_2
+height = LSHIFT
+fine = LCONTROL
+snap = LMENU
+collision = TAB
+align = CAPITAL
+simple = 1
+advanced = 2
+cancel = ESCAPE
+
+; Hold move + move mouse: move on the placement plane.
+; Hold height + move + move mouse: height / surface normal.
+; Hold rotate + move mouse: rotate.
+; Add fine: 1/10 sensitivity. Add snap: one axis / 15-degree rotation steps.

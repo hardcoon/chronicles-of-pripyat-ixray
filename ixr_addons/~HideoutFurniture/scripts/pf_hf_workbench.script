@@ -1,0 +1,325 @@
+-- One inert workbench near the actor, only for a newly started Developer game.
+local SECTION = "pf_hf_workbench_dev"
+local ITEM_SECTION = "pf_hf_workbench_item"
+local PENDING_KEY = "pf_hf_workbench_dev_pending_v1"
+local SPAWNED_KEY = "pf_hf_workbench_dev_spawned_v1"
+local OBJECT_ID_KEY = "pf_hf_workbench_dev_object_id_v1"
+local ORIENTATION_KEY = "pf_hf_workbench_orientation_v3"
+local SPAWN_DELAY_MS = 3000
+local RETRY_DELAY_MS = 1000
+local PLACEMENT_DISTANCE = 1.65
+local DEV_SUPPLIES = {
+	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
+	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_electronics", "pf_hf_dampers",
+	"pf_hf_oil", "lz_nm_metal_part"
+}
+
+local runtime = {
+	registered = false,
+	hook_installed = false,
+	supplies_checked = false,
+	pending = false,
+	due = 0,
+	placing = {},
+	generation = 0
+}
+
+local function stored(key, default)
+	if not db.actor then return default end
+	return xr_logic.pstor_retrieve(db.actor, key, default)
+end
+
+local function save(key, value)
+	if db.actor then xr_logic.pstor_store(db.actor, key, value) end
+end
+
+local function developer_mode()
+	return pf_stash_qa and pf_stash_qa.is_developer_mode and
+		pf_stash_qa.is_developer_mode() == true
+end
+
+local function existing_workbench()
+	local simulator = alife()
+	if not simulator then return nil end
+	for _, object in simulator:objects() do
+		if object:section_name() == SECTION then return object end
+	end
+	return nil
+end
+
+local function complete(object)
+	save(OBJECT_ID_KEY, object.id)
+	save(SPAWNED_KEY, true)
+	save(PENDING_KEY, false)
+	runtime.pending = false
+	printf("[pf_hf_workbench] Workbench ready: object_id=%s", tostring(object.id))
+end
+
+local function notify(string_id)
+	if not db.actor then return end
+	db.actor:give_game_news(game.translate_string("st_tip"),
+		game.translate_string(string_id), "pf_news_item_received", 0, 3000)
+end
+
+local function placement_yaw(forward_x, forward_z)
+	-- X-Ray rotates world objects in the opposite yaw direction to the
+	-- mathematical X/Z heading. Keeping the minus here is what makes all
+	-- cardinal and diagonal placements face the actor consistently.
+	return -math.atan2(forward_x, forward_z)
+end
+
+local function finish_orientation_migration()
+	if stored(ORIENTATION_KEY, false) == true then return true end
+	local simulator = alife()
+	if not simulator or not db.actor then return false end
+	for _, object in simulator:objects() do
+		if object:section_name() == SECTION then
+			local yaw = -(object.angle and tonumber(object.angle.y) or 0)
+			object.angle = vector():set(0, yaw, 0)
+		end
+	end
+	save(ORIENTATION_KEY, true)
+	return true
+end
+
+function model_bounds()
+	-- OGF_HEADER of the authored model after removing the vise.
+	return {min=vector():set(-0.489394069,0.000000238418579,-0.536652684),
+		max=vector():set(0.495274425,1.02399087,0.309042603),
+		pivot=vector():set(0,0,0)}
+end
+
+function create_placed(pose,item_id)
+	local actor = db.actor
+	local simulator = alife()
+	if not actor or not simulator then return nil,"actor_missing" end
+	local server_item = simulator:object(item_id, true)
+	if not server_item or server_item:section_name() ~= ITEM_SECTION or
+		tonumber(server_item.parent_id) ~= actor:id() then
+		return nil,"source_lost"
+	end
+	if not pose or
+		not pf_runtime_editor_geometry.finite(pose.position) or
+		not pf_runtime_editor_geometry.finite(pose.rotation) then return nil,"invalid_pose" end
+	local object
+	local ok,err=pcall(function()
+		object=simulator:create(SECTION,pose.position,pose.level_vertex_id,pose.game_vertex_id)
+		if not object then error("create_failed") end
+		object:use_ai_locations(false)
+		object.position=vector():set(pose.position)
+		object.angle=vector():set(pose.rotation)
+		object.m_level_vertex_id=pose.level_vertex_id
+		object.m_game_vertex_id=pose.game_vertex_id
+		simulator:release(server_item,true)
+	end)
+	if not ok then
+		if object then pcall(function() simulator:release(object,true) end) end
+		return nil,tostring(err)
+	end
+	runtime.placing[item_id]=nil
+	complete(object)
+	return object.id
+end
+
+local function perform_placement(item_id)
+	if not finish_orientation_migration() then runtime.placing[item_id]=nil;return end
+	local ok=pf_runtime_editor.begin({section=SECTION,title="pf_hf_workbench_item_name",
+		source_item_id=item_id,source_section=ITEM_SECTION,bounds=model_bounds(),
+		visual="dynamics\\placeable\\pf_hf_portable_workbench.ogf",
+		initial_distance=PLACEMENT_DISTANCE,max_range=5,
+		orientation_mode="local_minus_z_front",
+		on_confirm=create_placed,on_cancel=function() runtime.placing[item_id]=nil end})
+	if not ok then
+		runtime.placing[item_id]=nil
+		notify("pf_hf_workbench_place_failed")
+	end
+end
+
+function place_item(item)
+	if not item or not db.actor or item:section()~=ITEM_SECTION or
+		runtime.placing[item:id()] or pf_runtime_editor.is_active() then return false end
+	local item_id = item:id()
+	local generation=runtime.generation
+	runtime.placing[item_id] = true
+	local queued=pf_runtime_editor.defer_start(function()
+		if generation==runtime.generation and runtime.placing[item_id] then perform_placement(item_id) end
+	end,function() runtime.placing[item_id]=nil end)
+	if not queued then runtime.placing[item_id]=nil end
+	-- The item is not eatable. Consume it here only after the physical
+	-- workbench has been created successfully.
+	return false
+end
+
+function pickup(id)
+	local actor = db.actor
+	local simulator = alife()
+	local object = simulator and simulator:object(id, true) or nil
+	if not actor or not object or object:section_name() ~= SECTION then return false end
+	local item = simulator:create(ITEM_SECTION, actor:position(), actor:level_vertex_id(), actor:game_vertex_id(), actor:id())
+	if not item then return false end
+	local ok=pcall(function() simulator:release(object,true) end)
+	if not ok then pcall(function() simulator:release(item,true) end);return false end
+	save(OBJECT_ID_KEY, 0)
+	save(PENDING_KEY, false)
+	runtime.pending = false
+	printf("[pf_hf_workbench] Picked up as inventory item: object_id=%s", tostring(item.id))
+	return true
+end
+
+local function give_developer_supplies(actor, simulator)
+	if not actor or not simulator or not developer_mode() then return end
+	local counts = {}
+	actor:iterate_inventory(function(_, item)
+		local section = item:section()
+		counts[section] = (counts[section] or 0) + 1
+	end, actor)
+	local created = 0
+	for _, section in ipairs(DEV_SUPPLIES) do
+		for _ = (counts[section] or 0) + 1, 99 do
+			if simulator:create(section, actor:position(), actor:level_vertex_id(),
+				actor:game_vertex_id(), actor:id()) then
+				created = created + 1
+			end
+		end
+	end
+	if created > 0 then
+		printf("[pf_hf_workbench] Developer materials replenished: %d", created)
+	end
+end
+
+local function spawn()
+	local actor = db.actor
+	local simulator = alife()
+	if not actor or not simulator or not developer_mode() then return false end
+	local old = existing_workbench()
+	if old then
+		complete(old)
+		give_developer_supplies(actor, simulator)
+		return true
+	end
+
+	-- The existing Developer stash is ahead and to the actor's right. Place the
+	-- bench ahead and to the left so both can be inspected at the new-game start.
+	local actor_position = actor:position()
+	local direction = actor:direction()
+	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+	local forward_x = length > 0.001 and direction.x / length or 1
+	local forward_z = length > 0.001 and direction.z / length or 0
+	local right_x, right_z = -forward_z, forward_x
+	local position = vector():set(
+		actor_position.x + forward_x * 2.8 - right_x * 1.65,
+		actor_position.y,
+		actor_position.z + forward_z * 2.8 - right_z * 1.65
+	)
+	local vertex_id = level.vertex_id(position)
+	if not vertex_id or not level.valid_vertex_id(vertex_id) then
+		-- Passing an invalid node into alife():create can stall net_Spawn.
+		vertex_id = actor:level_vertex_id()
+	end
+	if not vertex_id or not level.valid_vertex_id(vertex_id) then return false end
+
+	local object = simulator:create(SECTION, position, vertex_id, actor:game_vertex_id())
+	if not object then
+		printf("! [pf_hf_workbench] Could not spawn Developer workbench")
+		return false
+	end
+	local dx = actor_position.x - position.x
+	local dz = actor_position.z - position.z
+	object.angle = vector():set(0, placement_yaw(-dx, -dz), 0)
+	complete(object)
+	give_developer_supplies(actor, simulator)
+	return true
+end
+
+function open(id)
+	local object = level.object_by_id(id)
+	if not db.actor or not object then return false end
+	local actor_position, object_position = db.actor:position(), object:position()
+	local dx = actor_position.x - object_position.x
+	local dy = actor_position.y - object_position.y
+	local dz = actor_position.z - object_position.z
+	if dx * dx + dy * dy + dz * dz > 3.25 * 3.25 then return false end
+	if developer_mode() then give_developer_supplies(db.actor, alife()) end
+	local due = time_global() + 1
+	local generation=runtime.generation
+	local actor_id=db.actor:id()
+	level.add_call(function() return time_global() >= due end, function()
+		local target=level.object_by_id(id)
+		if generation==runtime.generation and db.actor and db.actor:id()==actor_id and
+			target and target:section()==SECTION then
+			local ok, err = pcall(function() ui_pf_hf_workbench.show(id) end)
+			if not ok then
+				printf("! [pf_hf_workbench] UI failed: %s", tostring(err))
+				local ui = rawget(_G, "ui_pf_hf_workbench")
+				if ui and ui.force_close then pcall(ui.force_close) end
+			end
+		end
+	end)
+	return true
+end
+
+function schedule_new_game()
+	if not db.actor or not developer_mode() then return false end
+	if stored(SPAWNED_KEY, false) then return true end
+	save(PENDING_KEY, true)
+	runtime.pending = true
+	runtime.due = time_global() + SPAWN_DELAY_MS
+	return true
+end
+
+local function update()
+	if not db.actor then return end
+	finish_orientation_migration()
+	if not runtime.supplies_checked and developer_mode() then
+		local simulator = alife()
+		if simulator then
+			give_developer_supplies(db.actor, simulator)
+			runtime.supplies_checked = true
+		end
+	end
+	if not runtime.hook_installed then
+		on_game_start()
+	end
+	if not runtime.pending and stored(PENDING_KEY, false) == true then
+		runtime.pending = true
+		runtime.due = time_global() + RETRY_DELAY_MS
+	end
+	if not runtime.pending or time_global() < runtime.due then return end
+	if spawn() then return end
+	runtime.due = time_global() + RETRY_DELAY_MS
+end
+
+local function on_load()
+	-- A different save may be loaded in the same Lua state. Resume only if
+	-- that save owns the pending marker; update reads it after db.actor exists.
+	runtime.pending = false
+	runtime.due = 0
+	runtime.supplies_checked = false
+	runtime.placing = {}
+	runtime.generation=runtime.generation+1
+	local ui = rawget(_G, "ui_pf_hf_workbench")
+	if ui and ui.force_close then
+		ui.force_close()
+	end
+end
+
+function on_game_start()
+	if not runtime.hook_installed and pf_stash_qa and
+		type(pf_stash_qa.prepare_developer_new_game) == "function" then
+		local previous = pf_stash_qa.prepare_developer_new_game
+		pf_stash_qa.prepare_developer_new_game = function(...)
+			local result = previous(...)
+			schedule_new_game()
+			return result
+		end
+		runtime.hook_installed = true
+	end
+	if not runtime.registered and type(RegisterScriptCallback) == "function" then
+		RegisterScriptCallback("update", update)
+		RegisterScriptCallback("load", on_load)
+		runtime.registered = true
+	end
+end
+
+-- mod_script imports modules but does not call on_game_start itself.
+on_game_start()

@@ -1,0 +1,98 @@
+class "pf_runtime_editor_hud" (CUIScriptWnd)
+function pf_runtime_editor_hud:__init() super()
+    local xml=CScriptXmlInit()
+    xml:ParseFile("ui_pf_runtime_editor.xml")
+    xml:InitWindow("main",0,self)
+    self.controls_background=xml:InitStatic("main:controls_background",self)
+    self.status_background=xml:InitStatic("main:status_background",self)
+    self.title=xml:InitTextWnd("main:title",self)
+    self.status=xml:InitTextWnd("main:status",self)
+    self.control_rows={}
+    for index=1,12 do
+        local key=xml:InitTextWnd("main:control_key",self)
+        local action=xml:InitTextWnd("main:control_action",self)
+        key:SetWndPos(vector2():set(20,286+(index-1)*24))
+        action:SetWndPos(vector2():set(96,286+(index-1)*24))
+        self.control_rows[index]={key=key,action=action}
+    end
+end
+function pf_runtime_editor_hud:refresh(session)
+    self.title:SetText(game.translate_string(session.spec.title or "pf_rt_title"))
+    self.title:AdjustWidthToText()
+    local state=game.translate_string("pf_rt_state_"..session.state)
+    local align=game.translate_string(session.align_surface and "pf_rt_surface" or "pf_rt_actor")
+    local collision=game.translate_string(session.check_collision and "pf_rt_collision_on" or "pf_rt_collision_off")
+    local status=session.error and game.translate_string(session.error) or game.translate_string("pf_rt_ready")
+    -- CUILines recognizes the two characters backslash+n, not a literal LF.
+    self.status:SetText(state.."\\n"..align.." | "..collision.."\\n"..status)
+    local mode=session.state=="ADV_CTRL" and "advanced" or string.lower(session.state)
+    local message=game.translate_string("pf_rt_controls_"..mode)
+    local labels=pf_runtime_editor.control_labels()
+    message=message:gsub("%$([%w_]+)",function(key) return labels[key] or key end)
+    -- Separate widgets keep every shortcut gold, without color-run wrapping
+    -- or dependence on the font's multibyte newline parser.
+    local index=0
+    local key_width=0
+    for line in message:gsub("\\n","\n"):gmatch("[^\r\n]+") do
+        local key,action=line:match("^(.-) %- (.+)$")
+        if key and index<#self.control_rows then
+            index=index+1
+            local row=self.control_rows[index]
+            row.key:SetText(key);row.action:SetText(action)
+            row.key:AdjustWidthToText();row.action:AdjustWidthToText()
+            key_width=math.max(key_width,row.key:GetWidth())
+            row.key:Show(true);row.action:Show(true)
+        end
+    end
+    for hidden=index+1,#self.control_rows do
+        local row=self.control_rows[hidden]
+        row.key:Show(false);row.action:Show(false)
+    end
+    -- Measure with the active engine font and UI scale, including rebound keys.
+    local action_x=20+key_width+10
+    local right=20+self.title:GetWidth()
+    for visible=1,index do
+        local row=self.control_rows[visible]
+        row.action:SetWndPos(vector2():set(action_x,286+(visible-1)*24))
+        right=math.max(right,action_x+row.action:GetWidth())
+    end
+    local width=right+12-8
+    local height=50+index*24
+    self.controls_background:SetWidth(width)
+    self.controls_background:SetHeight(height)
+    local status_y=244+height+8
+    self.status_background:SetWndPos(vector2():set(8,status_y))
+    self.status:SetWndPos(vector2():set(20,status_y+8))
+    self.status:SetWidth(width-24)
+    self.status:AdjustHeightToText()
+    self.status_background:SetWidth(width)
+    self.status_background:SetHeight(self.status:GetHeight()+16)
+end
+function create_hud() return pf_runtime_editor_hud() end
+
+function pf_runtime_editor_hud:Update()
+    CUIScriptWnd.Update(self)
+    -- CDialogHolder updates rendered windows every frame, including HOLDING.
+    pf_runtime_editor.update()
+end
+
+class "pf_runtime_editor_controls" (CUIScriptWnd)
+function pf_runtime_editor_controls:__init() super()
+    self:SetWndRect(Frect():set(0,0,1024,768))
+    self:SetWindowName("pf_runtime_editor_controls")
+end
+function pf_runtime_editor_controls:OnKeyboard(dik,action) return true end
+function create_controls() return pf_runtime_editor_controls() end
+
+-- A blank, non-modal window dispatches inventory requests on the UI thread.
+-- It has no children, draws nothing, and is retained/reused by the library.
+class "pf_runtime_editor_dispatcher" (CUIScriptWnd)
+function pf_runtime_editor_dispatcher:__init() super()
+    self:SetWndRect(Frect():set(0,0,0,0))
+    self:SetWindowName("pf_runtime_editor_dispatcher")
+end
+function pf_runtime_editor_dispatcher:Update()
+    pf_runtime_editor.flush_start()
+end
+function create_dispatcher() return pf_runtime_editor_dispatcher() end
+

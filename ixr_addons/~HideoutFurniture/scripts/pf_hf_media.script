@@ -1,0 +1,171 @@
+-- Donor station playlists and all 85 piano notes, played with IX-Ray sound APIs.
+local media=pf_hf_media_data
+local voices={}
+local note_names={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}
+
+function piano_note(index)
+    if index<0 or index>84 then return nil end
+    return note_names[index%12+1]..tostring(math.floor(index/12)+1)
+end
+function play_note(id,instrument,index,volume)
+    local object=level.object_by_id(id)
+    local bank=media.instruments[instrument]
+    local note=piano_note(index)
+    local path=bank and bank.notes[note]
+    if not object or not path then return false end
+    for i=#voices,1,-1 do if not voices[i]:playing() then table.remove(voices,i) end end
+    local sound=sound_object(path)
+    sound:play_at_pos(object,object:position(),0,sound_object.s3d)
+    sound.frequency=bank.pitches and bank.pitches[note] or 1
+    sound.volume=volume or .5
+    voices[#voices+1]=sound
+    return true
+end
+function stop_notes()
+    for _,sound in ipairs(voices) do sound:stop() end
+    voices={}
+end
+-- Collection IDs are saved, so appending a new collection does not reorder old saves.
+local collections={
+    {id="yanov",title="pf_hf_playlist_yanov",tracks=pf_hf_radio_playlists.yanov},
+    {id="zonefm",title="pf_hf_playlist_zonefm",tracks={}}}
+local by_collection={}
+for _,collection in ipairs(collections) do by_collection[collection.id]=collection end
+local channel_offsets={}
+for index,channel in ipairs(media.channels) do
+    channel_offsets[index]=#by_collection.zonefm.tracks
+    for number,path in ipairs(channel.tracks) do
+        by_collection.zonefm.tracks[#by_collection.zonefm.tracks+1]={sound=path,
+            name=string.format("ZoneFM %.1f FM / %02d",channel.frequency,number)}
+    end
+end
+local function reset_sequence(own)
+    own.shuffle_tracks=nil
+    own.radio_history={own.track}
+    own.radio_history_pos=1
+end
+function radio_selection(own)
+    if not own.collection then
+        -- Pre-collection saves used a per-station current track, starting at zero.
+        own.collection="zonefm"
+        own.track=(channel_offsets[own.channel or 1] or 0)+math.max(1,own.track or 0)
+    end
+    local collection=by_collection[own.collection] or collections[1]
+    own.collection=collection.id
+    own.track=math.max(1,math.min(#collection.tracks,own.track or 1))
+    if own.play_order~="shuffle" then own.play_order="ordered" end
+    own.repeat_track=own.repeat_track==true
+    if type(own.radio_history)~="table" or #own.radio_history==0 then reset_sequence(own) end
+    own.radio_history_pos=math.max(1,math.min(#own.radio_history,own.radio_history_pos or 1))
+    return collection,collection.tracks[own.track]
+end
+function radio_copy_settings(source,target)
+    target.play_order=source and source.play_order or "ordered"
+    target.repeat_track=source and source.repeat_track==true or false
+    target.radio_history_pos=source and source.radio_history_pos or 1
+    for _,key in ipairs({"shuffle_tracks","radio_history"}) do
+        target[key]=nil
+        if source and type(source[key])=="table" then
+            target[key]={}
+            for index,value in ipairs(source[key]) do target[key][index]=value end
+        end
+    end
+end
+function radio_set_order(id,order)
+    local own=pf_hf_furniture.state(id)
+    if not own or (order~="ordered" and order~="shuffle") then return false end
+    radio_selection(own)
+    if own.play_order~=order then own.play_order=order;reset_sequence(own) end
+    return true
+end
+function radio_toggle_repeat(id)
+    local own=pf_hf_furniture.state(id)
+    if not own then return false end
+    radio_selection(own)
+    own.repeat_track=not own.repeat_track
+    return true
+end
+function radio_set_collection(id,collection_id)
+    local own=pf_hf_furniture.state(id)
+    if not own or not by_collection[collection_id] then return false end
+    radio_selection(own)
+    if own.collection~=collection_id then
+        own.collection=collection_id;own.track=1;own.track_revision=(own.track_revision or 0)+1
+        reset_sequence(own)
+    end
+    return true
+end
+local function advance_track(own,step)
+    local collection=radio_selection(own)
+    if own.play_order=="ordered" then
+        own.track=(own.track-1+step)%#collection.tracks+1
+        reset_sequence(own)
+    else
+        for _=1,math.abs(step) do
+            local pos=own.radio_history_pos
+            if step<0 then
+                if pos>1 then own.radio_history_pos=pos-1;own.track=own.radio_history[pos-1] end
+            elseif pos<#own.radio_history then
+                own.radio_history_pos=pos+1;own.track=own.radio_history[pos+1]
+            else
+                if not own.shuffle_tracks or #own.shuffle_tracks==0 then
+                    local first_cycle=own.shuffle_tracks==nil
+                    own.shuffle_tracks={}
+                    for index=1,#collection.tracks do
+                        if not first_cycle or index~=own.track then
+                            own.shuffle_tracks[#own.shuffle_tracks+1]=index
+                        end
+                    end
+                    for index=#own.shuffle_tracks,2,-1 do
+                        local other=math.random(index)
+                        own.shuffle_tracks[index],own.shuffle_tracks[other]=own.shuffle_tracks[other],own.shuffle_tracks[index]
+                    end
+                    -- A new complete cycle includes every track, without an immediate boundary repeat.
+                    local count=#own.shuffle_tracks
+                    if count>1 and own.shuffle_tracks[count]==own.track then
+                        local other=math.random(count-1)
+                        own.shuffle_tracks[count],own.shuffle_tracks[other]=own.shuffle_tracks[other],own.shuffle_tracks[count]
+                    end
+                end
+                own.track=table.remove(own.shuffle_tracks) or own.track
+                own.radio_history[#own.radio_history+1]=own.track
+                if #own.radio_history>128 then table.remove(own.radio_history,1) end
+                own.radio_history_pos=#own.radio_history
+            end
+        end
+    end
+    own.track_revision=(own.track_revision or 0)+1
+end
+function radio_change_track(id,step)
+    local own=pf_hf_furniture.state(id)
+    if not own or type(step)~="number" or step~=math.floor(step) or math.abs(step)>128 then return false end
+    advance_track(own,step)
+    return true
+end
+function update_radio(object,binder)
+    local own=pf_hf_furniture.state(object:id())
+    if not own then return end
+    local collection,track=radio_selection(own)
+    local selection=own.collection..":"..own.track..":"..(own.track_revision or 0)
+    if binder.radio_sound and (not own.is_on or binder.radio_selection~=selection) then
+        binder.radio_sound:stop();binder.radio_sound=nil
+    end
+    if not own.is_on then return end
+    if binder.radio_sound and not binder.radio_sound:playing() then
+        if not own.repeat_track then advance_track(own,1) end
+        track=collection.tracks[own.track]
+        selection=own.collection..":"..own.track..":"..(own.track_revision or 0)
+        binder.radio_sound:stop();binder.radio_sound=nil
+    end
+    if not binder.radio_sound then
+        binder.radio_sound=sound_object(track.sound:gsub("/","\\"))
+        binder.radio_sound:play_at_pos(object,object:position(),0,sound_object.s3d)
+        binder.radio_selection=selection
+    end
+    binder.radio_sound.volume=own.volume
+    binder.radio_sound:set_position(object:position())
+end
+function channel_count() return #media.channels end
+function channel_frequency(index) return media.channels[index].frequency end
+function instrument_count() return #media.instruments end
+function instrument_name(index) return media.instruments[index].name end
