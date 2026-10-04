@@ -1,6 +1,6 @@
 -- Base-material yields for dismantling weapons, outfits, and helmets.
 -- Guaranteed bundles prevent bad rolls from breaking the salvage economy.
--- Every percentage is an independent deterministic bonus tied to the item id.
+-- Armor equipment components retain their separate legacy deterministic rolls.
 local core = lz_nm_core
 
 local BASE_MATERIALS = {
@@ -63,8 +63,7 @@ local EQUIPMENT_PROFILES = {
 			{ "pf_hf_fabric", 6 }, { "pf_hf_straps", 3 },
 			{ "pf_hf_rubber", 3 }
 		},
-		bonus = { { "pf_hf_fabric", 2, 40, 201 } },
-		special = { { "lz_nm_armor_pouch", 1, 20, 202 } }
+		bonus = { { "pf_hf_fabric", 2, 40, 201 } }
 	},
 	sealed = {
 		guaranteed = {
@@ -76,7 +75,6 @@ local EQUIPMENT_PROFILES = {
 			{ "pf_hf_electronics", 1, 25, 212 }
 		},
 		special = {
-			{ "lz_nm_rubber_padding", 1, 45, 213 },
 			{ "lz_nm_used_filter", 1, 35, 214 }
 		}
 	},
@@ -88,8 +86,7 @@ local EQUIPMENT_PROFILES = {
 		bonus = {
 			{ "pf_hf_plastic", 2, 40, 221 },
 			{ "pf_hf_dampers", 1, 30, 222 }
-		},
-		special = { { "lz_nm_armor_pouch", 1, 35, 223 } }
+		}
 	},
 	heavy = {
 		guaranteed = {
@@ -99,8 +96,7 @@ local EQUIPMENT_PROFILES = {
 		bonus = {
 			{ "pf_hf_dampers", 2, 50, 231 },
 			{ "pf_hf_scrap", 2, 40, 232 }
-		},
-		special = { { "lz_nm_armor_pouch", 1, 50, 233 } }
+		}
 	},
 	exo = {
 		guaranteed = {
@@ -120,8 +116,6 @@ local EQUIPMENT_PROFILES = {
 			{ "pf_hf_straps", 1, 35, 248 }
 		},
 		special = {
-			{ "lz_nm_armor_pouch", 1, 75, 249 },
-			{ "lz_nm_rubber_padding", 1, 50, 250 },
 			{ pool = TECH_COMPONENTS, count = 1, chance = 40, salt = 251 }
 		}
 	},
@@ -153,6 +147,22 @@ local EQUIPMENT_PROFILES = {
 		},
 		special = { { "lz_nm_used_filter", 1, 60, 323 } }
 	}
+}
+
+-- These are equipment parts, not the workbench's basic materials. Preserve
+-- the original item-id formula, multipliers, offsets and cost brackets so
+-- rolls stay stable across save/load. Chances use the user-approved balance.
+local ARMOR_COMPONENTS = {
+	{ section = "lz_nm_armor_pouch", multiplier = 48271, offset = 1013904223, multiple = true },
+	{ section = "lz_nm_rubber_padding", multiplier = 69621, offset = 1664525, multiple = true },
+	{ section = "lz_nm_combat_boots", multiplier = 16807, offset = 12345, multiple = false }
+}
+
+local ARMOR_COMPONENT_TIERS = {
+	{ max_cost = 7500, max_count = 1, chance = 25 },
+	{ max_cost = 15000, max_count = 2, chance = 35 },
+	{ max_cost = 30000, max_count = 3, chance = 45 },
+	{ max_cost = math.huge, max_count = 4, chance = 55 }
 }
 
 local COMPONENT_MATERIAL_ORDER = {
@@ -210,6 +220,31 @@ local function append_reward(rewards, counts, section, amount)
 	counts[section] = (counts[section] or 0) + amount
 end
 
+local function append_armor_components(rewards, counts, target)
+	local maximum, chance = 5, 65
+	local section = target:section()
+	if not string.find(section, "exo", 1, true) then
+		local cost = item_cost(section)
+		for _, tier in ipairs(ARMOR_COMPONENT_TIERS) do
+			if cost <= tier.max_cost then
+				maximum, chance = tier.max_count, tier.chance
+				break
+			end
+		end
+	end
+	for _, component in ipairs(ARMOR_COMPONENTS) do
+		local count = 0
+		for roll_index = 1, component.multiple and maximum or 1 do
+			local multiplier = component.multiplier + roll_index * 997
+			local offset = component.offset + roll_index * 104729
+			local value = tonumber(target:id()) or 0
+			for _ = 1, 2 do value = (value * multiplier + offset) % 2147483647 end
+			if value % 100 < chance then count = count + 1 end
+		end
+		append_reward(rewards, counts, component.section, count)
+	end
+end
+
 local function append_entries(rewards, counts, entries, item_id, rolled)
 	for _, entry in ipairs(entries or {}) do
 		local section, amount = entry[1], entry[2]
@@ -256,6 +291,7 @@ function rewards(target)
 	if not target then return nil end
 	local profile
 	local definition
+	local armor = false
 	if is_component(target) then
 		definition = component_definition(target)
 		profile = definition and definition.profile or nil
@@ -265,6 +301,7 @@ function rewards(target)
 	else
 		profile = pf_hf_workbench_repair.profile(target)
 		definition = EQUIPMENT_PROFILES[profile]
+		armor = core.is_outfit_or_helmet(target) and not core.is_helmet(target)
 	end
 	if not definition then return nil end
 
@@ -273,6 +310,7 @@ function rewards(target)
 	append_entries(result, counts, definition.guaranteed, item_id, false)
 	append_entries(result, counts, definition.bonus, item_id, true)
 	append_entries(result, counts, definition.special, item_id, true)
+	if armor then append_armor_components(result, counts, target) end
 
 	local base_total, special_total = 0, 0
 	for section, amount in pairs(counts) do
