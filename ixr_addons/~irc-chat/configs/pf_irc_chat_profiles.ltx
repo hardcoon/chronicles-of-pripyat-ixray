@@ -1,0 +1,49 @@
+; Connection defaults shipped with the addon.
+; "Restore default profiles" restores every bundled profile from this file.
+; Profiles and their channels are removable unless deletable = false.
+; Runtime edits are written to $app_data_root$\pf_irc_chat_multichannel\profiles.ltx.
+
+[general_default]
+enabled = true
+auto_login = false
+active_profile = primary
+notify_public_messages = true
+sound_public_messages = false
+notify_private_messages = true
+sound_private_messages = true
+history_window_messages = 150
+store_private_history = true
+
+[profile_primary_default]
+deletable = false
+address = nexus.hybridirc.com
+port = 6697
+tls = true
+encoding = utf-8
+nick =
+history_namespace = hybridirc
+
+[channels_primary_default]
+count = 1
+channel_1 = #chronicles_of_pripyat
+key_1 = STARTPRIPYAT
+require_registered_channel_1 = true
+required_modes_1 = knst
+store_history_1 = true
+
+[profile_backup_default]
+deletable = false
+address = irc.hybridirc.com
+port = 6697
+tls = true
+encoding = utf-8
+nick =
+history_namespace = hybridirc
+
+[channels_backup_default]
+count = 1
+channel_1 = #chronicles_of_pripyat
+key_1 = STARTPRIPYAT
+require_registered_channel_1 = true
+required_modes_1 = knst
+store_history_1 = true

@@ -1,0 +1,55 @@
+-- Stable IX-Ray IRC API. Implementation and state belong to the runtime.
+local callbacks_registered = false
+
+function load_message_page(...) return pf_irc_chat_runtime.load_message_page(...) end
+function set_history_follow_latest(...) return pf_irc_chat_runtime.set_history_follow_latest(...) end
+function update(...) return pf_irc_chat_runtime.update(...) end
+function on_game_load(...) return pf_irc_chat_runtime.on_game_load(...) end
+function on_key_press(...) return pf_irc_chat_runtime.on_key_press(...) end
+function on_actor_net_destroy(...) return pf_irc_chat_runtime.on_actor_net_destroy(...) end
+function authorize(...) return pf_irc_chat_runtime.authorize(...) end
+function get_auto_login(...) return pf_irc_chat_runtime.get_auto_login(...) end
+function set_auto_login(...) return pf_irc_chat_runtime.set_auto_login(...) end
+function try_auto_login(...) return pf_irc_chat_runtime.try_auto_login(...) end
+function note_pda_opened(...) return pf_irc_chat_runtime.note_pda_opened(...) end
+function disconnect(...) return pf_irc_chat_runtime.disconnect(...) end
+function reconnect(...) return pf_irc_chat_runtime.reconnect(...) end
+function clear_messages(...) return pf_irc_chat_runtime.clear_messages(...) end
+function open_query(...) return pf_irc_chat_runtime.open_query(...) end
+function select_conversation(...) return pf_irc_chat_runtime.select_conversation(...) end
+function close_query(...) return pf_irc_chat_runtime.close_query(...) end
+function add_temporary_channel(...) return pf_irc_chat_runtime.add_temporary_channel(...) end
+function part_channel(...) return pf_irc_chat_runtime.part_channel(...) end
+function join_channel(...) return pf_irc_chat_runtime.join_channel(...) end
+function delete_channel(...) return pf_irc_chat_runtime.delete_channel(...) end
+function remove_conversation(...) return pf_irc_chat_runtime.remove_conversation(...) end
+function toggle_active_conversation_notifications(...) return pf_irc_chat_runtime.toggle_active_conversation_notifications(...) end
+function send_message(...) return pf_irc_chat_runtime.send_message(...) end
+function request_user_sync(...) return pf_irc_chat_runtime.request_user_sync(...) end
+function set_presence(...) return pf_irc_chat_runtime.set_presence(...) end
+function save_profile(...) return pf_irc_chat_runtime.save_profile(...) end
+function activate_profile(...) return pf_irc_chat_runtime.activate_profile(...) end
+function delete_profile(...) return pf_irc_chat_runtime.delete_profile(...) end
+function reset_profile(...) return pf_irc_chat_runtime.reset_profile(...) end
+function mute(...) return pf_irc_chat_runtime.mute(...) end
+function unmute(...) return pf_irc_chat_runtime.unmute(...) end
+function get_state(...) return pf_irc_chat_runtime.get_state(...) end
+function get_messages(...) return pf_irc_chat_runtime.get_messages(...) end
+function get_conversations(...) return pf_irc_chat_runtime.get_conversations(...) end
+function get_users(...) return pf_irc_chat_runtime.get_users(...) end
+function get_visible_users(...) return pf_irc_chat_runtime.get_visible_users(...) end
+function get_active_profile(...) return pf_irc_chat_runtime.get_active_profile(...) end
+function list_profiles(...) return pf_irc_chat_runtime.list_profiles(...) end
+function is_enabled(...) return pf_irc_chat_runtime.is_enabled(...) end
+function set_enabled(...) return pf_irc_chat_runtime.set_enabled(...) end
+
+function on_game_start()
+    if callbacks_registered then return true end
+    if type(RegisterScriptCallback) ~= "function" then return false end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_game_load)
+    callbacks_registered = true
+    return true
+end
+
+on_game_start()

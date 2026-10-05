@@ -1,0 +1,919 @@
+local ADDON_DIR = "~irc-chat"
+local DEFAULT_FILE = "pf_irc_chat_profiles.ltx"
+local RUNTIME_FILE = "pf_irc_chat_runtime.ltx"
+-- Keep the multichannel build's mutable data isolated from older releases.
+-- Disabling the mod therefore leaves profiles from those releases untouched.
+local USER_DIR_NAME = "pf_irc_chat_multichannel"
+local CURRENT_LOGIN_SCHEMA = 3
+
+local ffi_ok, ffi = pcall(require, "ffi")
+local lfs_ok, lfs = pcall(require, "lfs")
+local kernel32 = nil
+
+if ffi_ok then
+    pcall(ffi.cdef, [[
+        int __stdcall MoveFileExA(const char* existing_name, const char* new_name, unsigned long flags);
+    ]])
+    local kernel_ok, kernel_value = pcall(ffi.load, "kernel32")
+    if kernel_ok then kernel32 = kernel_value end
+end
+
+local defaults_path = nil
+local runtime_defaults_path = nil
+local user_dir = nil
+local profiles_path = nil
+local identity_path = nil
+local muted_path = nil
+local notification_exceptions_path = nil
+
+local settings_cache = nil
+local muted_cache = nil
+local notification_exceptions_cache = nil
+local identity_cache = nil
+local command_cache = nil
+
+local function trim(value)
+    return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function bool_value(value, fallback)
+    if type(value) == "boolean" then return value end
+    local normalized = trim(value):lower()
+    if normalized == "true" or normalized == "1" or normalized == "yes" then return true end
+    if normalized == "false" or normalized == "0" or normalized == "no" then return false end
+    return fallback == true
+end
+
+local function irc_casefold(value)
+    local replacements = { ["["] = "{", ["]"] = "}", ["\\"] = "|", ["^"] = "~" }
+    value = trim(value):lower()
+    return (value:gsub(".", function(character) return replacements[character] or character end))
+end
+
+local function init_paths()
+    if defaults_path then return true end
+    if not getFS or not getFS() then return false end
+    defaults_path = getFS():update_path("$arch_dir_addons$", ADDON_DIR .. "\\configs\\" .. DEFAULT_FILE)
+    runtime_defaults_path = getFS():update_path("$arch_dir_addons$", ADDON_DIR .. "\\configs\\" .. RUNTIME_FILE)
+    -- Mutable settings belong to this installation, independent of saves.
+    local app_root = getFS():update_path("$app_data_root$", "")
+    user_dir = app_root .. USER_DIR_NAME
+    profiles_path = user_dir .. "\\profiles.ltx"
+    identity_path = user_dir .. "\\identity.ltx"
+    muted_path = user_dir .. "\\muted.ltx"
+    notification_exceptions_path = user_dir .. "\\notification_exceptions.ltx"
+    return true
+end
+
+local function ensure_user_dir()
+    if not init_paths() or not lfs_ok then return false end
+    if lfs.attributes(user_dir, "mode") == "directory" then return true end
+    return lfs.mkdir(user_dir) == true
+end
+
+local function parse_ltx(path)
+    local result = {}
+    local section = nil
+    local file = io.open(path, "r")
+    if not file then return nil end
+    for raw_line in file:lines() do
+        local line = raw_line:gsub("^\239\187\191", "")
+        line = trim(line:gsub("%s*[;].*$", ""))
+        local section_name = line:match("^%[([^%]]+)%]$")
+        if section_name then
+            section = trim(section_name)
+            result[section] = result[section] or {}
+        elseif section and line ~= "" then
+            local key, value = line:match("^([^=]+)=(.*)$")
+            if key then result[section][trim(key)] = trim(value) end
+        end
+    end
+    file:close()
+    return result
+end
+
+local function write_atomic(path, content)
+    if not ensure_user_dir() then return false, "user_directory_unavailable" end
+    local temp_path = path .. ".tmp"
+    local file = io.open(temp_path, "wb")
+    if not file then return false, "temporary_file_unavailable" end
+    local ok = file:write(content)
+    file:flush()
+    file:close()
+    if not ok then return false, "write_failed" end
+
+    if ffi_ok and kernel32 then
+        local MOVEFILE_REPLACE_EXISTING = 0x1
+        local MOVEFILE_WRITE_THROUGH = 0x8
+        if kernel32.MoveFileExA(temp_path, path, MOVEFILE_REPLACE_EXISTING + MOVEFILE_WRITE_THROUGH) ~= 0 then
+            return true
+        end
+    end
+    local existing = io.open(path, "rb")
+    if existing then
+        existing:close()
+        return false, "atomic_replace_unavailable"
+    end
+    if os.rename(temp_path, path) then return true end
+    return false, "replace_failed"
+end
+
+local PROFILE_FIELDS = { "address", "port", "tls", "encoding", "nick", "history_namespace" }
+
+local function copy_channel(source)
+    source = source or {}
+    return {
+        name = trim(source.name or source.channel),
+        key = trim(source.key),
+        require_registered_channel = bool_value(source.require_registered_channel, true),
+        required_modes = trim(source.required_modes):lower(),
+        store_history = bool_value(source.store_history, false)
+    }
+end
+
+local function source_channels(source)
+    local result = {}
+    if type(source and source.channels) == "table" then
+        for _, channel in ipairs(source.channels) do
+            local copied = copy_channel(channel)
+            if copied.name ~= "" then result[#result + 1] = copied end
+        end
+    end
+    if #result == 0 and trim(source and source.channel) ~= "" then
+        result[1] = copy_channel(source)
+    end
+    return result
+end
+
+local function copy_profile(source, default_name)
+    local result = {}
+    source = source or {}
+    for _, key in ipairs(PROFILE_FIELDS) do
+        -- Only nil is absent; false is an explicitly unchecked checkbox.
+        local value = source[key]
+        result[key] = value ~= nil and tostring(value) or ""
+    end
+    result.port = tonumber(result.port) or 0
+    result.tls = bool_value(result.tls, true)
+    result.history_namespace = trim(result.history_namespace):lower()
+    if result.history_namespace == "" then result.history_namespace = trim(default_name):lower() end
+    result.deletable = bool_value(source.deletable, true)
+    result.channels = source_channels(source)
+    -- Keep a read-only compatibility view for old UI integrations while all
+    -- writes use the channels array and the channels_<profile> LTX section.
+    local first = result.channels[1] or copy_channel({})
+    result.channel = first.name
+    result.key = first.key
+    result.require_registered_channel = first.require_registered_channel
+    result.required_modes = first.required_modes
+    return result
+end
+
+local function copy_settings(source)
+    local result = {
+        enabled = source.enabled ~= false,
+        auto_login = source.auto_login == true,
+        active_profile = tostring(source.active_profile or ""),
+        login_schema = tonumber(source.login_schema) or CURRENT_LOGIN_SCHEMA,
+        notify_public_messages = source.notify_public_messages == true,
+        sound_public_messages = source.sound_public_messages == true,
+        notify_private_messages = source.notify_private_messages ~= false,
+        sound_private_messages = source.sound_private_messages ~= false,
+        history_window_messages = math.max(50, math.min(1000,
+            tonumber(source.history_window_messages) or 150)),
+        store_private_history = source.store_private_history ~= false,
+        deleted_profiles = {},
+        profiles = {}
+    }
+    for name, deleted in pairs(source.deleted_profiles or {}) do
+        if deleted == true then result.deleted_profiles[name] = true end
+    end
+    for name, profile in pairs(source.profiles or {}) do
+        result.profiles[name] = copy_profile(profile, name)
+    end
+    return result
+end
+
+local function serialize_settings(settings)
+    local lines = {
+        "; User-owned IRC chat settings. Written atomically by the PDA UI.",
+        "[general]",
+        "enabled = " .. tostring(settings.enabled ~= false),
+        "auto_login = " .. tostring(settings.auto_login == true),
+        "active_profile = " .. tostring(settings.active_profile),
+        "login_schema = " .. tostring(settings.login_schema or CURRENT_LOGIN_SCHEMA),
+        "notify_public_messages = " .. tostring(settings.notify_public_messages == true),
+        "sound_public_messages = " .. tostring(settings.sound_public_messages == true),
+        "notify_private_messages = " .. tostring(settings.notify_private_messages == true),
+        "sound_private_messages = " .. tostring(settings.sound_private_messages == true),
+        "history_window_messages = " .. tostring(math.max(50, math.min(1000,
+            tonumber(settings.history_window_messages) or 150))),
+        "store_private_history = " .. tostring(settings.store_private_history ~= false),
+        ""
+    }
+    local deleted_names = {}
+    for name, deleted in pairs(settings.deleted_profiles or {}) do
+        if deleted == true then table.insert(deleted_names, name) end
+    end
+    table.sort(deleted_names)
+    if #deleted_names > 0 then
+        table.insert(lines, "[deleted_profiles]")
+        for _, name in ipairs(deleted_names) do table.insert(lines, name .. " = true") end
+        table.insert(lines, "")
+    end
+    local names = {}
+    for name in pairs(settings.profiles or {}) do table.insert(names, name) end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local profile = settings.profiles[name]
+        table.insert(lines, "[profile_" .. name .. "]")
+        table.insert(lines, "deletable = " .. tostring(profile.deletable ~= false))
+        for _, key in ipairs(PROFILE_FIELDS) do
+            local value = profile[key]
+            table.insert(lines, key .. " = " .. (value ~= nil and tostring(value) or ""))
+        end
+        table.insert(lines, "")
+        table.insert(lines, "[channels_" .. name .. "]")
+        table.insert(lines, "count = " .. tostring(#(profile.channels or {})))
+        for index, channel in ipairs(profile.channels or {}) do
+            table.insert(lines, "channel_" .. index .. " = " .. tostring(channel.name or ""))
+            table.insert(lines, "key_" .. index .. " = " .. tostring(channel.key or ""))
+            table.insert(lines, "require_registered_channel_" .. index .. " = " ..
+                tostring(channel.require_registered_channel == true))
+            table.insert(lines, "required_modes_" .. index .. " = " ..
+                tostring(channel.required_modes or ""))
+            table.insert(lines, "store_history_" .. index .. " = " ..
+                tostring(channel.store_history == true))
+        end
+        table.insert(lines, "")
+    end
+    return table.concat(lines, "\r\n") .. "\r\n"
+end
+
+local function load_defaults()
+    if not init_paths() then return nil end
+    return parse_ltx(defaults_path)
+end
+
+local function create_settings_from_defaults(defaults)
+    defaults = defaults or {}
+    local general = defaults.general_default or {}
+    local profiles = {}
+    for section, values in pairs(defaults) do
+        local name = section:match("^profile_(.+)_default$")
+        if name then
+            local source = {}
+            for key, value in pairs(values) do source[key] = value end
+            local channel_values = defaults["channels_" .. name .. "_default"]
+            if channel_values then
+                source.channels = {}
+                local count = math.max(0, math.min(16, tonumber(channel_values.count) or 0))
+                for index = 1, count do
+                    source.channels[#source.channels + 1] = {
+                        name = channel_values["channel_" .. index],
+                        key = channel_values["key_" .. index],
+                        require_registered_channel = channel_values[
+                            "require_registered_channel_" .. index],
+                        required_modes = channel_values["required_modes_" .. index],
+                        store_history = channel_values["store_history_" .. index]
+                    }
+                end
+            end
+            profiles[name] = copy_profile(source, name)
+        end
+    end
+    return {
+        enabled = bool_value(general.enabled, true),
+        auto_login = bool_value(general.auto_login, false),
+        active_profile = trim(general.active_profile) ~= "" and trim(general.active_profile) or "001",
+        login_schema = CURRENT_LOGIN_SCHEMA,
+        notify_public_messages = bool_value(general.notify_public_messages, true),
+        sound_public_messages = bool_value(general.sound_public_messages, false),
+        notify_private_messages = bool_value(general.notify_private_messages, true),
+        sound_private_messages = bool_value(general.sound_private_messages, true),
+        history_window_messages = math.max(50, math.min(1000,
+            tonumber(general.history_window_messages) or 150)),
+        store_private_history = bool_value(general.store_private_history, true),
+        deleted_profiles = {},
+        profiles = profiles
+    }
+end
+
+local function obsolete_bundled_profile_kind(name, values, channel_values)
+    name = tostring(name or ""):lower()
+    if name == "ircnet" and trim(values and values.address):lower() == "irc.386.su" and
+        tonumber(values and values.port) == 6689 then
+        return "obsolete"
+    end
+    if name == "001" and trim(values and values.address):lower() == "nexus.hybridirc.com" and
+        tonumber(values and values.port) == 6697 and channel_values and
+        tonumber(channel_values.count) == 2 and
+        trim(channel_values.channel_1):lower() == "#chronicles_of_pripyat" and
+        trim(channel_values.key_1) == "STARTPRIPYAT" and
+        trim(channel_values.channel_2):lower() == "#test" and
+        trim(channel_values.key_2) == "123" then
+        return "legacy_primary"
+    end
+    return nil
+end
+
+local function merge_user_settings(default_settings, user)
+    if not user then return default_settings, true end
+    local general = user.general or {}
+    local stored_schema = tonumber(general.login_schema) or 0
+    local missing_auto_login = general.auto_login == nil
+    default_settings.enabled = bool_value(general.enabled, default_settings.enabled)
+    default_settings.auto_login = bool_value(general.auto_login, default_settings.auto_login)
+    default_settings.notify_public_messages = bool_value(
+        general.notify_public_messages, default_settings.notify_public_messages)
+    default_settings.sound_public_messages = bool_value(
+        general.sound_public_messages, default_settings.sound_public_messages)
+    default_settings.notify_private_messages = bool_value(
+        general.notify_private_messages, default_settings.notify_private_messages)
+    default_settings.sound_private_messages = bool_value(
+        general.sound_private_messages, default_settings.sound_private_messages)
+    default_settings.history_window_messages = math.max(50, math.min(1000,
+        tonumber(general.history_window_messages) or default_settings.history_window_messages or 150))
+    default_settings.store_private_history = bool_value(
+        general.store_private_history, default_settings.store_private_history)
+    if trim(general.active_profile) ~= "" then default_settings.active_profile = trim(general.active_profile) end
+    for name, value in pairs(user.deleted_profiles or {}) do
+        if bool_value(value, false) and
+            (not default_settings.profiles[name] or default_settings.profiles[name].deletable ~= false) then
+            default_settings.deleted_profiles[name] = true
+            default_settings.profiles[name] = nil
+        end
+    end
+    local removed_obsolete_profile = false
+    for section, values in pairs(user) do
+        local name = section:match("^profile_(.+)$")
+        if name and not name:match("_default$") then
+            local obsolete_kind = obsolete_bundled_profile_kind(
+                name, values, user["channels_" .. name])
+            if obsolete_kind then
+                removed_obsolete_profile = true
+                if obsolete_kind == "legacy_primary" then
+                    local primary = default_settings.profiles.primary
+                    if primary and trim(primary.nick) == "" then primary.nick = trim(values.nick) end
+                    if trim(default_settings.active_profile):lower() == "001" then
+                        default_settings.active_profile = "primary"
+                    end
+                end
+            elseif not default_settings.deleted_profiles[name] then
+                local source = {}
+                for key, value in pairs(values) do source[key] = value end
+                local bundled_profile = default_settings.profiles[name]
+                if trim(source.history_namespace) == "" and bundled_profile then
+                    source.history_namespace = bundled_profile.history_namespace
+                end
+                if bundled_profile and bundled_profile.deletable == false then
+                    source.deletable = false
+                end
+                if source.deletable == nil and default_settings.profiles[name] then
+                    source.deletable = default_settings.profiles[name].deletable
+                end
+                local channel_values = user["channels_" .. name]
+                if channel_values then
+                    source.channels = {}
+                    local count = math.max(0, math.min(16, tonumber(channel_values.count) or 0))
+                    for index = 1, count do
+                        local stored_name = channel_values["channel_" .. index]
+                        local stored_history = channel_values["store_history_" .. index]
+                        if stored_history == nil and bundled_profile then
+                            for _, bundled_channel in ipairs(bundled_profile.channels or {}) do
+                                if trim(bundled_channel.name):lower() == trim(stored_name):lower() then
+                                    stored_history = bundled_channel.store_history
+                                    break
+                                end
+                            end
+                        end
+                        source.channels[#source.channels + 1] = {
+                            name = stored_name,
+                            key = channel_values["key_" .. index],
+                            require_registered_channel = channel_values[
+                                "require_registered_channel_" .. index],
+                            required_modes = channel_values["required_modes_" .. index],
+                            store_history = stored_history
+                        }
+                    end
+                elseif stored_schema < 2 and default_settings.profiles[name] then
+                    -- Upgrade the old flat first channel but retain additional
+                    -- bundled channels (for example the shipped #test room).
+                    source.channels = source_channels(values)
+                    local seen = {}
+                    for _, channel in ipairs(source.channels) do seen[channel.name:lower()] = true end
+                    for _, channel in ipairs(default_settings.profiles[name].channels or {}) do
+                        if not seen[channel.name:lower()] then
+                            source.channels[#source.channels + 1] = copy_channel(channel)
+                        end
+                    end
+                end
+                if bundled_profile and bundled_profile.deletable == false then
+                    source.history_namespace = bundled_profile.history_namespace
+                    local required = bundled_profile.channels[1]
+                    local found = false
+                    for _, channel in ipairs(source.channels or {}) do
+                        if irc_casefold(channel.name) == irc_casefold(required.name) then
+                            channel.store_history = true
+                            found = true
+                        end
+                    end
+                    if not found then
+                        source.channels = source.channels or {}
+                        table.insert(source.channels, 1, copy_channel(required))
+                    end
+                end
+                default_settings.profiles[name] = copy_profile(source, name)
+            end
+        end
+    end
+    if stored_schema < CURRENT_LOGIN_SCHEMA then
+        for _, profile in pairs(default_settings.profiles) do
+            if trim(profile.nick):lower() == "stalker" then profile.nick = "" end
+        end
+    end
+    default_settings.login_schema = CURRENT_LOGIN_SCHEMA
+    return default_settings, stored_schema < CURRENT_LOGIN_SCHEMA or removed_obsolete_profile or
+        missing_auto_login
+end
+
+function load_settings(force)
+    if settings_cache and not force then return settings_cache end
+    local defaults = load_defaults()
+    if not defaults then return nil, "defaults_unavailable" end
+    local settings = create_settings_from_defaults(defaults)
+    local user = init_paths() and parse_ltx(profiles_path) or nil
+    local rewrite = false
+    settings, rewrite = merge_user_settings(settings, user)
+    if not settings.profiles[settings.active_profile] then
+        settings.active_profile = settings.profiles.primary and "primary" or next(settings.profiles) or "primary"
+    end
+    settings_cache = settings
+    if not user or rewrite then write_atomic(profiles_path, serialize_settings(settings)) end
+    return settings_cache
+end
+
+function save_settings(settings)
+    local ok, error_code = write_atomic(profiles_path, serialize_settings(settings))
+    if ok then settings_cache = settings end
+    return ok, error_code
+end
+
+function is_auto_login_enabled()
+    local settings = load_settings()
+    return settings and settings.auto_login == true or false
+end
+
+function set_auto_login(enabled)
+    local settings, error_code = load_settings()
+    if not settings then return false, error_code end
+    settings = copy_settings(settings)
+    settings.auto_login = enabled == true
+    return save_settings(settings)
+end
+
+function get_active_profile()
+    local settings, error_code = load_settings()
+    if not settings then return nil, nil, error_code end
+    return settings.profiles[settings.active_profile], settings.active_profile
+end
+
+function get_profile(name)
+    local settings = load_settings()
+    return settings and settings.profiles[tostring(name or "")] or nil
+end
+
+function get_history_options()
+    local settings, error_code = load_settings()
+    if not settings then return nil, error_code end
+    return {
+        history_window_messages = math.max(50, math.min(1000,
+            tonumber(settings.history_window_messages) or 150)),
+        store_private_history = settings.store_private_history ~= false
+    }
+end
+
+function channel_history_referenced(namespace, channel_name)
+    namespace = trim(namespace):lower()
+    channel_name = irc_casefold(channel_name)
+    local settings = load_settings()
+    if not settings then return false end
+    for profile_name, profile in pairs(settings.profiles or {}) do
+        local profile_namespace = trim(profile.history_namespace):lower()
+        if profile_namespace == "" then profile_namespace = trim(profile_name):lower() end
+        if profile_namespace == namespace then
+            for _, channel in ipairs(profile.channels or {}) do
+                if channel.store_history == true and irc_casefold(channel.name) == channel_name then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function list_profiles()
+    local settings = load_settings()
+    local result = {}
+    if settings then for name in pairs(settings.profiles) do table.insert(result, name) end end
+    local preferred_order = { primary = 1, backup = 2 }
+    table.sort(result, function(left, right)
+        local left_rank = preferred_order[left] or 3
+        local right_rank = preferred_order[right] or 3
+        if left_rank ~= right_rank then return left_rank < right_rank end
+        return left < right
+    end)
+    return result
+end
+
+function set_active_profile(name)
+    name = trim(name):lower()
+    local settings, error_code = load_settings()
+    if not settings then return false, error_code end
+    if not settings.profiles[name] then return false, "profile_missing" end
+    if settings.active_profile == name then return true end
+    settings = copy_settings(settings)
+    settings.active_profile = name
+    return save_settings(settings)
+end
+
+function delete_profile(name)
+    name = trim(name):lower()
+    if name == "" or not name:match("^[a-z0-9_%-]+$") then return false, "profile_name_invalid" end
+    local settings, error_code = load_settings()
+    if not settings then return false, error_code end
+    if not settings.profiles[name] then return false, "profile_missing" end
+
+    if settings.profiles[name].deletable == false then
+        return false, "profile_delete_forbidden"
+    end
+
+    settings = copy_settings(settings)
+    settings.profiles[name] = nil
+    settings.deleted_profiles[name] = true
+    if settings.active_profile == name then
+        local names = {}
+        for profile_name in pairs(settings.profiles) do table.insert(names, profile_name) end
+        table.sort(names)
+        settings.active_profile = settings.profiles.primary and "primary" or names[1]
+    end
+    if not settings.active_profile then return false, "profile_last" end
+    local ok, save_error = save_settings(settings)
+    if not ok then return false, save_error end
+    -- Notification overrides belong to the deleted profile. Their cleanup is
+    -- best-effort because the profile deletion has already been committed.
+    if clear_profile_notification_exceptions then
+        clear_profile_notification_exceptions(name)
+    end
+    return true, nil, settings.active_profile
+end
+
+local COMMAND_IDS = { "channel", "query", "unmute", "mute", "close", "clear" }
+local COMMAND_ID_SET = {}
+for _, command_id in ipairs(COMMAND_IDS) do COMMAND_ID_SET[command_id] = true end
+
+local function command_defaults()
+    return {
+        { id = "channel", insert = "/channel", scope = "private", enabled = true },
+        { id = "query", insert = "/query ", scope = "all", enabled = true },
+        { id = "unmute", insert = "/unmute ", scope = "all", enabled = true },
+        { id = "mute", insert = "/mute ", scope = "all", enabled = true },
+        { id = "close", insert = "/close", scope = "private", enabled = true },
+        { id = "clear", insert = "/clear", scope = "all", enabled = true }
+    }
+end
+
+local function split_command_order(value)
+    local result = {}
+    local used = {}
+    for command_id in tostring(value or ""):gmatch("[^,%s]+") do
+        command_id = command_id:lower()
+        if COMMAND_ID_SET[command_id] and not used[command_id] then
+            table.insert(result, command_id)
+            used[command_id] = true
+        end
+    end
+    for _, command_id in ipairs(COMMAND_IDS) do
+        if not used[command_id] then table.insert(result, command_id) end
+    end
+    return result
+end
+
+function get_command_settings(force)
+    if command_cache and not force then return command_cache end
+    if not init_paths() then
+        command_cache = command_defaults()
+        return command_cache
+    end
+    local data = parse_ltx(runtime_defaults_path)
+    if not data then
+        command_cache = command_defaults()
+        return command_cache
+    end
+    local order = split_command_order(data.commands and data.commands.order or "")
+    local result = {}
+    for _, command_id in ipairs(order) do
+        local values = data["command_" .. command_id] or {}
+        local insert = trim(values.insert)
+        if insert == "" or insert:lower():match("^/([^%s]+)") ~= command_id then
+            insert = "/" .. command_id
+        end
+        if bool_value(values.append_space, false) then insert = insert .. " " end
+        local scope = trim(values.scope):lower()
+        if scope ~= "private" then scope = "all" end
+        table.insert(result, {
+            id = command_id,
+            insert = insert,
+            scope = scope,
+            enabled = bool_value(values.enabled, true)
+        })
+    end
+    command_cache = result
+    return command_cache
+end
+
+function get_notification_settings()
+    local settings, error_code = load_settings()
+    if not settings then return nil, error_code end
+    return {
+        notify_public_messages = settings.notify_public_messages == true,
+        sound_public_messages = settings.sound_public_messages == true,
+        notify_private_messages = settings.notify_private_messages == true,
+        sound_private_messages = settings.sound_private_messages == true
+    }
+end
+
+local function notification_key_part(value)
+    return (trim(value):lower():gsub("([^%w%._%-@])", function(character)
+        return string.format("%%%02X", string.byte(character))
+    end))
+end
+
+local function notification_exception_location(profile_name, kind, target)
+    profile_name = trim(profile_name):lower()
+    kind = trim(kind):lower()
+    target = trim(target):lower()
+    if profile_name == "" or not profile_name:match("^[a-z0-9_%-]+$") then return nil end
+    if kind ~= "channel" and kind ~= "private" then return nil end
+    if target == "" or #target > 300 then return nil end
+    return "profile_" .. profile_name, kind .. "_" .. notification_key_part(target)
+end
+
+local function load_notification_exceptions(force)
+    if notification_exceptions_cache and not force then return notification_exceptions_cache end
+    init_paths()
+    notification_exceptions_cache = parse_ltx(notification_exceptions_path) or {}
+    return notification_exceptions_cache
+end
+
+local function save_notification_exceptions()
+    local sections = {}
+    for section, values in pairs(notification_exceptions_cache or {}) do
+        if type(values) == "table" and next(values) then sections[#sections + 1] = section end
+    end
+    table.sort(sections)
+    local lines = {}
+    for _, section in ipairs(sections) do
+        lines[#lines + 1] = "[" .. section .. "]"
+        local keys = {}
+        for key, value in pairs(notification_exceptions_cache[section]) do
+            if bool_value(value, false) then keys[#keys + 1] = key end
+        end
+        table.sort(keys)
+        for _, key in ipairs(keys) do lines[#lines + 1] = key .. " = true" end
+        lines[#lines + 1] = ""
+    end
+    return write_atomic(notification_exceptions_path, table.concat(lines, "\r\n"))
+end
+
+function is_conversation_notifications_disabled(profile_name, kind, target)
+    local section, key = notification_exception_location(profile_name, kind, target)
+    if not section then return false end
+    local values = load_notification_exceptions()[section]
+    return type(values) == "table" and bool_value(values[key], false)
+end
+
+function set_conversation_notifications_disabled(profile_name, kind, target, disabled)
+    local section, key = notification_exception_location(profile_name, kind, target)
+    if not section then return false, "notification_target_invalid" end
+    local values = load_notification_exceptions()[section]
+    if disabled == true then
+        if type(values) ~= "table" then
+            values = {}
+            notification_exceptions_cache[section] = values
+        end
+        values[key] = "true"
+    elseif type(values) == "table" then
+        values[key] = nil
+        if not next(values) then notification_exceptions_cache[section] = nil end
+    end
+    local ok, error_code = save_notification_exceptions()
+    if not ok then notification_exceptions_cache = nil end
+    return ok, error_code
+end
+
+function clear_profile_notification_exceptions(profile_name)
+    profile_name = trim(profile_name):lower()
+    if profile_name == "" or not profile_name:match("^[a-z0-9_%-]+$") then
+        return false, "profile_name_invalid"
+    end
+    local section = "profile_" .. profile_name
+    local exceptions = load_notification_exceptions()
+    if not exceptions[section] then return true end
+    exceptions[section] = nil
+    local ok, error_code = save_notification_exceptions()
+    if not ok then notification_exceptions_cache = nil end
+    return ok, error_code
+end
+
+function save_profile(name, values, make_active, notification_values)
+    name = trim(name):lower()
+    if name == "" or not name:match("^[a-z0-9_%-]+$") then return false, "profile_name_invalid" end
+    local settings, error_code = load_settings()
+    if not settings then return false, error_code end
+    settings = copy_settings(settings)
+    local existing_profile = settings.profiles[name]
+    local source = {}
+    for key, value in pairs(values or {}) do source[key] = value end
+    if existing_profile and trim(source.history_namespace) == "" then
+        source.history_namespace = existing_profile.history_namespace
+    end
+    local saved_profile = copy_profile(source, name)
+    if existing_profile and source.deletable == nil then
+        saved_profile.deletable = existing_profile.deletable ~= false
+    end
+    local defaults = create_settings_from_defaults(load_defaults())
+    local bundled = defaults.profiles[name]
+    if bundled and bundled.deletable == false then
+        local required = bundled.channels[1]
+        local found = false
+        for _, channel in ipairs(saved_profile.channels) do
+            if irc_casefold(channel.name) == irc_casefold(required.name) then
+                channel.store_history = true
+                found = true
+            end
+        end
+        if not found then return false, "channel_delete_forbidden" end
+        saved_profile.deletable = false
+        saved_profile.history_namespace = bundled.history_namespace
+    end
+    settings.profiles[name] = saved_profile
+    settings.deleted_profiles[name] = nil
+    if make_active ~= false then settings.active_profile = name end
+    if type(notification_values) == "table" then
+        settings.notify_public_messages = notification_values.notify_public_messages == true
+        settings.sound_public_messages = notification_values.sound_public_messages == true
+        settings.notify_private_messages = notification_values.notify_private_messages == true
+        settings.sound_private_messages = notification_values.sound_private_messages == true
+    end
+    return save_settings(settings)
+end
+
+function save_active_nick(nick)
+    local settings, error_code = load_settings()
+    if not settings then return false, error_code end
+    local profile = settings.profiles[settings.active_profile]
+    if not profile then return false, "profile_missing" end
+    profile = copy_profile(profile)
+    profile.nick = trim(nick)
+    return save_profile(settings.active_profile, profile, true)
+end
+
+function reset_profile(name)
+    name = trim(name):lower()
+    local defaults = load_defaults()
+    if not defaults then return false, "defaults_unavailable" end
+    local bundled = create_settings_from_defaults(defaults)
+    if not next(bundled.profiles) then return false, "default_profile_unavailable" end
+
+    local current, error_code = load_settings()
+    if not current then return false, error_code end
+    local settings = copy_settings(current)
+    for profile_name, default_profile in pairs(bundled.profiles) do
+        local restored = copy_profile(default_profile)
+        local existing = settings.profiles[profile_name]
+        -- Restoring connection defaults must not silently change a nickname
+        -- already chosen for that same bundled profile.
+        if existing and trim(existing.nick) ~= "" then restored.nick = existing.nick end
+        settings.profiles[profile_name] = restored
+        settings.deleted_profiles[profile_name] = nil
+    end
+
+    -- Keep the active profile when it still exists. If it was unavailable,
+    -- prefer the active profile declared by the bundled configuration.
+    if not settings.profiles[settings.active_profile] then
+        settings.active_profile = settings.profiles[bundled.active_profile] and
+            bundled.active_profile or next(settings.profiles)
+    end
+    local ok, save_error = save_settings(settings)
+    if not ok then return false, save_error end
+    local shown_name = settings.profiles[name] and name or settings.active_profile
+    return true, nil, settings.active_profile, shown_name
+end
+
+function get_identity_path()
+    if not init_paths() then return nil end
+    return identity_path
+end
+
+function get_identity(force)
+    if force then identity_cache = nil end
+    if identity_cache then return identity_cache end
+    init_paths()
+    local data = parse_ltx(identity_path)
+    local stored = data and data.identity or nil
+    local id = stored and trim(stored.install_id) or ""
+    local part1, part2, part3, part4, part5 = id:match(
+        "^([0-9a-fA-F]+)%-([0-9a-fA-F]+)%-([0-9a-fA-F]+)%-([0-9a-fA-F]+)%-([0-9a-fA-F]+)$")
+    local valid_uuid = part1 and #part1 == 8 and #part2 == 4 and #part3 == 4 and
+        #part4 == 4 and #part5 == 12 and part3:sub(1, 1):lower() == "4" and
+        part4:sub(1, 1):lower():match("[89ab]") ~= nil
+    if not valid_uuid then
+        return nil, "identity_unavailable"
+    end
+    identity_cache = { install_id = id:lower(), created_at_utc = tostring(stored.created_at_utc or "") }
+    return identity_cache
+end
+
+local function load_muted(force)
+    if muted_cache and not force then return muted_cache end
+    init_paths()
+    local data = parse_ltx(muted_path)
+    muted_cache = data and data.muted or {}
+    return muted_cache
+end
+
+local function save_muted()
+    local identities = {}
+    for identity in pairs(muted_cache or {}) do table.insert(identities, identity) end
+    table.sort(identities)
+    local lines = { "[muted]" }
+    for _, identity in ipairs(identities) do
+        table.insert(lines, identity .. " = " .. tostring(muted_cache[identity] or ""))
+    end
+    return write_atomic(muted_path, table.concat(lines, "\r\n") .. "\r\n")
+end
+
+function is_muted(identity)
+    return load_muted()[tostring(identity or ""):lower()] ~= nil
+end
+
+function mute(identity, nick)
+    identity = trim(identity):lower()
+    if identity == "" then return false, "identity_missing" end
+    if #identity > 200 or identity:find("[\r\n;=]") then
+        return false, "identity_invalid"
+    end
+    load_muted()[identity] = trim(nick)
+    return save_muted()
+end
+
+function unmute(identity)
+    identity = trim(identity):lower()
+    if identity == "" or #identity > 200 or identity:find("[\r\n;=]") then
+        return false, "identity_invalid"
+    end
+    load_muted()[identity] = nil
+    return save_muted()
+end
+
+function list_muted()
+    local result = {}
+    for identity, nick in pairs(load_muted()) do
+        table.insert(result, { identity = identity, nick = nick })
+    end
+    table.sort(result, function(a, b) return a.nick:lower() < b.nick:lower() end)
+    return result
+end
+
+function get_history_root()
+    if not init_paths() then return nil, "user_directory_unavailable" end
+    if not ensure_user_dir() then return nil, "user_directory_unavailable" end
+    return user_dir .. "\\history"
+end
+
+-- Public IX-Ray gameplay option API.
+function is_enabled()
+    local settings = load_settings()
+    return settings and settings.enabled ~= false or false
+end
+
+function set_enabled(enabled)
+    local settings, error_code = load_settings()
+    if not settings then return false, error_code end
+    settings = copy_settings(settings)
+    settings.enabled = enabled == true
+    return save_settings(settings)
+end
+
+function is_channel_deletable(profile_name, channel_name)
+    local settings = load_settings()
+    local profile = settings and settings.profiles[profile_name]
+    if not profile or profile.deletable ~= false then return true end
+    local bundled = create_settings_from_defaults(load_defaults()).profiles[profile_name]
+    if not bundled or bundled.deletable ~= false then return false end
+    for _, channel in ipairs(bundled.channels) do
+        if irc_casefold(channel_name) == irc_casefold(channel.name) then return false end
+    end
+    return true
+end

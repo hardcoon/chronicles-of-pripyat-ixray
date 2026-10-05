@@ -1,0 +1,518 @@
+local LOG_VERSION = 1
+local INDEX_VERSION = 1
+local READ_BLOCK_BYTES = 8192
+
+local lfs_ok, lfs = pcall(require, "lfs")
+local ffi_ok, ffi = pcall(require, "ffi")
+local kernel32 = nil
+
+if ffi_ok then
+    pcall(ffi.cdef, [[
+        int __stdcall MoveFileExA(const char* existing_name, const char* new_name,
+            unsigned long flags);
+    ]])
+    local ok, value = pcall(ffi.load, "kernel32")
+    if ok then kernel32 = value end
+end
+
+local active = nil
+
+local function trim(value)
+    return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function encode(value)
+    return tostring(value or ""):gsub("%%", "%%25"):gsub("\t", "%%09")
+        :gsub("\r", "%%0D"):gsub("\n", "%%0A")
+        :gsub(";", "%%3B"):gsub("=", "%%3D")
+end
+
+local function decode(value)
+    return tostring(value or ""):gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+    end)
+end
+
+local function fields(line)
+    local result = {}
+    for field in (tostring(line or "") .. "\t"):gmatch("(.-)\t") do
+        result[#result + 1] = field
+    end
+    return result
+end
+
+local function ensure_dir(path)
+    if not lfs_ok then return false, "lfs_unavailable" end
+    if lfs.attributes(path, "mode") == "directory" then return true end
+    if lfs.mkdir(path) then return true end
+    return false, "history_directory_unavailable"
+end
+
+local function write_atomic(path, content)
+    local temporary = path .. ".tmp"
+    local file = io.open(temporary, "wb")
+    if not file then return false, "history_index_unavailable" end
+    local ok = file:write(content)
+    file:flush()
+    file:close()
+    if not ok then return false, "history_index_write_failed" end
+    if kernel32 and kernel32.MoveFileExA(temporary, path, 0x1 + 0x8) ~= 0 then return true end
+    os.remove(path)
+    if os.rename(temporary, path) then return true end
+    return false, "history_index_replace_failed"
+end
+
+local function parse_index(path)
+    local result = { version = INDEX_VERSION, next_id = 1, entries = {}, by_key = {} }
+    local file = io.open(path, "rb")
+    if not file then return result end
+    local section = nil
+    local sections = {}
+    for raw_line in file:lines() do
+        local line = trim(raw_line:gsub("^\239\187\191", ""):gsub("%s*[;].*$", ""))
+        local name = line:match("^%[([^%]]+)%]$")
+        if name then
+            section = trim(name)
+            sections[section] = sections[section] or {}
+        elseif section and line ~= "" then
+            local key, value = line:match("^([^=]+)=(.*)$")
+            if key then sections[section][trim(key)] = trim(value) end
+        end
+    end
+    file:close()
+    local meta = sections.meta or {}
+    if tonumber(meta.version) ~= INDEX_VERSION then return result end
+    result.next_id = math.max(1, tonumber(meta.next_id) or 1)
+    for section_name, values in pairs(sections) do
+        local id = section_name:match("^entry_(%d+)$")
+        local kind = trim(values.kind):lower()
+        local key = decode(values.key)
+        if id and (kind == "channel" or kind == "private") and key ~= "" then
+            local entry = {
+                id = tonumber(id), kind = kind, key = key,
+                filename = trim(values.filename), nick = decode(values.nick),
+                identity = decode(values.identity):lower(),
+                unread = math.max(0, math.min(99, tonumber(values.unread) or 0)),
+                closed = values.closed == "true", last_activity = tonumber(values.last_activity) or 0
+            }
+            if entry.filename:match("^%d+%.log$") then
+                result.entries[entry.id] = entry
+                result.by_key[kind .. "\t" .. key] = entry
+                if entry.id >= result.next_id then result.next_id = entry.id + 1 end
+            end
+        end
+    end
+    return result
+end
+
+local function write_index()
+    if not active then return false, "history_not_active" end
+    local lines = {
+        "; Message bodies are stored in append-only logs, never in this index.",
+        "[meta]", "version = " .. INDEX_VERSION,
+        "next_id = " .. tostring(active.next_id), ""
+    }
+    local ids = {}
+    for id in pairs(active.entries) do ids[#ids + 1] = id end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+        local entry = active.entries[id]
+        lines[#lines + 1] = string.format("[entry_%06d]", entry.id)
+        lines[#lines + 1] = "kind = " .. entry.kind
+        lines[#lines + 1] = "key = " .. encode(entry.key)
+        lines[#lines + 1] = "filename = " .. entry.filename
+        lines[#lines + 1] = "nick = " .. encode(entry.nick)
+        lines[#lines + 1] = "identity = " .. encode(entry.identity)
+        lines[#lines + 1] = "unread = " .. tostring(entry.unread or 0)
+        lines[#lines + 1] = "closed = " .. tostring(entry.closed == true)
+        lines[#lines + 1] = "last_activity = " .. tostring(entry.last_activity or 0)
+        lines[#lines + 1] = ""
+    end
+    return write_atomic(active.index_path, table.concat(lines, "\r\n") .. "\r\n")
+end
+
+local function log_path(entry)
+    if not active or not entry then return nil end
+    return active.path .. "\\" .. (entry.kind == "private" and "private" or "channels") ..
+        "\\" .. entry.filename
+end
+
+local function log_header(entry)
+    return table.concat({ "PF_IRC_CONVERSATION", tostring(LOG_VERSION), entry.kind,
+        encode(entry.key) }, "\t")
+end
+
+local function set_metadata(entry, metadata)
+    metadata = metadata or {}
+    local changed = false
+    for _, key in ipairs({ "nick", "identity" }) do
+        if metadata[key] ~= nil then
+            local value = tostring(metadata[key] or "")
+            if key == "identity" then value = value:lower() end
+            if entry[key] ~= value then entry[key], changed = value, true end
+        end
+    end
+    if metadata.unread ~= nil then
+        local value = math.max(0, math.min(99, tonumber(metadata.unread) or 0))
+        if entry.unread ~= value then entry.unread, changed = value, true end
+    end
+    if metadata.closed ~= nil and entry.closed ~= (metadata.closed == true) then
+        entry.closed, changed = metadata.closed == true, true
+    end
+    if metadata.last_activity ~= nil then
+        local value = tonumber(metadata.last_activity) or 0
+        if entry.last_activity ~= value then entry.last_activity, changed = value, true end
+    end
+    return changed
+end
+
+function activate(namespace)
+    namespace = trim(namespace):lower()
+    if namespace == "" or not namespace:match("^[a-z0-9_%-]+$") then
+        return nil, "history_namespace_invalid"
+    end
+    local root, error_code = pf_irc_chat_config.get_history_root()
+    if not root then return nil, error_code end
+    local namespace_path = root .. "\\" .. namespace
+    for _, path in ipairs({ root, namespace_path, namespace_path .. "\\channels",
+        namespace_path .. "\\private" }) do
+        local ok, directory_error = ensure_dir(path)
+        if not ok then return nil, directory_error end
+    end
+    local index_path = namespace_path .. "\\index.ltx"
+    local index = parse_index(index_path)
+    active = {
+        namespace = namespace, path = namespace_path, index_path = index_path,
+        next_id = index.next_id, entries = index.entries, by_key = index.by_key
+    }
+    local existing = io.open(index_path, "rb")
+    if existing then existing:close() else
+        local ok, write_error = write_index()
+        if not ok then return nil, write_error end
+    end
+    return active
+end
+
+function current_namespace()
+    return active and active.namespace or nil
+end
+
+function list_entries(kind)
+    local result = {}
+    if not active then return result end
+    for _, entry in pairs(active.entries) do
+        if not kind or entry.kind == kind then result[#result + 1] = entry end
+    end
+    table.sort(result, function(left, right)
+        if left.last_activity ~= right.last_activity then
+            return left.last_activity > right.last_activity
+        end
+        return left.id < right.id
+    end)
+    return result
+end
+
+function get_entry(kind, key)
+    return active and active.by_key[tostring(kind) .. "\t" .. tostring(key)] or nil
+end
+
+function ensure_entry(kind, key, metadata)
+    if not active then return nil, "history_not_active" end
+    kind, key = trim(kind):lower(), tostring(key or "")
+    if (kind ~= "channel" and kind ~= "private") or key == "" then
+        return nil, "history_entry_invalid"
+    end
+    local lookup = kind .. "\t" .. key
+    local entry = active.by_key[lookup]
+    local changed = false
+    if not entry then
+        local id = active.next_id
+        active.next_id = id + 1
+        entry = {
+            id = id, kind = kind, key = key, filename = string.format("%06d.log", id),
+            nick = "", identity = "", unread = 0, closed = false,
+            last_activity = 0
+        }
+        active.entries[id], active.by_key[lookup], changed = entry, entry, true
+    end
+    changed = set_metadata(entry, metadata) or changed
+    if changed then
+        local ok, error_code = write_index()
+        if not ok then return nil, error_code end
+    end
+    return entry
+end
+
+function update_entry(entry, metadata)
+    if not active or not entry or active.entries[entry.id] ~= entry then
+        return false, "history_entry_missing"
+    end
+    if not set_metadata(entry, metadata) then return true end
+    return write_index()
+end
+
+function remove_entry(entry)
+    if not active or not entry or active.entries[entry.id] ~= entry then return true end
+    os.remove(log_path(entry))
+    active.entries[entry.id] = nil
+    active.by_key[entry.kind .. "\t" .. entry.key] = nil
+    return write_index()
+end
+
+function remove_key(kind, key)
+    return remove_entry(get_entry(kind, key))
+end
+
+function remove_private_logs()
+    if not active then return false, "history_not_active" end
+    local remove = {}
+    for _, entry in pairs(active.entries) do
+        if entry.kind == "private" then remove[#remove + 1] = entry end
+    end
+    for _, entry in ipairs(remove) do
+        os.remove(log_path(entry))
+        active.entries[entry.id] = nil
+        active.by_key[entry.kind .. "\t" .. entry.key] = nil
+    end
+    if lfs_ok then
+        local private_path = active.path .. "\\private"
+        for filename in lfs.dir(private_path) do
+            if filename:match("^%d+%.log$") then os.remove(private_path .. "\\" .. filename) end
+        end
+    end
+    return write_index()
+end
+
+function remove_private_logs_all()
+    local root, error_code = pf_irc_chat_config.get_history_root()
+    if not root then return false, error_code end
+    if not lfs_ok then return false, "lfs_unavailable" end
+    local original_namespace = active and active.namespace or nil
+    for namespace in lfs.dir(root) do
+        if namespace ~= "." and namespace ~= ".." and
+            namespace:match("^[a-z0-9_%-]+$") and
+            lfs.attributes(root .. "\\" .. namespace, "mode") == "directory" then
+            local storage = activate(namespace)
+            if storage then remove_private_logs() end
+        end
+    end
+    if original_namespace then activate(original_namespace) end
+    return true
+end
+
+local function ensure_log(entry)
+    local path = log_path(entry)
+    local file = io.open(path, "rb")
+    if file then
+        local size = file:seek("end") or 0
+        file:seek("set", 0)
+        local header = (file:read("*l") or ""):gsub("\r$", "")
+        file:close()
+        if size > 0 then
+            if header ~= log_header(entry) then return nil, "history_format_invalid" end
+            return path
+        end
+    end
+    file = io.open(path, "wb")
+    if not file then return nil, "history_log_unavailable" end
+    local ok = file:write(log_header(entry), "\r\n")
+    file:flush()
+    file:close()
+    if not ok then return nil, "history_log_write_failed" end
+    return path
+end
+
+local function message_line(message)
+    return table.concat({ "M", encode(message.kind), encode(message.nick),
+        encode(message.identity), encode(message.text), message.own == true and "1" or "0",
+        message.mentioned == true and "1" or "0", encode(message.time), encode(message.date) }, "\t")
+end
+
+local function parse_message(line, start_offset, end_offset)
+    local value = fields(line)
+    if value[1] ~= "M" or #value < 9 then return nil end
+    local message = {
+        kind = decode(value[2]), nick = decode(value[3]),
+        identity = decode(value[4]):lower(), text = decode(value[5]),
+        own = value[6] == "1", mentioned = value[7] == "1",
+        time = decode(value[8]), date = decode(value[9]),
+        _history_start = start_offset, _history_end = end_offset
+    }
+    if message.text == "" or #message.text > 4096 or #message.nick > 128 or
+        #message.identity > 240 or #message.kind > 32 or
+        not message.kind:match("^[%a_]+$") then return nil end
+    if not message.time:match("^%d%d:%d%d$") then message.time = "" end
+    if not message.date:match("^%d%d%d%d%-%d%d%-%d%d$") then message.date = "" end
+    return message
+end
+
+function append(entry, message)
+    local path, error_code = ensure_log(entry)
+    if not path then return nil, error_code end
+    local needs_separator = false
+    local check = io.open(path, "rb")
+    if check then
+        local size = check:seek("end") or 0
+        if size > 0 then
+            check:seek("set", size - 1)
+            needs_separator = check:read(1) ~= "\n"
+        end
+        check:close()
+    end
+    local file = io.open(path, "ab")
+    if not file then return nil, "history_log_unavailable" end
+    local start_offset = file:seek("end") or 0
+    local ok = true
+    if needs_separator then
+        ok = file:write("\r\n")
+        start_offset = start_offset + 2
+    end
+    if ok then ok = file:write(message_line(message), "\r\n") end
+    file:flush()
+    local end_offset = file:seek() or start_offset
+    file:close()
+    if not ok then return nil, "history_log_write_failed" end
+    message._history_start, message._history_end = start_offset, end_offset
+    return start_offset, end_offset
+end
+
+function clear(entry)
+    if not active or not entry then return false, "history_entry_missing" end
+    local file = io.open(log_path(entry), "wb")
+    if not file then return false, "history_log_unavailable" end
+    local ok = file:write(log_header(entry), "\r\n")
+    file:flush()
+    file:close()
+    if not ok then return false, "history_log_write_failed" end
+    return update_entry(entry, { unread = 0, last_activity = os.time() })
+end
+
+local function open_log(entry)
+    local file = io.open(log_path(entry), "rb")
+    if not file then return nil, nil, "history_missing" end
+    local header = (file:read("*l") or ""):gsub("\r$", "")
+    local start_offset = file:seek() or 0
+    if header ~= log_header(entry) then
+        file:close()
+        return nil, nil, "history_format_invalid"
+    end
+    return file, start_offset
+end
+
+local function previous_lf(file, before_offset, minimum)
+    local cursor = before_offset
+    while cursor > minimum do
+        local block_start = math.max(minimum, cursor - READ_BLOCK_BYTES)
+        file:seek("set", block_start)
+        local data = file:read(cursor - block_start) or ""
+        for index = #data, 1, -1 do
+            if data:byte(index) == 10 then return block_start + index - 1 end
+        end
+        cursor = block_start
+    end
+    return nil
+end
+
+local function complete_end(file, data_start)
+    local size = file:seek("end") or data_start
+    if size <= data_start then return data_start end
+    file:seek("set", size - 1)
+    if file:read(1) == "\n" then return size end
+    local newline = previous_lf(file, size, data_start)
+    return newline and (newline + 1) or data_start
+end
+
+local function previous_line(file, cursor, data_start)
+    if cursor <= data_start then return nil end
+    local content_end = cursor
+    file:seek("set", cursor - 1)
+    if file:read(1) == "\n" then content_end = cursor - 1 end
+    local newline = previous_lf(file, content_end, data_start)
+    local line_start = newline and (newline + 1) or data_start
+    file:seek("set", line_start)
+    local line = file:read(content_end - line_start) or ""
+    line = line:gsub("\r$", "")
+    return line, line_start, cursor
+end
+
+function read_latest(entry, limit)
+    local file, data_start, error_code = open_log(entry)
+    if not file then
+        if error_code == "history_missing" then
+            return {}, { start_offset = 0, end_offset = 0, has_older = false,
+                has_newer = false }
+        end
+        return nil, nil, error_code
+    end
+    local cursor = complete_end(file, data_start)
+    local end_offset = cursor
+    local reversed = {}
+    while cursor > data_start and #reversed < math.max(1, tonumber(limit) or 20) do
+        local line, line_start, line_end = previous_line(file, cursor, data_start)
+        if not line then break end
+        cursor = line_start
+        local message = parse_message(line, line_start, line_end)
+        if message then reversed[#reversed + 1] = message end
+    end
+    file:close()
+    local messages = {}
+    for index = #reversed, 1, -1 do messages[#messages + 1] = reversed[index] end
+    return messages, {
+        start_offset = messages[1] and messages[1]._history_start or end_offset,
+        end_offset = messages[#messages] and messages[#messages]._history_end or end_offset,
+        has_older = cursor > data_start, has_newer = false
+    }
+end
+
+function read_older(entry, before_offset, limit)
+    local file, data_start, error_code = open_log(entry)
+    if not file then return nil, nil, error_code end
+    local end_offset = math.max(data_start, math.min(tonumber(before_offset) or data_start,
+        complete_end(file, data_start)))
+    local cursor = end_offset
+    local reversed = {}
+    while cursor > data_start and #reversed < math.max(1, tonumber(limit) or 20) do
+        local line, line_start, line_end = previous_line(file, cursor, data_start)
+        if not line then break end
+        cursor = line_start
+        local message = parse_message(line, line_start, line_end)
+        if message then reversed[#reversed + 1] = message end
+    end
+    file:close()
+    local messages = {}
+    for index = #reversed, 1, -1 do messages[#messages + 1] = reversed[index] end
+    return messages, {
+        start_offset = messages[1] and messages[1]._history_start or end_offset,
+        end_offset = end_offset, has_older = cursor > data_start,
+        has_newer = true
+    }
+end
+
+function read_newer(entry, after_offset, limit)
+    local file, data_start, error_code = open_log(entry)
+    if not file then return nil, nil, error_code end
+    local final_offset = complete_end(file, data_start)
+    local cursor = math.max(data_start, math.min(tonumber(after_offset) or data_start, final_offset))
+    file:seek("set", cursor)
+    local messages = {}
+    while cursor < final_offset and #messages < math.max(1, tonumber(limit) or 20) do
+        local line_start = cursor
+        local line = file:read("*l")
+        local line_end = file:seek() or final_offset
+        if not line or line_end > final_offset then break end
+        cursor = line_end
+        line = line:gsub("\r$", "")
+        local message = parse_message(line, line_start, line_end)
+        if message then messages[#messages + 1] = message end
+    end
+    file:close()
+    return messages, {
+        start_offset = messages[1] and messages[1]._history_start or cursor,
+        end_offset = messages[#messages] and messages[#messages]._history_end or cursor,
+        has_older = true, has_newer = cursor < final_offset
+    }
+end
+
+function get_log_path(entry)
+    return log_path(entry)
+end

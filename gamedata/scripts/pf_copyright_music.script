@@ -231,7 +231,9 @@ local function start_level_music(level_name)
 end
 
 local function update_level_music()
-    if not db.actor or state.menu_active then
+    -- UI updates can outlive the native level during disconnect. The Lua actor
+    -- proxy may still exist, but level.name() requires a live level.
+    if not level.present() or not db.actor or state.menu_active then
         stop_level_music()
         return
     end

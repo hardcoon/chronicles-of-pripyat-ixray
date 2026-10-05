@@ -5,6 +5,18 @@ local Controller = {}
 Controller.__index = Controller
 local registered = false
 local ROOT = "zzzzzzzzzzzzzzzzzzzzzz_pf-puzzles\\"
+local RULE_BLOCKS = {
+    { "goal_heading", 4 },
+    { "goal_body", 8 },
+    { "controls_heading", 4 },
+    { "controls_body", 8 },
+    { "progress_heading", 4 },
+    { "progress_body", 8 },
+    { "saving_heading", 4 },
+    { "saving_body", 8 },
+    { "sound_heading", 4 },
+    { "sound_body", 8 },
+}
 local function tr(id) return game.translate_string(id) end
 local function native() return pf_nes_native end
 local function address(buffer) return tonumber(ffi.cast("uintptr_t", buffer)) end
@@ -84,7 +96,18 @@ function Controller:initialize(owner)
     self.rules_shade = xml:InitStatic("nes:rules_shade", self.root)
     self.rules = xml:InitStatic("nes:rules", self.root)
     xml:InitTextWnd("nes:rules:caption", self.rules)
-    xml:InitTextWnd("nes:rules:body", self.rules)
+    xml:InitFrameLine("nes:rules:caption_line", self.rules)
+    self.rules_body = xml:InitStatic("nes:rules:body", self.rules)
+    self.rules_texts = {}
+    -- Compact, non-scrolling rules; retain the other games' localized colors/fonts.
+    local y = 0
+    for _, block in ipairs(RULE_BLOCKS) do
+        local text = xml:InitTextWnd("nes:rules:" .. block[1], self.rules_body)
+        text:AdjustHeightToText()
+        text:SetWndPos(vector2():set(0, y))
+        y = y + text:GetHeight() + block[2]
+        self.rules_texts[#self.rules_texts + 1] = text
+    end
     self.rules_back = xml:Init3tButton("nes:rules:back", self.rules)
     self.progress_window=xml:InitStatic("nes:progress",self.root)
     self.progress_caption=xml:InitTextWnd("nes:progress:caption",self.progress_window)

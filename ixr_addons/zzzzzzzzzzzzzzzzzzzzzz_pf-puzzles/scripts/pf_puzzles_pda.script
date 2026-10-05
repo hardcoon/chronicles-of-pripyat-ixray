@@ -12,6 +12,7 @@ local shell_state = {
 local MAX_CELLS = 150
 local TILE_SLOT_COUNT = 6
 local TILE_COLUMNS = 2
+local CATALOG_COLUMNS = 2
 local TILE_ORIGIN_X = 4
 local TILE_ORIGIN_Y = 4
 local TILE_COLUMN_STEP = 453
@@ -73,7 +74,7 @@ local CATALOG_GAMES = {
     {
         id = "nes",
         name_id = "pf_nes_name",
-        description_id = "pf_nes_description",
+        description_id = "pf_nes_description_short",
         preview_texture = "ui_pf_nes_preview",
         native_module = "pf_nes_native",
         ui_module = "pf_puzzles_nes_ui",
@@ -187,6 +188,7 @@ function pf_puzzles_tab:__init() super()
     self.cells = {}
     self.tile_cards = {}
     self.list_rows = {}
+    self.list_grid_rows = {}
     self.catalog_states = {}
     self.last_revision = -1
     self.snapshot = nil
@@ -286,16 +288,35 @@ function pf_puzzles_tab:InitControls()
 
     self.tile_view = xml:InitStatic("catalog:tile_view", self.catalog)
 
-    self.list_view = xml:InitScrollView("catalog:list_view", self.catalog)
+    -- The outer view clips a same-height wrapper and never overflows. The
+    -- inner view keeps wheel/drag scrolling, with its bar outside that scissor.
+    self.list_clip = xml:InitScrollView("catalog:list_clip", self.catalog)
+    self.list_clip:SetFixedScrollBar(false)
+    self.list_scroll_wrapper = CUIWindow()
+    xml:InitWindow("catalog:list_scroll_wrapper", 0, self.list_scroll_wrapper)
+    self.list_clip:AddWindow(self.list_scroll_wrapper, true)
+    self.list_scroll_wrapper:SetAutoDelete(false)
+    self.list_view = xml:InitScrollView("catalog:list_view", self.list_scroll_wrapper)
+    self.list_view:SetFixedScrollBar(false)
+    local grid_row = nil
     for index = 1, #CATALOG_GAMES do
-        local row = xml:InitStatic("catalog:list_view:row", nil)
+        local column = (index - 1) % CATALOG_COLUMNS
+        if column == 0 then
+            grid_row = CUIWindow()
+            xml:InitWindow("catalog:list_view:grid_row", 0, grid_row)
+            self.list_view:AddWindow(grid_row, true)
+            grid_row:SetAutoDelete(false)
+            self.list_grid_rows[#self.list_grid_rows + 1] = grid_row
+        end
+        local row = xml:InitStatic("catalog:list_view:row", grid_row)
+        row:SetWndPos(vector2():set(
+            column * (grid_row:GetWidth() - row:GetWidth()), 0))
         local preview = xml:InitStatic("catalog:list_view:row:preview", row)
         local name = xml:InitTextWnd("catalog:list_view:row:name", row)
         local description = xml:InitTextWnd("catalog:list_view:row:description", row)
         local best = xml:InitTextWnd("catalog:list_view:row:best", row)
         local play = xml:Init3tButton("catalog:list_view:row:play", row)
         local rules = xml:Init3tButton("catalog:list_view:row:rules", row)
-        self.list_view:AddWindow(row, true)
         row:SetAutoDelete(false)
         row:Show(false)
         row:Enable(false)
@@ -545,8 +566,7 @@ function pf_puzzles_tab:ConfirmPendingAction()
 end
 
 function pf_puzzles_tab:SetCatalogLayout(layout)
-    -- Keep the tile implementation available for a possible future apps
-    -- catalog, but expose only the compact list in the current Puzzles UI.
+    -- The shared card template is arranged into a scrolling two-column grid.
     shell_state.layout = "list"
     self.tile_view:Show(false)
     self.tile_view:Enable(false)
