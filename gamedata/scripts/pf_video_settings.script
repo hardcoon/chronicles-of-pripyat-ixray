@@ -1,0 +1,58 @@
+-- Recommended graphics defaults are applied once per installation.
+-- The regular video options checkbox remains the owner of subsequent choices.
+local MIGRATION_FILE = "pf_video_defaults_v1.setting"
+local checked_this_session = false
+
+function apply_defaults_once()
+    if checked_this_session then return end
+    checked_this_session = true
+
+    local fs = getFS()
+    local marker_path = fs:update_path("$app_data_root$", MIGRATION_FILE)
+    local file = io.open(marker_path, "r")
+    if file then
+        local version = file:read("*l")
+        file:close()
+        if version == "1" then return end
+    end
+
+    -- Reserve a writable marker before changing anything. An incomplete marker
+    -- is retried on the next launch, but never during later menu visits.
+    local marker = io.open(marker_path, "w")
+    if not marker then
+        printf("[PF VIDEO] Cannot write the graphics-defaults marker")
+        return
+    end
+
+    local console = get_console()
+    console:execute("r2_volumetric_lights off")
+    console:execute("cfg_save")
+
+    -- The supported launcher uses the engine's default user.ltx. Verify the
+    -- saved value before recording completion; failed saving must be retried.
+    local config = io.open(fs:update_path("$app_data_root$", "user.ltx"), "r")
+    local saved_off = false
+    if config then
+        for line in config:lines() do
+            local value = string.match(line, "^%s*r2_volumetric_lights%s+(%S+)")
+            if value then
+                saved_off = string.lower(value) == "off"
+                break
+            end
+        end
+        config:close()
+    end
+    if not saved_off or console:get_bool("r2_volumetric_lights") then
+        marker:close()
+        printf("[PF VIDEO] Unable to confirm the saved volumetric-light default")
+        return
+    end
+
+    local written = marker:write("1\n")
+    local closed = marker:close()
+    if not written or not closed then
+        printf("[PF VIDEO] Cannot save the graphics-defaults marker")
+        return
+    end
+    printf("[PF VIDEO] Applied recommended default: r2_volumetric_lights off")
+end

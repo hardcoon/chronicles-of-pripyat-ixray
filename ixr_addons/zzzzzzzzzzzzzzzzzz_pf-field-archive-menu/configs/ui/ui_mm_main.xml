@@ -1,0 +1,173 @@
+<w>
+    <background x="0" y="0" width="1024" height="768">
+        <auto_static x="0" y="0" width="1024" height="768" stretch="1">
+            <texture>pf_menu_background_4</texture>
+        </auto_static>
+        <auto_static x="0" y="0" width="1024" height="768" stretch="1">
+            <texture>pf_fa_main_4</texture>
+        </auto_static>
+        <auto_static x="38" y="44" width="274" height="109" stretch="1">
+            <texture>pf_fa_logo</texture>
+        </auto_static>
+        <auto_static x="80" y="655" width="1" height="25">
+            <text font="font_condensed_20" align="c" vert_align="c" r="104" g="100" b="91">|</text>
+        </auto_static>
+    </background>
+
+    <!-- Startup menu hover is positioned instantly by Lua; the native moving strip stays transparent. -->
+    <main_hover_selector x="0" y="198" width="360" height="54" stretch="1">
+        <texture>pf_fa_menu_selector</texture>
+    </main_hover_selector>
+    <main_hover_hit_1 x="76" y="198" width="260" height="60" stretch="1"><texture>pf_fa_transparent</texture></main_hover_hit_1>
+    <main_hover_hit_2 x="76" y="258" width="260" height="60" stretch="1"><texture>pf_fa_transparent</texture></main_hover_hit_2>
+    <main_hover_hit_3 x="76" y="318" width="260" height="60" stretch="1"><texture>pf_fa_transparent</texture></main_hover_hit_3>
+    <main_hover_hit_4 x="76" y="378" width="260" height="60" stretch="1"><texture>pf_fa_transparent</texture></main_hover_hit_4>
+
+    <shniaga_wnd x="0" y="198" width="360" height="310">
+        <buttons_region x="76" y="0" width="260" height="310" always_show_scroll="false"/>
+        <shniaga x="0" y="0" width="360" height="54" stretch="1">
+            <texture>pf_fa_transparent</texture>
+            <magnifire x="0" y="0" width="360" height="54" stretch="1">
+                <texture>pf_fa_transparent</texture>
+            </magnifire>
+            <speed>0</speed>
+        </shniaga>
+    </shniaga_wnd>
+
+    <shniaga_wnd_pause x="0" y="198" width="360" height="420">
+        <buttons_region x="76" y="0" width="260" height="420" always_show_scroll="false"/>
+        <shniaga x="0" y="0" width="360" height="54" stretch="1">
+            <texture>pf_fa_menu_selector</texture>
+            <magnifire x="0" y="0" width="360" height="54" stretch="1">
+                <texture>pf_fa_transparent</texture>
+            </magnifire>
+            <speed>700</speed>
+        </shniaga>
+    </shniaga_wnd_pause>
+
+    <button h="60"/>
+
+    <menu_main btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_new_game" caption="pf_fa_new_game"/>
+        <btn name="btn_load" caption="pf_fa_load_game"/>
+        <btn name="btn_options" caption="pf_fa_settings"/>
+    </menu_main>
+
+    <menu_main_logout btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_new_game" caption="pf_fa_new_game"/>
+        <btn name="btn_load" caption="pf_fa_load_game"/>
+        <btn name="btn_logout" caption="pf_fa_logout"/>
+        <btn name="btn_options" caption="pf_fa_settings"/>
+    </menu_main_logout>
+
+    <menu_main_last_save btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_lastsave" caption="pf_fa_continue"/>
+        <btn name="btn_new_game" caption="pf_fa_new_game"/>
+        <btn name="btn_load" caption="pf_fa_load_game"/>
+        <btn name="btn_options" caption="pf_fa_settings"/>
+    </menu_main_last_save>
+
+    <menu_new_game btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_stalker" caption="pf_fa_stalker"/>
+        <btn name="btn_master" caption="pf_fa_experienced"/>
+        <btn name="btn_new_back" caption="pf_fa_back"/>
+    </menu_new_game>
+
+    <menu_new_game_developer btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_stalker" caption="pf_fa_stalker"/>
+        <btn name="btn_master" caption="pf_fa_experienced"/>
+        <btn name="btn_developer" caption="pf_fa_developer"/>
+        <btn name="btn_new_back" caption="pf_fa_back"/>
+    </menu_new_game_developer>
+
+    <menu_main_single btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_ret" caption="pf_fa_return_game"/>
+        <btn name="btn_load" caption="pf_fa_load_game"/>
+        <btn name="btn_save" caption="pf_fa_save_game"/>
+        <btn name="btn_options" caption="pf_fa_settings"/>
+        <btn name="btn_quit_to_mm" caption="pf_fa_quit_to_menu"/>
+        <btn name="btn_quit" caption="pf_fa_quit"/>
+    </menu_main_single>
+
+    <menu_main_single_dead btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_lastsave" caption="pf_fa_continue"/>
+        <btn name="btn_load" caption="pf_fa_load_game"/>
+        <btn name="btn_options" caption="pf_fa_settings"/>
+        <btn name="btn_quit_to_mm" caption="pf_fa_quit_to_menu"/>
+        <btn name="btn_quit" caption="pf_fa_quit"/>
+    </menu_main_single_dead>
+
+    <menu_main_mm btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_ret" caption="pf_fa_return_game"/>
+        <btn name="btn_options" caption="pf_fa_settings"/>
+        <btn name="btn_quit_to_mm" caption="pf_fa_disconnect"/>
+        <btn name="btn_quit" caption="pf_fa_quit"/>
+    </menu_main_mm>
+
+    <menu_network_game btn_height="60" font="ui_font_pf_fa_menu" align="l" a="255" r="214" g="210" b="199">
+        <btn name="btn_internet" caption="pf_fa_internet"/>
+        <btn name="btn_localnet" caption="pf_fa_localnet"/>
+        <btn name="btn_new_back" caption="pf_fa_back"/>
+    </menu_network_game>
+
+    <main_quit x="0" y="530" width="360" height="54" stretch="1">
+        <texture>pf_fa_transparent</texture>
+        <text x="76" y="0" width="260" height="54" font="ui_font_pf_fa_menu" align="l" vert_align="c">pf_fa_quit_plain</text>
+        <text_color>
+            <e r="214" g="210" b="199"/>
+            <h r="214" g="210" b="199"/>
+            <t r="197" g="138" b="50"/>
+            <d r="110" g="108" b="101"/>
+        </text_color>
+    </main_quit>
+
+    <!-- Live single-player pause menu: two equal 30px group gaps, no Continue duplicate. -->
+    <pause_selector x="0" y="198" width="360" height="54" stretch="1">
+        <texture>pf_fa_menu_selector</texture>
+    </pause_selector>
+
+    <pause_ret x="0" y="198" width="360" height="54" stretch="1">
+        <texture>pf_fa_transparent</texture>
+        <text x="76" y="0" width="260" height="54" font="ui_font_pf_fa_menu" align="l" vert_align="c">pf_fa_return_game</text>
+        <text_color><e r="214" g="210" b="199"/><h r="214" g="210" b="199"/><t r="197" g="138" b="50"/><d r="110" g="108" b="101"/></text_color>
+    </pause_ret>
+    <pause_load x="0" y="288" width="360" height="54" stretch="1">
+        <texture>pf_fa_transparent</texture>
+        <text x="76" y="0" width="260" height="54" font="ui_font_pf_fa_menu" align="l" vert_align="c">pf_fa_load_game</text>
+        <text_color><e r="214" g="210" b="199"/><h r="214" g="210" b="199"/><t r="197" g="138" b="50"/><d r="110" g="108" b="101"/></text_color>
+    </pause_load>
+    <pause_save x="0" y="348" width="360" height="54" stretch="1">
+        <texture>pf_fa_transparent</texture>
+        <text x="76" y="0" width="260" height="54" font="ui_font_pf_fa_menu" align="l" vert_align="c">pf_fa_save_game</text>
+        <text_color><e r="214" g="210" b="199"/><h r="214" g="210" b="199"/><t r="197" g="138" b="50"/><d r="110" g="108" b="101"/></text_color>
+    </pause_save>
+    <pause_options x="0" y="408" width="360" height="54" stretch="1">
+        <texture>pf_fa_transparent</texture>
+        <text x="76" y="0" width="260" height="54" font="ui_font_pf_fa_menu" align="l" vert_align="c">pf_fa_settings</text>
+        <text_color><e r="214" g="210" b="199"/><h r="214" g="210" b="199"/><t r="197" g="138" b="50"/><d r="110" g="108" b="101"/></text_color>
+    </pause_options>
+    <pause_quit_to_mm x="0" y="468" width="360" height="54" stretch="1">
+        <texture>pf_fa_transparent</texture>
+        <text x="76" y="0" width="260" height="54" font="ui_font_pf_fa_menu" align="l" vert_align="c">pf_fa_quit_to_menu</text>
+        <text_color><e r="214" g="210" b="199"/><h r="214" g="210" b="199"/><t r="197" g="138" b="50"/><d r="110" g="108" b="101"/></text_color>
+    </pause_quit_to_mm>
+    <pause_quit x="0" y="558" width="360" height="54" stretch="1">
+        <texture>pf_fa_transparent</texture>
+        <text x="76" y="0" width="260" height="54" font="ui_font_pf_fa_menu" align="l" vert_align="c">pf_fa_quit</text>
+        <text_color><e r="214" g="210" b="199"/><h r="214" g="210" b="199"/><t r="197" g="138" b="50"/><d r="110" g="108" b="101"/></text_color>
+    </pause_quit>
+
+    <menu_sound random="0">
+        <menu_music>ambient\no_sound</menu_music>
+    </menu_sound>
+
+    <russian_lang x="49" y="649" width="27" height="32" stretch="1">
+        <texture>ui_flag_russia_cop</texture>
+    </russian_lang>
+    <english_lang x="88" y="649" width="27" height="32" stretch="1">
+        <texture>ui_flag_usa_cop</texture>
+    </english_lang>
+    <static_version x="49" y="697" width="280" height="28">
+        <text align="l" vert_align="c" font="font_condensed_18" r="150" g="108" b="48" complex_mode="0"/>
+    </static_version>
+</w>

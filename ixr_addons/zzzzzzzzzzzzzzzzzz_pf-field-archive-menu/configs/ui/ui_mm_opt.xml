@@ -220,6 +220,14 @@
   <video_adv>
     <scroll_v x="0" y="0" width="466" height="395" right_ident="0" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="0" always_show_scroll="1" scroll_profile="field_archive"/>
     <templ_item width="466" height="44"/>
+    <templ_item_volumetric_light width="466" height="84">
+      <auto_static x="16" y="34" width="438" height="20">
+        <text font="letterica16" align="l" vert_align="c" r="190" g="137" b="52">ui_mm_volumetric_light_recommendation</text>
+      </auto_static>
+      <auto_static x="16" y="54" width="438" height="24">
+        <text font="letterica16" align="l" vert_align="c" complex_mode="1" r="190" g="137" b="52">ui_mm_volumetric_light_performance_warning</text>
+      </auto_static>
+    </templ_item_volumetric_light>
     <cap_vis_dist x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_vis_distance</text>
     </cap_vis_dist>
@@ -553,7 +561,7 @@
     </cap_volumetric_light>
     <check_volumetric_light x="228" y="3" width="20" height="27" stretch="1">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_volumetric_lights" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r2_volumetric_lights" group="mm_opt_video_adv"/>
     </check_volumetric_light>
     <cap_r4_tessellation x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r4_enable_tessellation</text>
