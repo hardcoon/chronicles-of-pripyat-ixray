@@ -496,6 +496,22 @@ function pf_hf_workbench_dialog:Update()
 		self:OnClose()
 		return
 	end
+	local pending = self.inventory_refresh
+	if pending then
+		local waiting = false
+		for _, id in ipairs(pending.ids) do
+			if level.object_by_id(id) then waiting = true break end
+		end
+		if not waiting then
+			self.inventory_refresh = nil
+			self:Refresh()
+			if self.tab == pending.tab and self.selected_id == pending.item and
+				self.selected_recipe == pending.recipe and
+				self.selected_upgrade_id == pending.upgrade then
+				self:SetTransactionStatus(true, pending.message)
+			end
+		end
+	end
 	if self.tab == "upgrade" then
 		local hovered = nil
 		local item = self.selected_id and
@@ -698,6 +714,7 @@ function pf_hf_workbench_dialog:RefreshSelected()
 	self.condition_bar:Show(self.tab == "repair" and item ~= nil)
 	self.condition_track:Show(self.tab == "repair" and item ~= nil)
 	self.repair:Show(self.tab == "repair" and item ~= nil and item:condition() < 0.9999)
+	self.repair:Enable(self.inventory_refresh == nil)
 	if not item then
 		self.selected_name:SetText(tr("pf_hf_no_selection"))
 		self.selected_source:SetText("")
@@ -792,7 +809,7 @@ function pf_hf_workbench_dialog:RefreshCraft(recipe)
 	end
 	self.upgrade_action:SetText(tr("pf_hf_craft_action"))
 	self.upgrade_action:Show(output ~= nil)
-	self.upgrade_action:Enable(available)
+	self.upgrade_action:Enable(available and self.inventory_refresh == nil)
 end
 
 function pf_hf_workbench_dialog:RefreshUpgrade(item)
@@ -906,7 +923,7 @@ function pf_hf_workbench_dialog:RefreshUpgrade(item)
 		self.upgrade_material_backgrounds[index]:Show(false)
 	end
 	self.upgrade_action:Show(state == "available")
-	self.upgrade_action:Enable(state == "available")
+	self.upgrade_action:Enable(state == "available" and self.inventory_refresh == nil)
 	self.upgrade_action:SetText(tr("pf_hf_upgrade_action"))
 end
 
@@ -923,6 +940,7 @@ function pf_hf_workbench_dialog:OnUpgradeNode(column, row)
 end
 
 function pf_hf_workbench_dialog:OnInstallUpgrade()
+	if self.inventory_refresh then return end
 	if self.tab == "craft" then
 		self:OnCraft()
 		return
@@ -930,11 +948,10 @@ function pf_hf_workbench_dialog:OnInstallUpgrade()
 	if self.tab ~= "upgrade" or not self.selected_upgrade_id then return end
 	local item = self.selected_id and
 		pf_hf_workbench_repair.find_owned_target(self.selected_id)
-	local ok, message_id = pf_hf_workbench_upgrade.install(item, self.selected_upgrade_id)
+	local ok, message_id, consumed = pf_hf_workbench_upgrade.install(item, self.selected_upgrade_id)
+	self:QueueInventoryRefresh(ok, message_id, consumed)
 	self:RefreshUpgrade(item)
-	self.upgrade_state:SetText(tr(message_id))
-	self.upgrade_state:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
-		GetARGB(255, 231, 121, 104))
+	self:SetTransactionStatus(ok, message_id)
 end
 
 function pf_hf_workbench_dialog:OnSelectEntry(item_id, recipe_output)
@@ -1019,22 +1036,39 @@ function pf_hf_workbench_dialog:OnUpgradeTab()
 	self:Refresh()
 end
 
-function pf_hf_workbench_dialog:OnRepair()
-	if not self.selected_id or self.tab ~= "repair" then return end
-	local ok, message_id = pf_hf_workbench_repair.repair(self.selected_id)
-	self.status:SetText(tr(message_id))
-	self.status:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
+function pf_hf_workbench_dialog:QueueInventoryRefresh(ok, message, consumed)
+	-- Online ALife release queues GE_DESTROY; both inventories can still contain
+	-- the consumed objects in this callback. Wait for these specific IDs only,
+	-- then rebuild counts and availability once, without a timed inventory scan.
+	if not ok or not consumed or #consumed == 0 then return end
+	self.inventory_refresh = { ids = consumed, message = message, tab = self.tab,
+		item = self.selected_id, recipe = self.selected_recipe,
+		upgrade = self.selected_upgrade_id }
+end
+
+function pf_hf_workbench_dialog:SetTransactionStatus(ok, message)
+	local control = self.tab == "repair" and self.status or self.upgrade_state
+	control:SetText(tr(message))
+	control:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
 		GetARGB(255, 231, 121, 104))
+end
+
+function pf_hf_workbench_dialog:OnRepair()
+	if self.inventory_refresh then return end
+	if not self.selected_id or self.tab ~= "repair" then return end
+	local ok, message_id, consumed = pf_hf_workbench_repair.repair(self.selected_id)
+	self:QueueInventoryRefresh(ok, message_id, consumed)
 	self:Refresh()
+	self:SetTransactionStatus(ok, message_id)
 end
 
 function pf_hf_workbench_dialog:OnCraft()
+	if self.inventory_refresh then return end
 	if self.tab ~= "craft" or not self.selected_recipe then return end
-	local ok, message_id = pf_hf_workbench_craft.craft(self.selected_recipe)
+	local ok, message_id, consumed = pf_hf_workbench_craft.craft(self.selected_recipe)
+	self:QueueInventoryRefresh(ok, message_id, consumed)
 	self:Refresh()
-	self.upgrade_state:SetText(tr(message_id))
-	self.upgrade_state:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
-		GetARGB(255, 231, 121, 104))
+	self:SetTransactionStatus(ok, message_id)
 end
 
 function pf_hf_workbench_dialog:OnKeyboard(dik, keyboard_action)
@@ -1067,4 +1101,6 @@ end
 
 function force_close()
 	if active_dialog and active_dialog.bench_id then active_dialog:OnClose() end
+	-- This entry point is used by load/teardown; IDs belong to the old world.
+	if active_dialog then active_dialog.inventory_refresh = nil end
 end

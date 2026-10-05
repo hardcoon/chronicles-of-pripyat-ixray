@@ -139,9 +139,14 @@ function repair(id)
 			end
 		end
 	end
+	local consumed_ids = {}
 	for section, amount in pairs(needed) do
-		for index = 1, amount do core.release_item(materials[section][index]) end
+		for index = 1, amount do
+			local material = materials[section][index]
+			consumed_ids[#consumed_ids + 1] = material:id()
+			core.release_item(material)
+		end
 	end
 	target:set_condition(math.min(1, condition + STEP))
-	return true, "pf_hf_repaired"
+	return true, "pf_hf_repaired", consumed_ids
 end

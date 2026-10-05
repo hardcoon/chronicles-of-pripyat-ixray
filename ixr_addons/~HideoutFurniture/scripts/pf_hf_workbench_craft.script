@@ -273,10 +273,13 @@ function craft(output)
 		db.actor:level_vertex_id(), db.actor:game_vertex_id(), db.actor:id())
 	if not result then return false, "pf_hf_craft_failed" end
 
+	local consumed_ids = {}
 	for section, amount in pairs(selected.materials) do
 		for index = 1, amount do
-			core.release_item(objects[section][index])
+			local material = objects[section][index]
+			consumed_ids[#consumed_ids + 1] = material:id()
+			core.release_item(material)
 		end
 	end
-	return true, "pf_hf_crafted"
+	return true, "pf_hf_crafted", consumed_ids
 end

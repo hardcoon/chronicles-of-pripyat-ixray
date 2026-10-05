@@ -380,9 +380,14 @@ function install(item, node_id)
 	if not item:install_upgrade(node_id) then
 		return false, "pf_hf_upgrade_unavailable"
 	end
+	local consumed_ids = {}
 	for section, amount in pairs(needed) do
-		for index = 1, amount do core.release_item(objects[section][index]) end
+		for index = 1, amount do
+			local material = objects[section][index]
+			consumed_ids[#consumed_ids + 1] = material:id()
+			core.release_item(material)
+		end
 	end
-	return true, "pf_hf_upgrade_installed"
+	return true, "pf_hf_upgrade_installed", consumed_ids
 end
 
