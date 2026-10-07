@@ -47,7 +47,7 @@ local function start(item_id)
     local ok,err=pf_runtime_editor.begin({section=OBJECT,title="pf_rt_crate_title",
         source_item_id=item_id,source_section=ITEM,bounds=model_bounds(),
         visual="dynamics\\box\\box_wood_01.ogf",
-        initial_distance=2,max_range=5,
+        initial_distance=2,
         on_confirm=create_object,on_cancel=function() pending[item_id]=nil end})
     if not ok then
         pending[item_id]=nil

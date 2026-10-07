@@ -10,7 +10,10 @@ end
 function accepts(kind,item)
     local section=item:section()
     if kind=="canned_food" then return canned[section] or false end
-    if kind=="ammo" then return (type(IsAmmo)=="function" and IsAmmo(item)) or field(section,"class")=="AMMO" end
+    if kind=="ammo" then
+        -- Native IX-Ray check includes AMMO_S and launcher rounds.
+        return item:is_ammo()
+    end
     if kind=="meds" then
         return medical[section] or field(section,"kind")=="i_medical" or
             field("inventory_sort_registry",section)=="medicine"

@@ -127,9 +127,13 @@ function RuntimeEditorQuaternion:to_euler_angles()
     local m33 = te[10];
 
     -- ZXY
-    angles.x = math.asin( clamp( m32, - 1, 1 ) );
+    -- Native vectors round quaternion products to float. asin(m32) and a
+    -- threshold on sin(pitch) lose precision near 90 degrees, even for 89.99.
+    -- The other matrix entries retain cos(pitch), including its tiny values.
+    local cos_pitch = math.sqrt(m31*m31 + m33*m33)
+    angles.x = math.atan2(m32, cos_pitch)
 
-    if ( math.abs( m32 ) < 0.9999999 ) then
+    if ( cos_pitch > 0.000001 ) then
 
         angles.y = math.atan2( - m31, m33 );
         angles.z = math.atan2( - m12, m22 );

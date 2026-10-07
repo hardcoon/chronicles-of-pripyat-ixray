@@ -15,9 +15,19 @@ collision = TAB
 align = CAPITAL
 simple = 1
 advanced = 2
+preview = 3
+display = Q
+rotation_axis = R
 cancel = ESCAPE
 
 ; Hold move + move mouse: move on the placement plane.
 ; Hold height + move + move mouse: height / surface normal.
 ; Hold rotate + move mouse: rotate.
-; Add fine: 1/10 sensitivity. Add snap: one axis / 15-degree rotation steps.
+; Advanced mode only: add fine for 1/10 sensitivity.
+; Add snap: one axis / 15-degree rotation steps.
+; preview: freeze the object and walk/look around; place confirms this pose.
+; advanced: resume the frozen pose; drags follow the current camera view. simple: reset and follow the camera.
+
+; display: lines/translucent -> lines/opaque -> opaque without helpers.
+; The selected display style is kept until the game exits, including save loads.
+; rotation_axis: vertical Y / local side X; modes 1 and 2 only.

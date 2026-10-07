@@ -8,9 +8,14 @@ local serial=0
 local registered=false
 local default_collision=true
 local default_surface=false
+local default_display=1
+local DEFAULT_MAX_RANGE=15
 local placement_sound=nil
 local KEY_SIMPLE=DIK_keys.DIK_1
 local KEY_ADVANCED=DIK_keys.DIK_2
+local KEY_PREVIEW=DIK_keys.DIK_3
+local KEY_DISPLAY=DIK_keys.DIK_Q
+local KEY_AXIS=DIK_keys.DIK_R
 local KEY_ALIGN=DIK_keys.DIK_CAPITAL or DIK_keys.DIK_CAPSLOCK
 local KEY_COLLISION=DIK_keys.DIK_TAB
 
@@ -53,7 +58,7 @@ end
 local function configured_keys(overrides)
     local result={place=use_key(),move=DIK_keys.MOUSE_1,rotate=DIK_keys.MOUSE_2,
         height=DIK_keys.DIK_LSHIFT,fine=DIK_keys.DIK_LCONTROL,snap=DIK_keys.DIK_LMENU,
-        collision=KEY_COLLISION,align=KEY_ALIGN,simple=KEY_SIMPLE,advanced=KEY_ADVANCED,cancel=DIK_keys.DIK_ESCAPE}
+        collision=KEY_COLLISION,align=KEY_ALIGN,simple=KEY_SIMPLE,advanced=KEY_ADVANCED,preview=KEY_PREVIEW,display=KEY_DISPLAY,rotation_axis=KEY_AXIS,cancel=DIK_keys.DIK_ESCAPE}
     local defaults={};for name,key in pairs(result) do defaults[name]=key end
     local uses_binding=true
     local ini=type(system_ini)=="function" and system_ini() or nil
@@ -84,7 +89,11 @@ end
 function control_labels()
     local keys=session and session.keys or configured_keys()
     return {key_interact=key_label(keys.place),key_collision=key_label(keys.collision),
-        key_align=key_label(keys.align),key_simple=key_label(keys.simple),key_mode=key_label(keys.advanced),key_escape=key_label(keys.cancel),
+        key_align=key_label(keys.align),key_simple=key_label(keys.simple),key_mode=key_label(keys.advanced),
+        key_preview=key_label(keys.preview),key_escape=key_label(keys.cancel),
+        key_display=key_label(keys.display),key_axis=key_label(keys.rotation_axis),
+        display_mode=game.translate_string("pf_rt_display_"..(session and session.display_mode or default_display)),
+        rotation_axis=game.translate_string(session and session.side_axis and "pf_rt_axis_side" or "pf_rt_axis_vertical"),
         key_lmb=key_label(keys.move),key_rmb=key_label(keys.rotate),
         key_mouse=game.translate_string("pf_rt_key_mouse"),key_shift=key_label(keys.height),
         key_ctrl=key_label(keys.fine),key_alt=key_label(keys.snap)}
@@ -208,8 +217,16 @@ local function render_preview(s,vertices,quaternion)
         transform.k=quaternion:rotate_vector(vector():set(0,0,1))
         transform.c=geometry.copy(s.pose.position)
         s.model.matrix=transform
-        s.model.color=fcolor():set(1,1,1,.42)
+        s.model.color=fcolor():set(1,1,1,s.display_mode==1 and .42 or 1)
         s.model.visible=true
+    end
+    -- Display styles affect only helpers and model opacity, never placement.
+    local outlines=s.display_mode~=3
+    if not outlines then
+        for _,handle in ipairs(s.lines) do handle.visible=false end
+        for _,handle in ipairs(s.contacts) do handle.visible=false end
+        s.pivot.visible=false
+        return
     end
     local green,front,red=color(.3,.7,1),color(.55,.82,1),color(1,0,0)
     for i,pair in ipairs(geometry.edges) do
@@ -236,32 +253,56 @@ local function render_preview(s,vertices,quaternion)
 end
 
 local function update_pose(s,confirming)
-    local cam_pos,cam_dir,freeze_distance
-    if s.state=="HOLDING" then
-        cam_pos,cam_dir=geometry.copy(device().cam_pos),geometry.copy(device().cam_dir)
-    else
-        cam_pos,cam_dir,freeze_distance=s.camera_position,s.camera_direction,s.camera_distance
-    end
-    -- The donor uses HUD's current target distance, including distant targets.
-    -- Only confirmation is limited to five metres; preview follows every frame.
-    local distance=freeze_distance or target_distance(s)
-    local hit=geometry.cast(s.target_ray,cam_pos,cam_dir,1000,db.actor)
+    local anchor,quaternion,position,rotation
     local align_surface=s.align_surface and s.spec.orientation_mode~="local_minus_z_front"
-    local normal=align_surface and geometry.surface_normal(s.target_ray,cam_pos,cam_dir,1000,db.actor,hit) or nil
-    local anchor,quaternion=donor.calculate_pose(s.offset,s.rotation_offset,s.spec.base_rotation,
-        cam_pos,cam_dir,distance,align_surface,normal)
+    if s.state=="PREVIEW" and s.pose then
+        -- Inspection never derives a new transform from the moving camera or
+        -- the surface under its crosshair. Only validity/ALife IDs are refreshed.
+        anchor,quaternion=s.anchor,s.quaternion
+        position,rotation=s.pose.position,s.pose.rotation
+    else
+        local cam_pos,cam_dir,freeze_distance
+        if s.state=="HOLDING" then
+            cam_pos,cam_dir=geometry.copy(device().cam_pos),geometry.copy(device().cam_dir)
+        else
+            cam_pos,cam_dir,freeze_distance=s.camera_position,s.camera_direction,s.camera_distance
+        end
+        -- The donor uses HUD's current target distance, including distant targets.
+        -- Only confirmation is limited by max_range; preview follows every frame.
+        local distance=freeze_distance or target_distance(s)
+        local normal=s.fixed_frame and s.fixed_frame.normal
+        if align_surface and not s.fixed_frame then
+            local hit=geometry.cast(s.target_ray,cam_pos,cam_dir,1000,db.actor)
+            normal=geometry.surface_normal(s.target_ray,cam_pos,cam_dir,1000,db.actor,hit)
+        end
+        anchor,quaternion=donor.calculate_pose(s.offset,s.rotation_offset,s.spec.base_rotation,
+            cam_pos,cam_dir,distance,align_surface,normal)
+        if not anchor or not quaternion then
+            -- The donor retains the last preview when a surface normal is unavailable.
+            s.valid=false;s.error="pf_rt_no_surface"
+            if s.hud then s.hud:refresh(s) end
+            return false
+        end
+        if s.tilt_offset~=0 then
+            -- The donor's handedness makes products apply left-to-right. Tilt
+            -- around the model's local X first, then apply its yaw/surface frame.
+            quaternion=pf_runtime_editor_math.get_rotation_around(vector():set(1,0,0),
+                s.tilt_offset*math.pi/180):multiply(quaternion)
+            quaternion:normalize()
+        end
+        position=geometry.sub(anchor,quaternion:rotate_vector(s.spec.bounds.pivot))
+        rotation=quaternion:to_euler_angles()
+        -- Keep the frame and controls that produced the last visible pose. Mode 3
+        -- and its return to mode 2 use this exact frame, including a sloping surface.
+        s.pose_frame={position=geometry.copy(cam_pos),direction=geometry.copy(cam_dir),distance=distance,
+            normal=normal and geometry.copy(normal),offset=geometry.copy(s.offset),rotation=s.rotation_offset,tilt=s.tilt_offset}
+        if s.state=="HOLDING" then s.last_distance=distance end
+    end
     local valid=true
     s.error=nil
-    if not anchor or not quaternion then
-        -- The donor retains the last preview when a surface normal is unavailable.
-        s.valid=false;s.error="pf_rt_no_surface"
-        if s.hud then s.hud:refresh(s) end
-        return false
-    end
-    local position=geometry.sub(anchor,quaternion:rotate_vector(s.spec.bounds.pivot))
-    local rotation=quaternion:to_euler_angles()
     if not geometry.finite(position) or not geometry.finite(rotation) then valid=false;s.error="pf_rt_no_surface" end
-    if target_distance(s)>s.spec.max_range then valid=false;s.error="pf_rt_too_far" end
+    local distance=(s.state=="PREVIEW" or s.fixed_frame) and anchor:distance_to(device().cam_pos) or target_distance(s)
+    if distance>s.spec.max_range then valid=false;s.error="pf_rt_too_far" end
     -- Furniture does not navigate. The actor supplies ALife bookkeeping IDs;
     -- the chosen pose may be indoors, upstairs or entirely outside the AI grid.
     -- Match the donor: never derive placement permission or height from a node.
@@ -270,9 +311,8 @@ local function update_pose(s,confirming)
     s.collision_vertices=geometry.corners(s.spec.bounds,position,quaternion,true)
     local colliding=s.check_collision and geometry.collides(s.collision_ray,s.collision_vertices,nil) or false
     if colliding then valid=false;s.error="pf_rt_collision" end
-    s.valid,s.colliding,s.anchor=valid,colliding,anchor
+    s.valid,s.colliding,s.anchor,s.quaternion=valid,colliding,anchor,quaternion
     s.pose={position=position,rotation=rotation,level_vertex_id=vertex,game_vertex_id=db.actor:game_vertex_id()}
-    if s.state=="HOLDING" then s.last_distance=distance end
     if not confirming then
         render_preview(s,vertices,quaternion)
         if s.hud then s.hud:refresh(s) end
@@ -307,7 +347,7 @@ function confirm()
     return true,id
 end
 
-local function set_state(s,new_state,preserve_transform)
+local function set_state(s,new_state)
     local old_state=s.state
     s.state=new_state
     -- placeable_furniture.transition_functors, with session-owned storage.
@@ -315,9 +355,22 @@ local function set_state(s,new_state,preserve_transform)
         s.camera_position=geometry.copy(device().cam_pos)
         s.camera_direction=geometry.copy(device().cam_dir)
         s.camera_distance=target_distance(s)
-    elseif not preserve_transform and new_state=="HOLDING" and (old_state=="ADV_CTRL" or old_state=="PREVIEW" or old_state=="IDLE") then
+    elseif new_state=="PREVIEW" and s.pose_frame then
+        s.drag_frame=nil
+        s.fixed_frame=s.pose_frame
+        s.camera_position=geometry.copy(s.fixed_frame.position)
+        s.camera_direction=geometry.copy(s.fixed_frame.direction)
+        s.camera_distance=s.fixed_frame.distance
+        s.offset=geometry.copy(s.fixed_frame.offset)
+        s.rotation_offset=s.fixed_frame.rotation
+        s.tilt_offset=s.fixed_frame.tilt
+    elseif new_state=="HOLDING" then
+        s.fixed_frame=nil
+        s.drag_frame=nil
         s.offset=geometry.copy(s.spec.initial_offset)
         s.rotation_offset=0
+        s.tilt_offset=0
+        s.side_axis=false
     end
     if s.hud then s.hud:refresh(s) end
 end
@@ -331,16 +384,63 @@ local function toggle_collision(s)
     notify(s.check_collision and "pf_rt_collision_on" or "pf_rt_collision_off")
 end
 local function toggle_surface(s)
+    if s.state=="PREVIEW" then return end -- Mode 3 cannot change the held transform.
+    s.fixed_frame=nil -- An explicit alignment change starts a new editing plane.
     if s.spec.orientation_mode=="local_minus_z_front" then s.error="pf_rt_upright_only";notify(s.error)
     else
         s.align_surface=not s.align_surface;default_surface=s.align_surface
         notify(s.align_surface and "pf_rt_surface" or "pf_rt_actor")
     end
 end
+local function get_active_rotation(s)
+    return s.side_axis and s.tilt_offset or s.rotation_offset
+end
+local function set_active_rotation(s,value)
+    if s.side_axis then s.tilt_offset=value else s.rotation_offset=value end
+end
+local function frame_vector(frame,value)
+    return geometry.add(geometry.add(geometry.scale(frame.i,value.x),
+        geometry.scale(frame.j,value.y)),geometry.scale(frame.k,value.z))
+end
+local function frame_coordinates(frame,value)
+    return vector():set(geometry.dot(frame.i,value),geometry.dot(frame.j,value),geometry.dot(frame.k,value))
+end
+local function get_drag_offset(s)
+    local frame=s.drag_frame
+    if not frame then return s.offset end
+    return frame_coordinates(frame.view,frame_vector(frame.source,geometry.sub(s.offset,frame.origin)))
+end
+local function set_drag_offset(s,value)
+    local frame=s.drag_frame
+    if not frame then s.offset=value;return end
+    s.offset=geometry.add(frame.origin,frame_coordinates(frame.source,frame_vector(frame.view,value)))
+end
+local function capture_drag_frame(s)
+    s.drag_frame=nil
+    if not s.fixed_frame then return end
+    -- Keep the saved pose in its original placement frame, but translate mouse
+    -- gestures through the current camera frame when resuming after inspection.
+    local _,rotation=donor.calculate_pose(vector():set(0,0,0),0,0,vector():set(0,0,0),
+        s.fixed_frame.direction,1,s.align_surface,s.fixed_frame.normal)
+    if not rotation then return end
+    rotation:normalize()
+    local source={i=rotation:rotate_vector(vector():set(1,0,0)),
+        j=rotation:rotate_vector(vector():set(0,1,0)),k=rotation:rotate_vector(vector():set(0,0,1))}
+    local direction=device().cam_dir
+    local camera_right=geometry.unit(geometry.cross(vector():set(0,1,0),direction))
+        or vector():set(1,0,0)
+    local camera_up=geometry.unit(geometry.cross(direction,camera_right)) or vector():set(0,1,0)
+    local projected_right=geometry.sub(camera_right,geometry.scale(source.j,geometry.dot(camera_right,source.j)))
+    -- Edge-on views can leave only float rounding noise after projection.
+    local right=geometry.length(projected_right)>0.00001 and geometry.unit(projected_right) or geometry.copy(source.i)
+    local forward=geometry.unit(geometry.cross(right,source.j)) or geometry.copy(source.k)
+    if geometry.dot(forward,camera_up)<0 then forward=geometry.scale(forward,-1) end
+    s.drag_frame={origin=geometry.copy(s.offset),source=source,view={i=right,j=source.j,k=forward}}
+end
 local function controller_access(s)
     return {keys=s.keys,
-        get_offset=function() return s.offset end,set_offset=function(v) s.offset=v end,
-        get_rotation=function() return s.rotation_offset end,set_rotation=function(v) s.rotation_offset=v end,
+        get_offset=function() return get_drag_offset(s) end,set_offset=function(v) set_drag_offset(s,v) end,
+        get_rotation=function() return get_active_rotation(s) end,set_rotation=function(v) set_active_rotation(s,v) end,
         confirm=confirm,toggle_collision=function() toggle_collision(s) end,
         toggle_surface=function() toggle_surface(s) end,
         set_state=function(state) set_state(s,state) end,close=function() close_controls(s) end}
@@ -355,10 +455,10 @@ function key_down(key)
     end
     return level.editor_key_down(key)
 end
-local function read_modifiers(controller)
+local function read_modifiers(controller,allow_fine)
     local keys=controller.access.keys
     controller.shift=key_down(keys.height)
-    controller.fine_control=key_down(keys.fine)
+    controller.fine_control=allow_fine~=false and key_down(keys.fine)
     controller.snap=key_down(keys.snap)
 end
 local function finish_direct_drag(s)
@@ -376,7 +476,7 @@ local function begin_direct_drag(s,key)
     end
     local controller=s.direct_controller
     controller:Reset()
-    read_modifiers(controller)
+    read_modifiers(controller,false) -- Fine control belongs to advanced mode.
     controller:KeyPress(key,ui_events.WINDOW_KEY_PRESSED)
     controller:Update() -- Anchor before the first raw mouse event, without a UI window.
     s.direct_key=key
@@ -390,7 +490,7 @@ end
 local function rollback_direct_drag(s)
     local controller=s.direct_controller
     s.offset=geometry.copy(controller.prev_offset)
-    s.rotation_offset=controller.prev_rot
+    set_active_rotation(s,controller.prev_rot)
     controller.state=controller.states.IDLE
     s.direct_cancelled=true -- Consume motion until the physical button is released.
 end
@@ -398,6 +498,7 @@ local function open_controls(s)
     finish_direct_drag(s)
     if s.state=="HOLDING" or s.state=="PREVIEW" then set_state(s,"ADV_CTRL") end
     if s.controls_shown then return end
+    capture_drag_frame(s)
     s.controls=s.controls or ui_pf_runtime_editor.create_controls()
     if not s.controller then
         s.controller=donor.create(controller_access(s))
@@ -427,10 +528,32 @@ function handle_input(event,key,action,dx,dy)
         return s.controls_shown or false
     end
     if event==4 then return s.controls_shown or false end
-    if key==s.keys.simple or key==s.keys.advanced then
+    if key==s.keys.display or key==s.keys.rotation_axis then
+        if event==0 then
+            if key==s.keys.display then
+                s.display_mode=s.display_mode%3+1
+                default_display=s.display_mode
+            elseif s.state~="PREVIEW" then
+                -- End the current gesture before changing which angle it edits.
+                -- Both angles survive; the next RMB drag starts from this pose.
+                finish_direct_drag(s)
+                s.side_axis=not s.side_axis
+                if s.controller then
+                    s.controller:Reset();read_modifiers(s.controller);s.controller.init=true
+                end
+            end
+            -- HUD::Update applies the new style/axis on the UI render thread.
+        end
+        return true -- Never leak Q/R to lean, reload or weapon input.
+    end
+    if key==s.keys.simple or key==s.keys.advanced or key==s.keys.preview then
         if event==0 then
             if key==s.keys.simple then
-                finish_direct_drag(s);close_controls(s);set_state(s,"HOLDING",true)
+                finish_direct_drag(s);close_controls(s);set_state(s,"HOLDING")
+            elseif key==s.keys.preview then
+                if s.pose_frame then
+                    finish_direct_drag(s);close_controls(s);set_state(s,"PREVIEW")
+                else notify(s.error or "pf_rt_no_surface") end
             else open_controls(s) end
         end
         return true -- Consume press, hold and release before weapon-slot input.
@@ -442,14 +565,15 @@ function handle_input(event,key,action,dx,dy)
         end
         return true
     end
-    if (s.state=="HOLDING" or s.state=="PREVIEW") and not place then
+    if s.state=="PREVIEW" and (key==s.keys.move or key==s.keys.rotate) then return true end
+    if s.state=="HOLDING" and not place then
         if key==s.keys.move or key==s.keys.rotate then
             if event==0 and not s.direct_key then begin_direct_drag(s,key)
             elseif event==2 and key==s.direct_key then finish_direct_drag(s) end
             return true
         end
         if key==s.keys.height or key==s.keys.fine or key==s.keys.snap then
-            if s.direct_key and (event==0 or event==2) then
+            if key~=s.keys.fine and s.direct_key and (event==0 or event==2) then
                 s.direct_controller:KeyPress(key,event==0 and ui_events.WINDOW_KEY_PRESSED or ui_events.WINDOW_KEY_RELEASED)
                 s.direct_controller:Update()
             end
@@ -508,7 +632,7 @@ function begin(spec)
     own.bounds={min=geometry.copy(b.min),max=geometry.copy(b.max),pivot=geometry.copy(b.pivot or vector():set(0,0,0))}
     if not geometry.finite(own.bounds.pivot) then return false,"bad_bounds" end
     own.initial_distance=tonumber(spec.initial_distance) or 2
-    own.max_range=tonumber(spec.max_range) or 5
+    own.max_range=tonumber(spec.max_range) or DEFAULT_MAX_RANGE
     own.base_rotation=tonumber(spec.base_rotation) or 0
     own.initial_offset=geometry.copy(spec.initial_offset or vector():set(0,0,0))
     if not geometry.finite(own.initial_offset) then return false,"bad_offset" end
@@ -518,7 +642,7 @@ function begin(spec)
     local controls=spec.controls or {}
     local keys,place_uses_binding=configured_keys(controls)
     local s={spec=own,actor_id=db.actor:id(),level_name=level.name(),state="IDLE",
-        offset=vector():set(0,0,0),rotation_offset=0,
+        offset=vector():set(0,0,0),rotation_offset=0,tilt_offset=0,side_axis=false,display_mode=default_display,
         check_collision=spec.check_collision==true or (spec.check_collision==nil and default_collision),
         align_surface=(spec.align_surface==true or (spec.align_surface==nil and default_surface)) and spec.orientation_mode~="local_minus_z_front",
         keys=keys,place_uses_binding=place_uses_binding,

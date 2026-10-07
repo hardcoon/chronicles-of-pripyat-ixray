@@ -31,7 +31,7 @@ local function show_countdown()
         restore_hold_tip();held.tip_id=aimed:id()
     end
     local remaining=math.ceil(math.max(0,HOLD_MS-(time_global()-held.started))/100)/10
-    set_hold_tip(string.format(game.translate_string("pf_hf_pickup_countdown"),remaining))
+    set_hold_tip(held.title.."\\n"..string.format(game.translate_string("pf_hf_pickup_countdown"),remaining))
     held.hint_shown=true
 end
 
@@ -95,7 +95,11 @@ function handle_input(event,key,action)
         local object=target()
         if not object then return false end
         local aimed=level.get_target_obj()
+        local entry=pf_hf_furniture.definition(object:section())
+        local title=entry.title
+        if not title and entry.item then title=system_ini():r_string(entry.item,"inv_name") end
         held={id=object:id(),tip_id=aimed and aimed:id() or object:id(),section=object:section(),
+            title=game.translate_string(title or object:section()),
             actor_id=db.actor:id(),level=level.name(),key=key,started=time_global()}
         show_countdown()
         return true

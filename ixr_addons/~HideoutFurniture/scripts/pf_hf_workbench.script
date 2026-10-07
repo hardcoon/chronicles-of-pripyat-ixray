@@ -126,7 +126,7 @@ local function perform_placement(item_id)
 	local ok=pf_runtime_editor.begin({section=SECTION,title="pf_hf_workbench_item_name",
 		source_item_id=item_id,source_section=ITEM_SECTION,bounds=model_bounds(),
 		visual="dynamics\\placeable\\pf_hf_portable_workbench.ogf",
-		initial_distance=PLACEMENT_DISTANCE,max_range=5,
+		initial_distance=PLACEMENT_DISTANCE,
 		orientation_mode="local_minus_z_front",
 		on_confirm=create_placed,on_cancel=function() runtime.placing[item_id]=nil end})
 	if not ok then

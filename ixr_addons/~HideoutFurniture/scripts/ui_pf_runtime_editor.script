@@ -8,7 +8,7 @@ function pf_runtime_editor_hud:__init() super()
     self.title=xml:InitTextWnd("main:title",self)
     self.status=xml:InitTextWnd("main:status",self)
     self.control_rows={}
-    for index=1,12 do
+    for index=1,14 do
         local key=xml:InitTextWnd("main:control_key",self)
         local action=xml:InitTextWnd("main:control_action",self)
         key:SetWndPos(vector2():set(20,286+(index-1)*24))

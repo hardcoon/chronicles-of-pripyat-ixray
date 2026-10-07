@@ -180,7 +180,7 @@ function place_item(item,variant)
         if generation~=current_generation or not pending[id] then return end
         local ok=pf_runtime_editor.begin({section=entry.object,title=entry.title,
             source_item_id=id,source_section=entry.item,bounds=bounds(entry),visual=entry.visual,
-            base_rotation=entry.base_rotation,initial_distance=2,max_range=5,
+            base_rotation=entry.base_rotation,initial_distance=2,
             on_confirm=function(pose,source_id) return create_placed(pose,source_id,entry.object) end,
             on_cancel=function() pending[id]=nil end})
         if not ok then pending[id]=nil end
