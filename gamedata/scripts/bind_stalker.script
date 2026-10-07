@@ -574,7 +574,8 @@ function actor_binder:update(delta)
 	
 	xr_s.on_actor_update(delta)
 	pf_player_health_balance.update()
-	set_vehicle_weapon_hud_hidden(self, self.object:IsInCar())
+	-- Disabled: moving ammo HUD off-screen can leave it hidden after exiting a vehicle.
+	-- set_vehicle_weapon_hud_hidden(self, self.object:IsInCar())
 
 	if(self.surge_manager) then
 		if(self.f_surge_manager_loaded ~= true) then

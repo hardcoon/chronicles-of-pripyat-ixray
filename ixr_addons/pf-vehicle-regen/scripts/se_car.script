@@ -1,0 +1,39 @@
+---------------------------------------------------------------------
+class "se_car" (cse_alife_car)
+--------------------
+function se_car:__init (section) super (section)
+	--log("_bp: set_car:__init")
+	self.ini = nil
+	self.spawner_present = false
+end
+
+function se_car:on_register()
+	cse_alife_car.on_register(self)
+	pf_vehicle_regeneration.track(self.id, self:section_name())
+	-- Проверяем кастомдату обьекта на наличие стори айди.
+	story_objects.check_spawn_ini_for_story_id(self)
+	
+	--from test xr_effects.spawn_object_in(db.actor, nil, {"wpn_pm","my_moskvich_story_id"})
+end
+function se_car:on_unregister()
+	unregister_story_object_by_id(self.id)
+	pf_vehicle_regeneration.untrack(self.id)
+	cse_alife_car.on_unregister(self)
+end
+--------------------
+function se_car:can_switch_offline ()
+	return cse_alife_car.can_switch_offline(self)
+end
+--------------------
+function se_car:can_switch_online ()
+	if self.ini == nil then
+		self.ini = self:spawn_ini() 
+		self.spawner_present = self.ini:section_exist("spawner")
+	end
+
+	if self.ini == nil or self.spawner_present == false then 
+		return cse_alife_car.can_switch_online(self)
+	end    
+	return xr_spawner.check_spawn (self)
+end    
+--------------------

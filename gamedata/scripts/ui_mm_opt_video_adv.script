@@ -90,10 +90,14 @@ function opt_video_adv:InitControls(x, y, xml, handler)
 		return false
 	end
 
-	_st = xml:InitStatic("video_adv:templ_item", nil)
-	xml:InitStatic("video_adv:cap_r4_full_detail_distance", _st)
-	xml:InitTrackBar("video_adv:track_r4_full_detail_distance", _st)
-	table.insert(handler.m_preconditions, {func=fullDetailDistancePrec, control=_st})
+	-- Older R4 builds lack this project cvar (GetFloat then returns 0..0).
+	-- Do not create a trackbar with a zero range and an invalid slider position.
+	if get_console():get_float("r4_full_detail_distance_scale") > 0 then
+		_st = xml:InitStatic("video_adv:templ_item", nil)
+		xml:InitStatic("video_adv:cap_r4_full_detail_distance", _st)
+		xml:InitTrackBar("video_adv:track_r4_full_detail_distance", _st)
+		table.insert(handler.m_preconditions, {func=fullDetailDistancePrec, control=_st})
+	end
 
 	_st	= xml:InitStatic("video_adv:templ_item", nil)
 	xml:InitStatic("video_adv:cap_geometry_lod", _st)

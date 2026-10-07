@@ -3,6 +3,7 @@
 -- Only session caches are used: F9 deliberately replenishes the complete shelf.
 local trade_config = "misc\\trade\\trade_pf_yanov_savka.ltx"
 local state_name = "pf_yanov_savka_sit_fixed"
+local pose_name = "pf_yanov_savka_sit_fixed_pose"
 local stocked_ids = {}
 local configured_storage = setmetatable({}, { __mode = "v" })
 local trade_ini = nil
@@ -22,7 +23,6 @@ local resident_data = {
     game_vertex_id = 376,
     state = state_name,
     fixed_direction = true,
-    placement_animstate = "sit_ass",
     logic_section = "remark@pf_yanov_savka",
 }
 
@@ -37,10 +37,21 @@ function ensure_registered()
     if type(states) ~= "table" or type(animstates) ~= "table" or
             type(states.sit_ass) ~= "table" or
             type(animstates.sit_ass) ~= "table" then return false end
-    -- Use Trapper's native seated body state, including its normal entry/idle.
-    -- Keep the resident's own name without modifying the shared sit_ass state.
+    -- Keep the native seated body channel: its idle does not lock the state
+    -- planner. A private idle-only graph avoids replaying a standing/sitting
+    -- transition after load or online and never owns the NPC's world transform.
     local seated = {}
     for key, value in pairs(states.sit_ass) do seated[key] = value end
+    seated.animstate = pose_name
+    seated.animation = nil
+    seated.direction = nil
+    animstates[pose_name] = {
+        prop = { maxidle = 5, sumidle = 3, rnd = 80, moving = false },
+        into = nil,
+        out = nil,
+        idle = { [0] = "sit_2_idle_0" },
+        rnd = nil,
+    }
     states[state_name] = seated
     registered = true
     return true

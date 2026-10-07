@@ -1,0 +1,119 @@
+-- Emergency hull repair: ten percentage points per in-game hour,
+-- capped at twenty percent. Native car health remains the saved authority.
+
+local settings = { interval = 1000, period = 3600, gain = 0.10, ceiling = 0.20 }
+local state = { cars = {}, registered = false }
+local impl = {}
+
+function track(id, section)
+    if state.cars[id] and state.cars[id].section == section then return end
+    state.cars[id] = { section = section, credit = 0 }
+end
+
+function untrack(id)
+    state.cars[id] = nil
+end
+
+function reset()
+    state.seeded = false
+    state.last_time = nil
+    state.last_tick = nil
+    state.next_update = nil
+    for _, entry in pairs(state.cars) do
+        entry.credit = 0
+        entry.last_health = nil
+    end
+end
+
+function impl.seed(simulator)
+    -- Native C_NIVA cars do not run se_car:on_register. Include existing
+    -- native and scripted cars once after loading, including offline cars.
+    for _, server in simulator:objects() do
+        local class = server:clsid()
+        if class == clsid.car or (clsid.car_s and class == clsid.car_s) then
+            track(server.id, server:section_name())
+        end
+    end
+    state.seeded = true
+end
+
+function impl.repair(id, entry, elapsed, simulator)
+    local server = simulator:object(id, true)
+    if not server or server:section_name() ~= entry.section then
+        state.cars[id] = nil
+        return
+    end
+
+    -- Keep only server IDs, never client/CCar pointers, across updates. Credit
+    -- accrued while offline is applied once the car returns to the level.
+    if entry.last_health == nil or
+        (entry.last_health > 0 and entry.last_health < settings.ceiling) then
+        entry.credit = math.min(settings.period * settings.ceiling / settings.gain,
+            entry.credit + elapsed)
+    end
+    local object = level.object_by_id(id)
+    if not object then return end
+    local car = object:get_car()
+    if not car then
+        state.cars[id] = nil
+        return
+    end
+
+    local health = car:GetfHealth()
+    if health <= 0 or health >= settings.ceiling then
+        entry.credit = 0
+        entry.last_health = health
+        return
+    end
+    if entry.last_health and health < entry.last_health - 0.000001 then
+        -- New damage cannot spend time banked before that damage. There is
+        -- no cooldown: the current gameplay interval starts repair at once.
+        entry.credit = elapsed
+    elseif entry.last_health and math.abs(health - entry.last_health) < 0.000001 then
+        -- CCar stores a float; retain the fractional repair between ticks.
+        health = entry.last_health
+    end
+    local repaired = math.min(settings.ceiling,
+        health + settings.gain * entry.credit / settings.period)
+    if repaired > health then car:SetfHealth(repaired) end
+    entry.credit = 0
+    entry.last_health = repaired
+end
+
+function update()
+    local actor = db.actor
+    local simulator = actor and actor:alive() and alife() or nil
+    if not simulator then
+        reset()
+        return
+    end
+    if not state.seeded then impl.seed(simulator) end
+    -- Device time only limits polling. Repair follows ALife's in-game clock,
+    -- including its time factor and time skipped by sleeping.
+    local tick = time_global()
+    if state.last_tick and tick < state.last_tick then reset() end
+    state.last_tick = tick
+    if state.next_update and tick < state.next_update then return end
+    state.next_update = tick + settings.interval
+    local now = game.get_game_time()
+    local elapsed = state.last_time and now:diffSec(state.last_time) or 0
+    if elapsed < 0 then
+        reset()
+        state.last_tick = tick
+        state.next_update = tick + settings.interval
+        elapsed = 0
+    end
+    state.last_time = now
+    for id, entry in pairs(state.cars) do
+        impl.repair(id, entry, elapsed, simulator)
+    end
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", reset)
+    state.registered = true
+end
+
+on_game_start()

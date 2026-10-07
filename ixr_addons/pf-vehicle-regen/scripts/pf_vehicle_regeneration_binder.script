@@ -1,0 +1,21 @@
+-- Native C_NIVA vehicles bypass the scripted server se_car lifecycle.
+function bind(object)
+    object:bind_object(vehicle_regeneration_binder(object))
+end
+
+class "vehicle_regeneration_binder" (object_binder)
+
+function vehicle_regeneration_binder:__init(object) super(object)
+end
+
+function vehicle_regeneration_binder:net_spawn(server)
+    if not object_binder.net_spawn(self, server) then return false end
+    pf_vehicle_regeneration.track(self.object:id(), self.object:section())
+    return true
+end
+
+function vehicle_regeneration_binder:net_destroy()
+    -- Going offline must retain elapsed repair credit. Deleted server IDs
+    -- are discarded by the registry's normal update.
+    object_binder.net_destroy(self)
+end

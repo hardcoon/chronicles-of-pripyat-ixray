@@ -109,7 +109,6 @@ end
 
 local resident_ids = {}
 local prepared_online = {}
-local placement_ready_due = {}
 local pose_applied = {}
 local greeting_inside = {}
 local next_direction_retry = {}
@@ -119,6 +118,7 @@ local cleanup_ids = {}
 local cleanup_due = nil
 local scanned = false
 local next_update = 0
+local resident_failures = {}
 
 local function copy_vector(value)
     return vector():set(value.x, value.y, value.z)
@@ -280,35 +280,11 @@ local function apply_online_object(object, resident, force_position)
         next_direction_retry[id] = nil
     end
 
-    if force_position and resident.placement_animstate ~= nil then
-        -- A restored/first-bound remark can be active before the seated body
-        -- state has entered its idle. Let the native pose finish first, then
-        -- perform this bind's sole placement; no later drift teleports.
-        disable_stationary_perception(object)
-        restore_pose(object, resident, storage)
-        local animstate = storage.state_mgr.animstate
-        local pose = animstate ~= nil and animstate.states or nil
-        if pose == nil or pose.current_state ~= resident.placement_animstate or
-                pose.anim_marker ~= 3 then -- native MARKER_IDLE
-            placement_ready_due[id] = nil
-            return
-        end
-        local now = time_global()
-        if placement_ready_due[id] == nil then
-            -- The idle is queued during its entry callback. Allow one update
-            -- for the engine to start it before assigning the final transform.
-            placement_ready_due[id] = now + update_interval
-            return
-        end
-        if now < placement_ready_due[id] then return end
-    end
-
     -- Place every resident only once after bind/online. Repeated correction
     -- would fight the character controller when a narrow capsule overlaps
     -- authored furniture and would make the NPC jump between two positions.
     if force_position then
         object:set_npc_position(copy_vector(resident.position))
-        placement_ready_due[id] = nil
         pose_applied[id] = nil
         next_direction_retry[id] = nil
         if resident.settle_after_spawn and spawn_settle_pending[id] then
@@ -363,33 +339,24 @@ local function scan_existing_objects()
     scanned = true
 end
 
-local function spawn_missing_objects()
-    local sim = alife()
-    if sim == nil then
-        return
-    end
-
-    for _, resident in ipairs(residents) do
-        local id = resident_ids[resident.section]
-        local server_object = id ~= nil and sim:object(id) or nil
-        if server_object == nil and resident_should_be_present(resident) then
-            server_object = sim:create(
-                resident.section,
-                copy_vector(resident.position),
-                resident.level_vertex_id,
-                resident.game_vertex_id
-            )
-            if server_object ~= nil then
-                resident_ids[resident.section] = server_object.id
-                if resident.settle_after_spawn then
-                    spawn_settle_pending[server_object.id] = true
-                end
-                pin_server_object(server_object, resident)
-                printf("~ [pf_yanov_station] spawned [%s], id [%s]",
-                    resident.section, tostring(server_object.id))
-            end
+local function spawn_missing_object(sim, resident)
+    local server_object = sim:create(
+        resident.section,
+        copy_vector(resident.position),
+        resident.level_vertex_id,
+        resident.game_vertex_id
+    )
+    if server_object ~= nil then
+        -- Remember the ID before any placement work, including on old saves.
+        resident_ids[resident.section] = server_object.id
+        if resident.settle_after_spawn then
+            spawn_settle_pending[server_object.id] = true
         end
+        pin_server_object(server_object, resident)
+        printf("~ [pf_yanov_station] spawned [%s], id [%s]",
+            resident.section, tostring(server_object.id))
     end
+    return server_object
 end
 
 local function release_absent_resident(sim, server_object, resident)
@@ -405,7 +372,6 @@ local function release_absent_resident(sim, server_object, resident)
 
     resident_ids[resident.section] = nil
     prepared_online[id] = nil
-    placement_ready_due[id] = nil
     pose_applied[id] = nil
     greeting_inside[id] = nil
     next_direction_retry[id] = nil
@@ -439,7 +405,6 @@ local function cleanup_one_object(now)
         else
             cleanup_ids[id] = nil
             prepared_online[id] = nil
-            placement_ready_due[id] = nil
             pose_applied[id] = nil
             greeting_inside[id] = nil
             next_direction_retry[id] = nil
@@ -455,10 +420,69 @@ local function cleanup_one_object(now)
     cleanup_due = nil
 end
 
+local function report_resident_result(section, ok, message)
+    if ok then
+        if resident_failures[section] ~= nil then
+            log1(string.format("~ [pf_yanov_station] resident [%s] recovered", section))
+        end
+        resident_failures[section] = nil
+    else
+        message = tostring(message)
+        if resident_failures[section] ~= message then
+            log1(string.format("! [pf_yanov_station] resident [%s] waiting: %s", section, message))
+        end
+        resident_failures[section] = message
+    end
+end
+
+local function update_resident(sim, resident, spawn_allowed)
+    -- A private pose can delay only its own NPC. Discovery and the other
+    -- residents must keep working if this registration is not ready or fails.
+    if resident.section == nimble_section then
+        if not pf_yanov_nimble_pose.ensure_registered() then
+            return false, "Nimble pose is not ready"
+        end
+    elseif savka ~= nil and resident.section == "pf_yanov_savka" then
+        if not savka.ensure_registered() then
+            return false, "Savka pose is not ready"
+        end
+    end
+
+    local id = resident_ids[resident.section]
+    local server_object = id ~= nil and sim:object(id) or nil
+    local present = resident_should_be_present(resident)
+    if server_object == nil and spawn_allowed and present then
+        server_object = spawn_missing_object(sim, resident)
+        if server_object == nil then return false, "ALife create returned nil" end
+        id = server_object.id
+    end
+    if server_object == nil then return true end
+
+    if not present then
+        release_absent_resident(sim, server_object, resident)
+        return true
+    end
+
+    local object = level.object_by_id(id)
+    if object ~= nil then
+        apply_online_object(object, resident, not prepared_online[id])
+        if savka ~= nil and resident.section == "pf_yanov_savka" then
+            savka.update(object)
+        end
+    else
+        pin_server_object(server_object, resident)
+        prepared_online[id] = nil
+        pose_applied[id] = nil
+        greeting_inside[id] = nil
+        next_direction_retry[id] = nil
+        spawn_settle_due[id] = nil
+    end
+    return true
+end
+
 function reset()
     resident_ids = {}
     prepared_online = {}
-    placement_ready_due = {}
     pose_applied = {}
     greeting_inside = {}
     next_direction_retry = {}
@@ -468,6 +492,7 @@ function reset()
     cleanup_due = nil
     scanned = false
     next_update = 0
+    resident_failures = {}
     if savka ~= nil then savka.reset() end
     if pf_yanov_nimble_dialog ~= nil and
             type(pf_yanov_nimble_dialog.reset_vehicle_sales_runtime) == "function" then
@@ -479,12 +504,6 @@ function update()
     if db.actor == nil or level.name() ~= level_name then
         return
     end
-    if not pf_yanov_nimble_pose.ensure_registered() then
-        return
-    end
-
-    if savka ~= nil and not savka.ensure_registered() then return end
-
     local now = time_global()
     if not scanned then
         scan_existing_objects()
@@ -496,42 +515,21 @@ function update()
     end
     next_update = now + update_interval
 
-    if pf_yanov_nimble_dialog ~= nil and
-            type(pf_yanov_nimble_dialog.update_vehicle_sales) == "function" then
-        pf_yanov_nimble_dialog.update_vehicle_sales()
-    end
-
-    if actor_is_near() then
-        spawn_missing_objects()
-    end
-
     local sim = alife()
-    if sim == nil then
-        return
-    end
+    if sim == nil then return end
+    local spawn_allowed = actor_is_near()
 
     for _, resident in ipairs(residents) do
-        local id = resident_ids[resident.section]
-        local server_object = id ~= nil and sim:object(id) or nil
-        if server_object ~= nil and not resident_should_be_present(resident) then
-            release_absent_resident(sim, server_object, resident)
-        elseif server_object ~= nil then
-            local object = level.object_by_id(id)
-            if object ~= nil then
-                apply_online_object(object, resident, not prepared_online[id])
-                if savka ~= nil and resident.section == "pf_yanov_savka" then
-                    savka.update(object)
-                end
-            else
-                pin_server_object(server_object, resident)
-                prepared_online[id] = nil
-                placement_ready_due[id] = nil
-                pose_applied[id] = nil
-                greeting_inside[id] = nil
-                next_direction_retry[id] = nil
-                spawn_settle_due[id] = nil
-            end
-        end
+        -- A missing/broken pose, quest condition or service belongs to one
+        -- resident; it must not abort spawning/placement for the whole station.
+        local ok, ready, message = pcall(update_resident, sim, resident, spawn_allowed)
+        report_resident_result(resident.section, ok and ready, ok and message or ready)
+    end
+
+    if pf_yanov_nimble_dialog ~= nil and
+            type(pf_yanov_nimble_dialog.update_vehicle_sales) == "function" then
+        local ok, message = pcall(pf_yanov_nimble_dialog.update_vehicle_sales)
+        report_resident_result("nimble_vehicle_sales", ok, message)
     end
 end
 
