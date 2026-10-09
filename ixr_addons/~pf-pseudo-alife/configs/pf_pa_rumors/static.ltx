@@ -1,0 +1,26 @@
+; Fixed Yanov/bunker news and exclusion policy for permanent residents.
+; Text values are localization IDs; this file is ASCII.
+
+[static]
+ids = yanov,bunker
+source = fixed_text
+texts_per_topic = 8
+
+[dynamic_policy]
+source = owned_population_only
+require_managed = true
+excluded_section_prefixes = pf_yanov_,pf_bunker_
+excluded_sections = pf_yanov_hawaiian,pf_yanov_nitro,pf_yanov_trapper,pf_yanov_nimble,pf_yanov_savka,pf_yanov_freedom_sleeper,pf_yanov_freedom_guard,pf_yanov_freedom_sitter,pf_bunker_novikov,pf_bunker_hermann,pf_bunker_guard_01,pf_bunker_guard_02,pf_bunker_guard_03,pf_bunker_guard_04
+managed_visitors_near_landmarks = allowed
+
+[yanov]
+place = p017
+texts = pf_pa_rumor_static_yanov_01,pf_pa_rumor_static_yanov_02,pf_pa_rumor_static_yanov_03,pf_pa_rumor_static_yanov_04,pf_pa_rumor_static_yanov_05,pf_pa_rumor_static_yanov_06,pf_pa_rumor_static_yanov_07,pf_pa_rumor_static_yanov_08
+source = fixed_text
+permanent_npcs = excluded_from_dynamic
+
+[bunker]
+place = p176
+texts = pf_pa_rumor_static_bunker_01,pf_pa_rumor_static_bunker_02,pf_pa_rumor_static_bunker_03,pf_pa_rumor_static_bunker_04,pf_pa_rumor_static_bunker_05,pf_pa_rumor_static_bunker_06,pf_pa_rumor_static_bunker_07,pf_pa_rumor_static_bunker_08
+source = fixed_text
+permanent_npcs = excluded_from_dynamic

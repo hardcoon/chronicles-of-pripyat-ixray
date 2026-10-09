@@ -1,0 +1,162 @@
+-- Pure horizontal geography and grouping. Called only by the dialog question.
+-- No engine access, callbacks, RNG state, world scans or per-object caches.
+local impl = {}
+
+function impl.finite(value)
+    return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+function impl.ids(value)
+    return string.gmatch(value or "", "[^,%s]+")
+end
+
+function compile(places, coordinates)
+    local result = {cells = {}, size = 128, rows = 0}
+    local meta = coordinates and coordinates.coordinates
+    if not meta or meta.runtime_enabled ~= "true" or not places or not places.places
+        or places.places.selection_enabled ~= "true" or meta.level_name ~= places.places.level_name then return result end
+    result.level_name = meta.level_name
+    for id in impl.ids(meta.ids) do
+        local source = coordinates[id]
+        if source and source.mapped == "true" and places[id] then
+            local row = {id = id, x = tonumber(source.center_x), z = tonumber(source.center_z),
+                priority = tonumber(source.priority) or 0, shape = source.shape}
+            local valid = impl.finite(row.x) and impl.finite(row.z) and impl.finite(row.priority)
+            if valid and row.shape == "circle" then
+                row.radius = tonumber(source.radius_m)
+                valid = impl.finite(row.radius) and row.radius > 0
+                if valid then
+                    row.min_x, row.max_x = row.x - row.radius, row.x + row.radius
+                    row.min_z, row.max_z = row.z - row.radius, row.z + row.radius
+                end
+            elseif valid and row.shape == "polygon" then
+                row.points = {}
+                for value in impl.ids(source.polygon_xz) do
+                    local number = tonumber(value)
+                    if not impl.finite(number) then valid = false; break end
+                    row.points[#row.points + 1] = number
+                end
+                valid = valid and #row.points >= 6 and #row.points % 2 == 0
+                if valid then
+                    row.min_x, row.max_x, row.min_z, row.max_z = math.huge, -math.huge, math.huge, -math.huge
+                    for i = 1, #row.points, 2 do
+                        row.min_x, row.max_x = math.min(row.min_x, row.points[i]), math.max(row.max_x, row.points[i])
+                        row.min_z, row.max_z = math.min(row.min_z, row.points[i + 1]), math.max(row.max_z, row.points[i + 1])
+                    end
+                end
+            else valid = false end
+            if valid then
+                local lo_x, hi_x = math.floor(row.min_x / result.size), math.floor(row.max_x / result.size)
+                local lo_z, hi_z = math.floor(row.min_z / result.size), math.floor(row.max_z / result.size)
+                -- Malformed data must not allocate an unbounded grid at first question.
+                if (hi_x - lo_x + 1) * (hi_z - lo_z + 1) <= 4096 then
+                    for x = lo_x, hi_x do
+                        for z = lo_z, hi_z do
+                            local key = x .. ":" .. z
+                            local cell = result.cells[key] or {}
+                            result.cells[key] = cell
+                            cell[#cell + 1] = row
+                        end
+                    end
+                    result.rows = result.rows + 1
+                end
+            end
+        end
+    end
+    return result
+end
+
+function impl.contains(row, x, z)
+    if x < row.min_x or x > row.max_x or z < row.min_z or z > row.max_z then return false end
+    if row.shape == "circle" then return (x - row.x)^2 + (z - row.z)^2 <= row.radius^2 end
+    local points, inside = row.points, false
+    local j = #points - 1
+    for i = 1, #points, 2 do
+        local ax, az, bx, bz = points[j], points[j + 1], points[i], points[i + 1]
+        local cross = (x - ax) * (bz - az) - (z - az) * (bx - ax)
+        if math.abs(cross) <= 0.00001 * math.max(1, math.abs(bx - ax) + math.abs(bz - az))
+            and x >= math.min(ax, bx) and x <= math.max(ax, bx)
+            and z >= math.min(az, bz) and z <= math.max(az, bz) then return true end
+        if (az > z) ~= (bz > z) and x < (bx - ax) * (z - az) / (bz - az) + ax then inside = not inside end
+        j = i
+    end
+    return inside
+end
+
+function locate(index, x, z)
+    if not index or not impl.finite(x) or not impl.finite(z) then return nil end
+    local key = math.floor(x / index.size) .. ":" .. math.floor(z / index.size)
+    local best, distance
+    for _, row in ipairs(index.cells[key] or {}) do
+        if impl.contains(row, x, z) then
+            local d = (x - row.x)^2 + (z - row.z)^2
+            if not best or row.priority > best.priority or (row.priority == best.priority
+                and (d < distance or (d == distance and row.id < best.id))) then best, distance = row, d end
+        end
+    end
+    return best and best.id
+end
+
+function impl.group_key(row)
+    if type(row.group) == "string" and row.group ~= "" then return "g:" .. row.group end
+    return "i:" .. tostring(row.id) .. ":" .. tostring(row.section)
+end
+
+-- Input contains only freshly validated, living, owned objects. A dispersed
+-- group's report counts the cluster within 80 m of an actual mapped member.
+function candidates(index, objects, speaker_id, seen)
+    local groups, own, result = {}, {}, {}
+    for _, row in ipairs(objects or {}) do
+        local key = impl.group_key(row)
+        if row.id == speaker_id then own[key] = true end
+        if type(row.subject) == "string" and impl.finite(row.x) and impl.finite(row.z) then
+            local group = groups[key] or {}
+            groups[key] = group
+            group[#group + 1] = row
+        end
+    end
+    for key, members in pairs(groups) do
+        if not own[key] and not (seen and seen[key]) then
+            table.sort(members, function(a, b)
+                if (a.subject == "ecolog") ~= (b.subject == "ecolog") then return a.subject == "ecolog" end
+                return a.id < b.id
+            end)
+            local anchor, place
+            for _, member in ipairs(members) do
+                place = locate(index, member.x, member.z)
+                if place then anchor = member; break end
+            end
+            if anchor then
+                local counts, names = {}, {}
+                for _, member in ipairs(members) do
+                    if (anchor.x - member.x)^2 + (anchor.z - member.z)^2 <= 80^2 then
+                        if not counts[member.subject] then names[#names + 1] = member.subject end
+                        counts[member.subject] = (counts[member.subject] or 0) + 1
+                    end
+                end
+                table.sort(names, function(a, b)
+                    if (a == "ecolog") ~= (b == "ecolog") then return a == "ecolog" end
+                    return a < b
+                end)
+                local subjects, valid = {}, true
+                for _, name in ipairs(names) do
+                    valid = valid and counts[name] <= 100
+                    subjects[#subjects + 1] = {id = name, count = counts[name]}
+                end
+                if valid and #subjects > 0 then
+                    result[#result + 1] = {key = key, place = place, subjects = subjects,
+                        focus = 1, observed = false}
+                end
+            end
+        end
+    end
+    table.sort(result, function(a, b) return a.key < b.key end)
+    return result
+end
+
+-- A private, stateless choice must not advance the population/global RNG.
+function seed(value)
+    local result = 1
+    for i = 1, #value do result = (result * 31 + string.byte(value, i)) % 2147483647 end
+    return result
+end

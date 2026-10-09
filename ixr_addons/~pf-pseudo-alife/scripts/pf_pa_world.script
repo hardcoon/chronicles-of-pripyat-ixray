@@ -1,0 +1,1516 @@
+-- All world state and navigation live here; the facade owns callbacks.
+-- No full mesh traversal, static spawn catalogue, smart terrains or engine changes.
+local KEY = "pf_pseudo_alife_v1"
+local VERSION = 1
+local SLOTS = {s = 2997, m = 999} -- 999 people plus up to two escorts per scientist.
+local impl = {}
+local rt = {pending = nil}
+
+function impl.log(message)
+    local line = "[PF_PSEUDO_ALIFE] " .. tostring(message)
+    _G.log(line)
+    -- printf and the native Lua logger may be disabled in shipping builds.
+    -- Close each infrequent write so diagnostics remain readable during a session.
+    local path = getFS():update_path("$app_data_root$", "logs\\pf_pseudo_alife.log")
+    local file = io.open(path, "ab")
+    if file then file:write(tostring(time_global()), " ", line, "\n"); file:close() end
+end
+
+function impl.number(ini, name, default, lo, hi)
+    local value = default
+    if ini:line_exist("pf_pseudo_alife", name) then value = ini:r_float("pf_pseudo_alife", name) end
+    return math.max(lo, math.min(hi, value))
+end
+
+function impl.settings()
+    local ini = system_ini()
+    local cfg = {
+        enabled = ini:r_bool("pf_pseudo_alife", "enabled"),
+        level_name = ini:r_string("pf_pseudo_alife", "level_name"),
+        stalkers = math.floor(impl.number(ini, "stalkers", 100, 0, 999)),
+        mutants = math.floor(impl.number(ini, "mutants", 100, 0, 999)),
+        tick_ms = impl.number(ini, "tick_ms", 250, 100, 5000),
+        spawn_ms = impl.number(ini, "spawn_interval_ms", 250, 250, 60000),
+        work = math.floor(impl.number(ini, "records_per_tick", 16, 1, 32)),
+        orders = math.floor(impl.number(ini, "orders_per_tick", 2, 1, 8)),
+        safe_distance = impl.number(ini, "offline_move_min_distance", 220, 180, 1000),
+        spacing = impl.number(ini, "spawn_spacing", 45, 10, 150),
+        step = impl.number(ini, "waypoint_distance", 100, 15, 120),
+        speed = impl.number(ini, "offline_speed", 1.2, 0.1, 5),
+        rest = impl.number(ini, "rest_seconds", 20, 5, 600),
+        retry = impl.number(ini, "stuck_seconds", 25, 10, 120),
+        respawn = impl.number(ini, "respawn_seconds", 300, 60, 86400),
+    }
+    local function number(section, key, default, lo, hi)
+        local n = ini:line_exist(section, key) and ini:r_float(section, key) or default
+        return math.floor(math.max(lo, math.min(hi, n)))
+    end
+    cfg.groups = ini:section_exist("pf_pa_squad_plan") and ini:r_bool("pf_pa_squad_plan", "enabled")
+    cfg.mutant_groups = ini:section_exist("pf_pa_mutant_group_plan") and ini:r_bool("pf_pa_mutant_group_plan", "enabled")
+    cfg.sizes = {number("pf_pa_squad_plan", "squads_of_5", 1, 0, 20),
+        number("pf_pa_squad_plan", "squads_of_3", 3, 0, 30), number("pf_pa_squad_plan", "squads_of_2", 5, 0, 50)}
+    cfg.weights = {}
+    for _, key in ipairs({"loners", "duty", "freedom", "monolith", "bandits", "scientists"}) do
+        cfg.weights[#cfg.weights + 1] = number("pf_pa_faction_plan", key .. "_percent", 0, 0, 100)
+    end
+    cfg.follow = number("pf_pa_squad_plan", "follow_distance", 6, 3, 15)
+    cfg.regroup = number("pf_pa_squad_plan", "regroup_distance", 35, 20, 80)
+    cfg.escort = 2 -- Fixed user rule: exactly one scientist and two military escorts.
+    cfg.mutant_min = number("pf_pa_mutant_group_plan", "min_members", 1, 1, 3)
+    cfg.mutant_max = number("pf_pa_mutant_group_plan", "max_members", 3, cfg.mutant_min, 3)
+    cfg.gigant_cap = number("pf_pa_mutant_group_plan", "pseudogigant_max", 1, 0, 10)
+    cfg.chimera_cap = number("pf_pa_mutant_group_plan", "chimera_max", 2, 0, 10)
+    cfg.loot = {bandage = number("pf_pa_loot", "bandage_chance", 25, 0, 100),
+        provisions = number("pf_pa_loot", "provisions_chance", 20, 0, 100),
+        hydration = number("pf_pa_loot", "hydration_chance", 23, 0, 100),
+        ammo = number("pf_pa_loot", "ammo_chance", 72, 0, 100),
+        ammo_min = number("pf_pa_loot", "ammo_min", 1, 1, 4), ammo_max = number("pf_pa_loot", "ammo_max", 2, 1, 4),
+        chance = number("pf_pa_loot", "materials_chance", 40, 0, 100),
+        min = number("pf_pa_loot", "materials_min", 1, 1, 8), max = number("pf_pa_loot", "materials_max", 1, 1, 8),
+        extra = number("pf_pa_loot", "extra_materials_chance", 0, 0, 100),
+        extra_min = number("pf_pa_loot", "extra_materials_min", 1, 1, 8), extra_max = number("pf_pa_loot", "extra_materials_max", 3, 1, 8)}
+
+    if rt.overrides then
+        cfg.enabled = rt.overrides.enabled
+        cfg.stalkers = rt.overrides.humans
+        cfg.mutants = rt.overrides.mutants
+        cfg.respawn = rt.overrides.respawn_seconds
+    end
+    return cfg
+end
+
+function impl.corpse_loot(record, server)
+    if record.kind == "s" and not record.loot_done and server.death_droped then
+        rt.corpses = rt.corpses or {}
+        rt.corpses[#rt.corpses + 1] = {record = record}
+    end
+end
+
+function take_corpses()
+    local result = rt.corpses
+    rt.corpses = nil
+    return result, rt.cfg and rt.cfg.loot
+end
+
+function impl.population_plan()
+    if rt.desired then impl.sync_plan(); return end
+    local signature = table.concat({rt.cfg.stalkers, rt.cfg.mutants, tostring(rt.cfg.groups),
+        tostring(rt.cfg.mutant_groups), table.concat(rt.cfg.sizes, ","), table.concat(rt.cfg.weights, ","),
+        rt.cfg.mutant_min, rt.cfg.mutant_max, rt.cfg.gigant_cap, rt.cfg.chimera_cap, rt.cfg.escort}, "/")
+    if rt.root.population and rt.root.population.signature == signature then return end
+    local plan = {signature = signature, entries = {}, groups = {}, humans = 0, mutants = 0, escorts = 0}
+    local factions = {"", "d", "f", "o", "b", "e"}
+    local function group(kind, faction, count, escort, species)
+        local id = kind .. tostring(#plan.groups + 1)
+        local g = {id = id, kind = kind, faction = faction, members = {}, born = false}
+        plan.groups[#plan.groups + 1] = g
+        local escort_count = tonumber(escort) or 0
+        for i = 1, count + escort_count do
+            local code = i <= escort_count and "a" or faction
+            local index = kind == "s" and plan.humans + 1 or plan.mutants + 1
+            local key = kind .. string.format("%03d", index)
+            local section = "pf_pa_" .. kind .. "_" .. (kind == "s" and (code ~= "" and code .. "_" or "")
+                or (species and string.format("%02d_", species) or "")) .. string.format("%03d", index)
+            plan.entries[key] = {section = section, group = id, faction = code, kind = kind}
+            g.members[#g.members + 1] = key
+            if kind == "s" then plan.humans = index else plan.mutants = index end
+        end
+        plan.escorts = plan.escorts + escort_count
+    end
+    if rt.cfg.groups then
+        local sum, quota, fractions, assigned = 0, {}, {}, 0
+        for _, w in ipairs(rt.cfg.weights) do sum = sum + w end
+        assert(sum > 0, "faction weights sum to zero")
+        for i, w in ipairs(rt.cfg.weights) do
+            local exact = rt.cfg.stalkers * w / sum
+            quota[i], fractions[i] = math.floor(exact), exact - math.floor(exact)
+            assigned = assigned + quota[i]
+        end
+        while assigned < rt.cfg.stalkers do
+            local best = 1
+            for i = 2, 6 do if fractions[i] > fractions[best] then best = i end end
+            quota[best], fractions[best], assigned = quota[best] + 1, -1, assigned + 1
+        end
+        local sizes = {}
+        for i, size in ipairs({5, 3, 2}) do for n = 1, rt.cfg.sizes[i] do sizes[#sizes + 1] = size end end
+        -- Scientists are never created without their own military escort.
+        while quota[6] > 0 do
+            group("s", "e", 1, rt.cfg.escort)
+            quota[6] = quota[6] - 1
+        end
+        for _, size in ipairs(sizes) do
+            local available, total = {}, 0
+            for _, i in ipairs({1, 2, 3, 4, 5}) do
+                if quota[i] >= size then available[#available + 1] = i; total = total + quota[i] end
+            end
+            if total > 0 then
+                local roll, selected = impl.random(total), available[1]
+                for _, i in ipairs(available) do roll = roll - quota[i]; if roll <= 0 then selected = i; break end end
+                group("s", factions[selected], size)
+                quota[selected] = quota[selected] - size
+            end
+        end
+        for _, i in ipairs({1, 2, 3, 4, 5}) do for n = 1, quota[i] do group("s", factions[i], 1) end end
+    else
+        for i = 1, rt.cfg.stalkers do group("s", "", 1) end
+    end
+    local rare = {[9] = rt.cfg.chimera_cap, [10] = rt.cfg.gigant_cap}
+    while plan.mutants < rt.cfg.mutants do
+        local size = rt.cfg.mutant_groups and rt.cfg.mutant_min + impl.random(rt.cfg.mutant_max - rt.cfg.mutant_min + 1) - 1 or 1
+        size = math.min(size, rt.cfg.mutants - plan.mutants)
+        local pool = {}
+        for species = 1, 10 do if not rare[species] or rare[species] > 0 then pool[#pool + 1] = species end end
+        local species = pool[impl.random(#pool)]
+        if species==7 then size=math.min(size,3) elseif species==8 then size=math.min(size,2) end
+        if rare[species] then size = math.min(size, rare[species]); rare[species] = rare[species] - size end
+        group("m", "", size, false, species)
+    end
+    assert(plan.humans <= SLOTS.s, "human population plus escorts exceeds slot capacity")
+    rt.root.population = plan
+end
+
+function impl.refresh_keys()
+    local limits = {s = 128, m = 100}
+    for _, records in ipairs({rt.root.population.entries, rt.root.slots}) do
+        for key in pairs(records) do
+            local kind, index = key:match("^([sm])(%d+)$")
+            if kind then limits[kind] = math.max(limits[kind], tonumber(index)) end
+        end
+    end
+    if rt.key_limits and limits.s == rt.key_limits.s and limits.m == rt.key_limits.m then return end
+    rt.key_limits, rt.keys = limits, {}
+    for index = 1, math.max(limits.s, limits.m) do
+        if index <= limits.s then rt.keys[#rt.keys + 1] = string.format("s%03d", index) end
+        if index <= limits.m then rt.keys[#rt.keys + 1] = string.format("m%03d", index) end
+    end
+    rt.cursor, rt.spawn_cursor = 1, 1
+end
+
+function impl.recipe_matches(g, recipe)
+    if g.finished or g.kind ~= recipe.kind or g.faction ~= recipe.faction
+        or #g.members ~= recipe.count + (recipe.escort or 0) then return false end
+    if g.kind == "m" then
+        local entry = rt.root.population.entries[g.members[1]]
+        return entry and tonumber(string.match(entry.section,"^pf_pa_m_(%d%d)_")) == recipe.species
+    end
+    return true
+end
+
+function impl.sync_plan()
+    if not rt.desired then return end
+    local plan = rt.root.population or {entries={},groups={}}
+    rt.root.population = plan
+    -- The settings signature identifies quotas. Saved recipes retain the latest
+    -- random assignment, including formations that have not spawned yet.
+    if plan.signature ~= rt.desired.signature or not plan.recipes then
+        plan.recipes = {}
+        for i,recipe in ipairs(rt.desired.recipes) do
+            plan.recipes[i] = {kind=recipe.kind,faction=recipe.faction,count=recipe.count,
+                escort=recipe.escort or 0,species=recipe.species}
+        end
+    end
+    rt.refill_dirty = false
+    local used,groups = {},{}
+    for _,g in ipairs(plan.groups) do
+        local selected
+        for i,recipe in ipairs(plan.recipes) do
+            if not used[i] and impl.recipe_matches(g,recipe) then selected=i;break end
+        end
+        g.retiring = not selected
+        g.recipe = selected
+        if selected then used[selected]=true end
+        local occupied=false
+        for _,key in ipairs(g.members) do if rt.root.slots[key] then occupied=true;break end end
+        if g.retiring and not occupied then
+            for _,key in ipairs(g.members) do plan.entries[key]=nil end
+            g.finished=true
+        else
+            if occupied and g.retiring then g.born=true end
+            groups[#groups+1]=g
+        end
+    end
+    plan.groups=groups
+    rt.root.group_serial=rt.root.group_serial or #groups
+    rt.plan_dirty=false
+    for i,recipe in ipairs(plan.recipes) do
+        if not used[i] then
+            local free={}
+            local limit=SLOTS[recipe.kind]
+            local count=recipe.count+(recipe.escort or 0)
+            for index=1,limit do
+                local key=recipe.kind .. string.format("%03d",index)
+                if not plan.entries[key] and not rt.root.slots[key] then free[#free+1]=key end
+                if #free==count then break end
+            end
+            if #free<count then rt.plan_dirty=true
+            else
+                rt.root.group_serial=rt.root.group_serial+1
+                local g={id="r" .. rt.root.group_serial,kind=recipe.kind,faction=recipe.faction,members=free,born=false,
+                    recipe=i,roll_pending=recipe.kind=="m" or recipe.faction~="e"}
+                for n,key in ipairs(free) do
+                    local code=n<=(recipe.escort or 0) and "a" or recipe.faction
+                    local suffix=recipe.kind=="s" and (code~="" and code .. "_" or "") or string.format("%02d_",recipe.species)
+                    local section="pf_pa_" .. recipe.kind .. "_" .. suffix .. string.sub(key,2)
+                    plan.entries[key]={section=section,group=g.id,faction=code,kind=recipe.kind}
+                end
+                groups[#groups+1]=g
+            end
+        end
+    end
+    impl.refresh_keys()
+    plan.signature,plan.humans,plan.mutants,plan.escorts=rt.desired.signature,rt.desired.humans,rt.desired.mutants,rt.desired.escorts
+    rt.groups={}
+    for _,g in ipairs(groups) do
+        rt.groups[g.id]=g
+        if g.roll_pending and not g.retiring then rt.refill_dirty=true end
+    end
+end
+
+function impl.capacity(g, entry)
+    if not rt.desired then return true end
+    local alive={s=0,m=0};local rare={[9]=0,[10]=0}
+    local reserve={s=0,m=0};local rare_reserve={[9]=0,[10]=0}
+    for _,records in ipairs({rt.root.slots,rt.retired or {}}) do
+        for _,record in pairs(records) do
+            local server=alife():object(record.id)
+            if impl.identity(record,server) and server:alive() then
+                local _,kind=impl.slot_key(record.section)
+                alive[kind]=alive[kind]+1
+                local species=tonumber(string.match(record.section,"^pf_pa_m_(%d%d)_"))
+                if rare[species] then rare[species]=rare[species]+1 end
+            end
+        end
+    end
+    local started=false
+    for _,candidate in ipairs(rt.root.population.groups) do
+        if not candidate.born and not candidate.retiring then
+            local present,missing=false,0
+            for _,key in ipairs(candidate.members) do
+                if rt.root.slots[key] then present=true else missing=missing+1 end
+            end
+            if present then
+                reserve[candidate.kind]=reserve[candidate.kind]+missing
+                local item=rt.root.population.entries[candidate.members[1]]
+                local species=tonumber(string.match(item.section,"^pf_pa_m_(%d%d)_"))
+                if rare_reserve[species] then rare_reserve[species]=rare_reserve[species]+missing end
+                if candidate.id==g.id then started=true end
+            end
+        end
+    end
+    local extra=started and 0 or #g.members
+    local limit=g.kind=="s" and (rt.cfg.stalkers+rt.desired.escorts) or rt.cfg.mutants
+    if alive[g.kind]+reserve[g.kind]+extra>limit then return false end
+    local species=tonumber(string.match(entry.section,"^pf_pa_m_(%d%d)_"))
+    local cap=species==9 and rt.cfg.chimera_cap or species==10 and rt.cfg.gigant_cap
+    if cap and rare[species]+rare_reserve[species]+extra>cap then return false end
+    return true
+end
+
+-- The facade injects a settings snapshot and pure desired recipes only on change.
+function configure(values, desired)
+    rt.overrides,rt.desired=values,desired
+    if not rt.initialized then return end
+    rt.cfg.enabled,rt.cfg.stalkers,rt.cfg.mutants,rt.cfg.respawn=values.enabled,values.humans,values.mutants,values.respawn_seconds
+    impl.sync_plan()
+end
+
+function impl.group(record)
+    local key = impl.slot_key(record.section)
+    local entry = rt.root.population and rt.root.population.entries[key]
+    if not entry or entry.section ~= record.section then return nil end
+    return rt.groups and rt.groups[entry.group]
+end
+
+function impl.leader(g)
+    local leader
+    for _, key in ipairs(g.members) do
+        local record = rt.root.slots[key]
+        local server = record and alife():object(record.id)
+        if record and impl.identity(record, server) and server:alive() then
+            -- Prefer a living military escort over the scientists.
+            if not leader or string.match(record.section, "^pf_pa_s_a_") then leader = record end
+        end
+    end
+    return leader
+end
+
+function impl.u16(b, offset)
+    local a, c = string.byte(b, offset or 1, (offset or 1) + 1)
+    assert(c, "truncated u16")
+    return a + c * 256
+end
+function impl.u32(b, offset)
+    local a, c, d, e = string.byte(b, offset or 1, (offset or 1) + 3)
+    assert(e, "truncated u32")
+    return a + c * 256 + d * 65536 + e * 16777216
+end
+function impl.f32(b, offset)
+    local value = impl.u32(b, offset)
+    local sign = value >= 2147483648 and -1 or 1
+    local exponent = math.floor(value / 8388608) % 256
+    local fraction = value % 8388608
+    assert(exponent < 255, "non-finite graph coordinate/weight")
+    if exponent == 0 then return sign * fraction * 2 ^ -149 end
+    return sign * (1 + fraction / 8388608) * 2 ^ (exponent - 127)
+end
+function impl.read(file, size)
+    local b = file:read(size)
+    assert(b and #b == size, "truncated navigation data")
+    return b
+end
+function impl.zstring(file)
+    local out = {}
+    for i = 1, 256 do
+        local b = impl.read(file, 1)
+        if b == "\0" then return table.concat(out) end
+        out[#out + 1] = b
+    end
+    error("invalid graph level name")
+end
+
+function impl.open_navigation()
+    local path = getFS():update_path("$game_spawn$", "all.spawn")
+    rt.file = assert(io.open(path, "rb"), "loose all.spawn is required for read-only navigation")
+    local f = rt.file
+    local graph_end
+    while true do
+        local h = impl.read(f, 8)
+        local id, size = impl.u32(h, 1), impl.u32(h, 5)
+        assert(id < 2147483648, "compressed all.spawn chunks are unsupported")
+        if id == 4 then graph_end = f:seek() + size; break end
+        assert(f:seek("cur", size), "invalid all.spawn chunk")
+    end
+    local h = impl.read(f, 28)
+    local g = {version = string.byte(h, 1), count = impl.u16(h, 2),
+        edge_count = impl.u32(h, 4), death_count = impl.u32(h, 8),
+        guid = string.sub(h, 12, 27), vertices = {}, order = {}, cell_cache = {}, cache_count = 0}
+    assert(g.version == 13 and g.count > 0 and g.count < 65535, "unsupported game graph")
+    local levels = string.byte(h, 28)
+    assert(levels == 1, "this prototype requires the single-level Pripyat graph")
+    for i = 1, levels do
+        g.level_name = impl.zstring(f)
+        impl.read(f, 12)
+        g.level_id = string.byte(impl.read(f, 1))
+        impl.zstring(f)
+        g.level_guid = impl.read(f, 16)
+    end
+    assert(g.level_name == rt.cfg.level_name, "unexpected game graph level")
+    local vertices_base = f:seek()
+    for id = 0, g.count - 1 do
+        local b = impl.read(f, 42)
+        local packed = impl.u32(b, 25)
+        local v = {x = impl.f32(b, 1), y = impl.f32(b, 5), z = impl.f32(b, 9),
+            lv = math.floor(packed / 256), level_id = packed % 256,
+            offset = impl.u32(b, 33), edge_count = string.byte(b, 41), edges = {}}
+        assert(v.level_id == g.level_id and game_graph():valid_vertex_id(id), "graph ID mismatch")
+        local native = game_graph():vertex(id)
+        assert(native:level_vertex_id() == v.lv, "all.spawn differs from the running graph")
+        g.vertices[id] = v
+        g.order[#g.order + 1] = id
+    end
+    for id = 0, g.count - 1 do
+        local v = g.vertices[id]
+        f:seek("set", vertices_base + v.offset)
+        for j = 1, v.edge_count do
+            local b = impl.read(f, 6)
+            local to, distance = impl.u16(b, 1), impl.f32(b, 3)
+            assert(to < g.count and distance > 0, "invalid graph edge")
+            v.edges[#v.edges + 1] = {to = to, distance = distance}
+        end
+    end
+    local cross = vertices_base + g.count * 42 + g.edge_count * 6 + g.death_count * 20
+    f:seek("set", cross)
+    local c = impl.read(f, 48)
+    local cross_size = impl.u32(c, 1)
+    g.mesh_count = impl.u32(c, 9)
+    assert(impl.u32(c, 5) == g.version and impl.u32(c, 13) == g.count, "cross table header mismatch")
+    assert(string.sub(c, 17, 32) == g.level_guid and string.sub(c, 33, 48) == g.guid,
+        "cross table GUID mismatch")
+    assert(cross_size == 48 + g.mesh_count * 6 and cross + cross_size <= graph_end,
+        "cross table size mismatch")
+    g.cells_base = cross + 48
+    local ai_path = getFS():update_path("$level$", "level.ai")
+    local ai_file = assert(io.open(ai_path, "rb"), "loose level.ai is required to verify navigation")
+    local ai_header = ai_file:read(56)
+    ai_file:close()
+    assert(ai_header and #ai_header == 56 and impl.u32(ai_header, 5) == g.mesh_count
+        and string.sub(ai_header, 41, 56) == g.level_guid, "AI mesh/cross table mismatch")
+    rt.graph = g
+    for id = 0, g.count - 1 do
+        local v = g.vertices[id]
+        assert(level.valid_vertex_id(v.lv), "invalid graph anchor level vertex")
+        assert(impl.cross_cell(v.lv).gv == id, "graph anchor/cross table mismatch")
+        -- Arrivals and native destinations must use the same mesh-cell centre.
+        local p = level.vertex_position(v.lv)
+        v.x, v.y, v.z = p.x, p.y, p.z
+    end
+    impl.log(string.format("navigation ready: %d game vertices, %d edges, %d mesh nodes; mesh not loaded into Lua",
+        g.count, g.edge_count, g.mesh_count))
+end
+
+function impl.cross_cell(lv)
+    local g = rt.graph
+    if type(lv) ~= "number" or lv < 0 or lv >= g.mesh_count or lv ~= math.floor(lv) then return nil end
+    if g.cell_cache[lv] then return g.cell_cache[lv] end
+    rt.file:seek("set", g.cells_base + lv * 6)
+    local b = impl.read(rt.file, 6)
+    local cell = {gv = impl.u16(b, 1), distance = impl.f32(b, 3)}
+    if cell.gv >= g.count then return nil end
+    if g.cache_count >= 2048 then g.cell_cache = {}; g.cache_count = 0 end
+    g.cell_cache[lv] = cell
+    g.cache_count = g.cache_count + 1
+    return cell
+end
+
+function impl.random(limit)
+    rt.root.seed = rt.root.seed * 16807 % 2147483647
+    return math.floor(rt.root.seed / 2147483647 * limit) + 1
+end
+function impl.distance2(a, b)
+    local x, y, z = a.x - b.x, a.y - b.y, a.z - b.z
+    return x * x + y * y + z * z
+end
+function impl.position(v)
+    return vector():set(v.x, v.y, v.z)
+end
+function impl.coordinates(v)
+    return {x = v.x, y = v.y, z = v.z}
+end
+function impl.slot_key(section)
+    local kind, number = string.match(section or "", "^pf_pa_([sm])_(%d+)$")
+    if not kind then kind, number = string.match(section or "", "^pf_pa_([sm])_[%da-z]+_(%d+)$") end
+    number = tonumber(number)
+    if kind and number >= 1 and number <= SLOTS[kind] then return kind .. string.format("%03d", number), kind, number end
+end
+function impl.identity(record, server)
+    return server and server:section_name() == record.section and server:name() == record.name
+end
+
+function impl.heap_push(heap, id, cost)
+    local n = #heap + 1
+    while n > 1 do
+        local parent = math.floor(n / 2)
+        if heap[parent].cost <= cost then break end
+        heap[n] = heap[parent]
+        n = parent
+    end
+    heap[n] = {id = id, cost = cost}
+end
+function impl.heap_pop(heap)
+    local first, last = heap[1], table.remove(heap)
+    if #heap > 0 then
+        local i = 1
+        while i * 2 <= #heap do
+            local child = i * 2
+            if child < #heap and heap[child + 1].cost < heap[child].cost then child = child + 1 end
+            if last.cost <= heap[child].cost then break end
+            heap[i] = heap[child]
+            i = child
+        end
+        heap[i] = last
+    end
+    return first
+end
+
+function impl.route(start, goal)
+    local g = rt.graph
+    if not g.vertices[start] or not g.vertices[goal] then return nil end
+    local distances, previous, heap = {[start] = 0}, {}, {}
+    impl.heap_push(heap, start, 0)
+    while #heap > 0 do
+        local item = impl.heap_pop(heap)
+        if item.cost == distances[item.id] then
+            if item.id == goal then
+                local result, id = {}, goal
+                while id do table.insert(result, 1, id); id = previous[id] end
+                rt.metrics.routes = rt.metrics.routes + 1
+                return result
+            end
+            for _, edge in ipairs(g.vertices[item.id].edges) do
+                if game_graph():accessible(edge.to) then
+                    local cost = item.cost + edge.distance
+                    if not distances[edge.to] or cost < distances[edge.to] then
+                        distances[edge.to], previous[edge.to] = cost, item.id
+                        impl.heap_push(heap, edge.to, cost)
+                    end
+                end
+            end
+        end
+    end
+    rt.metrics.route_failures = rt.metrics.route_failures + 1
+end
+
+function impl.make_record(server, kind)
+    return {id = server.id, name = server:name(), section = server:section_name(), kind = kind,
+        last_tick = rt.root.clock, rest_until = rt.root.clock + impl.random(20), serial = 0}
+end
+
+function impl.wait_respawn(record)
+    -- Keep the logical slot even if another system removes the physical corpse.
+    -- Missing objects with no observed death start a conservative cooldown now.
+    record.dead_at = record.dead_at or rt.root.clock
+    return rt.root.clock - record.dead_at < rt.cfg.respawn
+end
+
+function impl.reconcile()
+    local found = {}
+    -- One pass per load; never done in the hot update path.
+    for _, server in alife():objects() do
+        local key, kind = impl.slot_key(server:section_name())
+        if key then
+            local previous = rt.root.slots[key]
+            if not found[key] or (previous and impl.identity(previous, server)) then
+                if found[key] then rt.retired[#rt.retired + 1] = found[key] end
+                found[key] = {id = server.id, name = server:name(), section = server:section_name()}
+                if not previous or not impl.identity(previous, server) then
+                    rt.root.slots[key] = impl.make_record(server, kind)
+                end
+            else
+                rt.retired[#rt.retired + 1] = {id = server.id, name = server:name(), section = server:section_name()}
+            end
+        end
+    end
+    for key, record in pairs(rt.root.slots) do
+        if not found[key] then
+            local g = impl.group(record)
+            if impl.target_enabled(key) and g then
+                g.born = true
+                record.dead_at = record.dead_at or rt.root.clock
+            elseif not impl.target_enabled(key) or not impl.wait_respawn(record) then rt.root.slots[key] = nil end
+        else
+            -- Reset session clocks and commands, preserving goals/rest/death cooldown.
+            record.last_tick = rt.root.clock
+            local server = alife():object(record.id)
+            record.online = server and server.online or false
+            record.command = nil
+            record.activity = nil -- Session seats are revalidated by their controller.
+            record.route_requested_at = nil
+            record.progress = nil
+            record.progress_at = nil
+        end
+    end
+    rt.metrics.reconciliations = rt.metrics.reconciliations + 1
+end
+
+function impl.init(now)
+    rt.cfg = impl.settings()
+    if level.name() ~= rt.cfg.level_name then return false end
+    rt.root = rt.pending or {version = VERSION, seed = 426100100, clock = 0, slots = {}}
+    rt.pending = nil
+    assert(rt.root.version == VERSION and type(rt.root.slots) == "table", "unsupported population save version")
+    rt.root.clock = rt.root.clock or 0
+    rt.root.seed = rt.root.seed or 426100100
+    rt.metrics = {routes = 0, route_failures = 0, spawned = 0, spawn_rejected = 0,
+        offline_moves = 0, orders = 0, stuck = 0, reconciliations = 0, retired = 0}
+    rt.retired, rt.keys, rt.key_limits = {}, {}, nil
+    rt.cursor, rt.spawn_cursor, rt.anchor_cursor = 1, 1, 1
+    rt.next_tick, rt.last_tick, rt.next_spawn, rt.next_report = now, now, now + 3000, now + 5000
+    impl.open_navigation()
+    if rt.root.graph_guid and rt.root.graph_guid ~= rt.graph.guid then
+        -- Saved graph routes are invalid after navigation replacement; entity identities remain.
+        for _, record in pairs(rt.root.slots) do record.route = nil; record.next_gv = nil; record.remaining = nil end
+    end
+    rt.root.graph_guid = rt.graph.guid
+    for i = #rt.graph.order, 2, -1 do
+        local j = impl.random(i)
+        rt.graph.order[i], rt.graph.order[j] = rt.graph.order[j], rt.graph.order[i]
+    end
+    impl.population_plan()
+    rt.groups = {}
+    for _, g in ipairs(rt.root.population.groups) do rt.groups[g.id] = g end
+    impl.reconcile()
+    impl.refresh_keys()
+    alife_storage_manager.get_state()[KEY] = rt.root
+    impl.log(string.format("population target: %d humans + %d military escorts, %d mutants; one creation per %d ms",
+        rt.cfg.stalkers, rt.root.population.escorts, rt.cfg.mutants, rt.cfg.spawn_ms))
+    rt.initialized = true
+    return true
+end
+
+function impl.ray(position, direction, range)
+    local ray = ray_pick()
+    ray:set_flags(3)
+    ray:set_range(range)
+    ray:set_ignore_object(db.actor)
+    ray:set_position(position)
+    ray:set_direction(direction)
+    if ray:query() then return ray:get_distance() end
+end
+function impl.grounded(lv)
+    if not level.valid_vertex_id(lv) then return nil end
+    local p = level.vertex_position(lv)
+    local hit = impl.ray(vector():set(p.x, p.y + 0.8, p.z), vector():set(0, -1, 0), 1.6)
+    if not hit or math.abs(0.8 - hit) > 0.3 then return nil end
+    local position = vector():set(p.x, p.y + 0.85 - hit, p.z)
+    if impl.ray(vector():set(p.x, position.y + 0.1, p.z), vector():set(0, 1, 0), 1.8) then return nil end
+    local center = vector():set(p.x, position.y + 0.7, p.z)
+    for i = 1, 4 do
+        local angle = i * math.pi / 2
+        if impl.ray(center, vector():set(math.cos(angle), 0, math.sin(angle)), 0.9) then return nil end
+    end
+    return position
+end
+
+function impl.candidate(actor_position)
+    local g = rt.graph
+    local gv = g.order[rt.anchor_cursor]
+    rt.anchor_cursor = rt.anchor_cursor % #g.order + 1
+    local anchor = g.vertices[gv]
+    if not game_graph():accessible(gv) then return nil end
+    local angle, radius = impl.random(6283) / 1000, impl.random(45) + 10
+    local lv = level.vertex_in_direction(anchor.lv, vector():set(math.cos(angle), 0, math.sin(angle)), radius)
+    if not level.valid_vertex_id(lv) or lv == anchor.lv then return nil end
+    local p = level.vertex_position(lv)
+    if impl.distance2(p, actor_position) < rt.cfg.safe_distance ^ 2 then return nil end
+    for _, record in pairs(rt.root.slots) do
+        local server = alife():object(record.id)
+        if impl.identity(record, server) and impl.distance2(p, server.position) < rt.cfg.spacing ^ 2 then return nil end
+    end
+    local cell = impl.cross_cell(lv)
+    if not cell or not game_graph():accessible(cell.gv) then return nil end
+    local grounded = impl.grounded(lv)
+    if grounded then return grounded, lv, cell.gv end
+end
+
+function impl.target_enabled(key)
+    return not rt.root.draining and rt.root.population.entries[key] ~= nil
+end
+
+function impl.member_position(g, actor_position, anchor)
+    local leader = anchor or impl.leader(g)
+    if not leader then return impl.candidate(actor_position) end
+    local server = alife():object(leader.id)
+    if server.online or impl.distance2(server.position, actor_position) <= rt.cfg.safe_distance ^ 2 then return end
+    local angle = impl.random(6283) / 1000
+    local lv = level.vertex_in_direction(server.m_level_vertex_id, vector():set(math.cos(angle), 0, math.sin(angle)), 3 + impl.random(4))
+    if not level.valid_vertex_id(lv) then return end
+    local p, cell = impl.grounded(lv), impl.cross_cell(lv)
+    if not p or not cell or cell.gv ~= server.m_game_vertex_id or not game_graph():accessible(cell.gv)
+        or impl.distance2(p, actor_position) <= rt.cfg.safe_distance ^ 2 then return end
+    -- Members may be close to their group, but never stack on an occupied cell.
+    for _, record in pairs(rt.root.slots) do
+        local other = alife():object(record.id)
+        if impl.identity(record, other) and impl.distance2(p, other.position) < 2.25 then return end
+    end
+    return p, lv, cell.gv
+end
+
+function impl.spawn_one(now, actor_position)
+    if now < rt.next_spawn or not rt.cfg.enabled or rt.root.draining then return end
+    rt.next_spawn = now + rt.cfg.spawn_ms
+    impl.prepare_recruits(actor_position)
+    local wanted
+    for i = 1, #rt.keys do
+        local key = rt.keys[rt.spawn_cursor]
+        rt.spawn_cursor = rt.spawn_cursor % #rt.keys + 1
+        if impl.target_enabled(key) and not rt.root.slots[key] then
+            local entry = rt.root.population.entries[key]
+            local g = rt.groups[entry.group]
+            local first = rt.root.slots[g.members[1]]
+            local first_server = first and alife():object(first.id)
+            local escorts_ready = true
+            if g.faction == "e" and entry.faction == "e" then
+                for _, member_key in ipairs(g.members) do
+                    if rt.root.population.entries[member_key].faction == "a" then
+                        local member = rt.root.slots[member_key]
+                        local soldier = member and alife():object(member.id)
+                        if not member or not impl.identity(member, soldier) or not soldier:alive() then escorts_ready = false end
+                    end
+                end
+            end
+            if not g.retiring and escorts_ready and not g.born and (key == g.members[1] or (first and impl.identity(first, first_server)
+                and first_server:alive())) then wanted = key; break end
+        end
+    end
+    if not wanted then return end
+    local entry = rt.root.population.entries[wanted]
+    local g = rt.groups[entry.group]
+    if not impl.capacity(g, entry) then return end
+    local p, lv, gv = impl.member_position(g, actor_position)
+    if not p then rt.metrics.spawn_rejected = rt.metrics.spawn_rejected + 1; return end
+    local section = entry.section
+    assert(system_ini():section_exist(section), "missing population section " .. section)
+    local server = alife():create(section, p, lv, gv)
+    assert(server, "ALife creation returned nil for " .. section)
+    assert(server.group_id == 65535, "managed member unexpectedly belongs to a native simulation squad")
+    server.m_smart_terrain_id = 65535
+    server:brain():can_choose_alife_tasks(false)
+    rt.root.slots[wanted] = impl.make_record(server, string.sub(wanted, 1, 1))
+    local complete = true
+    for _, key in ipairs(g.members) do if not rt.root.slots[key] then complete = false end end
+    if complete then g.born = true end
+    rt.metrics.spawned = rt.metrics.spawned + 1
+end
+
+function impl.group_respawn(g, actor_position)
+    if not g.born or impl.leader(g) then return end
+    g.dead_at = g.dead_at or rt.root.clock
+    if not g.retiring and rt.root.clock - g.dead_at < rt.cfg.respawn then return end
+    for _, key in ipairs(g.members) do
+        local record = rt.root.slots[key]
+        local server = record and alife():object(record.id)
+        if record and impl.identity(record, server) and (server.online
+            or impl.distance2(server.position, actor_position) <= rt.cfg.safe_distance ^ 2) then return end
+    end
+    for _, key in ipairs(g.members) do
+        local record = rt.root.slots[key]
+        if record then impl.release_owned(record, alife():object(record.id), actor_position) end
+        rt.root.slots[key] = nil
+    end
+    g.dead_at, g.born = nil, false
+    if g.retiring then
+        for _, key in ipairs(g.members) do rt.root.population.entries[key] = nil end
+        g.finished, rt.plan_dirty = true, true
+    elseif rt.desired and (g.kind=="m" or g.faction~="e") then
+        g.roll_pending, rt.refill_dirty = true, true
+    end
+end
+
+function impl.recruit_allowed(g, label)
+    if g.kind=="s" then return true end
+    local size = #g.members
+    if label==10 then return size==1 end
+    if label==9 then
+        return size<=math.max(1,rt.cfg.chimera_cap-rt.overrides.mutant_chimera+1)
+    end
+    local maximum=rt.overrides.mutant_group_max
+    if label==7 then maximum=math.min(maximum,3) elseif label==8 then maximum=math.min(maximum,2) end
+    return size>=1 and size<=maximum
+end
+
+function impl.shuffle_recruits(pool)
+    if #pool==0 then return end
+    -- Human labels have no size restrictions. Mutant swaps accept only legal
+    -- assignments; this preserves exact species quotas and the size histogram.
+    for pass=1,(pool[1].group.kind=="s" and 1 or 4) do
+        for i=#pool,2,-1 do
+            local j=impl.random(i)
+            local a,b=pool[i],pool[j]
+            if impl.recruit_allowed(a.group,b.label) and impl.recruit_allowed(b.group,a.label) then
+                a.label,b.label=b.label,a.label
+            end
+        end
+    end
+    local plan=rt.root.population
+    for _,item in ipairs(pool) do
+        local g,label=item.group,item.label
+        g.faction=g.kind=="s" and label or ""
+        for _,key in ipairs(g.members) do
+            local suffix=g.kind=="s" and (label~="" and label .. "_" or "") or string.format("%02d_",label)
+            plan.entries[key]={section="pf_pa_" .. g.kind .. "_" .. suffix .. string.sub(key,2),
+                group=g.id,faction=g.faction,kind=g.kind}
+        end
+        plan.recipes[g.recipe]={kind=g.kind,faction=g.faction,count=#g.members,escort=0,
+            species=g.kind=="m" and label or nil}
+        g.roll_pending=nil
+    end
+end
+
+function impl.prepare_recruits(actor_position)
+    if not rt.desired or not rt.refill_dirty then return end
+    -- One bounded pass on vacancy events, not a world/mesh scan per update.
+    -- Include every mature, safely releasable dead group, even if its record
+    -- has not reached the round-robin processing cursor in this tick.
+    local humans,mutants={},{}
+    for _,g in ipairs(rt.root.population.groups) do
+        if g.born then impl.group_respawn(g,actor_position) end
+        if not g.born and not g.retiring and not g.finished and g.recipe
+            and (g.kind=="m" or g.faction~="e") then
+            local empty=true
+            for _,key in ipairs(g.members) do if rt.root.slots[key] then empty=false;break end end
+            if empty then
+                local entry=rt.root.population.entries[g.members[1]]
+                local label=g.kind=="s" and g.faction or tonumber(string.match(entry.section,"^pf_pa_m_(%d%d)_"))
+                local pool=g.kind=="s" and humans or mutants
+                pool[#pool+1]={group=g,label=label}
+            end
+        end
+    end
+    impl.shuffle_recruits(humans)
+    impl.shuffle_recruits(mutants)
+    rt.refill_dirty=false
+end
+
+function impl.danger(npc)
+    if not npc:best_danger() then return false end
+    local manager = npc:motivation_action_manager()
+    -- Match the vanilla GOAP decision, including its reaction/inertia filters.
+    -- A corpse or old sound can remain in memory after danger becomes false.
+    return not manager:initialized() or manager:evaluator(stalker_ids.property_danger):evaluate()
+end
+
+function impl.busy(record, npc, ignore_corpse)
+    if not npc then return false end
+    if record.kind == "m" then return npc:get_enemy() ~= nil end
+    if npc:is_talking() or npc:best_enemy() or impl.danger(npc) then return true end
+    local manager = npc:motivation_action_manager()
+    if not manager:initialized() then return true end
+    local action = manager:current_action_id()
+    if ignore_corpse and action == xr_actions_id.corpse_exist then return false end
+    -- 39001 is the peaceful action registered by xr_pf_pa_roam. Only its
+    -- owner may consume travel/stuck time; native post-combat/wounded/meet
+    -- actions must finish before movement is assessed or retried.
+    return action ~= 39001
+end
+
+function impl.follow(record, server, npc, leader)
+    if impl.busy(record, npc) then
+        record.progress_at, record.progress = rt.root.clock, nil
+        return
+    end
+    local target = alife():object(leader.id)
+    local distance = math.sqrt(impl.distance2(server.position, target.position))
+    if distance <= rt.cfg.follow then
+        if record.command and record.command.kind ~= "idle" then
+            record.serial = (record.serial or 0) + 1
+            record.command = {serial = record.serial, kind = "idle"}
+            if db.storage[record.id] then db.storage[record.id].pf_pa_command = record.command end
+        end
+        return
+    end
+    if not npc then
+        local current, goal = server.m_game_vertex_id, target.m_game_vertex_id
+        local v = rt.graph.vertices[goal]
+        if not v then return end
+        if record.follow_gv ~= goal or not record.follow_next then
+            record.follow_gv, record.follow_next = goal, goal
+            local travel
+            if current ~= goal then
+                local vertex = rt.graph.vertices[current]
+                for _, edge in ipairs(vertex and vertex.edges or {}) do
+                    if edge.to == goal then travel = edge.distance; break end
+                end
+                if not travel then
+                    local route = impl.route(current, goal)
+                    if not route or not route[2] then record.follow_next = nil; return end
+                    record.follow_next = route[2]
+                    for _, edge in ipairs(vertex.edges) do if edge.to == route[2] then travel = edge.distance; break end end
+                end
+            else
+                local cell = impl.cross_cell(server.m_level_vertex_id)
+                local target_cell = impl.cross_cell(target.m_level_vertex_id)
+                travel = cell and target_cell and cell.distance + target_cell.distance
+            end
+            record.remaining = math.max(1, (travel or distance) / rt.cfg.speed)
+        end
+        record.remaining = math.max(0, (record.remaining or 1) - (record.follow_elapsed or 0))
+        if record.remaining > 0 or server.online or target.online then return end
+        if impl.distance2(server.position, db.actor:position()) <= rt.cfg.safe_distance ^ 2
+            or impl.distance2(target.position, db.actor:position()) <= rt.cfg.safe_distance ^ 2 then return end
+        local p, lv, gv
+        if record.follow_next == goal then
+            p, lv, gv = impl.member_position(nil, db.actor:position(), leader)
+        else
+            local next_vertex = rt.graph.vertices[record.follow_next]
+            if not game_graph():accessible(record.follow_next)
+                or impl.distance2(next_vertex, db.actor:position()) <= rt.cfg.safe_distance ^ 2 then return end
+            p, lv, gv = impl.grounded(next_vertex.lv), next_vertex.lv, record.follow_next
+        end
+        if p then
+            alife():teleport_object(record.id, gv, lv, p)
+            if db.offline_objects[record.id] then db.offline_objects[record.id].level_vertex_id = lv end
+            if db.spawned_vertex_by_id then db.spawned_vertex_by_id[record.id] = nil end
+            rt.metrics.offline_moves = rt.metrics.offline_moves + 1
+            record.follow_next = nil
+        end
+        return
+    end
+    if not db.storage[record.id] or not db.storage[record.id].active_section then return end
+    if rt.root.clock < (record.follow_at or 0) then return end
+    local p = npc:position()
+    if not record.progress or impl.distance2(p, record.progress) >= 1 then
+        record.progress, record.progress_at = impl.coordinates(p), rt.root.clock
+    end
+    local stuck = rt.root.clock - (record.progress_at or rt.root.clock) >= rt.cfg.retry
+    local coarse_arrived = record.command and record.command.kind == "game" and server.m_game_vertex_id == record.command.gv
+    if record.command and record.command.follow_goal == target.m_game_vertex_id
+        and not coarse_arrived and not stuck and impl.distance2(p, record.command) > 4 then return end
+    if record.command and record.command.kind ~= "idle" and not coarse_arrived and not stuck
+        and impl.distance2(record.command, target.position) < 16 then return end
+    if stuck then rt.metrics.stuck = rt.metrics.stuck + 1; record.progress_at = rt.root.clock end
+    if rt.orders_left <= 0 then return end
+    local direction = vector():set(target.position.x - p.x, 0, target.position.z - p.z)
+    local length = math.min(rt.cfg.step, math.max(0, distance - rt.cfg.follow * 0.5))
+    local lv = npc:vertex_in_direction(npc:level_vertex_id(), direction, length)
+    local point = level.valid_vertex_id(lv) and level.vertex_position(lv)
+    if point and impl.distance2(point, target.position) < distance * distance
+        and impl.distance2(point, p) >= (length * 0.85) ^ 2 then
+        if impl.command(record, npc, "level", lv, target.m_game_vertex_id, point) then record.follow_at = rt.root.clock + 3 end
+    elseif npc:accessible(target.m_level_vertex_id) then
+        local kind = record.kind == "s" and server.m_game_vertex_id ~= target.m_game_vertex_id and "game" or "level"
+        if impl.command(record, npc, kind, target.m_level_vertex_id, target.m_game_vertex_id, target.position) then record.follow_at = rt.root.clock + 3 end
+    else
+        -- A leader's exact cell may be restricted. Try the existing graph corridor
+        -- instead of retrying the same inaccessible cell indefinitely.
+        local current, goal = server.m_game_vertex_id, target.m_game_vertex_id
+        local corridor = record.follow_corridor
+        if not corridor or corridor.current ~= current or corridor.goal ~= goal then
+            local route = current ~= goal and impl.route(current, goal)
+            corridor = {current = current, goal = goal, next_gv = route and route[2] or goal}
+            record.follow_corridor = corridor
+        end
+        local next_gv = corridor.next_gv
+        local anchor = rt.graph.vertices[next_gv]
+        if anchor and npc:accessible(anchor.lv) then
+            local kind = record.kind == "s" and current ~= next_gv and "game" or "level"
+            if impl.command(record, npc, kind, anchor.lv, next_gv, impl.position(anchor)) then
+                record.command.follow_goal = goal
+            end
+        end
+        record.follow_at = rt.root.clock + 3
+    end
+end
+
+function impl.clear_gather(record)
+    local gather = rt.gather and rt.gather[record.id]
+    if gather and gather.navigation then
+        record.serial = math.max(record.serial or 0, gather.navigation.serial or 0) + 1
+        record.command, record.progress, record.progress_at = nil, nil, nil
+        local storage = db.storage[record.id]
+        if storage then storage.pf_pa_command = nil end
+        gather.navigation = nil
+    end
+    record.regrouping = nil -- Clear legacy save state as well.
+end
+
+function impl.regroup(record, server, npc, g, elapsed)
+    rt.gather = rt.gather or {}
+    local gather = rt.gather[record.id]
+    local laggard
+    for _, key in ipairs(g.members) do
+        local member = rt.root.slots[key]
+        local other = member and alife():object(member.id)
+        if member and impl.identity(member, other) and other:alive()
+            and impl.distance2(server.position, other.position) > rt.cfg.regroup ^ 2 then
+            laggard = member; break
+        end
+    end
+    if not laggard then
+        impl.clear_gather(record); rt.gather[record.id] = nil
+        return false
+    end
+    if gather and gather.resume_until then
+        if rt.root.clock < gather.resume_until then return false end
+        rt.gather[record.id], gather = nil, nil
+    end
+    if not gather then
+        gather = {elapsed = 0, navigation = {id = record.id, kind = record.kind,
+            section = record.section, serial = (record.serial or 0) + 1}}
+        rt.gather[record.id] = gather
+        local storage = db.storage[record.id]
+        if storage then storage.pf_pa_command = {kind = "idle", serial = gather.navigation.serial} end
+    end
+    record.regrouping = true
+    local other = alife():object(laggard.id)
+    local follower = other.online and level.object_by_id(laggard.id)
+    -- Fight/talk may pause gathering. A corpse search has its own deadline;
+    -- repeated searches must not hold the entire group indefinitely.
+    if impl.busy(record, npc, true) or impl.busy(laggard, follower, true) then return true end
+    gather.elapsed = gather.elapsed + elapsed
+    if gather.elapsed < rt.cfg.retry then return true end
+    if gather.elapsed < rt.cfg.retry * 2 then
+        -- Keep migration state separate from this temporary rendezvous order.
+        gather.navigation.follow_elapsed = elapsed
+        impl.follow(gather.navigation, server, npc, laggard)
+        return true
+    end
+    impl.clear_gather(record)
+    -- An unreachable member must not hold everyone forever. Give it a bounded
+    -- catch-up window while migration resumes, then try gathering again.
+    gather.resume_until = rt.root.clock + rt.cfg.retry * 3
+    return false
+end
+
+function impl.idle(record, now)
+    if record.destination then record.destination_failed = true end
+    record.destination, record.destination_leg, record.destination_arrived, record.route_complete = nil, nil, nil, nil
+    record.route_decided, record.route_requested_at = nil, nil
+    record.route, record.next_gv, record.remaining, record.command = nil, nil, nil, nil
+    record.goal = nil
+    record.rest_until = now + rt.cfg.rest + impl.random(20)
+    record.progress, record.progress_at, record.retries = nil, nil, 0
+    record.serial = (record.serial or 0) + 1
+    local storage = db.storage[record.id]
+    if storage then storage.pf_pa_command = {serial = record.serial, kind = "idle"} end
+end
+
+function impl.select_leg(record, server)
+    local current = server.m_game_vertex_id
+    if record.destination and (record.route_complete or current == record.goal) then
+        record.destination_leg = true
+        record.next_gv = record.destination.gv
+        record.remaining = math.max(1, math.sqrt(impl.distance2(server.position, record.destination)) / rt.cfg.speed)
+        record.retries = 0
+        return true
+    end
+    if not rt.graph.vertices[current] then return false end
+    if not record.route then
+        local goal = record.goal
+        if not rt.graph.vertices[goal] or goal == current then
+            goal = rt.graph.order[impl.random(#rt.graph.order)]
+            if goal == current then return false end
+        end
+        record.goal = goal
+        record.route = impl.route(current, goal)
+        record.route_index = 2
+    end
+    if not record.route then return false end
+    record.next_gv = record.route[record.route_index]
+    if not record.next_gv then return false end
+    local distance
+    if current == record.next_gv then
+        local cell = impl.cross_cell(server.m_level_vertex_id)
+        distance = cell and cell.distance
+    else
+        for _, edge in ipairs(rt.graph.vertices[current].edges) do
+            if edge.to == record.next_gv then distance = edge.distance; break end
+        end
+    end
+    if not distance then record.route = nil; record.next_gv = nil; return false end
+    record.remaining = math.max(1, distance / rt.cfg.speed)
+    record.retries = 0
+    return true
+end
+
+function impl.advance_leg(record)
+    if record.destination_leg then
+        record.destination_arrived = true
+        record.destination_leg, record.route, record.next_gv, record.remaining, record.command = nil, nil, nil, nil, nil
+        local storage = db.storage[record.id]
+        if storage then storage.pf_pa_command = {kind = "idle", serial = (record.serial or 0) + 1} end
+        return
+    end
+    record.route_index = (record.route_index or 1) + 1
+    record.next_gv, record.remaining, record.command = nil, nil, nil
+    record.progress, record.progress_at, record.retries = nil, nil, 0
+end
+
+function impl.finish_leg(record)
+    impl.advance_leg(record)
+    if record.destination_arrived then return end
+    if not record.route[record.route_index] then
+        if record.destination then record.route_complete = true
+        else impl.idle(record, rt.root.clock) end
+    end
+end
+
+function impl.offline(record, server, elapsed, actor_position)
+    record.command, record.progress, record.progress_at = nil, nil, nil
+    if not record.next_gv and not impl.select_leg(record, server) then impl.idle(record, rt.root.clock); return end
+    record.remaining = math.max(0, (record.remaining or 1) - elapsed)
+    if record.remaining > 0 then return end
+    local v = record.destination_leg and record.destination or rt.graph.vertices[record.next_gv]
+    -- Do not jump into the player's observation/online neighbourhood.
+    if impl.distance2(server.position, actor_position) <= rt.cfg.safe_distance ^ 2
+        or impl.distance2(v, actor_position) <= rt.cfg.safe_distance ^ 2 then return end
+    if not game_graph():accessible(record.next_gv) or not level.valid_vertex_id(v.lv) then
+        impl.idle(record, rt.root.clock); return
+    end
+    local destination = impl.grounded(v.lv)
+    if not destination then
+        rt.metrics.route_failures = rt.metrics.route_failures + 1
+        impl.idle(record, rt.root.clock); return
+    end
+    -- This API updates the ALife graph registry, unlike naked field assignment.
+    alife():teleport_object(record.id, record.next_gv, v.lv, destination)
+    if db.offline_objects[record.id] then db.offline_objects[record.id].level_vertex_id = v.lv end
+    if db.spawned_vertex_by_id then db.spawned_vertex_by_id[record.id] = nil end
+    rt.metrics.offline_moves = rt.metrics.offline_moves + 1
+    impl.finish_leg(record)
+end
+
+function impl.command(record, npc, kind, lv, gv, p)
+    if rt.orders_left <= 0 then return false end
+    record.serial = (record.serial or 0) + 1
+    record.command = {serial = record.serial, kind = kind, lv = lv, gv = gv, x = p.x, y = p.y, z = p.z}
+    db.storage[record.id].pf_pa_command = record.command
+    record.progress = impl.coordinates(npc:position())
+    record.progress_at = rt.root.clock
+    rt.orders_left = rt.orders_left - 1
+    rt.metrics.orders = rt.metrics.orders + 1
+    return true
+end
+
+function impl.online(record, server, npc)
+    local storage = db.storage[record.id]
+    if not storage or not storage.active_section then return end
+    if not npc:alive() or impl.busy(record, npc) then
+        record.progress_at = rt.root.clock
+        record.progress = nil
+        return
+    end
+    if not record.next_gv and not impl.select_leg(record, server) then impl.idle(record, rt.root.clock); return end
+    local v = record.destination_leg and record.destination or rt.graph.vertices[record.next_gv]
+    local p = npc:position()
+    if impl.distance2(p, v) <= (record.destination_leg and 1 or 9) then
+        impl.finish_leg(record)
+        return
+    end
+    local command = record.command
+    if command and (command.kind == "idle" or impl.distance2(p, command) <= 4) then
+        record.command = nil; command = nil
+    end
+    if command then
+        storage.pf_pa_command = command
+        if not record.progress or impl.distance2(p, record.progress) >= 1 then
+            record.progress, record.progress_at = impl.coordinates(p), rt.root.clock
+        elseif rt.root.clock - (record.progress_at or rt.root.clock) >= rt.cfg.retry then
+            rt.metrics.stuck = rt.metrics.stuck + 1
+            record.retries = (record.retries or 0) + 1
+            if record.retries > 2 then impl.idle(record, rt.root.clock); return end
+            record.command = nil
+        end
+        if record.command then return end
+    end
+    -- A ray through connected mesh cells provides a cheap verified straight leg.
+    -- Around walls use the next existing game-graph anchor, never a random nearer node.
+    local direction = vector():set(v.x - p.x, 0, v.z - p.z)
+    local distance = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+    local length = math.min(rt.cfg.step, distance)
+    local lv = npc:vertex_in_direction(npc:level_vertex_id(), direction, length)
+    local point = level.valid_vertex_id(lv) and level.vertex_position(lv)
+    if point and (record.retries or 0) == 0 and length >= 2
+        and impl.distance2(p, point) >= (length * 0.85) ^ 2
+        and impl.distance2(point, v) < impl.distance2(p, v) then
+        impl.command(record, npc, "level", lv, record.next_gv, point)
+    elseif npc:accessible(v.lv) then
+        local kind = record.kind == "s" and not record.destination_leg and server.m_game_vertex_id ~= record.next_gv and "game" or "level"
+        impl.command(record, npc, kind, v.lv, record.next_gv, impl.position(v))
+    else
+        rt.metrics.route_failures = rt.metrics.route_failures + 1
+        impl.idle(record, rt.root.clock)
+    end
+end
+
+-- Generic temporary activity commands; the facade supplies the controller.
+-- This module has no dependency on the campfire subsystem.
+function impl.activity(record, server, npc, elapsed, actor_position)
+    local a = record.activity
+    if not a then return false end
+    if npc then
+        if impl.busy(record, npc) then record.progress, record.progress_at = nil, rt.root.clock; return true end
+        local st = db.storage[record.id]
+        if not st or not st.active_section then return true end
+        if record.command and record.command.activity_token == a.token then
+            st.pf_pa_command = record.command
+            return true
+        end
+        if impl.command(record, npc, a.kind, a.lv, a.gv, a) then
+            record.command.activity_token = a.token
+            record.command.look, record.command.pose = a.look, a.pose
+        end
+    elseif a.kind ~= "rest" then
+        a.remaining = math.max(0, (a.remaining or math.sqrt(impl.distance2(server.position, a)) / rt.cfg.speed) - elapsed)
+        if a.remaining <= 0 and not server.online
+            and impl.distance2(server.position, actor_position) > rt.cfg.safe_distance ^ 2
+            and impl.distance2(a, actor_position) > rt.cfg.safe_distance ^ 2 then
+            alife():teleport_object(record.id, a.gv, a.lv, impl.position(a))
+            if db.offline_objects[record.id] then db.offline_objects[record.id].level_vertex_id = a.lv end
+            if db.spawned_vertex_by_id then db.spawned_vertex_by_id[record.id] = nil end
+            rt.metrics.offline_moves = rt.metrics.offline_moves + 1
+        end
+    end
+    return true
+end
+
+function enable_activities(enabled)
+    rt.activities_enabled = enabled == true
+end
+
+function activity_context()
+    if not rt.initialized or rt.failed or rt.root.draining then return nil end
+    return {clock = rt.root.clock, slots = rt.root.slots, groups = rt.root.population.groups,
+        graph = rt.graph, safe_distance = rt.cfg.safe_distance, retry = rt.cfg.retry}
+end
+
+function impl.activity_point(point, previous)
+    if not point or not level.valid_vertex_id(point.lv) then return nil end
+    -- A fire's anchor and its nearby seats can belong to different graph cells.
+    -- Native teleport/graph registry must use the exact node's cross-table ID.
+    local cell = previous and previous.lv == point.lv and {gv = previous.gv} or impl.cross_cell(point.lv)
+    if not cell or not rt.graph.vertices[cell.gv] or not game_graph():accessible(cell.gv) then return nil end
+    point.gv = cell.gv
+    return point
+end
+
+function apply_activities(orders)
+    if not rt.initialized then return end
+    for _, order in ipairs(orders or {}) do
+        local r = rt.root.slots[order.key]
+        local server = r and alife():object(r.id)
+        if r and r.kind == "s" and r.name == order.name and impl.identity(r, server) and server:alive() then
+            if order.op == "decision" and r.route_requested_at then
+                r.route_decided, r.route_requested_at = true, nil
+                r.destination, r.destination_arrived, r.destination_failed = impl.activity_point(order.destination), nil, nil
+                if order.destination and not r.destination then r.destination_failed = true end
+                if r.destination then r.goal = r.destination.gv; r.activity_token = order.token end
+            elseif order.op == "member" then
+                local old = r.activity
+                local a = impl.activity_point(order.activity, old)
+                if a and (not old or old.token ~= a.token or old.kind ~= a.kind or old.lv ~= a.lv) then
+                    r.activity, r.command = a, nil
+                end
+            elseif order.op == "unseat" and r.activity and r.activity.token == order.token then
+                r.activity, r.command = nil, nil
+                if db.storage[r.id] then db.storage[r.id].pf_pa_command = nil end
+            elseif order.op == "finish" then
+                if r.activity and r.activity.token == order.token then r.activity, r.command = nil, nil end
+                if r.activity_token == order.token then
+                    r.activity_token = nil
+                    impl.idle(r, rt.root.clock)
+                    r.destination_failed = nil
+                end
+                if db.storage[r.id] then db.storage[r.id].pf_pa_command = nil end
+            end
+        end
+    end
+end
+
+function impl.release_owned(record, server, actor_position)
+    if not impl.identity(record, server) then return true end
+    if server.online or impl.distance2(server.position, actor_position) <= rt.cfg.safe_distance ^ 2 then return false end
+    alife():release(server, true)
+    rt.metrics.retired = rt.metrics.retired + 1
+    return true
+end
+
+function impl.process(key, actor_position)
+    local record = rt.root.slots[key]
+    if not record then return end
+    local server = alife():object(record.id)
+    local g = impl.group(record)
+    if not impl.identity(record, server) then
+        if rt.gather then rt.gather[record.id] = nil end
+        if impl.target_enabled(key) and g then
+            g.born = true
+            record.dead_at = record.dead_at or rt.root.clock
+            impl.group_respawn(g, actor_position)
+        elseif not impl.target_enabled(key) or not impl.wait_respawn(record) then rt.root.slots[key] = nil end
+        return
+    end
+    local elapsed = math.max(0, rt.root.clock - (record.last_tick or rt.root.clock))
+    record.last_tick = rt.root.clock
+    if rt.root.draining or (not server:alive() and not impl.target_enabled(key)) then
+        if not server:alive() then impl.corpse_loot(record, server) end
+        if impl.release_owned(record, server, actor_position) then rt.root.slots[key] = nil; rt.plan_dirty = true end
+        return
+    end
+    if not server:alive() then
+        impl.clear_gather(record)
+        if rt.gather then rt.gather[record.id] = nil end
+        impl.corpse_loot(record, server)
+        if g then
+            g.born = true
+            record.dead_at = record.dead_at or rt.root.clock
+            impl.group_respawn(g, actor_position)
+        elseif not impl.wait_respawn(record) and impl.release_owned(record, server, actor_position) then rt.root.slots[key] = nil end
+        return
+    end
+    record.dead_at = nil
+    local npc = server.online and level.object_by_id(record.id)
+    if server.online and not npc then return end
+    if record.online ~= server.online then
+        impl.clear_gather(record)
+        if rt.gather then rt.gather[record.id] = nil end
+        record.online = server.online
+        record.command, record.progress, record.progress_at = nil, nil, nil
+        -- Client combat may have moved the object off its old migration corridor.
+        record.route, record.next_gv, record.remaining = nil, nil, nil
+        record.destination_leg, record.route_complete, record.activity = nil, nil, nil
+        elapsed = 0
+    end
+    local leader = g and impl.leader(g)
+    local leader_id = leader and leader.id or record.id
+    if record.leader_id and record.leader_id ~= leader_id then
+        impl.clear_gather(record)
+        if rt.gather then rt.gather[record.id] = nil end
+        record.command, record.progress, record.progress_at = nil, nil, nil
+        record.follow_at, record.follow_gv, record.follow_next = nil, nil, nil
+        record.follow_corridor = nil
+        record.route, record.next_gv, record.remaining = nil, nil, nil
+        local storage = db.storage[record.id]
+        if storage then storage.pf_pa_command = nil end
+    end
+    record.leader_id = leader_id
+    if impl.activity(record, server, npc, elapsed, actor_position) then return end
+    -- A partly spawned group may already be online. Let it leave the player;
+    -- missing members are still created only at a safe, offline position.
+    if leader and leader.id ~= record.id then
+        record.follow_elapsed = elapsed
+        impl.follow(record, server, npc, leader)
+        return
+    end
+    if record.destination_arrived then return end
+    if rt.root.clock < (record.rest_until or 0) then return end
+    if g and (#g.members > 1 or g.retiring) and impl.regroup(record, server, npc, g, elapsed) then return end
+    if rt.activities_enabled and record.kind == "s" and not record.route and not record.goal and not record.route_decided then
+        record.route_requested_at = record.route_requested_at or rt.root.clock
+        -- A missing/failed controller never blocks the ordinary route indefinitely.
+        if rt.root.clock - record.route_requested_at < 5 then return end
+        record.route_decided, record.route_requested_at = true, nil
+    end
+    if npc then impl.online(record, server, npc) else impl.offline(record, server, elapsed, actor_position) end
+end
+
+function impl.tick(now)
+    if not db.actor or not alife() then return end
+    if not rt.initialized and not impl.init(now) then return end
+    if now < rt.next_tick then return end
+    rt.next_tick = now + rt.cfg.tick_ms
+    -- Active-session seconds; saves preserve remaining travel, loading adds no phantom elapsed time.
+    rt.root.clock = rt.root.clock + math.min(2, math.max(0, now - rt.last_tick) / 1000)
+    rt.last_tick = now
+    if rt.plan_dirty and now >= (rt.next_plan_sync or 0) then
+        rt.next_plan_sync = now + 5000
+        impl.sync_plan()
+    end
+    local actor_position = db.actor:position()
+    rt.orders_left = rt.cfg.orders
+    for i = 1, rt.cfg.work do
+        local key = rt.keys[rt.cursor]
+        rt.cursor = rt.cursor % #rt.keys + 1
+        impl.process(key, actor_position)
+    end
+    if #rt.retired > 0 then
+        local duplicate = rt.retired[#rt.retired]
+        local server = alife():object(duplicate.id)
+        if (rt.root.draining or not impl.identity(duplicate, server) or not server:alive())
+            and impl.release_owned(duplicate, server, actor_position) then table.remove(rt.retired) end
+    end
+    impl.spawn_one(now, actor_position)
+    if now >= rt.next_report then rt.next_report = now + 30000; status(true) end
+end
+
+function update()
+    if rt.failed then return end
+    local ok, failure = pcall(impl.tick, time_global())
+    if not ok then
+        rt.failed = tostring(failure)
+        if rt.file then rt.file:close(); rt.file = nil end
+        impl.log("STOPPED (existing objects retained): " .. rt.failed)
+    end
+end
+
+function reset()
+    if rt.file then rt.file:close() end
+    -- load_state runs before actor load in CALifeStorageManager::load.
+    -- Preserve that pending sidecar; if absent, reconstruct from actual owned objects.
+    local pending = rt.pending
+    rt = {pending = pending, overrides = rt.overrides, desired = rt.desired, activities_enabled = rt.activities_enabled}
+end
+function load(data)
+    rt.pending = data and data[KEY] or nil
+end
+function save(data)
+    if rt.root and rt.initialized then data[KEY] = rt.root end
+end
+
+function status(print_to_log)
+    local result = {stalkers = 0, mutants = 0, online = 0, dead = 0, waiting = 0, failed = rt.failed, ready = rt.initialized or false}
+    result.factions = {stalker = 0, dolg = 0, freedom = 0, monolith = 0, bandit = 0, ecolog = 0, army = 0, killer = 0}
+    if rt.root and alife() then
+        for _, record in pairs(rt.root.slots) do
+            local server = alife():object(record.id)
+            if impl.identity(record, server) then
+                if server:alive() then
+                    local name = record.kind == "s" and "stalkers" or "mutants"
+                    result[name] = result[name] + 1
+                    if record.kind == "s" then
+                        local code = string.match(record.section, "^pf_pa_s_([dfobeac])_") or ""
+                        local faction = ({[""] = "stalker", d = "dolg", f = "freedom", o = "monolith", b = "bandit", e = "ecolog", a = "army", c = "killer"})[code]
+                        result.factions[faction] = result.factions[faction] + 1
+                    end
+                    if server.online then result.online = result.online + 1 end
+                else result.dead = result.dead + 1 end
+            else result.waiting = result.waiting + 1 end
+        end
+        result.draining = rt.root.draining or false
+    end
+    result.metrics = rt.metrics
+    if print_to_log then
+        local m = rt.metrics or {}
+        impl.log(string.format("status humans=%d mutants=%d online=%d dead=%d waiting=%d spawned=%d rejected=%d routes=%d failures=%d offline_moves=%d orders=%d stuck=%d draining=%s error=%s",
+            result.stalkers, result.mutants, result.online, result.dead, result.waiting, m.spawned or 0, m.spawn_rejected or 0,
+            m.routes or 0, m.route_failures or 0, m.offline_moves or 0, m.orders or 0, m.stuck or 0,
+            tostring(result.draining or false), tostring(rt.failed or "none")))
+        local f = result.factions
+        impl.log(string.format("factions stalker=%d duty=%d freedom=%d monolith=%d bandit=%d scientist=%d military=%d",
+            f.stalker, f.dolg, f.freedom, f.monolith, f.bandit, f.ecolog, f.army))
+    end
+    return result
+end
+function debug_objects()
+    local result, seen, counts = {}, {}, {}
+    if not rt.root or not alife() then return result end
+    for _, records in ipairs({rt.root.slots, rt.retired or {}}) do
+        for _, record in pairs(records) do
+            local server = alife():object(record.id)
+            if not seen[record.id] and impl.identity(record, server) and server:alive() then
+                local _, kind, number = impl.slot_key(record.section)
+                local g = impl.group(record)
+                local group = g and g.id
+                local species = kind == "m" and (tonumber(record.section:match("^pf_pa_m_(%d%d)_")) or (number-1)%11+1)
+                result[#result + 1] = {id=record.id, kind=kind, section=record.section,
+                    group=group, faction=g and g.faction, species=species,
+                    online=server.online == true}
+                if group then counts[group] = (counts[group] or 0) + 1 end
+                seen[record.id] = true
+            end
+        end
+    end
+    for _, object in ipairs(result) do object.count = counts[object.group] or 1 end
+    return result
+end
+
+
+function debug_groups()
+    local result = {}
+    if not rt.root or not rt.root.population then return result end
+    for _, g in ipairs(rt.root.population.groups) do
+        local item = {id = g.id, kind = g.kind, faction = g.faction, members = {}}
+        local leader = impl.leader(g)
+        item.leader = leader and leader.id
+        for _, key in ipairs(g.members) do
+            local record = rt.root.slots[key]
+            local server = record and alife():object(record.id)
+            if record and impl.identity(record, server) and server:alive() then item.members[#item.members + 1] = record.id end
+        end
+        result[#result + 1] = item
+    end
+    return result
+end
+
+-- Read-only snapshot for an explicit dialog question. Never called by update.
+function rumor_objects()
+    local result, seen = {}, {}
+    local simulator = alife()
+    if not rt.initialized or not rt.root or not rt.graph or not simulator then return result end
+    for _, record in pairs(rt.root.slots) do
+        if type(record.id) == "number" and record.id >= 0 and record.id < 65535
+            and record.id == math.floor(record.id) and not seen[record.id] then
+            local server = simulator:object(record.id)
+            local _, kind, number = impl.slot_key(record.section)
+            if kind and impl.identity(record, server) and server:alive()
+                and rt.graph.vertices[server.m_game_vertex_id] then
+                local npc = server.online == true and level.object_by_id(record.id) or nil
+                if server.online ~= true or (npc and npc:alive()) then
+                    local position = npc and npc:position() or server.position
+                    local group = impl.group(record)
+                    result[#result + 1] = {managed = true, id = record.id, name = record.name,
+                        section = record.section, kind = kind, group = group and group.id,
+                        faction = kind == "s" and (record.section:match("^pf_pa_s_([dfobeac])_") or "") or nil,
+                        species = kind == "m" and (tonumber(record.section:match("^pf_pa_m_(%d%d)_")) or (number - 1) % 11 + 1) or nil,
+                        x = position.x, z = position.z}
+                    seen[record.id] = true
+                end
+            end
+        end
+    end
+    return result
+end
+
+function drain()
+    if not rt.root then impl.log("drain unavailable before population initialization"); return end
+    rt.root.draining = true
+    impl.log("drain enabled; only owned distant offline objects will be released")
+end

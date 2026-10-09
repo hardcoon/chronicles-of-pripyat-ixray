@@ -1,0 +1,96 @@
+-- Native CZoneCampfire owns its three-second light/particle transitions.
+-- The furniture state owns the helper ID; no world scan or extra saved table.
+local function valid_zone(sim,id,section)
+    local zone=id and sim:object(id,true)
+    return zone and zone:section_name()==section and zone or nil
+end
+
+local function configure_zone(zone,owner_id,radius)
+    -- CSE_ALifeObject prefix + CSE_Shape, verified against installed HF-012.
+    -- Preserve every suffix byte, including the server script's saved fields.
+    local source=net_packet()
+    source:w_begin(0)
+    zone:STATE_Write(source)
+    source:r_seek(2)
+    local prefix={}
+    for i=1,18 do prefix[i]=source:r_u8() end
+    local custom={}
+    while true do
+        assert(source:r_tell()<source:w_tell(),"unterminated_campfire_custom_data")
+        local byte=source:r_u8()
+        if byte==0 then break end
+        custom[#custom+1]=string.char(byte)
+    end
+    local story,spawn=source:r_u32(),source:r_u32()
+    local count=source:r_u8()
+    for i=1,count do
+        local kind=source:r_u8()
+        assert(kind==0 or kind==1,"unsupported_campfire_shape")
+        for n=1,(kind==0 and 16 or 48) do source:r_u8() end
+    end
+    local suffix={}
+    while source:r_tell()<source:w_tell() do suffix[#suffix+1]=source:r_u8() end
+    assert(#suffix>=31,"unsupported_campfire_state")
+    local result=net_packet()
+    result:w_begin(0)
+    for i=1,#prefix do result:w_u8(prefix[i]) end
+    result:w_stringZ(table.concat(custom).."\n[pf_hf_campfire]\nowner_id = "..owner_id.."\n")
+    result:w_u32(story);result:w_u32(spawn)
+    result:w_u8(1);result:w_u8(0)
+    result:w_vec3(vector():set(0,0,0));result:w_float(radius)
+    for i=1,#suffix do result:w_u8(suffix[i]) end
+    result:r_seek(2)
+    zone:STATE_Read(result,result:w_tell()-2)
+end
+
+function effect_position(owner,entry)
+    local offset=entry.fire_offset or {0,0,0}
+    local angle=owner.angle
+    local rotation=matrix():setXYZ(angle.x,angle.y,angle.z)
+    local x,y,z=offset[1],offset[2],offset[3]
+    return vector():set(owner.position.x+rotation.i.x*x+rotation.j.x*y+rotation.k.x*z,
+        owner.position.y+rotation.i.y*x+rotation.j.y*y+rotation.k.y*z,
+        owner.position.z+rotation.i.z*x+rotation.j.z*y+rotation.k.z*z)
+end
+
+function update(binder,entry,own)
+    if not own then return end
+    local sim=alife()
+    if not sim then return end
+    local existing=valid_zone(sim,own.fire_zone_id,entry.zone)
+    if existing and own.fire_placement==2 then return end
+    -- Old helpers lack the particle orientation. Keep their light origin
+    -- and requested on/off state when recreating the helper once.
+    if existing then sim:release(existing,true) end
+    own.fire_zone_id=nil
+    -- A new unlit piece never creates a flame. First ignition creates one
+    -- persistent native helper; subsequent uses and save/load reuse that ID.
+    if not own.is_on then return end
+    local owner=sim:object(binder.object:id(),true)
+    if not owner then return end
+    if binder.fire_retry and time_global()<binder.fire_retry then return end
+    local zone
+    local ok,err=pcall(function()
+        zone=sim:create(entry.zone,effect_position(owner,entry),owner.m_level_vertex_id,owner.m_game_vertex_id)
+        assert(zone,"campfire_create_failed")
+        -- CSE_ALifeSpaceRestrictor already returns used_ai_locations=false.
+        -- Its Lua object does not expose the physics furniture's setter.
+        zone.angle=vector():set(owner.angle)
+        configure_zone(zone,owner.id,entry.fire_radius)
+        own.fire_zone_id=zone.id
+        own.fire_placement=2
+    end)
+    if not ok then
+        if zone then sim:release(zone,true) end
+        binder.fire_retry=time_global()+5000
+        local message="! [pf_hf_campfires] "..entry.zone..": helper creation failed: "..tostring(err)
+        if type(log1)=="function" then log1(message) else printf("%s",message) end
+    end
+end
+
+function remove(entry,own)
+    local sim=alife()
+    local zone=sim and own and valid_zone(sim,own.fire_zone_id,entry.zone)
+    if zone then sim:release(zone,true) end
+    if own then own.fire_zone_id=nil end
+end

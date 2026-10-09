@@ -1,0 +1,71 @@
+-- This facade is the sole callback owner. No actor binder override is needed.
+local registered = false
+local applied_options
+
+function on_game_start()
+    load_scheme("xr_pf_pa_roam", "pf_pa_roam", 0)
+    -- Load the stock registry first, then install our scoped corpse binder.
+    load_scheme("xr_pf_pa_scavenge", "corpse_detection", modules.stype_stalker)
+    load_scheme("mob_pf_pa_roam", "mob_pf_pa_roam", 1)
+    if not registered and type(RegisterScriptCallback) == "function" then
+        RegisterScriptCallback("update", update)
+        RegisterScriptCallback("load", on_load)
+        RegisterScriptCallback("save_state", on_save_state)
+        RegisterScriptCallback("load_state", on_load_state)
+        registered = true
+    end
+end
+
+function update()
+    local revision = pf_pa_options.revision()
+    if revision ~= applied_options then
+        local values = pf_pa_options.get()
+        pf_pa_world.configure(values, pf_pa_plan.build(values))
+        pf_pa_debug.set_enabled(values.debug_map)
+        applied_options = revision
+    end
+    pf_pa_world.enable_activities(true)
+    pf_pa_world.apply_activities(pf_pa_camp_rest.update(pf_pa_world.activity_context()))
+    pf_pa_world.update()
+    local corpses, rules = pf_pa_world.take_corpses()
+    if corpses then pf_pa_loot.process(corpses, rules) end
+    if pf_pa_debug.needs_refresh() then pf_pa_debug.refresh(pf_pa_world.debug_objects()) end
+end
+
+function on_load()
+    applied_options = nil
+    pf_pa_dialogs.reset()
+    pf_pa_debug.reset()
+    pf_pa_world.reset()
+    pf_pa_camp_rest.reset()
+    xr_pf_pa_scavenge.reset()
+end
+
+function on_save_state(data)
+    pf_pa_world.save(data)
+    pf_pa_camp_rest.save(data)
+end
+
+function on_load_state(data)
+    pf_pa_world.load(data)
+    pf_pa_camp_rest.load(data)
+end
+
+function status(print_to_log)
+    return pf_pa_world.status(print_to_log ~= false)
+end
+
+-- Console: run_string pf_pseudo_alife.debug_map(true) / debug_map(false).
+function debug_map(enabled)
+    local result = pf_pa_debug.set_enabled(enabled)
+    if result then pf_pa_debug.refresh(pf_pa_world.debug_objects()) end
+    return result
+end
+
+-- Disable population and release only owned, distant offline objects.
+-- Keep the addon installed while draining a save before removing it.
+function drain()
+    pf_pa_world.drain()
+end
+
+on_game_start()

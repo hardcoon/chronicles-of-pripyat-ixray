@@ -8,6 +8,9 @@ for _,entry in ipairs(pf_hf_even_more_catalog.entries) do
 end
 for section,entry in pairs(pf_hf_native_doors_catalog.by_object) do catalog.by_object[section]=entry end
 for section,entry in pairs(pf_hf_native_doors_catalog.by_item) do catalog.by_item[section]=entry end
+for _,entry in ipairs(pf_hf_campfire_catalog.entries) do
+    catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
+end
 local pending={}
 local data={}
 local generation=0
@@ -34,6 +37,14 @@ end
 function in_interaction_range(object)
     local entry=object and definition(object:section())
     if not entry or not db.actor then return false end
+    if entry.kind=="campfire" then
+        -- Large log/brick rings are used at their visible surface, not at the
+        -- distant floor pivot in the middle of the model.
+        local aimed,distance=level.get_target_obj(),level.get_target_dist()
+        if aimed and aimed:id()==object:id() then
+            return type(distance)=="number" and distance>=0 and distance<=3.25
+        end
+    end
     if entry.kind=="light" then
         -- A ceiling attachment/pivot can be far above both actor and bulb.
         -- Use the HUD's visible surface hit, shared by USE, reload and pickup.
@@ -137,11 +148,17 @@ function create_placed(pose,item_id,world_section)
     local ok,err=pcall(function()
         object=sim:create(entry.object,pose.position,pose.level_vertex_id,pose.game_vertex_id)
         if not object then error("create_failed") end
-        object:use_ai_locations(false)
+        -- Native SCRPTOBJ returns CSE_Abstract without the physical object setter.
+        -- CScriptObject::UsedAI_Locations is false; keep it online below.
+        if not entry.physicsless then object:use_ai_locations(false) end
         object.position=vector():set(pose.position)
         object.angle=vector():set(pose.rotation)
-        object.m_level_vertex_id=pose.level_vertex_id
-        object.m_game_vertex_id=pose.game_vertex_id
+        if entry.physicsless then
+            sim:set_switch_offline(object.id,false)
+        else
+            object.m_level_vertex_id=pose.level_vertex_id
+            object.m_game_vertex_id=pose.game_vertex_id
+        end
         if entry.kind=="light" then configure_light(object,entry,light_mode(entry.item,item_id)) end
         local own=state(object.id)
         own.condition=entry.kind=="light" and 1 or (previous and previous.condition or 1)
@@ -221,6 +238,7 @@ function pickup(id)
         if item then data[item.id]=nil;pcall(function() sim:release(item,true) end) end
         notify("pf_hf_pickup_failed");return false
     end
+    if entry.kind=="campfire" then pf_hf_campfires.remove(entry,old) end
     if entry.kind=="stove" then pf_hf_stove.clear_storage(id,old) end
     data[id]=nil
     if entry.kind=="light" then
@@ -240,12 +258,21 @@ function pickup(id)
     return true
 end
 
+function toggle_campfire(id)
+    local object=level.object_by_id(id)
+    local entry=object and definition(object:section())
+    if not entry or entry.kind~="campfire" or not db.actor or not in_interaction_range(object) then return false end
+    local own=state(id);own.is_on=not own.is_on
+    apply_tip(object);return true
+end
+
 function interact(id)
     local object=level.object_by_id(id)
     local entry=object and definition(object:section())
     if not object or not db.actor or not entry then return false end
     if not in_interaction_range(object) then return false end
     if entry.kind=="workbench" then return pf_hf_workbench.open(id) end
+    if entry.kind=="campfire" then return pf_hf_campfire_cooking.open(id) end
     if entry.kind=="bed" then ui_sleep_dialog.sleep();return true end
     if entry.kind=="fan" then local own=state(id);own.is_on=not own.is_on;return true end
     if entry.kind=="stove" then return false end
@@ -275,12 +302,17 @@ function tip(section,id)
             ((storage and storage.active_section=="ph_door@open") or (own and own.door_closed==false)))
         return key_hint("pf_hf_key_use",game.translate_string(open and "tip_door_close" or "tip_door_open"))
     end
-    local action=entry.kind=="stash" and "pf_hf_search" or
+    local own=entry.kind=="campfire" and id and state(id)
+    local action=entry.kind=="campfire" and (own and own.is_on and "pf_hfc_extinguish" or "pf_hfc_ignite") or
+        entry.kind=="stash" and "pf_hf_search" or
         (entry.kind=="light" or entry.kind=="fan") and "pf_hf_toggle" or
         entry.kind=="bed" and "pf_hfe_sleep" or
         (entry.kind=="workbench" or entry.kind=="radio" or entry.kind=="piano") and "pf_hf_use"
     if not action then return "" end
-    local text=key_hint("pf_hf_key_use",game.translate_string(action))
+    local text=key_hint(entry.kind=="campfire" and "pf_hf_key_reload" or "pf_hf_key_use",game.translate_string(action))
+    if entry.kind=="campfire" then
+        text=key_hint("pf_hf_key_use",game.translate_string("pf_hfc_cook_action")).."\\n"..text
+    end
     if entry.kind=="light" then
         text=text.."\\n"..key_hint("pf_hf_key_reload",game.translate_string(
             light_mode(section,id)=="static" and "pf_hf_light_static" or "pf_hf_light_dynamic"))

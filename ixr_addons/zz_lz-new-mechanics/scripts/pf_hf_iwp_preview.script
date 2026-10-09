@@ -1,0 +1,98 @@
+-- Explicit console previews only; no food use or automatic registration.
+local allowed={meat_eat=true,fry=true,harvest_hands_eat_invtrans=true,harvest_success_hands_eat=true}
+local serial,current=0,nil
+local prefix="pf_hf_iwp_"
+
+local function report(message)
+    printf("[IWP preview] %s",message)
+end
+
+local function own(actor)
+    return actor and actor:is_hud_animator_active() and
+        actor:get_hud_animator_section():sub(1,#prefix)==prefix
+end
+
+local function valid(request)
+    return db.actor and db.actor:alive() and db.actor:id()==request.actor_id and
+        level.name()==request.world
+end
+
+function stop()
+    serial=serial+1;current=nil
+    if own(db.actor) then
+        db.actor:stop_hud_animator()
+        db.actor:set_hud_animator_force_hide_items(false)
+    end
+end
+
+function on_started()
+    local actor=db.actor
+    if not own(actor) then return end
+    get_console():hide()
+    if current and actor:get_hud_animator_section()==current.section then current.started=true end
+    report("playing "..actor:get_hud_animator_section())
+end
+
+function on_finished()
+    local actor=db.actor
+    if not own(actor) then return end
+    report("finished "..actor:get_hud_animator_section())
+    if current and actor:get_hud_animator_section()==current.section then current=nil end
+end
+
+function status()
+    local actor=db.actor
+    report("active="..tostring(actor and actor:is_hud_animator_active() or false)..
+        " section="..tostring(actor and actor:get_hud_animator_section() or "no actor")..
+        " request="..tostring(current and current.section or "none")..
+        " started="..tostring(current and current.started or false))
+end
+
+function play(name)
+    if not allowed[name] then report("unknown motion: "..tostring(name));return false end
+    local actor=db.actor
+    if not actor or not actor:alive() then report("load a save first");return false end
+    local section=prefix..name
+    local ini=system_ini()
+    -- anm_show may pair a hand motion with the attached item's own motion.
+    if not ini:section_exist(section) or not ini:line_exist(section,"anm_show") or
+        ini:r_string(section,"anm_show"):match("^%s*([^,%s]+)")~=name then
+        report("preview config is not loaded; fully restart the game");return false
+    end
+    if actor:is_hud_animator_active() then
+        report("replacing "..actor:get_hud_animator_section())
+        actor:stop_hud_animator()
+    end
+    serial=serial+1
+    local request={epoch=serial,actor_id=actor:id(),world=level.name(),section=section,started=false}
+    current=request
+    report("queued "..section)
+    get_console():hide()
+    local due=time_global()+250
+    level.add_call(function() return request.epoch~=serial or not valid(request) or time_global()>=due end,function()
+        if request.epoch~=serial then return end
+        if not valid(request) then current=nil;return end
+        local player=db.actor
+        -- An inventory decoration can restart between the request and this update.
+        if player:is_hud_animator_active() then player:stop_hud_animator() end
+        player:set_hud_animator_force_hide_items(true)
+        local ok,err=pcall(player.start_hud_animator,player,section)
+        if not ok or not own(player) or player:get_hud_animator_section()~=section then
+            player:set_hud_animator_force_hide_items(false)
+            current=nil
+            report("start failed: "..tostring(err or player:get_hud_animator_section()))
+            return
+        end
+        local deadline=time_global()+10000
+        level.add_call(function()
+            return request.epoch~=serial or current~=request or not valid(request) or time_global()>=deadline
+        end,function()
+            if request.epoch~=serial or current~=request then return end
+            if not valid(request) then current=nil;return end
+            local playing=request.started
+            stop()
+            report(playing and "preview timed out and was stopped" or "native motion never started")
+        end)
+    end)
+    return true
+end

@@ -1,0 +1,74 @@
+-- Companion fire with explicit furniture ownership, never a smart-terrain fire.
+local active={}
+local registered=false
+local next_update=0
+function init(object) object:bind_object(pf_hf_campfire_zone(object)) end
+class "pf_hf_campfire_zone" (object_binder)
+function pf_hf_campfire_zone:__init(object) super(object) end
+function pf_hf_campfire_zone:net_spawn(server)
+    if not object_binder.net_spawn(self,server) then return false end
+    local ini=self.object:spawn_ini()
+    if ini and ini:section_exist("pf_hf_campfire") then
+        self.owner_id=ini:r_u32("pf_hf_campfire","owner_id")
+    end
+    self.fire=self.object:get_campfire()
+    -- Suppress the stock always-on spawn before applying the saved request.
+    self.object:disable_anomaly()
+    self.last_on=false
+    self.ready_at=time_global()+100
+    active[self.object:id()]=self
+    return true
+end
+function pf_hf_campfire_zone:retire(own)
+    if self.removing then return end
+    self.removing=true
+    local id=self.object:id()
+    if own and own.fire_zone_id==id then own.fire_zone_id=nil end
+    self.object:disable_anomaly()
+    level.add_call(function() return true end,function()
+        local sim=alife();local server=sim and sim:object(id,true)
+        if server then sim:release(server,true) end
+    end)
+end
+function pf_hf_campfire_zone:sync()
+    if self.removing then return end
+    if time_global()<self.ready_at then return end
+    local owner=self.owner_id and alife():object(self.owner_id,true)
+    local entry=owner and pf_hf_furniture.definition(owner:section_name())
+    local own=entry and entry.kind=="campfire" and pf_hf_furniture.state(self.owner_id)
+    if not own or own.fire_zone_id~=self.object:id() or entry.zone~=self.object:section() then
+        self:retire()
+        return
+    end
+    if self.last_on~=own.is_on then
+        if own.is_on then self.fire:turn_on() else self.fire:turn_off() end
+        self.last_on=own.is_on
+        -- Repeated GoDisabledState asserts; repeated GoEnabledState replaces
+        -- an unfinished particle effect. Serialize native transitions.
+        self.ready_at=time_global()+3100
+    elseif not own.is_on then
+        -- CZoneCampfire loops disabled_sound until its next ignition/destruction.
+        -- Retire only the finished effect; the placed furniture remains intact.
+        self:retire(own)
+    end
+end
+function pf_hf_campfire_zone:net_destroy()
+    if active[self.object:id()]==self then active[self.object:id()]=nil end
+    object_binder.net_destroy(self)
+end
+function pf_hf_campfire_zone:net_save_relevant() return true end
+
+function update()
+    -- CCustomZone skips the Lua binder's scheduled update while disabled.
+    -- Drive only our live helpers from the actor callback, including unlit ones.
+    local now=time_global()
+    if not db.actor or now<next_update then return end
+    next_update=now+100
+    for _,zone in pairs(active) do zone:sync() end
+end
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("update",update)
+    registered=true
+end
+on_game_start()

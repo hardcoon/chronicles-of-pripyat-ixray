@@ -1,0 +1,121 @@
+-- Direct world OGF, read only on selection; no exported meshes or game objects.
+local OWNER="pf_hfw_repair_result:"
+local VIEW={depth=.32,x=512,y=392,width=300,height=190,zoom=2}
+
+function create()
+    local state={yaw=0,pitch=0,roll=0}
+    local ok=pcall(function()
+        local api=rawget(_G,"debug_render")
+        if not api or type(api.available)~="function" or not api.available() or
+            type(api.add_ogf_model)~="function" or type(api.clear_owner)~="function" then return end
+        api.clear_owner(OWNER)
+        state.api=api
+        state.camera_relative=type(api.add_ui_ogf_model)=="function"
+        state.camera={cam_pos=vector():set(0,0,0),cam_right=vector():set(1,0,0),
+            cam_top=vector():set(0,1,0),cam_dir=vector():set(0,0,1)}
+        state.transform=matrix():identity()
+        state.right=vector();state.top=vector();state.forward=vector();state.position=vector()
+        state.axes={state.right,state.top,state.forward}
+    end)
+    if not ok then state.api=nil end
+    return state
+end
+
+function close(state)
+    if not state then return end
+    if state.api then state.api.clear_owner(OWNER) end
+    state.model=nil;state.item_id=nil;state.section=nil;state.radius=nil;state.zoom=nil;state.drag=nil
+    state.yaw=0;state.pitch=0;state.roll=0
+end
+
+function select(state,section,item_id)
+    if not state or not state.api then return false end
+    if state.item_id==item_id and state.section==section then
+        return state.model~=nil and state.model:valid()
+    end
+    close(state)
+    -- Remember failed selections too; unavailable assets must not reload each frame.
+    state.section=section;state.item_id=item_id
+    local ok=pcall(function()
+        local ini=system_ini()
+        if not ini:line_exist(section,"visual") then return end
+        local visual=ini:r_string(section,"visual"):lower():gsub("/","\\")
+        local add=state.camera_relative and state.api.add_ui_ogf_model or state.api.add_ogf_model
+        local model=add(OWNER.."model",visual)
+        if not model or not model:valid() then return end
+        local extent=model.extent
+        local radius=extent:magnitude()
+        if radius<=0 then return end
+        model.color=fcolor():set(1,1,1,1);model.visible=false
+        state.model=model;state.radius=radius
+        local class=ini:line_exist(section,"class") and ini:r_string(section,"class") or ""
+        local weapon=class:sub(1,3)=="WP_"
+        state.zoom=VIEW.zoom*(class=="E_HLMET" and .8 or 1)
+        state.yaw=weapon and math.pi/2 or math.pi+.6
+        state.pitch=weapon and -.20 or -.80
+        state.roll=weapon and .35 or 0
+    end)
+    if not ok or not state.model then
+        state.api.clear_owner(OWNER);state.model=nil
+    end
+    return state.model~=nil
+end
+
+function mouse(state,pressed,cursor)
+    if not state then return false end
+    if not pressed then local captured=state.drag~=nil;state.drag=nil;return captured end
+    if not state.model or not state.model:valid() or not state.model.visible or not cursor or
+        math.abs(cursor.x-VIEW.x)>VIEW.width*state.zoom/2 or math.abs(cursor.y-VIEW.y)>VIEW.height*state.zoom/2 then return false end
+    state.drag={x=cursor.x,y=cursor.y}
+    return true
+end
+
+function drag(state,cursor)
+    if not state or not state.drag or not cursor then return end
+    local dx,dy=cursor.x-state.drag.x,cursor.y-state.drag.y
+    local cr,sr=math.cos(state.roll),math.sin(state.roll)
+    state.yaw=(state.yaw-(cr*dx-sr*dy)*.012)%(2*math.pi)
+    state.pitch=math.max(-math.pi/2,math.min(math.pi/2,state.pitch-(sr*dx+cr*dy)*.012))
+    state.drag.x=cursor.x;state.drag.y=cursor.y
+end
+
+function update(state,view)
+    if not state or not state.model or not state.model:valid() then return false end
+    if not view.cam_right or not view.cam_top or not view.fov or not view.aspect_ratio or
+        view.fov<=0 or view.fov>=179 or view.aspect_ratio<=0 then
+        state.model.visible=false;return false
+    end
+    if state.camera_relative then
+        state.camera.fov=view.fov;state.camera.aspect_ratio=view.aspect_ratio
+        view=state.camera
+    end
+    -- Fit a fixed sphere, retaining the geometric-centre pivot throughout rotation.
+    local tangent=math.tan(view.fov*math.pi/360)
+    local horizontal=tangent/view.aspect_ratio*VIEW.width/1024
+    local vertical=tangent*VIEW.height/768
+    local dx=(VIEW.x/512-1)*VIEW.depth*tangent/view.aspect_ratio
+    local dy=(1-VIEW.y/384)*VIEW.depth*tangent
+    local hx=horizontal+math.abs(dx/VIEW.depth)
+    local vy=vertical+math.abs(dy/VIEW.depth)
+    local scale=state.zoom*VIEW.depth/state.radius*math.min(horizontal/math.sqrt(1+hx*hx),
+        vertical/math.sqrt(1+vy*vy))
+    local cy,sy,cp,sp=math.cos(state.yaw),math.sin(state.yaw),math.cos(state.pitch),math.sin(state.pitch)
+    local p,r,u,d=view.cam_pos,view.cam_right,view.cam_top,view.cam_dir
+    state.right:set(r.x*cy+u.x*sp*sy-d.x*cp*sy,r.y*cy+u.y*sp*sy-d.y*cp*sy,r.z*cy+u.z*sp*sy-d.z*cp*sy):mul(scale)
+    state.top:set(u.x*cp+d.x*sp,u.y*cp+d.y*sp,u.z*cp+d.z*sp):mul(scale)
+    state.forward:set(r.x*sy-u.x*sp*cy+d.x*cp*cy,r.y*sy-u.y*sp*cy+d.y*cp*cy,r.z*sy-u.z*sp*cy+d.z*cp*cy):mul(scale)
+    -- Roll only the display frame; mouse deltas above are unrolled into its axes.
+    local cr,sr=math.cos(state.roll),math.sin(state.roll)
+    for _,axis in ipairs(state.axes) do
+        local x,y,z=axis:dotproduct(r),axis:dotproduct(u),axis:dotproduct(d)
+        axis:set(r.x*(cr*x-sr*y)+u.x*(sr*x+cr*y)+d.x*z,
+            r.y*(cr*x-sr*y)+u.y*(sr*x+cr*y)+d.y*z,
+            r.z*(cr*x-sr*y)+u.z*(sr*x+cr*y)+d.z*z)
+    end
+    state.position:set(p.x+d.x*VIEW.depth+r.x*dx+u.x*dy,
+        p.y+d.y*VIEW.depth+r.y*dx+u.y*dy,p.z+d.z*VIEW.depth+r.z*dx+u.z*dy)
+    local transform=state.transform
+    transform.i=state.right;transform.j=state.top;transform.k=state.forward;transform.c=state.position
+    state.model.matrix=transform;state.model.visible=true
+    return true
+end

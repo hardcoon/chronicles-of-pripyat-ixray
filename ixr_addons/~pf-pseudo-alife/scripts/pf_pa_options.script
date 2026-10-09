@@ -1,0 +1,180 @@
+-- Settings leaf: no callbacks, population scans, UI dependencies or world calls.
+local impl = {}
+local st = {revision = 0}
+local schema = {
+    {key="enabled", kind="check", default=false, side="global"},
+    {key="debug_map", kind="check", default=false, side="global"},
+    {key="respawn_hours", kind="float", default=72, side="global"},
+    {key="humans", default=40, min=0, max=999, side="human"},
+    {key="human_size_1", default=8, min=0, max=999, side="human", heading="sizes"},
+    {key="human_size_2", default=5, min=0, max=499, side="human"},
+    {key="human_size_3", default=4, min=0, max=333, side="human"},
+    {key="human_size_4", default=2, min=0, max=249, side="human"},
+    {key="human_size_5", default=0, min=0, max=199, side="human"},
+    {key="faction_stalker", default=8, min=0, max=999, side="human", heading="factions"},
+    {key="faction_bandit", default=6, min=0, max=999, side="human"},
+    {key="faction_dolg", default=2, min=0, max=999, side="human"},
+    {key="faction_freedom", default=2, min=0, max=999, side="human"},
+    {key="faction_monolith", default=1, min=0, max=999, side="human"},
+    {key="faction_ecolog", default=2, min=0, max=999, side="human"},
+    {key="faction_killer", default=0, min=0, max=999, side="human"},
+    {key="mutants", default=80, min=0, max=999, side="mutant"},
+    {key="mutant_group_max", default=4, min=1, max=100, side="mutant"},
+    {key="mutant_dog", default=6, min=0, max=999, side="mutant", heading="species"},
+    {key="mutant_boar", default=5, min=0, max=999, side="mutant"},
+    {key="mutant_flesh", default=5, min=0, max=999, side="mutant"},
+    {key="mutant_pseudodog", default=4, min=0, max=999, side="mutant"},
+    {key="mutant_snork", default=2, min=0, max=999, side="mutant"},
+    {key="mutant_bloodsucker", default=2, min=0, max=999, side="mutant"},
+    {key="mutant_burer", default=2, min=0, max=999, side="mutant"},
+    {key="mutant_controller", default=2, min=0, max=999, side="mutant"},
+    {key="mutant_chimera", default=1, min=0, max=2, side="mutant"},
+    {key="mutant_gigant", default=1, min=0, max=1, side="mutant"},
+    {key="mutant_tushkano", default=0, min=0, max=999, side="mutant"},
+}
+
+function impl.path(suffix)
+    return getFS():update_path("$app_data_root$", "pf_pa_options.setting" .. (suffix or ""))
+end
+function impl.copy(values)
+    local result = {}
+    for key, value in pairs(values) do result[key] = value end
+    return result
+end
+function time_factor()
+    local factor
+    if db and db.actor and level and level.get_time_factor then
+        local ok, value = pcall(level.get_time_factor)
+        if ok then factor = value end
+    end
+    if not factor or factor <= 0 then
+        local ini = system_ini()
+        factor = ini:line_exist("alife", "time_factor") and ini:r_float("alife", "time_factor") or 10
+    end
+    return math.max(0.1, factor)
+end
+function impl.init()
+    if st.values then return end
+    local ini = system_ini()
+    local hours = ini:line_exist("pf_pa_menu_defaults", "respawn_hours") and ini:r_float("pf_pa_menu_defaults", "respawn_hours") or 72
+    st.values = {respawn_seconds=math.floor(hours / time_factor() * 3600 + 0.5)}
+    for _, item in ipairs(schema) do
+        if item.key ~= "respawn_hours" then
+            st.values[item.key] = item.default
+            if ini:line_exist("pf_pa_menu_defaults",item.key) then
+                if item.kind == "check" then st.values[item.key] = ini:r_bool("pf_pa_menu_defaults",item.key)
+                else st.values[item.key] = ini:r_float("pf_pa_menu_defaults",item.key) end
+            end
+        end
+    end
+    st.values.enabled = ini:r_bool("pf_pseudo_alife", "enabled")
+    st.values.humans = ini:r_float("pf_pseudo_alife", "stalkers")
+    st.values.mutants = ini:r_float("pf_pseudo_alife", "mutants")
+    local file = io.open(impl.path(), "rb")
+    if file then
+        local saved = {}
+        for line in file:lines() do
+            local key, value = string.match(line, "^([%w_]+)=([%w%.%-]+)$")
+            if key then saved[key] = value end
+        end
+        file:close()
+        local candidate = impl.copy(st.values)
+        for _, item in ipairs(schema) do
+            local value = saved[item.key]
+            if value and item.key ~= "respawn_hours" then
+                candidate[item.key] = item.kind == "check" and value == "true" or tonumber(value)
+                if item.kind == "check" and value == "false" then candidate[item.key] = false end
+            end
+        end
+        candidate.respawn_seconds = tonumber(saved.respawn_seconds) or candidate.respawn_seconds
+        -- Only migrate the former shipped delay; preserve any customized delay.
+        if not saved.settings_version and tonumber(saved.respawn_seconds) == 3600 then
+            candidate.respawn_seconds = st.values.respawn_seconds
+        end
+        candidate.respawn_hours = candidate.respawn_seconds / 3600 * time_factor()
+        candidate._factor = time_factor()
+        local ok = validate(candidate)
+        if ok then candidate.respawn_hours, candidate._factor = nil, nil; st.values = candidate end
+    end
+    st.revision = st.revision + 1
+end
+function rows()
+    return schema
+end
+function get()
+    impl.init()
+    local values = impl.copy(st.values)
+    values._factor = time_factor()
+    values.respawn_hours = values.respawn_seconds / 3600 * values._factor
+    return values
+end
+function revision()
+    impl.init()
+    return st.revision
+end
+function validate(values)
+    for _, item in ipairs(schema) do
+        local value = values[item.key]
+        if item.kind == "check" then
+            if type(value) ~= "boolean" then return false, "pf_pa_opt_invalid" end
+        elseif type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+            return false, "pf_pa_opt_invalid"
+        elseif item.key ~= "respawn_hours" and (value ~= math.floor(value) or value < item.min or value > item.max) then
+            return false, "pf_pa_opt_invalid"
+        end
+    end
+    local factor = tonumber(values._factor) or time_factor()
+    local seconds = values.respawn_hours / factor * 3600
+    if seconds < 60 - 0.01 or seconds > 86400 + 0.01 then return false, "pf_pa_opt_respawn_range" end
+    local groups, people, factions = 0, 0, 0
+    for size=1,5 do
+        local n = values["human_size_" .. size]
+        groups, people = groups + n, people + size * n
+    end
+    for _, name in ipairs({"stalker","bandit","dolg","freedom","monolith","killer"}) do
+        factions = factions + values["faction_" .. name]
+    end
+    if groups ~= factions then return false, "pf_pa_opt_group_totals" end
+    local scientists = values.faction_ecolog
+    if people + scientists > values.humans then return false, "pf_pa_opt_human_limit" end
+    if people + scientists * 3 > 2997 then return false, "pf_pa_opt_escort_limit" end
+    local minimum = 0
+    for _, name in ipairs({"dog","boar","flesh","pseudodog","snork","bloodsucker","burer","controller","chimera","gigant","tushkano"}) do
+        minimum = minimum + values["mutant_" .. name]
+    end
+    if minimum > values.mutants then return false, "pf_pa_opt_mutant_limit" end
+    return true
+end
+function save(values)
+    impl.init()
+    local ok, why = validate(values)
+    if not ok then return false, why end
+    local candidate = impl.copy(values)
+    candidate.respawn_seconds = math.floor(values.respawn_hours / (values._factor or time_factor()) * 3600 + 0.5)
+    candidate.respawn_hours, candidate._factor = nil, nil
+    local lines = {"settings_version=2", "respawn_seconds=" .. candidate.respawn_seconds}
+    for _, item in ipairs(schema) do
+        if item.key ~= "respawn_hours" then lines[#lines+1] = item.key .. "=" .. tostring(candidate[item.key]) end
+    end
+    local temp, target, previous = impl.path(".tmp"), impl.path(), impl.path(".previous")
+    local file = io.open(temp, "wb")
+    if not file then return false, "pf_pa_opt_write_error" end
+    local written = file:write(table.concat(lines,"\n") .. "\n")
+    local closed = file:close()
+    if not written or not closed then os.remove(temp); return false, "pf_pa_opt_write_error" end
+    local existing = io.open(target,"rb")
+    if existing then
+        existing:close()
+        os.remove(previous)
+        if not os.rename(target,previous) then os.remove(temp); return false,"pf_pa_opt_write_error" end
+    end
+    if not os.rename(temp,target) then
+        if existing then os.rename(previous,target) end
+        os.remove(temp)
+        return false,"pf_pa_opt_write_error"
+    end
+    if existing then os.remove(previous) end
+    st.values = candidate
+    st.revision = st.revision + 1
+    return true
+end

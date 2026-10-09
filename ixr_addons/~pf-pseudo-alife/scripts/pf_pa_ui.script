@@ -1,0 +1,170 @@
+-- UI leaf: the options owner supplies rows/values and handles validation/persistence.
+class "panel" (CUIWindow)
+function panel:__init() super()
+    self.controls = {}
+    self.headings, self.counter_cache = {}, {}
+end
+function panel:__finalize() end
+function panel:InitControls(xml, rows)
+    self:SetAutoDelete(true)
+    self.rows = rows
+    self.scroll = xml:InitScrollView("scroll", self)
+    local columns = {human={}, mutant={}}
+    for _, side in ipairs({"human","mutant"}) do
+        xml:InitStatic("title_" .. side, self)
+    end
+    for _, item in ipairs(rows) do
+        if item.side == "global" then
+            local caption = xml:InitStatic("caption_" .. item.key, self)
+            if item.key == "debug_map" then self.debug_caption = caption end
+            if item.kind == "check" then self.controls[item.key] = xml:InitCheck("check_" .. item.key, self)
+            else self.controls[item.key] = xml:InitEditBox("edit_" .. item.key, self) end
+        else
+            local column = columns[item.side]
+            if item.heading then column[#column+1] = {heading=item.heading} end
+            column[#column+1] = item
+            if item.key == "humans" then column[#column+1] = false end
+        end
+    end
+    -- Each scroll item owns both cells, so their vertical movement is shared.
+    for index=1,math.max(#columns.human,#columns.mutant) do
+        local row = xml:InitStatic("row",nil)
+        for _, side in ipairs({"human","mutant"}) do
+            local item = columns[side][index]
+            if item then
+                local cell = xml:InitStatic(side .. "_cell",row)
+                if item.key then
+                    xml:InitStatic("caption",cell):TextControl():SetTextST("pf_pa_opt_" .. item.key)
+                    self.controls[item.key] = xml:InitEditBox(item.kind == "float" and "hours" or "integer",cell)
+                else
+                    self.headings[item.heading] = xml:InitStatic("heading",cell)
+                    self.headings[item.heading]:TextControl():SetTextST("pf_pa_opt_" .. item.heading)
+                end
+            end
+        end
+        self.scroll:AddWindow(row,true);row:SetAutoDelete(false)
+    end
+    local row = xml:InitStatic("footer_row",nil)
+    xml:InitStatic("footer_note",row):TextControl():SetTextST("pf_pa_opt_note_enabled")
+    self.scroll:AddWindow(row,true);row:SetAutoDelete(false)
+    self:RefreshDeveloperAccess()
+end
+
+-- Use the same applied settings flag as the main-menu F1 spawner.
+-- Refresh only when opening settings, without a background/file polling loop.
+function panel:RefreshDeveloperAccess()
+    local ok, enabled = false, false
+    if pf_stash_qa and type(pf_stash_qa.is_developer_access_enabled) == "function" then
+        ok, enabled = pcall(pf_stash_qa.is_developer_access_enabled)
+    end
+    local visible = ok and enabled == true
+    self.debug_caption:Show(visible)
+    self.controls.debug_map:Show(visible)
+    self.controls.debug_map:Enable(visible)
+end
+
+function panel:SetValues(values)
+    self.factor = values._factor
+    for _, item in ipairs(self.rows) do
+        local control,value = self.controls[item.key],values[item.key]
+        if item.kind == "check" then control:SetCheck(value)
+        elseif item.kind == "float" then
+            control:SetText((string.format("%.6f",value):gsub("0+$",""):gsub("%.$","")))
+        else control:SetText(tostring(value)) end
+    end
+    self:RefreshDeveloperAccess()
+    self:RefreshCounters(true)
+end
+
+-- Draft counts only: no world/ALife calls, and no changes to the entered values.
+function panel:Counts()
+    local values = self:GetValues()
+    local counts = {sizes=0,factions=0,humans=0,mutant_groups=0,mutant_min=0,mutant_max=0,
+        human_limit=values.humans,mutant_limit=values.mutants}
+    local sizes_ok,factions_ok,mutants_ok = true,true,values.mutant_group_max ~= nil
+    for size=1,5 do
+        local n = values["human_size_" .. size]
+        if n then counts.sizes=counts.sizes+n;counts.humans=counts.humans+size*n else sizes_ok=false end
+    end
+    for _, name in ipairs({"stalker","bandit","dolg","freedom","monolith","killer"}) do
+        local n = values["faction_" .. name]
+        if n then counts.factions=counts.factions+n else factions_ok=false end
+    end
+    if values.faction_ecolog then
+        counts.escorts=values.faction_ecolog*2
+        counts.humans=counts.humans+values.faction_ecolog
+    end
+    if not sizes_ok then counts.sizes=nil end
+    if not sizes_ok or not values.faction_ecolog then counts.humans=nil end
+    if not factions_ok then counts.factions=nil end
+    for _, name in ipairs({"dog","boar","flesh","pseudodog","snork","bloodsucker","burer","controller","chimera","gigant","tushkano"}) do
+        local n = values["mutant_" .. name]
+        if n then
+            local lo,hi = 1,values.mutant_group_max or 1
+            if name == "burer" then hi=math.min(hi,3)
+            elseif name == "controller" then hi=math.min(hi,2)
+            elseif name == "chimera" then hi=math.max(1,2-n+1)
+            elseif name == "gigant" then hi=1 end
+            counts.mutant_groups=counts.mutant_groups+n
+            counts.mutant_min=counts.mutant_min+lo*n
+            counts.mutant_max=counts.mutant_max+hi*n
+        else mutants_ok=false end
+    end
+    if mutants_ok and values.mutants then counts.mutant_target=math.min(values.mutants,counts.mutant_max)
+    else counts.mutant_groups,counts.mutant_min,counts.mutant_target=nil,nil,nil end
+    return counts
+end
+
+function panel:CounterLabel(key, control, text, error, heading)
+    local color = error and 0xffc46d64 or (heading and 0xffbe8934 or 0xffbeb8a9)
+    if self.counter_cache[key] == text .. ":" .. color then return end
+    self.counter_cache[key]=text .. ":" .. color
+    control:TextControl():SetText(text)
+    control:TextControl():SetTextColor(color)
+end
+
+function panel:RefreshCounters(force)
+    local now = time_global()
+    if not force and now < (self.next_counter_refresh or 0) then return end
+    self.next_counter_refresh=now+200
+    local counts = self:Counts()
+    local function number(value)return value and tostring(value) or "--" end
+    local mismatch = not counts.sizes or not counts.factions or counts.sizes ~= counts.factions
+    local mutant_error = not counts.mutant_min or not counts.mutant_limit or counts.mutant_min > counts.mutant_limit
+    for _, item in ipairs({{"sizes",counts.sizes,mismatch},{"factions",counts.factions,mismatch},{"species",counts.mutant_groups,mutant_error}}) do
+        local text = game.translate_string("pf_pa_opt_" .. item[1]) .. ": " .. number(item[2])
+        if item[1] == "factions" then
+            text=string.format(game.translate_string("pf_pa_opt_count_factions_heading"),number(counts.factions))
+        end
+        self:CounterLabel(item[1],self.headings[item[1]],
+            text,item[3],true)
+    end
+end
+
+function panel:ValidationText(reason)
+    self:RefreshCounters(true)
+    local counts = self:Counts()
+    if reason == "pf_pa_opt_group_totals" and counts.sizes and counts.factions then
+        return string.format(game.translate_string("pf_pa_opt_count_group_error"),counts.sizes,counts.factions,math.abs(counts.sizes-counts.factions))
+    elseif reason == "pf_pa_opt_human_limit" and counts.humans and counts.human_limit then
+        return string.format(game.translate_string("pf_pa_opt_count_human_error"),counts.humans,counts.human_limit)
+    elseif reason == "pf_pa_opt_mutant_limit" and counts.mutant_min and counts.mutant_limit then
+        return string.format(game.translate_string("pf_pa_opt_count_mutant_error"),counts.mutant_min,counts.mutant_limit)
+    end
+    return game.translate_string(reason)
+end
+function panel:GetValues()
+    local values = {_factor=self.factor}
+    for _, item in ipairs(self.rows) do
+        local control = self.controls[item.key]
+        if item.kind == "check" then values[item.key] = control:GetCheck() == true
+        else
+            local text = control:GetText():match("^%s*(.-)%s*$")
+            if item.kind == "float" then
+                text = text:gsub(",", ".")
+                if text:match("^%d+%.?%d*$") or text:match("^%.%d+$") then values[item.key] = tonumber(text) end
+            elseif text:match("^%d+$") then values[item.key] = tonumber(text) end
+        end
+    end
+    return values
+end

@@ -83,9 +83,10 @@ function handle_input(event,key,action)
     if action==key_bindings.kWPN_RELOAD and event==0 then
         local object=target()
         local entry=object and pf_hf_furniture.definition(object:section())
-        if not entry or entry.kind~="light" then return false end
+        if not entry or (entry.kind~="light" and entry.kind~="campfire") then return false end
         mode_keys[key]=true
-        pf_hf_furniture.toggle_light_mode(object:id())
+        if entry.kind=="campfire" then pf_hf_furniture.toggle_campfire(object:id())
+        else pf_hf_furniture.toggle_light_mode(object:id()) end
         if not held or not held.hint_shown then pf_hf_furniture.apply_tip(object) end
         return true
     end

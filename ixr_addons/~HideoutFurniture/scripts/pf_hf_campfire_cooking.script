@@ -1,0 +1,177 @@
+-- Campfire cooking and recipes; reserve every input until GE_DESTROY completes.
+local RECIPES={
+    {tab="cooking",raw="mutant_part_boar_chop",output="mutant_part_boar_chop_cook",amount=1,
+        label="pf_hfc_cook_recipe_boar",description="pf_hf_meat_boar_desc",ingredients={{section="mutant_part_boar_chop",amount=1}}},
+    {tab="cooking",raw="mutant_part_flesh_meat",output="mutant_part_flesh_meat_cook",amount=1,
+        label="mutant_flesh_meat",description="pf_hf_meat_flesh_desc",ingredients={{section="mutant_part_flesh_meat",amount=1}}},
+    {tab="cooking",raw="mutant_part_dog_meat",output="mutant_part_dog_meat_cook",amount=1,
+        label="mutant_dog_meat",description="pf_hf_meat_dog_desc",ingredients={{section="mutant_part_dog_meat",amount=1}}},
+    {tab="cooking",raw="mutant_part_psevdodog_meat",output="mutant_part_psevdodog_meat_cook",amount=1,
+        label="mutant_psevdodog_meat",description="pf_hf_meat_pseudodog_desc",ingredients={{section="mutant_part_psevdodog_meat",amount=1}}},
+    {tab="cooking",raw="mutant_part_krovosos_meat",output="mutant_part_krovosos_meat_cook",amount=1,
+        label="mutant_krovosos_meat",description="pf_hf_meat_bloodsucker_desc",ingredients={{section="mutant_part_krovosos_meat",amount=1}}},
+    {tab="cooking",raw="mutant_part_chimera_meat",output="mutant_part_chimera_meat_cook",amount=1,
+        label="mutant_chimera_meat",description="pf_hf_meat_chimera_desc",ingredients={{section="mutant_part_chimera_meat",amount=1}}},
+    {tab="cooking",raw="mutant_part_tushkano_meat",output="mutant_part_tushkano_meat_cook",amount=1,
+        label="mutant_tushkano_meat",description="pf_hf_meat_tushkano_desc",ingredients={{section="mutant_part_tushkano_meat",amount=1}}},
+    {tab="recipes",output="drug_booster",amount=1,label="pf_hfc_cook_recipe_hercules",description="pf_hfc_cook_hercules_description",
+        ingredients={{section="energy_drink",amount=4},{section="drug_coagulant",amount=1}}},
+    {tab="recipes",output="lz_nm_strange_stew",amount=1,label="st_lz_nm_strange_stew",description="st_lz_nm_strange_stew_descr",
+        ingredients={{section="mutant_part_dog_meat",amount=4},{section="mutant_part_krovosos_meat",amount=3},
+            {section="mutant_part_chimera_meat",amount=2},{section="flyaga",amount=1}}},
+    {tab="recipes",output="lz_nm_strange_shot",amount=1,label="st_lz_nm_strange_shot",description="st_lz_nm_strange_shot_descr",
+        ingredients={{section="mutant_part_boar_chop",amount=4},{section="mutant_part_tushkano_meat",amount=4},
+            {section="mutant_part_psevdodog_meat",amount=4},{section="vodka",amount=1}}}
+}
+local by_output,needed={},{}
+for _,entry in ipairs(RECIPES) do
+    by_output[entry.output]=entry
+    for _,ingredient in ipairs(entry.ingredients) do needed[ingredient.section]=true end
+end
+local reserved={}
+local busy={}
+local pending_open=nil
+local generation=0
+local registered=false
+
+local function server(id)
+    local simulation=alife()
+    return simulation and simulation:object(id,true)
+end
+
+function recipe(output) return output==nil and RECIPES[1] or by_output[output] end
+function recipes(tab)
+    local result={}
+    for _,entry in ipairs(RECIPES) do if entry.tab==tab then result[#result+1]=entry end end
+    return result
+end
+
+function station(id)
+    local actor=db.actor
+    local object=level.object_by_id(id)
+    local entry=object and pf_hf_furniture.definition(object:section())
+    local own=entry and entry.kind=="campfire" and pf_hf_furniture.state(id)
+    if not actor or not actor:alive() or not object or not own or
+        not pf_hf_furniture.in_interaction_range(object) then return nil end
+    return object,own
+end
+
+local function ingredients()
+    local counts,objects={},{}
+    for section in pairs(needed) do counts[section]=0;objects[section]={} end
+    if not db.actor then return counts,objects end
+    for id in pairs(reserved) do if not server(id) then reserved[id]=nil end end
+    db.actor:iterate_inventory(function(_,item)
+        local section=item:section()
+        if needed[section] and not reserved[item:id()] then
+            local object=server(item:id())
+            if object and object:section_name()==section and tonumber(object.parent_id)==db.actor:id() then
+                counts[section]=counts[section]+1;objects[section][#objects[section]+1]=object
+            end
+        end
+    end,db.actor)
+    for _,entries in pairs(objects) do table.sort(entries,function(a,b) return a.id<b.id end) end
+    return counts,objects
+end
+
+function availability(id,output)
+    local object,own=station(id)
+    local counts=ingredients()
+    if not object then return false,"pf_hfc_cook_unavailable",counts end
+    local selected=recipe(output)
+    local ini=system_ini()
+    if not selected or not ini:section_exist(selected.output) then return false,"pf_hfc_cook_failed",counts end
+    for _,input in ipairs(selected.ingredients) do
+        if not ini:section_exist(input.section) then return false,"pf_hfc_cook_failed",counts end
+    end
+    if not own.is_on then return false,"pf_hfc_cook_need_fire",counts end
+    if busy[id] then return false,"pf_hfc_cook_wait",counts end
+    for _,input in ipairs(selected.ingredients) do
+        if counts[input.section]<input.amount then
+            return false,selected.tab=="cooking" and "pf_hfc_cook_need_meat" or "pf_hfc_cook_need_ingredients",counts
+        end
+    end
+    return true,"pf_hfc_cook_ready",counts
+end
+
+function cook(id,output)
+    local ready,message=availability(id,output)
+    if not ready then return false,message end
+    local selected=recipe(output)
+    local counts,objects=ingredients()
+    local sources,consumed={},{}
+    for _,input in ipairs(selected.ingredients) do
+        if counts[input.section]<input.amount then return false,"pf_hfc_cook_need_ingredients" end
+        for index=1,input.amount do sources[#sources+1]=objects[input.section][index] end
+    end
+    local actor=db.actor
+    local actor_id=actor:id()
+    local simulation=alife()
+    local result
+    busy[id]=true
+    for _,source in ipairs(sources) do reserved[source.id]=true end
+    local ok=pcall(function()
+        result=simulation:create(selected.output,actor:position(),actor:level_vertex_id(),
+            actor:game_vertex_id(),actor_id)
+        if not result then error("create_failed") end
+        -- Inventory callbacks may invalidate a source/station during creation.
+        local object,own=station(id)
+        if not object or not own.is_on or db.actor:id()~=actor_id then error("station_changed") end
+        for _,source in ipairs(sources) do
+            if not server(source.id) or tonumber(source.parent_id)~=actor_id then error("source_changed") end
+        end
+        for _,source in ipairs(sources) do
+            simulation:release(source,true);consumed[#consumed+1]=source
+        end
+    end)
+    busy[id]=nil
+    if not ok then
+        local released={}
+        for _,source in ipairs(consumed) do released[source.id]=true end
+        for _,source in ipairs(sources) do if not released[source.id] then reserved[source.id]=nil end end
+        if result then pcall(function() simulation:release(result,true) end) end
+        -- Native release sends GE_DESTROY and cannot throw for valid sources.
+        -- Compensate a partial scripted failure; keep queued originals reserved.
+        for _,source in ipairs(consumed) do pcall(function()
+            simulation:create(source:section_name(),actor:position(),actor:level_vertex_id(),actor:game_vertex_id(),actor_id)
+        end) end
+        return false,"pf_hfc_cook_failed"
+    end
+    local ids={}
+    for _,source in ipairs(sources) do ids[#ids+1]=source.id end
+    return true,selected.tab=="cooking" and "pf_hfc_cook_done" or "pf_hfc_cook_crafted",ids
+end
+
+function open(id)
+    if pending_open or not station(id) or level.main_input_receiver() then return false end
+    pending_open=id
+    local epoch,actor_id,world=generation,db.actor:id(),level.name()
+    local due=time_global()+1
+    level.add_call(function() return epoch~=generation or time_global()>=due end,function()
+        if epoch~=generation then return end
+        pending_open=nil
+        if not db.actor or db.actor:id()~=actor_id or level.name()~=world or
+            not station(id) or level.main_input_receiver() then return end
+        local ok,opened,reason=pcall(function() return ui_pf_hf_campfire_cooking.show(id) end)
+        if not ok or not opened then
+            local message="! [HideoutFurniture] campfire cooking UI: "..
+                tostring(ok and (reason or "dialog declined opening") or opened)
+            if type(log1)=="function" then log1(message) else printf("%s",message) end
+            pcall(function() ui_pf_hf_campfire_cooking.force_close() end)
+        end
+    end)
+    return true
+end
+
+local function on_load()
+    generation=generation+1;pending_open=nil;reserved={};busy={}
+    local ui=rawget(_G,"ui_pf_hf_campfire_cooking")
+    if ui then ui.force_close() end
+end
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("load",on_load)
+    registered=true
+end
+on_game_start()

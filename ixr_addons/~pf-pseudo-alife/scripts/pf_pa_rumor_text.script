@@ -1,0 +1,231 @@
+-- Pure formatting only. The dialog facade will own loading, world observations,
+-- spatial selection and per-conversation snapshots. No engine calls at import.
+local impl = {}
+
+function impl.resolve(translate, key)
+    if type(translate) ~= "function" or type(key) ~= "string" then return nil end
+    local value = translate(key)
+    if type(value) ~= "string" or value == "" or value == key then return nil end
+    return value
+end
+
+function impl.ids(value)
+    local result = {}
+    for id in string.gmatch(value or "", "[^,%s]+") do result[#result + 1] = id end
+    return result
+end
+
+function impl.integer(value, minimum, maximum)
+    return type(value) == "number" and value == value and value >= minimum
+        and value <= maximum and value == math.floor(value)
+end
+
+function subject_id(tables, kind, faction, species)
+    if type(tables) ~= "table" then return nil end
+    if kind == "s" then
+        return tables.factions and tables.factions[(faction or "") == "" and "loner" or faction]
+    elseif kind == "m" then
+        return tables.species and tables.species[tostring(species)]
+    end
+end
+
+-- The facade must establish managed ownership using the current registry and
+-- identity first. This additional pure policy rejects permanent residents even
+-- when an incorrectly supplied record claims that they are managed.
+function dynamic_eligible(static_tables, record)
+    local policy = type(static_tables) == "table" and static_tables.dynamic_policy
+    if not policy or type(record) ~= "table" or record.managed ~= true then return false, "not_managed" end
+    if type(record.section) ~= "string" then return false, "missing_section" end
+    for _, section in ipairs(impl.ids(policy.excluded_sections)) do
+        if record.section == section then return false, "permanent_resident" end
+    end
+    for _, prefix in ipairs(impl.ids(policy.excluded_section_prefixes)) do
+        if record.section:sub(1, #prefix) == prefix then return false, "permanent_resident" end
+    end
+    local owned = record.section:match("^pf_pa_s_%d+$")
+        or record.section:match("^pf_pa_s_[dfobeac]_%d+$")
+        or record.section:match("^pf_pa_m_%d+$")
+        or record.section:match("^pf_pa_m_%d%d_%d+$")
+    return owned ~= nil, owned == nil and "not_owned_profile" or nil
+end
+
+function static_text(static_tables, topic, index, translate)
+    local row = type(static_tables) == "table" and static_tables[topic]
+    if not row or row.source ~= "fixed_text" then return nil, "unknown_static_topic" end
+    local ids = impl.ids(row.texts)
+    if not impl.integer(index, 1, #ids) then return nil, "invalid_static_index" end
+    local text = impl.resolve(translate, ids[index])
+    return text, text == nil and "missing_translation" or nil
+end
+
+-- Called by a question action, never by script_text. The facade owns the NPC's
+-- persisted progress and supplies one stable token per actually chosen question.
+-- A repeated action with the same token reuses its answer without spending again.
+function consume_answer(tables, progress, request_id, answer, translate)
+    local limits = type(tables) == "table" and tables.limits
+    local maximum = limits and tonumber(limits.max_answers)
+    if not maximum or not impl.integer(maximum, 1, 100) then return nil, "invalid_limit" end
+    if type(progress) ~= "table" then return nil, "missing_progress" end
+    if type(request_id) ~= "string" or request_id == "" then return nil, "missing_request_id" end
+    local count = progress.count or 0
+    if not impl.integer(count, 0, maximum) then return nil, "invalid_progress" end
+    if progress.request_id == request_id and type(progress.reply) == "string" then return progress.reply end
+    if count >= maximum then
+        local exhausted = impl.resolve(translate, limits.exhausted)
+        return exhausted, exhausted == nil and "missing_translation" or nil
+    end
+    if type(answer) ~= "string" or answer == "" then return nil, "missing_answer" end
+    progress.count = count + 1
+    progress.request_id = request_id
+    progress.reply = answer
+    return answer
+end
+
+function quantity(tables, id, count, form, variant, translate, language)
+    if type(tables) ~= "table" then return nil, "missing_tables" end
+    local subject = tables["subject_" .. tostring(id)]
+    local maximum = tables.grammar and tonumber(tables.grammar.max_count) or 0
+    if not subject then return nil, "unknown_subject" end
+    if not impl.integer(count, 1, maximum) then return nil, "invalid_count" end
+    if form ~= "nom" and form ~= "acc" then return nil, "invalid_form" end
+    if language ~= nil and language ~= "rus" and language ~= "eng" then return nil, "invalid_language" end
+    variant = variant or "spoken"
+    if variant == "spoken" then
+        variant = count >= 3 and "group" or (count == 2 and "pair" or "exact")
+    end
+    local number_key, noun_key
+    if variant == "group" or variant == "group_alt" then
+        if count < 3 then return nil, "group_requires_three" end
+        local key = subject["group_" .. form .. "_" .. (variant == "group" and "1" or "2")]
+        local value = impl.resolve(translate, key)
+        return value, value == nil and "missing_translation" or nil
+    elseif variant == "solo" then
+        if count ~= 1 then return nil, "solo_requires_one" end
+        local value = impl.resolve(translate, subject["solo_" .. form])
+        return value, value == nil and "missing_translation" or nil
+    elseif variant == "pair" then
+        if count ~= 2 then return nil, "pair_requires_two" end
+        number_key = tables.grammar["pair_" .. form]
+        noun_key = subject.gen_many
+    elseif variant == "exact" then
+        local number = tables[string.format("number_%03d", count)]
+        if not number then return nil, "missing_number" end
+        number_key = number[form .. "_" .. subject.gender]
+        if language == "eng" then
+            noun_key = count == 1 and subject.nom_one or subject.en_many
+        else
+            local ending, last_two = count % 10, count % 100
+            local one = ending == 1 and last_two ~= 11
+            local few = ending >= 2 and ending <= 4 and (last_two < 12 or last_two > 14)
+            if form == "acc" then
+                noun_key = one and subject.acc_one or subject.gen_many
+            else
+                noun_key = one and subject.nom_one or (few and subject.nom_few or subject.gen_many)
+            end
+        end
+    else
+        return nil, "invalid_variant"
+    end
+    local number = impl.resolve(translate, number_key)
+    local noun = impl.resolve(translate, noun_key)
+    if not number or not noun then return nil, "missing_translation" end
+    return number .. " " .. noun
+end
+
+function impl.scientific_escort(fact)
+    if type(fact.subjects) ~= "table" or #fact.subjects ~= 2 then return false end
+    local ecolog, army
+    for _, part in ipairs(fact.subjects) do
+        if type(part) ~= "table" then return false end
+        if part.id == "ecolog" then ecolog = part.count elseif part.id == "army" then army = part.count end
+    end
+    return ecolog == 1 and army == 2
+end
+
+function impl.subjects(tables, fact, form, translate, language)
+    if type(tables) ~= "table" then return nil, "missing_tables" end
+    if type(fact.subjects) ~= "table" or #fact.subjects < 1 or #fact.subjects > 19 then
+        return nil, "missing_subjects"
+    end
+    if fact.variant == "solo" and #fact.subjects > 1 then return nil, "solo_requires_single_subject" end
+    if impl.scientific_escort(fact) then
+        for _, part in ipairs(fact.subjects) do
+            if part.variant == "solo" then return nil, "solo_requires_single_subject" end
+        end
+        local composition = tables.composition_science_escort
+        local text = composition and impl.resolve(translate, composition[form])
+        return text, text == nil and "missing_translation" or nil
+    end
+    local result, seen = {}, {}
+    for _, part in ipairs(fact.subjects) do
+        if type(part) ~= "table" then return nil, "invalid_subject" end
+        if seen[part.id] then return nil, "duplicate_subject" end
+        local variant = part.variant or fact.variant
+        -- Diagnostics can request exact numerals. Spoken rumors cannot disclose
+        -- an exact count for 3+ members, even with an explicitly exact variant.
+        if variant == "exact" and type(part.count) == "number" and part.count >= 3 then variant = "group" end
+        local value, reason = quantity(tables, part.id, part.count, form, variant, translate, language)
+        if not value then return nil, reason end
+        if part.variant == "solo" and #fact.subjects > 1 then return nil, "solo_requires_single_subject" end
+        seen[part.id] = true
+        result[#result + 1] = value
+    end
+    if #result == 1 then return result[1] end
+    local join = impl.resolve(translate, tables.grammar.join_two)
+    if not join then return nil, "missing_translation" end
+    local last = table.remove(result)
+    return table.concat(result, ", ") .. " " .. join .. " " .. last
+end
+
+-- This is a text summary, NOT a geographic selector. Place IDs must come from
+-- a verified selector when wired to gameplay. Unmapped rows are for preview.
+function summary(tables, places, fact, translate, language)
+    if type(fact) ~= "table" then return nil, "missing_fact" end
+    local place = type(places) == "table" and places[fact.place]
+    if not place then return nil, "unknown_place" end
+    local who, reason = impl.subjects(tables, fact, "nom", translate, language)
+    if not who then return nil, reason end
+    local label = impl.resolve(translate, place.nom)
+    local location = impl.resolve(translate, place.loc)
+    if not label or not location then return nil, "missing_translation" end
+    return {who = who, where = label, location = location}
+end
+
+function render(tables, places, extras, fact, template_id, comment_index, translate, language)
+    if type(tables) ~= "table" or type(fact) ~= "table" then return nil, "missing_fact" end
+    local template = tables["template_" .. tostring(template_id)]
+    if not template then return nil, "unknown_template" end
+    if template.evidence == "observed" and fact.observed ~= true then return nil, "observation_required" end
+    local place = type(places) == "table" and places[fact.place]
+    if not place then return nil, "unknown_place" end
+    local subject, reason = impl.subjects(tables, fact, template.form, translate, language)
+    if not subject then return nil, reason end
+    local location = impl.resolve(translate, place.loc)
+    local format = impl.resolve(translate, template.text)
+    if not location or not format then return nil, "missing_translation" end
+    -- Exactly two controlled substitutions; text dictionaries have no executable code.
+    local result
+    if template.order == "place_subject" then result = string.format(format, location, subject)
+    elseif template.order == "subject_place" then result = string.format(format, subject, location)
+    else return nil, "invalid_order" end
+    if comment_index == nil or comment_index == 0 then return result end
+    local focus = fact.focus or 1
+    if not impl.integer(focus, 1, #fact.subjects) then return nil, "invalid_focus" end
+    local part = fact.subjects[focus]
+    local speaker = fact.speaker or "stalker"
+    local routes = type(extras) == "table" and extras["speaker_" .. tostring(speaker)]
+    if not routes then return nil, "unknown_speaker" end
+    local comment_id = routes[part.id]
+    if part.id == "ecolog" and speaker ~= "ecolog" and impl.scientific_escort(fact) then
+        comment_id = extras.extra and extras.extra.science_escort_comments
+    end
+    local comments = extras[comment_id]
+    if not comments then return nil, "missing_comments" end
+    -- A comment refers to the actual focused entity count, not the grammar ending
+    -- (21 means plural here), nor to the total size of a mixed scientist escort.
+    local ids = impl.ids(comments[part.count == 1 and "one" or "many"])
+    if not impl.integer(comment_index, 1, #ids) then return nil, "invalid_comment" end
+    local comment = impl.resolve(translate, ids[comment_index])
+    if not comment then return nil, "missing_translation" end
+    return result .. " " .. comment
+end

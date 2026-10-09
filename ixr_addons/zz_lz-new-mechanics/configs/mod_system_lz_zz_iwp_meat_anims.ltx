@@ -1,0 +1,76 @@
+; Existing cooked meats use the native food animator; raw ingredients stay inedible.
+![mutant_part_tushkano_meat_cook]
+animator_sect = meat_cook_use
+
+![mutant_part_krovosos_meat_cook]
+animator_sect = meat_cook_use
+
+![mutant_part_boar_chop_cook]
+animator_sect = meat_cook_use
+
+![mutant_part_flesh_meat_cook]
+animator_sect = meat_cook_use
+
+![mutant_part_dog_meat_cook]
+animator_sect = meat_cook_use
+
+![mutant_part_psevdodog_meat_cook]
+animator_sect = meat_cook_use
+
+![mutant_part_chimera_meat_cook]
+animator_sect = meat_cook_use
+
+[meat_cook_use]:animator_base
+; Original IWP [meat_cook_use] model, paired motion and zero origin.
+hands_position = 0.000, 0.000, 0.000
+hands_position_16x9 = 0.000, 0.000, 0.000
+item_attached = true
+item_visual = dynamics\weapons\wpn_eat\harvest\meat_1\wpn_meat_cook_hud.ogf
+item_position = 0.000, 0.000, 0.000
+item_orientation = 0.000, 0.000, 0.000
+anm_show = meat_eat, meat_eat_hud
+disable_ui_input = true
+hide_gasmask = true
+dof = 0.0, 0.5, 5, 5.7
+; Original IWP track; HUD gain doubled after the user's in-game listening check.
+; 0.42 -> 0.84 adds 6 dB; the recording and other food sounds are unchanged.
+; Animated food suppresses use_sound; the animator starts/stops this track.
+sound_1 = interface\item_usage\meat_use, 0.84
+
+; Manual previews remain available through run_string and never consume food.
+[pf_hf_iwp_preview_base]:animator_base
+hands_position = -0.100, -0.197, 0.060
+hands_position_16x9 = -0.100, -0.197, 0.060
+hands_orientation = 0.0, 0.0, 0.0
+hands_orientation_16x9 = 0.0, 0.0, 0.0
+item_attached = false
+sound_1 = $silent
+disable_input = false
+disable_key_input = false
+disable_ui_input = false
+hide_gasmask = false
+restore_weapon = true
+dof = 0.0, 0.0, 0.0, 0.0
+start_lua_callback = pf_hf_iwp_preview.on_started
+end_lua_callback = pf_hf_iwp_preview.on_finished
+
+[pf_hf_iwp_meat_eat]:meat_cook_use
+disable_ui_input = false
+hide_gasmask = false
+dof = 0.0, 0.0, 0.0, 0.0
+start_lua_callback = pf_hf_iwp_preview.on_started
+end_lua_callback = pf_hf_iwp_preview.on_finished
+
+[pf_hf_iwp_fry]:pf_hf_iwp_preview_base
+; IWP anm_inventory.ltx [cooking_use]: a cooking gesture, not eating.
+hands_position = 0.000, -0.200, -0.200
+hands_position_16x9 = 0.000, -0.200, -0.200
+anm_show = fry
+
+[pf_hf_iwp_harvest_hands_eat_invtrans]:pf_hf_iwp_preview_base
+; IWP [harvest_knife_base]: mutant harvesting, not a food-use candidate.
+anm_show = harvest_hands_eat_invtrans
+
+[pf_hf_iwp_harvest_success_hands_eat]:pf_hf_iwp_preview_base
+; IWP [harvest_pickup]: collecting the harvested mutant part.
+anm_show = harvest_success_hands_eat

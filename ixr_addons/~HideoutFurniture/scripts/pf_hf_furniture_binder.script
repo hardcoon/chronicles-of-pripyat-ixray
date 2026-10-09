@@ -46,7 +46,7 @@ function pf_hf_static_furniture:update(delta)
     if not self.tip_set then
         pf_hf_furniture.apply_tip(self.object);self.tip_set=true
     end
-    if not self.frozen and self.entry.kind~="stash" then
+    if not self.frozen and self.entry.kind~="stash" and not self.entry.physicsless then
         local shell=self.object:get_physics_shell()
         if shell and shell:get_elements_number()>0 then
             local root=shell:get_element_by_order(0)
@@ -103,6 +103,8 @@ function pf_hf_static_furniture:update(delta)
                 self.flame:stop();self.flame=nil
             end
         end
+    elseif self.entry.kind=="campfire" then
+        pf_hf_campfires.update(self,self.entry,pf_hf_furniture.state(self.object:id()))
     elseif self.entry.kind=="radio" then
         pf_hf_media.update_radio(self.object,self)
     elseif pf_hf_displays.has_profile(self.object:section()) then

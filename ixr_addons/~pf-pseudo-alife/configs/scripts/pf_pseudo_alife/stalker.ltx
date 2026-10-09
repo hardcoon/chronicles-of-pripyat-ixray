@@ -1,0 +1,38 @@
+[logic]
+active = pf_pa_roam
+dont_spawn_loot = true
+
+[dont_spawn_loot]
+
+; Native death_manager keeps the real supplies and scavenged inventory.
+[keep_items]
+
+[pf_pa_roam]
+meet = meet@pf_pa
+wounded = wounded@pf_pa
+gather_items_enabled = false
+help_wounded_enabled = false
+corpse_detection_enabled = true
+use_camp = false
+
+[meet@pf_pa]
+close_distance = 0
+close_anim = talk_default
+close_snd_hello = nil
+close_snd_bye = nil
+close_snd_distance = 0
+close_victim = actor
+far_distance = 0
+far_anim = nil
+far_victim = nil
+far_snd = nil
+meet_on_talking = true
+meet_dialog = pf_pa_city_news
+snd_on_use = nil
+trade_enable = false
+use = {=actor_enemy} false, {=has_enemy} false, {=is_wounded} false, true
+allow_break = true
+abuse = false
+
+[wounded@pf_pa]
+enable_talk = false

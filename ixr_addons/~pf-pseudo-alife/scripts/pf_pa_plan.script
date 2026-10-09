@@ -1,0 +1,67 @@
+-- Pure desired-population planner. No engine callbacks, settings or world calls.
+local impl = {}
+
+function impl.recipe(kind, faction, count, escort, species)
+    return {kind=kind,faction=faction or "",count=count,escort=escort or 0,species=species}
+end
+function fingerprint(recipe)
+    return table.concat({recipe.kind,recipe.faction,recipe.count,recipe.escort or 0,recipe.species or 0},"/")
+end
+function build(values)
+    local plan = {recipes={},humans=0,mutants=0,escorts=values.faction_ecolog*2}
+    local seed = 426100100
+    local function random(n)
+        seed = (seed * 16807) % 2147483647
+        return seed % n + 1
+    end
+    local function add(recipe)
+        plan.recipes[#plan.recipes+1] = recipe
+        if recipe.kind == "s" then plan.humans=plan.humans+recipe.count+recipe.escort
+        else plan.mutants=plan.mutants+recipe.count end
+    end
+    for i=1,values.faction_ecolog do add(impl.recipe("s","e",1,2)) end
+    local sizes = {}
+    for size=1,5 do for i=1,values["human_size_" .. size] do sizes[#sizes+1]=size end end
+    for i=#sizes,2,-1 do local j=random(i);sizes[i],sizes[j]=sizes[j],sizes[i] end
+    local factions = {{"stalker",""},{"bandit","b"},{"dolg","d"},{"freedom","f"},{"monolith","o"},{"killer","c"}}
+    local counts,total = {},0
+    for i,item in ipairs(factions) do counts[i]=values["faction_" .. item[1]];total=total+counts[i] end
+    assert(total==#sizes,"regular size/faction group totals differ")
+    for _,size in ipairs(sizes) do
+        local roll,selected=random(total)
+        for i,count in ipairs(counts) do roll=roll-count;if roll<=0 then selected=i;break end end
+        counts[selected],total=counts[selected]-1,total-1
+        add(impl.recipe("s",factions[selected][2],size))
+    end
+    local names={"dog","boar","flesh","pseudodog","snork","bloodsucker","burer","controller","chimera","gigant","tushkano"}
+    local groups, minimum, maximum = {},0,0
+    local rare = {[9]=2,[10]=1}
+    for species,name in ipairs(names) do
+        local n = values["mutant_" .. name]
+        for i=1,n do
+            local lo,hi=1,values.mutant_group_max
+            if species==7 then hi=math.min(hi,3) elseif species==8 then hi=math.min(hi,2) end
+            if rare[species] then hi=math.max(1,rare[species]-n+1) end
+            groups[#groups+1]={species=species,count=lo,max=hi}
+            minimum,maximum=minimum+lo,maximum+hi
+        end
+    end
+    local target=math.min(values.mutants,maximum)
+    assert(minimum<=target,"mutant groups exceed population limit")
+    local remaining=target-minimum
+    while remaining>0 do
+        local available={}
+        for i,g in ipairs(groups) do if g.count<g.max then available[#available+1]=i end end
+        assert(#available>0,"mutant size allocation exhausted")
+        local g=groups[available[random(#available)]]
+        g.count=g.count+1;remaining=remaining-1
+    end
+    for i=#groups,2,-1 do local j=random(i);groups[i],groups[j]=groups[j],groups[i] end
+    for _,g in ipairs(groups) do add(impl.recipe("m","",g.count,0,g.species)) end
+    assert(plan.humans-plan.escorts<=values.humans and plan.humans<=2997,"human population limit")
+    local signatures={}
+    for _,recipe in ipairs(plan.recipes) do signatures[#signatures+1]=fingerprint(recipe) end
+    table.sort(signatures)
+    plan.signature="options/2/" .. table.concat(signatures,";")
+    return plan
+end

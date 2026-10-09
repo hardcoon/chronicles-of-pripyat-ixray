@@ -1,0 +1,109 @@
+-- Direct item world OGF in camera coordinates; no exported meshes or game objects.
+local OWNER="pf_hfc_recipe_result:"
+local VIEW={depth=.32,x=512,y=382,width=180,height=142,zoom=1.1}
+
+function create()
+    local state={yaw=0,pitch=0}
+    local ok=pcall(function()
+        local api=rawget(_G,"debug_render")
+        if not api or type(api.available)~="function" or not api.available() or
+            type(api.add_ui_ogf_model)~="function" or type(api.clear_owner)~="function" then return end
+        api.clear_owner(OWNER)
+        state.api=api
+        state.camera={cam_pos=vector():set(0,0,0),cam_right=vector():set(1,0,0),
+            cam_top=vector():set(0,1,0),cam_dir=vector():set(0,0,1)}
+        state.transform=matrix():identity()
+        state.right=vector();state.top=vector();state.forward=vector();state.position=vector()
+        state.user_right=vector();state.user_top=vector();state.user_forward=vector()
+    end)
+    if not ok then state.api=nil end
+    return state
+end
+
+function close(state)
+    if not state then return end
+    if state.api then state.api.clear_owner(OWNER) end
+    state.model=nil;state.section=nil;state.extent=nil;state.radius=nil;state.drag=nil
+    state.base=nil;state.yaw=0;state.pitch=0
+end
+
+function mouse(state,pressed,cursor)
+    if not state then return false end
+    if not pressed then local captured=state.drag~=nil;state.drag=nil;return captured end
+    if not state.model or not state.model:valid() or not state.model.visible or not cursor or
+        math.abs(cursor.x-VIEW.x)>VIEW.width*VIEW.zoom/2 or math.abs(cursor.y-VIEW.y)>VIEW.height*VIEW.zoom/2 then return false end
+    state.drag={x=cursor.x,y=cursor.y}
+    return true
+end
+
+function drag(state,cursor)
+    if not state or not state.drag or not cursor then return end
+    state.yaw=(state.yaw-(cursor.x-state.drag.x)*.012)%(2*math.pi)
+    state.pitch=math.max(-math.pi/2,math.min(math.pi/2,state.pitch-(cursor.y-state.drag.y)*.012))
+    state.drag.x=cursor.x;state.drag.y=cursor.y
+end
+
+function select(state,section)
+    if not state or not state.api then return false end
+    if state.section==section then return state.model~=nil and state.model:valid() end
+    close(state)
+    -- Cache failed selections too; assets are read only when the result changes.
+    state.section=section
+    local ok=pcall(function()
+        local ini=system_ini()
+        if not ini:line_exist(section,"visual") then return end
+        local visual=ini:r_string(section,"visual"):lower():gsub("/","\\")
+        local model=state.api.add_ui_ogf_model(OWNER.."model",visual)
+        if not model or not model:valid() then return end
+        local extent=model.extent
+        local radius=extent:magnitude()
+        if radius<=0 or radius~=radius or radius==math.huge then return end
+        model.color=fcolor():set(1,1,1,1);model.visible=false
+        state.model=model;state.extent=extent;state.radius=radius
+        -- Preserve the old three-quarter pose without baking another mesh copy.
+        local yaw=-25*math.pi/180
+        local pitch=(section:match("^mutant_part_") or section=="lz_nm_strange_stew") and -55 or -15
+        local cy,sy,cp,sp=math.cos(yaw),math.sin(yaw),math.cos(pitch*math.pi/180),math.sin(pitch*math.pi/180)
+        state.base={vector():set(cy,sp*sy,-cp*sy),vector():set(0,cp,sp),vector():set(sy,-sp*cy,cp*cy)}
+    end)
+    if not ok or not state.model then
+        state.api.clear_owner(OWNER);state.model=nil
+    end
+    return state.model~=nil
+end
+
+local function composed(out,r,u,d,base,scale)
+    out:set(r.x*base.x+u.x*base.y+d.x*base.z,
+        r.y*base.x+u.y*base.y+d.y*base.z,r.z*base.x+u.z*base.y+d.z*base.z):mul(scale)
+end
+
+function update(state,view)
+    if not state or not state.model or not state.model:valid() then return false end
+    if not view.fov or not view.aspect_ratio or view.fov<=0 or view.fov>=179 or view.aspect_ratio<=0 then
+        state.model.visible=false;return false
+    end
+    -- UI OGF uses projection only, avoiding world/view precision loss near the camera.
+    state.camera.fov=view.fov;state.camera.aspect_ratio=view.aspect_ratio
+    view=state.camera
+    local tangent=math.tan(view.fov*math.pi/360)
+    local horizontal=tangent/view.aspect_ratio*VIEW.width/1024
+    local vertical=tangent*VIEW.height/768
+    local dx=(VIEW.x/512-1)*VIEW.depth*tangent/view.aspect_ratio
+    local dy=(1-VIEW.y/384)*VIEW.depth*tangent
+    local hx=horizontal+math.abs(dx/VIEW.depth)
+    local vy=vertical+math.abs(dy/VIEW.depth)
+    -- A fixed sphere keeps the centre, depth and +10% scale constant while rotating.
+    local scale=VIEW.zoom*VIEW.depth/state.radius*math.min(horizontal/math.sqrt(1+hx*hx),
+        vertical/math.sqrt(1+vy*vy))
+    local cy,sy,cp,sp=math.cos(state.yaw),math.sin(state.yaw),math.cos(state.pitch),math.sin(state.pitch)
+    local r,u,d=state.user_right,state.user_top,state.user_forward
+    r:set(cy,sp*sy,-cp*sy);u:set(0,cp,sp);d:set(sy,-sp*cy,cp*cy)
+    composed(state.right,r,u,d,state.base[1],scale)
+    composed(state.top,r,u,d,state.base[2],scale)
+    composed(state.forward,r,u,d,state.base[3],scale)
+    state.position:set(dx,dy,VIEW.depth)
+    local transform=state.transform
+    transform.i=state.right;transform.j=state.top;transform.k=state.forward;transform.c=state.position
+    state.model.matrix=transform;state.model.visible=true
+    return true
+end

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+    <dialog id="pf_pa_city_news">
+        <precondition>pf_pa_dialogs.allowed</precondition>
+        <phrase_list>
+            <phrase id="0">
+                <text />
+                <script_text>pf_pa_dialogs.hello_text</script_text>
+                <next>1</next>
+                <next>9</next>
+            </phrase>
+            <phrase id="1">
+                <text>pf_pa_city_news_question</text>
+                <precondition>pf_pa_dialogs.has_news</precondition>
+                <action>pf_pa_dialogs.request_news</action>
+                <next>2</next>
+            </phrase>
+            <phrase id="2">
+                <text />
+                <script_text>pf_pa_dialogs.news_text</script_text>
+                <next>1</next>
+                <next>9</next>
+            </phrase>
+            <phrase id="9">
+                <text>pf_pa_city_news_bye</text>
+                <action>dialogs.break_dialog</action>
+                <is_final>1</is_final>
+            </phrase>
+        </phrase_list>
+    </dialog>
+</game_dialogs>

@@ -1,0 +1,466 @@
+-- Workbench-style transparent cooking overlay; keep the actor's world pose.
+local active=nil
+local CAMERA_ID=73242
+local CAMERA_ALTERNATE_ID=73243
+local CAMERA_EFFECT="camera_effects\\pf_hf_campfire_view.anm"
+local CAMERA_BLEND_MS=600
+local CAMERA_MAX_STEP_MS=50
+local CAMERA_ADVANCE=.7
+local CAMERA_MIN_DISTANCE=.9
+local function tr(id) return game.translate_string(id) end
+local function label(section)
+    local ini=system_ini()
+    return ini:line_exist(section,"inv_name") and tr(ini:r_string(section,"inv_name")) or section
+end
+local function fit_section_icon(control, section, box_x, box_y, box_width,
+	box_height, allow_enlarge)
+	if not section then control:Show(false) return end
+	local ini = system_ini()
+	local function number(key, fallback)
+		return ini:line_exist(section, key) and
+			(tonumber(ini:r_string(section, key)) or fallback) or fallback
+	end
+	local gx, gy = number("inv_grid_x", 0), number("inv_grid_y", 0)
+	local gw, gh = number("inv_grid_width", 1), number("inv_grid_height", 1)
+	local scale = math.max(number("inv_scale", 1), 0.01)
+	local width, height = math.max(gw * 50 * scale, 1), math.max(gh * 50 * scale, 1)
+	local texture = ini:line_exist(section, "icons_texture") and
+		ini:r_string(section, "icons_texture") or "ui\\ui_icon_equipment"
+	if not pcall(function() control:InitTexture(texture) end) then
+		control:InitTexture("ui\\ui_icon_equipment")
+	end
+	control:SetTextureRect(Frect():set(gx * 50 * scale, gy * 50 * scale,
+		gx * 50 * scale + width, gy * 50 * scale + height))
+	local factor = math.min(box_width / width, box_height / height,
+		allow_enlarge and math.huge or 1)
+	local draw_width, draw_height = width * factor, height * factor
+	control:SetStretchTexture(true)
+	control:SetWndPos(vector2():set(box_x + (box_width - draw_width) * 0.5,
+		box_y + (box_height - draw_height) * 0.5))
+	control:SetWndSize(vector2():set(draw_width, draw_height))
+	control:Show(true)
+end
+
+local function description(recipe)
+    local ini=system_ini()
+    local id=ini:line_exist(recipe.output,"description") and ini:r_string(recipe.output,"description") or recipe.description
+    -- gsub also returns a replacement count; SetText accepts only one string.
+    return (tr(id):gsub("\\n","\n"))
+end
+
+local function focus_target(id,entry)
+    local owner=alife():object(id,true)
+    if not owner then return nil end
+    -- The particle source is offset from both the model bounds and light origin.
+    local x,y,z=entry.flame_offset[1],entry.flame_offset[2],entry.flame_offset[3]
+    local rotation=matrix():setXYZ(owner.angle.x,owner.angle.y,owner.angle.z)
+    return vector():set(owner.position.x+rotation.i.x*x+rotation.j.x*y+rotation.k.x*z,
+        owner.position.y+rotation.i.y*x+rotation.j.y*y+rotation.k.y*z,
+        owner.position.z+rotation.i.z*x+rotation.j.z*y+rotation.k.z*z)
+end
+
+local function focus_pose(origin,look,target,fraction)
+    local aim=vector():set(target):sub(origin)
+    local distance=aim:magnitude()
+    if distance<.001 then return vector():set(origin),vector():set(look) end
+    aim:div(distance)
+    local advance=math.min(CAMERA_ADVANCE,math.max(distance-CAMERA_MIN_DISTANCE,0))*fraction
+    local position=vector():set(origin.x+aim.x*advance,origin.y+aim.y*advance,origin.z+aim.z*advance)
+    local from_yaw=math.atan2(-look.x,look.z)
+    local yaw=from_yaw+((math.atan2(-aim.x,aim.z)-from_yaw+math.pi)%(2*math.pi)-math.pi)*fraction
+    local from_pitch=math.atan2(-look.y,math.sqrt(look.x*look.x+look.z*look.z))
+    local pitch=from_pitch+(math.atan2(-aim.y,math.sqrt(aim.x*aim.x+aim.z*aim.z))-from_pitch)*fraction
+    return position,vector():set(-math.sin(yaw)*math.cos(pitch),-math.sin(pitch),math.cos(yaw)*math.cos(pitch))
+end
+
+-- Same order/captions as CUIBoosterInfo; food values come from system_ini.
+-- Normalization is read from the actor's condition section, as in ActorCondition.
+local STAT_FIELDS={
+    {"boost_health_restore","ui_inv_health"},
+    {"boost_power_restore","ui_inv_power"},
+    {"boost_radiation_restore","ui_inv_radiation",-1},
+    {"boost_bleeding_restore","ui_inv_bleeding"},
+    {"boost_max_weight","ui_inv_outfit_additional_weight"},
+    {"boost_radiation_protection","ui_inv_outfit_radiation_protection","radio"},
+    {"boost_telepat_protection","ui_inv_outfit_telepatic_protection","psi"},
+    {"boost_chemburn_protection","ui_inv_outfit_chemical_burn_protection","acid"},
+    {"boost_burn_immunity","ui_inv_outfit_burn_immunity","fire"},
+    {"boost_shock_immunity","ui_inv_outfit_shock_immunity","electra"},
+    {"boost_radiation_immunity","ui_inv_outfit_radiation_immunity","radio"},
+    {"boost_telepat_immunity","ui_inv_outfit_telepatic_immunity","psi"},
+    {"boost_chemburn_immunity","ui_inv_outfit_chemical_burn_immunity","acid"},
+    {"boost_satiety","ui_inv_satiety",nil,"eat_satiety"},
+    {"boost_thirst","ui_inv_thirst",nil,"eat_thirst"},
+    {"boost_time","ui_inv_effect_time"},
+}
+local function stat_number(ini,section,key,fallback)
+    return ini:line_exist(section,key) and (tonumber(ini:r_string(section,key)) or fallback) or fallback
+end
+local function stat_round(value)
+    -- Lua 5.1 and the engine use different CRTs. Match the native tooltip's
+    -- nearest-even rounding explicitly for half values such as satiety 4.5.
+    local magnitude=math.abs(value)
+    local whole=math.floor(magnitude)
+    local fraction=magnitude-whole
+    if fraction>.5 or (fraction==.5 and whole%2==1) then whole=whole+1 end
+    return value<0 and -whole or whole
+end
+
+class "pf_hfc_cooking_dialog" (CUIScriptWnd)
+function pf_hfc_cooking_dialog:__init() super()
+    self:SetAutoDelete(false)
+    self:SetWndRect(Frect():set(0,0,1024,768))
+    self.keys={}
+    local xml=CScriptXmlInit();xml:ParseFile("ui_pf_hf_campfire_cooking.xml")
+    xml:InitWindow("main",0,self)
+    self.controls={}
+    for _,name in ipairs({"fade","left","right","footer","title_rule","footer_accent",
+        "result_rule","result_icon","ingredient_icon","ingredient_icon_2",
+        "ingredient_bg","ingredient_bg_2","cooking_selected","recipes_selected"}) do
+        self.controls[name]=xml:InitStatic("main:"..name,self)
+        self.controls[name]:Enable(false)
+    end
+    for _,name in ipairs({"title","category","recipe_count","result_heading",
+        "result_name","result_description","result_amount","result_weight","ingredient_heading",
+        "ingredient_name","ingredient_count","ingredient_name_2","ingredient_count_2",
+        "status","feedback","footer_title"}) do
+        self.controls[name]=xml:InitTextWnd("main:"..name,self)
+        self.controls[name]:Enable(false)
+    end
+    -- Existing script UI controls reuse the inventory's icons, units and scales.
+    local stats_xml=CScriptXmlInit();stats_xml:ParseFile("pf_hf_cooking_booster_params.xml")
+    self.result_stats={rows={}}
+    for _,field in ipairs(STAT_FIELDS) do
+        local path="booster_params:"..field[1]
+        if stats_xml:NodeExist(path,0) then
+            local row={field=field,icon=stats_xml:InitStatic(path..":icon",self),
+                caption=stats_xml:InitTextWnd(path..":caption",self),
+                value=stats_xml:InitTextWnd(path..":value",self)}
+            row.caption:SetText(tr(field[2]));row.caption:SetEllipsis(true)
+            row.icon:Enable(false);row.caption:Enable(false);row.value:Enable(false)
+            row.magnitude=tonumber(stats_xml:ReadAttribute(path..":value",0,"magnitude")) or 1
+            row.sign=stats_xml:ReadAttribute(path..":value",0,"show_sign")~="0"
+            row.unit=stats_xml:ReadAttribute(path..":value",0,"unit_str")
+            row.height=tonumber(stats_xml:ReadAttribute(path,0,"height")) or 20
+            row.caption_x=tonumber(stats_xml:ReadAttribute(path..":caption",0,"x")) or 24
+            row.value_x=tonumber(stats_xml:ReadAttribute(path..":value",0,"x")) or 140
+            row.texture_plus=stats_xml:ReadValue(path..":icon:texture",0)
+            row.texture_minus=stats_xml:ReadValue(path..":texture_minus",0)
+            self.result_stats.rows[#self.result_stats.rows+1]=row
+        end
+    end
+    self.controls.ingredient_name:SetEllipsis(true)
+    self.controls.ingredient_name_2:SetEllipsis(true)
+    self.ingredient_row_count=2
+    for _,tab in ipairs({"cooking","recipes"}) do
+        for _,recipe in ipairs(pf_hf_campfire_cooking.recipes(tab)) do
+            self.ingredient_row_count=math.max(self.ingredient_row_count,#recipe.ingredients)
+        end
+    end
+    -- Reuse the existing ingredient-row layout for recipes with more inputs.
+    for index=3,self.ingredient_row_count do
+        local suffix="_"..index
+        for _,name in ipairs({"ingredient_bg","ingredient_icon"}) do
+            local control=xml:InitStatic("main:"..name.."_2",self)
+            self.controls[name..suffix]=control;control:Enable(false)
+        end
+        for _,name in ipairs({"ingredient_name","ingredient_count"}) do
+            local control=xml:InitTextWnd("main:"..name.."_2",self)
+            self.controls[name..suffix]=control;control:Enable(false)
+        end
+        self.controls["ingredient_name"..suffix]:SetEllipsis(true)
+    end
+    self.controls.recipe_count:Show(false) -- Workbench's empty-list note is unused.
+    -- Every row is attached above the fade, with the same hover/selection order.
+    self.recipe_rows={}
+    for index=1,math.max(#pf_hf_campfire_cooking.recipes("cooking"),#pf_hf_campfire_cooking.recipes("recipes")) do
+        local row_index=index
+        local row={button=xml:Init3tButton("main:recipe",self),
+            selected=xml:InitStatic("main:recipe_selected",self),
+            icon=xml:InitStatic("main:recipe_icon",self),name=xml:InitTextWnd("main:recipe_name",self)}
+        local dy=(index-1)*58
+        row.button:SetWndPos(vector2():set(34,194+dy))
+        row.selected:SetWndPos(vector2():set(34,194+dy))
+        row.name:SetWndPos(vector2():set(89,198+dy))
+        for _,control in ipairs({row.selected,row.icon,row.name}) do control:Enable(false) end
+        local callback=index==1 and "recipe" or "recipe_"..index
+        self:Register(row.button,callback)
+        self:AddCallback(callback,ui_events.BUTTON_CLICKED,function(context) context:OnSelectRecipe(row_index) end,self)
+        self.recipe_rows[index]=row
+        if index==1 then
+            self.controls.recipe=row.button;self.controls.recipe_icon=row.icon
+            self.controls.recipe_name=row.name;self.controls.recipe_selected=row.selected
+        end
+    end
+    for _,entry in ipairs({{"cook",self.OnCook},{"close",self.OnClose},
+        {"tab_cooking",self.OnCookingTab},{"tab_recipes",self.OnRecipesTab}}) do
+        local button=xml:Init3tButton("main:"..entry[1],self)
+        self.controls[entry[1]]=button;self:Register(button,entry[1])
+        self:AddCallback(entry[1],ui_events.BUTTON_CLICKED,entry[2],self)
+    end
+end
+function pf_hfc_cooking_dialog:__finalize()
+    pf_hf_cooking_preview.close(self.preview)
+end
+
+function pf_hfc_cooking_dialog:Open(id)
+    if self.id then return false,"dialog already open" end
+    if not pf_hf_campfire_cooking.station(id) then return false,"station unavailable" end
+    if level.main_input_receiver() then return false,"another dialog owns input" end
+    local object=level.object_by_id(id)
+    local entry=pf_hf_furniture.definition(object:section())
+    local target=focus_target(id,entry)
+    if not target then return false,"station focus unavailable" end
+    self.id=id;self.actor_id=db.actor:id();self.world=level.name();self.keys={};self.pending=nil;self.tab="cooking"
+    self.saved_slot=tonumber(db.actor:active_slot()) or 0
+    self.controls.title:SetText(tr(entry.title:gsub("_name$","_heading")))
+    self.controls.feedback:SetText("")
+    self.selected=nil;self.visible_output=nil
+    -- Start at the current eye, then smoothly aim at the flame's emitter center.
+    -- The zero-motion ANM holds each anchor; only the camera moves, never the actor.
+    local view=device()
+    self.focus={origin=vector():set(view.cam_pos),look=vector():set(view.cam_dir),target=target,elapsed=0,frame=view.frame}
+    local duration=level.add_cam_effector_at(CAMERA_EFFECT,CAMERA_ID,false,"",
+        vector():set(view.cam_pos),vector():set(view.cam_dir))
+    if not duration or duration<=0 then
+        self.id=nil;self.saved_slot=nil
+        return false,"camera effector did not start"
+    end
+    self.camera=true;self.camera_id=CAMERA_ID
+    local hud=get_hud();if hud then hud:HideActorMenu() end
+    level.show_weapon(false)
+    if self.saved_slot~=0 then db.actor:activate_slot(0) end
+    self.preview=pf_hf_cooking_preview.create()
+    self:Refresh();self:ShowDialog(true)
+    return true
+end
+
+function pf_hfc_cooking_dialog:Refresh()
+    if not self.id then return end
+    local recipe=pf_hf_campfire_cooking.recipe(self.selected)
+    if not recipe or recipe.tab~=self.tab then recipe=pf_hf_campfire_cooking.recipes(self.tab)[1] end
+    if not recipe then self:OnClose();return end
+    self.selected=recipe.output
+    if self.visible_output~=recipe.output then
+        self.visible_output=recipe.output
+        self.controls.result_name:SetText(label(recipe.output))
+        self.controls.footer_title:SetText(label(recipe.output))
+        self.controls.result_description:SetText(description(recipe))
+        self.controls.result_description:AdjustHeightToText()
+        local stats_y=math.max(234,172+self.controls.result_description:GetHeight()+6)
+        local stats_height=self:UpdateResultStats(recipe.output,stats_y)
+        self.result_offset=math.max(0,stats_y+stats_height+7-350)
+        for _,row in ipairs({{"result_amount",816,350},{"result_weight",816,370},
+            {"status",816,393},{"ingredient_heading",816,417}}) do
+            self.controls[row[1]]:SetWndPos(vector2():set(row[2],row[3]+self.result_offset))
+        end
+        local feedback_y=math.max(550,445+self.result_offset+#recipe.ingredients*34)
+        self.controls.feedback:SetWndPos(vector2():set(816,feedback_y))
+        fit_section_icon(self.controls.result_icon,recipe.output,455,354,120,76,false)
+        self.preview_active=pf_hf_cooking_preview.select(self.preview,recipe.output) and
+            pf_hf_cooking_preview.update(self.preview,device())
+        self.controls.result_icon:Show(not self.preview_active)
+        local ini=system_ini()
+        local weight=ini:line_exist(recipe.output,"inv_weight") and tonumber((ini:r_string(recipe.output,"inv_weight"))) or 0
+        local weight_label=recipe.tab=="cooking" and "pf_hfc_cook_meat_weight" or "pf_hfc_cook_weight"
+        self.controls.result_weight:SetText(string.format(tr(weight_label),weight))
+        self.controls.result_amount:SetText(string.format(tr("pf_hfc_cook_result_amount"),recipe.amount))
+        for index=1,self.ingredient_row_count do
+            local suffix=index==1 and "" or "_"..index
+            local input=recipe.ingredients[index]
+            for _,name in ipairs({"ingredient_name","ingredient_count","ingredient_icon","ingredient_bg"}) do
+                self.controls[name..suffix]:Show(input~=nil)
+            end
+            if input then
+                local y=439+self.result_offset+(index-1)*34
+                self.controls["ingredient_bg"..suffix]:SetWndPos(vector2():set(816,y))
+                self.controls["ingredient_name"..suffix]:SetWndPos(vector2():set(854,y))
+                self.controls["ingredient_count"..suffix]:SetWndPos(vector2():set(959,y))
+                self.controls["ingredient_name"..suffix]:SetText(label(input.section))
+                fit_section_icon(self.controls["ingredient_icon"..suffix],input.section,818,y+1,32,30,false)
+            end
+        end
+    end
+    local ready,message,counts=pf_hf_campfire_cooking.availability(self.id,self.selected)
+    local entries=pf_hf_campfire_cooking.recipes(self.tab)
+    for index,row in ipairs(self.recipe_rows) do
+        local entry=entries[index]
+        row.button:Show(entry~=nil);row.name:Show(entry~=nil);row.icon:Show(entry~=nil)
+        row.selected:Show(entry~=nil and entry.output==self.selected)
+        if entry and row.output~=entry.output then
+            row.output=entry.output;row.name:SetText(tr(entry.label))
+            fit_section_icon(row.icon,entry.output,38,200+(index-1)*58,46,38,false)
+        end
+    end
+    local recipes=self.tab=="recipes"
+    self.controls.category:SetText(tr(recipes and "pf_hfc_cook_recipes" or "pf_hfc_cook_category"))
+    self.controls.recipe_count:SetText(recipes and string.format(tr("pf_hfc_cook_recipe_count"),#entries) or string.format(tr("pf_hfc_cook_available"),counts[recipe.raw] or 0))
+    for index,input in ipairs(recipe.ingredients) do
+        local suffix=index==1 and "" or "_"..index
+        local count=counts[input.section] or 0
+        local color=count>=input.amount and GetARGB(255,207,223,194) or GetARGB(255,231,121,104)
+        self.controls["ingredient_count"..suffix]:SetText(string.format("%d/%d",count,input.amount))
+        self.controls["ingredient_count"..suffix]:SetTextColor(color)
+        self.controls["ingredient_name"..suffix]:SetTextColor(color)
+    end
+    self.controls.status:SetText(tr(self.pending and "pf_hfc_cook_wait" or message))
+    self.controls.cook:SetText(tr("pf_hfc_cook_button"))
+    self.controls.cook:Show(true);self.controls.cook:Enable(ready and not self.pending)
+    self.controls.feedback:Show(true)
+    for _,name in ipairs({"cooking","recipes"}) do
+        local selected=self.tab==name
+        self.controls[name.."_selected"]:Show(selected)
+        -- CUI3tButton inherits CUIStatic's four-component Lua setter.
+        self.controls["tab_"..name]:SetTextColor(255,selected and 225 or 185,
+            selected and 170 or 184,selected and 86 or 177)
+    end
+    self.last_refresh=time_global()
+end
+
+function pf_hfc_cooking_dialog:UpdateResultStats(section,y)
+    local ini=system_ini()
+    local actor_section=db.actor:section()
+    local condition=ini:line_exist(actor_section,"condition_sect") and ini:r_string(actor_section,"condition_sect") or actor_section
+    local height=0
+    self.result_stats.section=section
+    for _,row in ipairs(self.result_stats.rows) do
+        local field=row.field
+        local value=stat_number(ini,section,field[4] or field[1],0)
+        local visible=math.abs(value)>=.000001
+        row.icon:Show(visible);row.caption:Show(visible);row.value:Show(visible)
+        if visible then
+            -- Radiation removal displays a minus but is still a benefit.
+            local color=field[1]=="boost_time" and GetARGB(255,170,170,170) or
+                (value>0 and GetARGB(255,178,222,154) or GetARGB(255,231,121,104))
+            local maximum=type(field[3])=="string" and stat_number(ini,condition,field[3].."_zone_max_power",1) or (field[3] or 1)
+            if math.abs(maximum)<.000001 then maximum=1 end
+            value=value/maximum*row.magnitude
+            local text=string.format(row.sign and "%+.0f" or "%.0f",stat_round(value))
+            if row.unit~="" then text=text.." "..tr(row.unit) end
+            row.value:SetText(text);row.value:SetTextColor(color)
+            if row.texture_minus~="" then row.icon:InitTexture(value>=0 and row.texture_plus or row.texture_minus) end
+            row.icon:SetWndPos(vector2():set(816,y+height))
+            row.caption:SetWndPos(vector2():set(816+row.caption_x,y+height))
+            row.value:SetWndPos(vector2():set(816+row.value_x,y+height))
+            height=height+row.height
+        end
+    end
+    self.result_stats.height=height
+    return height
+end
+
+function pf_hfc_cooking_dialog:OnCookingTab() self.tab="cooking";self.selected=nil;self:Refresh() end
+function pf_hfc_cooking_dialog:OnRecipesTab() self.tab="recipes";self.selected=nil;self:Refresh() end
+function pf_hfc_cooking_dialog:OnSelectRecipe(index)
+    local recipe=pf_hf_campfire_cooking.recipes(self.tab)[index or 1]
+    self.selected=recipe and recipe.output
+    self:Refresh()
+end
+
+function pf_hfc_cooking_dialog:OnCook()
+    if not self.id or self.pending or not pf_hf_campfire_cooking.recipe(self.selected) then return end
+    local ok,message,consumed=pf_hf_campfire_cooking.cook(self.id,self.selected)
+    if ok then self.pending=consumed end
+    self.controls.feedback:SetText(tr(message))
+    self.controls.feedback:SetTextColor(ok and GetARGB(255,178,222,154) or GetARGB(255,231,121,104))
+    self:Refresh()
+end
+
+function pf_hfc_cooking_dialog:Update()
+    CUIScriptWnd.Update(self)
+    if not self.id then return end
+    if not db.actor or db.actor:id()~=self.actor_id or level.name()~=self.world or
+        not pf_hf_campfire_cooking.station(self.id) then self:OnClose();return end
+    if self.focus and not self.focus.complete and self.focus.frame~=device().frame then
+        self.focus.frame=device().frame
+        if self.focus.cleanup_id then
+            -- The final camera was installed by the previous frame's queue drain.
+            level.remove_cam_effector_at(self.focus.cleanup_id)
+            self.focus.complete=true
+        else
+            -- A slow initial UI refresh or a frame hitch must not skip the blend.
+            local now=time_global()
+            if self.focus.updated then
+                local step=math.min(math.max(now-self.focus.updated,0),CAMERA_MAX_STEP_MS)
+                self.focus.elapsed=math.min(self.focus.elapsed+step,CAMERA_BLEND_MS)
+            end
+            self.focus.updated=now
+            local t=self.focus.elapsed/CAMERA_BLEND_MS
+            local position,direction=focus_pose(self.focus.origin,self.focus.look,self.focus.target,t*t*(3-2*t))
+            -- CameraManager drains additions AFTER processing the current camera.
+            -- Alternate IDs so the last installed anchor survives that processing.
+            local previous=self.camera_id
+            local next_id=previous==CAMERA_ID and CAMERA_ALTERNATE_ID or CAMERA_ID
+            local duration=level.add_cam_effector_at(CAMERA_EFFECT,next_id,false,"",position,direction)
+            if not duration or duration<=0 then self:OnClose();return end
+            self.camera_id=next_id
+            if t>=1 then self.focus.cleanup_id=previous end
+        end
+    end
+    if self.pending then
+        local waiting=false
+        for _,id in ipairs(self.pending) do if level.object_by_id(id) then waiting=true break end end
+        if not waiting then self.pending=nil;self:Refresh() end
+    end
+    if self.preview_active and self.preview.drag then
+        -- Reuse the editor's legacy-event -> SDL mouse-state translation.
+        -- Direct polling of Lua MOUSE_1 (337) reports a released keyboard key.
+        if type(level.editor_key_down)=="function" and not pf_runtime_editor.key_down(DIK_keys.MOUSE_1) then
+            pf_hf_cooking_preview.mouse(self.preview,false)
+        else pf_hf_cooking_preview.drag(self.preview,GetCursorPosition()) end
+    end
+    if self.preview_active and not pf_hf_cooking_preview.update(self.preview,device()) then
+        self.preview_active=false;self.controls.result_icon:Show(true)
+    end
+    if time_global()-(self.last_refresh or 0)>=200 then self:Refresh() end
+end
+
+function pf_hfc_cooking_dialog:OnKeyboard(key,action)
+    if key==DIK_keys.MOUSE_1 and
+        (action==ui_events.WINDOW_KEY_PRESSED or action==ui_events.WINDOW_KEY_RELEASED) and
+        pf_hf_cooking_preview.mouse(self.preview,action==ui_events.WINDOW_KEY_PRESSED,GetCursorPosition()) then return true end
+    if action==ui_events.WINDOW_KEY_RELEASED then self.keys[key]=nil;return true end
+    if action==ui_events.WINDOW_KEY_PRESSED then
+        local binding=dik_to_bind(key)
+        if binding==key_bindings.kQUIT or key==DIK_keys.DIK_ESCAPE then self:OnClose();return true end
+        if key==DIK_keys.DIK_F5 or key==DIK_keys.DIK_F9 or
+            binding==key_bindings.kQUICK_SAVE or binding==key_bindings.kQUICK_LOAD then return true end
+        if self.keys[key] then return true end
+        self.keys[key]=true
+        if key==DIK_keys.DIK_TAB then
+            if self.tab=="cooking" then self:OnRecipesTab() else self:OnCookingTab() end
+            return true
+        end
+        if binding==key_bindings.kUSE then self:OnCook();return true end
+        if binding==key_bindings.kWPN_RELOAD then
+            pf_hf_furniture.toggle_campfire(self.id);self:Refresh();return true
+        end
+    end
+    return CUIScriptWnd.OnKeyboard(self,key,action)
+end
+
+function pf_hfc_cooking_dialog:OnClose()
+    pf_hf_cooking_preview.close(self.preview)
+    self.preview=nil;self.preview_active=false
+    self:HideDialog()
+    if self.camera then
+        level.remove_cam_effector_at(CAMERA_ID)
+        level.remove_cam_effector_at(CAMERA_ALTERNATE_ID)
+        self.camera=nil;self.camera_id=nil
+    end
+    if db.actor and db.actor:id()==self.actor_id and level.name()==self.world then
+        level.show_weapon(true)
+        if self.saved_slot and self.saved_slot~=0 and db.actor:item_in_slot(self.saved_slot) then
+            db.actor:activate_slot(self.saved_slot)
+        end
+    end
+    self.id=nil;self.pending=nil;self.saved_slot=nil;self.keys={};self.focus=nil
+end
+
+function show(id)
+    if not active then active=pf_hfc_cooking_dialog() end
+    return active:Open(id)
+end
+function force_close()
+    if active and active.id then active:OnClose() end
+end

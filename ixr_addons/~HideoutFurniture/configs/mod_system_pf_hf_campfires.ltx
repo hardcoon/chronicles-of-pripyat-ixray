@@ -1,0 +1,165 @@
+; Portable copies of Pripyat Full campfire geometry.
+
+[pf_hfc_medium_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfc_medium_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_campfires\campfire_medium.ogf
+inv_name = pf_hfc_medium_name
+inv_name_short = pf_hfc_medium_name
+description = pf_hfc_medium_desc
+inv_weight = 1
+cost = 1200
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 2
+inv_scale = 4
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_campfires
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfc_medium]:physic_object
+; Visible ray-pickable object without a physics shell.
+class = SCRPTOBJ
+cform = skeleton
+damage_immune = true
+visual = pf_hf_campfires\campfire_medium.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1
+
+[pf_hfc_medium_fire]:campfire
+; Separate furniture particle variants; native lighting is unchanged.
+idle_particles = pf_hf_campfires\medium\idle
+enabling_particles = pf_hf_campfires\medium\enabled
+disabled_particles = pf_hf_campfires\medium\disabled
+blowout_particles = pf_hf_campfires\medium\disabled
+script_binding = pf_hf_campfire_zone_binder.init
+; Furniture fires are decorative: no anomaly damage, detector response or blowout.
+max_start_power = 0
+blowout_light = off
+idle_particles_dont_stop = false
+ignore_nonalive = true
+ignore_small = true
+ignore_artefacts = true
+idle_light_range = 6.5
+idle_light_height = 0.4666666666666666
+
+[pf_hfc_large_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfc_large_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_campfires\campfire_large.ogf
+inv_name = pf_hfc_large_name
+inv_name_short = pf_hfc_large_name
+description = pf_hfc_large_desc
+inv_weight = 3
+cost = 1600
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 2
+inv_scale = 4
+inv_grid_x = 2
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_campfires
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfc_large]:physic_object
+; Visible ray-pickable object without a physics shell.
+class = SCRPTOBJ
+cform = skeleton
+damage_immune = true
+visual = pf_hf_campfires\campfire_large.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 3
+
+[pf_hfc_large_fire]:campfire
+; Separate furniture particle variants; native lighting is unchanged.
+idle_particles = pf_hf_campfires\large\idle
+enabling_particles = pf_hf_campfires\large\enabled
+disabled_particles = pf_hf_campfires\large\disabled
+blowout_particles = pf_hf_campfires\large\disabled
+script_binding = pf_hf_campfire_zone_binder.init
+; Furniture fires are decorative: no anomaly damage, detector response or blowout.
+max_start_power = 0
+blowout_light = off
+idle_particles_dont_stop = false
+ignore_nonalive = true
+ignore_small = true
+ignore_artefacts = true
+idle_light_range = 8.0
+idle_light_height = 0.4666666666666666
+
+[pf_hfc_barrel_item]:identity_immunities
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfc_barrel_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_campfires\campfire_barrel.ogf
+inv_name = pf_hfc_barrel_name
+inv_name_short = pf_hfc_barrel_name
+description = pf_hfc_barrel_desc
+inv_weight = 2
+cost = 1400
+can_trade = false
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 2
+inv_scale = 4
+inv_grid_x = 4
+inv_grid_y = 0
+icons_texture = ui\ui_pf_hf_campfires
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfc_barrel]:physic_object
+; Visible ray-pickable object without a physics shell.
+class = SCRPTOBJ
+cform = skeleton
+damage_immune = true
+visual = pf_hf_campfires\campfire_barrel.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 2
+
+[pf_hfc_barrel_fire]:campfire
+; Separate furniture particle variants; native lighting is unchanged.
+idle_particles = pf_hf_campfires\barrel\idle
+enabling_particles = pf_hf_campfires\barrel\enabled
+disabled_particles = pf_hf_campfires\barrel\disabled
+blowout_particles = pf_hf_campfires\barrel\disabled
+script_binding = pf_hf_campfire_zone_binder.init
+; Furniture fires are decorative: no anomaly damage, detector response or blowout.
+max_start_power = 0
+blowout_light = off
+idle_particles_dont_stop = false
+ignore_nonalive = true
+ignore_small = true
+ignore_artefacts = true
+idle_light_range = 6
+idle_light_height = 0.4666666666666666
+
+![inventory_sort_registry]
+pf_hfc_medium_item = furniture
+pf_hfc_large_item = furniture
+pf_hfc_barrel_item = furniture

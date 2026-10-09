@@ -1,0 +1,1034 @@
+; Quantity, subject morphology and evidence-aware sentence templates.
+; Text values are localization IDs; this file is ASCII.
+
+[grammar]
+version = 1
+max_count = 100
+language_default = rus
+spoken_group_threshold = 3
+pair_nom = pf_pa_rumor_pair_nom
+pair_acc = pf_pa_rumor_pair_acc
+join_two = pf_pa_rumor_join_two
+fallback = pf_pa_rumor_fallback
+
+[factions]
+loner = stalker
+b = bandit
+d = dolg
+f = freedom
+o = monolith
+e = ecolog
+a = army
+c = killer
+
+[species]
+1 = dog
+2 = boar
+3 = flesh
+4 = pseudodog
+5 = snork
+6 = bloodsucker
+7 = burer
+8 = controller
+9 = chimera
+10 = gigant
+11 = tushkano
+
+[templates]
+ids = report_01,report_02,report_03,report_04,report_05,report_06,seen_01,seen_02,seen_03,seen_04
+
+[limits]
+max_answers = 3
+scope = npc_lifetime
+reset_on_reopen = false
+persist_with_npc = true
+exhausted = pf_pa_rumor_exhausted
+
+[subject_stalker]
+gender = m
+tone = neutral
+nom_one = pf_pa_rumor_stalker_nom_one
+gen_one = pf_pa_rumor_stalker_gen_one
+nom_few = pf_pa_rumor_stalker_nom_few
+acc_one = pf_pa_rumor_stalker_acc_one
+gen_many = pf_pa_rumor_stalker_gen_many
+solo_nom = pf_pa_rumor_stalker_solo_nom
+solo_acc = pf_pa_rumor_stalker_solo_acc
+en_many = pf_pa_rumor_stalker_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_stalker_group_nom_1
+group_acc_1 = pf_pa_rumor_stalker_group_acc_1
+group_nom_2 = pf_pa_rumor_stalker_group_nom_2
+group_acc_2 = pf_pa_rumor_stalker_group_acc_2
+
+[subject_bandit]
+gender = m
+tone = resentment
+nom_one = pf_pa_rumor_bandit_nom_one
+gen_one = pf_pa_rumor_bandit_gen_one
+nom_few = pf_pa_rumor_bandit_nom_few
+acc_one = pf_pa_rumor_bandit_acc_one
+gen_many = pf_pa_rumor_bandit_gen_many
+solo_nom = pf_pa_rumor_bandit_solo_nom
+solo_acc = pf_pa_rumor_bandit_solo_acc
+en_many = pf_pa_rumor_bandit_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_bandit_group_nom_1
+group_acc_1 = pf_pa_rumor_bandit_group_acc_1
+group_nom_2 = pf_pa_rumor_bandit_group_nom_2
+group_acc_2 = pf_pa_rumor_bandit_group_acc_2
+
+[subject_dolg]
+gender = m
+tone = cautious
+nom_one = pf_pa_rumor_dolg_nom_one
+gen_one = pf_pa_rumor_dolg_gen_one
+nom_few = pf_pa_rumor_dolg_nom_few
+acc_one = pf_pa_rumor_dolg_acc_one
+gen_many = pf_pa_rumor_dolg_gen_many
+solo_nom = pf_pa_rumor_dolg_solo_nom
+solo_acc = pf_pa_rumor_dolg_solo_acc
+en_many = pf_pa_rumor_dolg_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_dolg_group_nom_1
+group_acc_1 = pf_pa_rumor_dolg_group_acc_1
+group_nom_2 = pf_pa_rumor_dolg_group_nom_2
+group_acc_2 = pf_pa_rumor_dolg_group_acc_2
+
+[subject_freedom]
+gender = m
+tone = neutral
+nom_one = pf_pa_rumor_freedom_nom_one
+gen_one = pf_pa_rumor_freedom_gen_one
+nom_few = pf_pa_rumor_freedom_nom_few
+acc_one = pf_pa_rumor_freedom_acc_one
+gen_many = pf_pa_rumor_freedom_gen_many
+solo_nom = pf_pa_rumor_freedom_solo_nom
+solo_acc = pf_pa_rumor_freedom_solo_acc
+en_many = pf_pa_rumor_freedom_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_freedom_group_nom_1
+group_acc_1 = pf_pa_rumor_freedom_group_acc_1
+group_nom_2 = pf_pa_rumor_freedom_group_nom_2
+group_acc_2 = pf_pa_rumor_freedom_group_acc_2
+
+[subject_monolith]
+gender = m
+tone = danger
+nom_one = pf_pa_rumor_monolith_nom_one
+gen_one = pf_pa_rumor_monolith_gen_one
+nom_few = pf_pa_rumor_monolith_nom_few
+acc_one = pf_pa_rumor_monolith_acc_one
+gen_many = pf_pa_rumor_monolith_gen_many
+solo_nom = pf_pa_rumor_monolith_solo_nom
+solo_acc = pf_pa_rumor_monolith_solo_acc
+en_many = pf_pa_rumor_monolith_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_monolith_group_nom_1
+group_acc_1 = pf_pa_rumor_monolith_group_acc_1
+group_nom_2 = pf_pa_rumor_monolith_group_nom_2
+group_acc_2 = pf_pa_rumor_monolith_group_acc_2
+
+[subject_ecolog]
+gender = m
+tone = puzzled
+nom_one = pf_pa_rumor_ecolog_nom_one
+gen_one = pf_pa_rumor_ecolog_gen_one
+nom_few = pf_pa_rumor_ecolog_nom_few
+acc_one = pf_pa_rumor_ecolog_acc_one
+gen_many = pf_pa_rumor_ecolog_gen_many
+solo_nom = pf_pa_rumor_ecolog_solo_nom
+solo_acc = pf_pa_rumor_ecolog_solo_acc
+en_many = pf_pa_rumor_ecolog_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_ecolog_group_nom_1
+group_acc_1 = pf_pa_rumor_ecolog_group_acc_1
+group_nom_2 = pf_pa_rumor_ecolog_group_nom_2
+group_acc_2 = pf_pa_rumor_ecolog_group_acc_2
+
+[subject_army]
+gender = m
+tone = cautious
+nom_one = pf_pa_rumor_army_nom_one
+gen_one = pf_pa_rumor_army_gen_one
+nom_few = pf_pa_rumor_army_nom_few
+acc_one = pf_pa_rumor_army_acc_one
+gen_many = pf_pa_rumor_army_gen_many
+solo_nom = pf_pa_rumor_army_solo_nom
+solo_acc = pf_pa_rumor_army_solo_acc
+en_many = pf_pa_rumor_army_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_army_group_nom_1
+group_acc_1 = pf_pa_rumor_army_group_acc_1
+group_nom_2 = pf_pa_rumor_army_group_nom_2
+group_acc_2 = pf_pa_rumor_army_group_acc_2
+
+[subject_killer]
+gender = m
+tone = cautious
+nom_one = pf_pa_rumor_killer_nom_one
+gen_one = pf_pa_rumor_killer_gen_one
+nom_few = pf_pa_rumor_killer_nom_few
+acc_one = pf_pa_rumor_killer_acc_one
+gen_many = pf_pa_rumor_killer_gen_many
+solo_nom = pf_pa_rumor_killer_solo_nom
+solo_acc = pf_pa_rumor_killer_solo_acc
+en_many = pf_pa_rumor_killer_en_many
+group_kind = human
+group_nom_1 = pf_pa_rumor_killer_group_nom_1
+group_acc_1 = pf_pa_rumor_killer_group_acc_1
+group_nom_2 = pf_pa_rumor_killer_group_nom_2
+group_acc_2 = pf_pa_rumor_killer_group_acc_2
+
+[subject_dog]
+gender = f
+tone = animal
+nom_one = pf_pa_rumor_dog_nom_one
+gen_one = pf_pa_rumor_dog_gen_one
+nom_few = pf_pa_rumor_dog_nom_few
+acc_one = pf_pa_rumor_dog_acc_one
+gen_many = pf_pa_rumor_dog_gen_many
+solo_nom = pf_pa_rumor_dog_solo_nom
+solo_acc = pf_pa_rumor_dog_solo_acc
+en_many = pf_pa_rumor_dog_en_many
+group_kind = pack
+group_nom_1 = pf_pa_rumor_dog_group_nom_1
+group_acc_1 = pf_pa_rumor_dog_group_acc_1
+group_nom_2 = pf_pa_rumor_dog_group_nom_2
+group_acc_2 = pf_pa_rumor_dog_group_acc_2
+
+[subject_boar]
+gender = m
+tone = animal
+nom_one = pf_pa_rumor_boar_nom_one
+gen_one = pf_pa_rumor_boar_gen_one
+nom_few = pf_pa_rumor_boar_nom_few
+acc_one = pf_pa_rumor_boar_acc_one
+gen_many = pf_pa_rumor_boar_gen_many
+solo_nom = pf_pa_rumor_boar_solo_nom
+solo_acc = pf_pa_rumor_boar_solo_acc
+en_many = pf_pa_rumor_boar_en_many
+group_kind = herd
+group_nom_1 = pf_pa_rumor_boar_group_nom_1
+group_acc_1 = pf_pa_rumor_boar_group_acc_1
+group_nom_2 = pf_pa_rumor_boar_group_nom_2
+group_acc_2 = pf_pa_rumor_boar_group_acc_2
+
+[subject_flesh]
+gender = f
+tone = animal
+nom_one = pf_pa_rumor_flesh_nom_one
+gen_one = pf_pa_rumor_flesh_gen_one
+nom_few = pf_pa_rumor_flesh_nom_few
+acc_one = pf_pa_rumor_flesh_acc_one
+gen_many = pf_pa_rumor_flesh_gen_many
+solo_nom = pf_pa_rumor_flesh_solo_nom
+solo_acc = pf_pa_rumor_flesh_solo_acc
+en_many = pf_pa_rumor_flesh_en_many
+group_kind = herd
+group_nom_1 = pf_pa_rumor_flesh_group_nom_1
+group_acc_1 = pf_pa_rumor_flesh_group_acc_1
+group_nom_2 = pf_pa_rumor_flesh_group_nom_2
+group_acc_2 = pf_pa_rumor_flesh_group_acc_2
+
+[subject_pseudodog]
+gender = f
+tone = danger
+nom_one = pf_pa_rumor_pseudodog_nom_one
+gen_one = pf_pa_rumor_pseudodog_gen_one
+nom_few = pf_pa_rumor_pseudodog_nom_few
+acc_one = pf_pa_rumor_pseudodog_acc_one
+gen_many = pf_pa_rumor_pseudodog_gen_many
+solo_nom = pf_pa_rumor_pseudodog_solo_nom
+solo_acc = pf_pa_rumor_pseudodog_solo_acc
+en_many = pf_pa_rumor_pseudodog_en_many
+group_kind = pack
+group_nom_1 = pf_pa_rumor_pseudodog_group_nom_1
+group_acc_1 = pf_pa_rumor_pseudodog_group_acc_1
+group_nom_2 = pf_pa_rumor_pseudodog_group_nom_2
+group_acc_2 = pf_pa_rumor_pseudodog_group_acc_2
+
+[subject_snork]
+gender = m
+tone = danger
+nom_one = pf_pa_rumor_snork_nom_one
+gen_one = pf_pa_rumor_snork_gen_one
+nom_few = pf_pa_rumor_snork_nom_few
+acc_one = pf_pa_rumor_snork_acc_one
+gen_many = pf_pa_rumor_snork_gen_many
+solo_nom = pf_pa_rumor_snork_solo_nom
+solo_acc = pf_pa_rumor_snork_solo_acc
+en_many = pf_pa_rumor_snork_en_many
+group_kind = several
+group_nom_1 = pf_pa_rumor_snork_group_nom_1
+group_acc_1 = pf_pa_rumor_snork_group_acc_1
+group_nom_2 = pf_pa_rumor_snork_group_nom_2
+group_acc_2 = pf_pa_rumor_snork_group_acc_2
+
+[subject_bloodsucker]
+gender = m
+tone = fear
+nom_one = pf_pa_rumor_bloodsucker_nom_one
+gen_one = pf_pa_rumor_bloodsucker_gen_one
+nom_few = pf_pa_rumor_bloodsucker_nom_few
+acc_one = pf_pa_rumor_bloodsucker_acc_one
+gen_many = pf_pa_rumor_bloodsucker_gen_many
+solo_nom = pf_pa_rumor_bloodsucker_solo_nom
+solo_acc = pf_pa_rumor_bloodsucker_solo_acc
+en_many = pf_pa_rumor_bloodsucker_en_many
+group_kind = several
+group_nom_1 = pf_pa_rumor_bloodsucker_group_nom_1
+group_acc_1 = pf_pa_rumor_bloodsucker_group_acc_1
+group_nom_2 = pf_pa_rumor_bloodsucker_group_nom_2
+group_acc_2 = pf_pa_rumor_bloodsucker_group_acc_2
+
+[subject_burer]
+gender = m
+tone = fear
+nom_one = pf_pa_rumor_burer_nom_one
+gen_one = pf_pa_rumor_burer_gen_one
+nom_few = pf_pa_rumor_burer_nom_few
+acc_one = pf_pa_rumor_burer_acc_one
+gen_many = pf_pa_rumor_burer_gen_many
+solo_nom = pf_pa_rumor_burer_solo_nom
+solo_acc = pf_pa_rumor_burer_solo_acc
+en_many = pf_pa_rumor_burer_en_many
+group_kind = several
+group_nom_1 = pf_pa_rumor_burer_group_nom_1
+group_acc_1 = pf_pa_rumor_burer_group_acc_1
+group_nom_2 = pf_pa_rumor_burer_group_nom_2
+group_acc_2 = pf_pa_rumor_burer_group_acc_2
+
+[subject_controller]
+gender = m
+tone = fear
+nom_one = pf_pa_rumor_controller_nom_one
+gen_one = pf_pa_rumor_controller_gen_one
+nom_few = pf_pa_rumor_controller_nom_few
+acc_one = pf_pa_rumor_controller_acc_one
+gen_many = pf_pa_rumor_controller_gen_many
+solo_nom = pf_pa_rumor_controller_solo_nom
+solo_acc = pf_pa_rumor_controller_solo_acc
+en_many = pf_pa_rumor_controller_en_many
+group_kind = several
+group_nom_1 = pf_pa_rumor_controller_group_nom_1
+group_acc_1 = pf_pa_rumor_controller_group_acc_1
+group_nom_2 = pf_pa_rumor_controller_group_nom_2
+group_acc_2 = pf_pa_rumor_controller_group_acc_2
+
+[subject_chimera]
+gender = f
+tone = fear
+nom_one = pf_pa_rumor_chimera_nom_one
+gen_one = pf_pa_rumor_chimera_gen_one
+nom_few = pf_pa_rumor_chimera_nom_few
+acc_one = pf_pa_rumor_chimera_acc_one
+gen_many = pf_pa_rumor_chimera_gen_many
+solo_nom = pf_pa_rumor_chimera_solo_nom
+solo_acc = pf_pa_rumor_chimera_solo_acc
+en_many = pf_pa_rumor_chimera_en_many
+group_kind = several
+group_nom_1 = pf_pa_rumor_chimera_group_nom_1
+group_acc_1 = pf_pa_rumor_chimera_group_acc_1
+group_nom_2 = pf_pa_rumor_chimera_group_nom_2
+group_acc_2 = pf_pa_rumor_chimera_group_acc_2
+
+[subject_gigant]
+gender = m
+tone = fear
+nom_one = pf_pa_rumor_gigant_nom_one
+gen_one = pf_pa_rumor_gigant_gen_one
+nom_few = pf_pa_rumor_gigant_nom_few
+acc_one = pf_pa_rumor_gigant_acc_one
+gen_many = pf_pa_rumor_gigant_gen_many
+solo_nom = pf_pa_rumor_gigant_solo_nom
+solo_acc = pf_pa_rumor_gigant_solo_acc
+en_many = pf_pa_rumor_gigant_en_many
+group_kind = several
+group_nom_1 = pf_pa_rumor_gigant_group_nom_1
+group_acc_1 = pf_pa_rumor_gigant_group_acc_1
+group_nom_2 = pf_pa_rumor_gigant_group_nom_2
+group_acc_2 = pf_pa_rumor_gigant_group_acc_2
+
+[subject_tushkano]
+gender = m
+tone = animal
+nom_one = pf_pa_rumor_tushkano_nom_one
+gen_one = pf_pa_rumor_tushkano_gen_one
+nom_few = pf_pa_rumor_tushkano_nom_few
+acc_one = pf_pa_rumor_tushkano_acc_one
+gen_many = pf_pa_rumor_tushkano_gen_many
+solo_nom = pf_pa_rumor_tushkano_solo_nom
+solo_acc = pf_pa_rumor_tushkano_solo_acc
+en_many = pf_pa_rumor_tushkano_en_many
+group_kind = pack
+group_nom_1 = pf_pa_rumor_tushkano_group_nom_1
+group_acc_1 = pf_pa_rumor_tushkano_group_acc_1
+group_nom_2 = pf_pa_rumor_tushkano_group_nom_2
+group_acc_2 = pf_pa_rumor_tushkano_group_acc_2
+
+[composition_science_escort]
+nom = pf_pa_rumor_science_escort_nom
+acc = pf_pa_rumor_science_escort_acc
+ecolog_count = 1
+army_count = 2
+
+[number_001]
+nom_m = pf_pa_rumor_n001_nom_m
+nom_f = pf_pa_rumor_n001_nom_f
+acc_m = pf_pa_rumor_n001_acc_m
+acc_f = pf_pa_rumor_n001_acc_f
+
+[number_002]
+nom_m = pf_pa_rumor_n002_nom_m
+nom_f = pf_pa_rumor_n002_nom_f
+acc_m = pf_pa_rumor_n002_acc_m
+acc_f = pf_pa_rumor_n002_acc_f
+
+[number_003]
+nom_m = pf_pa_rumor_n003_nom_m
+nom_f = pf_pa_rumor_n003_nom_f
+acc_m = pf_pa_rumor_n003_acc_m
+acc_f = pf_pa_rumor_n003_acc_f
+
+[number_004]
+nom_m = pf_pa_rumor_n004_nom_m
+nom_f = pf_pa_rumor_n004_nom_f
+acc_m = pf_pa_rumor_n004_acc_m
+acc_f = pf_pa_rumor_n004_acc_f
+
+[number_005]
+nom_m = pf_pa_rumor_n005_nom_m
+nom_f = pf_pa_rumor_n005_nom_f
+acc_m = pf_pa_rumor_n005_acc_m
+acc_f = pf_pa_rumor_n005_acc_f
+
+[number_006]
+nom_m = pf_pa_rumor_n006_nom_m
+nom_f = pf_pa_rumor_n006_nom_f
+acc_m = pf_pa_rumor_n006_acc_m
+acc_f = pf_pa_rumor_n006_acc_f
+
+[number_007]
+nom_m = pf_pa_rumor_n007_nom_m
+nom_f = pf_pa_rumor_n007_nom_f
+acc_m = pf_pa_rumor_n007_acc_m
+acc_f = pf_pa_rumor_n007_acc_f
+
+[number_008]
+nom_m = pf_pa_rumor_n008_nom_m
+nom_f = pf_pa_rumor_n008_nom_f
+acc_m = pf_pa_rumor_n008_acc_m
+acc_f = pf_pa_rumor_n008_acc_f
+
+[number_009]
+nom_m = pf_pa_rumor_n009_nom_m
+nom_f = pf_pa_rumor_n009_nom_f
+acc_m = pf_pa_rumor_n009_acc_m
+acc_f = pf_pa_rumor_n009_acc_f
+
+[number_010]
+nom_m = pf_pa_rumor_n010_nom_m
+nom_f = pf_pa_rumor_n010_nom_f
+acc_m = pf_pa_rumor_n010_acc_m
+acc_f = pf_pa_rumor_n010_acc_f
+
+[number_011]
+nom_m = pf_pa_rumor_n011_nom_m
+nom_f = pf_pa_rumor_n011_nom_f
+acc_m = pf_pa_rumor_n011_acc_m
+acc_f = pf_pa_rumor_n011_acc_f
+
+[number_012]
+nom_m = pf_pa_rumor_n012_nom_m
+nom_f = pf_pa_rumor_n012_nom_f
+acc_m = pf_pa_rumor_n012_acc_m
+acc_f = pf_pa_rumor_n012_acc_f
+
+[number_013]
+nom_m = pf_pa_rumor_n013_nom_m
+nom_f = pf_pa_rumor_n013_nom_f
+acc_m = pf_pa_rumor_n013_acc_m
+acc_f = pf_pa_rumor_n013_acc_f
+
+[number_014]
+nom_m = pf_pa_rumor_n014_nom_m
+nom_f = pf_pa_rumor_n014_nom_f
+acc_m = pf_pa_rumor_n014_acc_m
+acc_f = pf_pa_rumor_n014_acc_f
+
+[number_015]
+nom_m = pf_pa_rumor_n015_nom_m
+nom_f = pf_pa_rumor_n015_nom_f
+acc_m = pf_pa_rumor_n015_acc_m
+acc_f = pf_pa_rumor_n015_acc_f
+
+[number_016]
+nom_m = pf_pa_rumor_n016_nom_m
+nom_f = pf_pa_rumor_n016_nom_f
+acc_m = pf_pa_rumor_n016_acc_m
+acc_f = pf_pa_rumor_n016_acc_f
+
+[number_017]
+nom_m = pf_pa_rumor_n017_nom_m
+nom_f = pf_pa_rumor_n017_nom_f
+acc_m = pf_pa_rumor_n017_acc_m
+acc_f = pf_pa_rumor_n017_acc_f
+
+[number_018]
+nom_m = pf_pa_rumor_n018_nom_m
+nom_f = pf_pa_rumor_n018_nom_f
+acc_m = pf_pa_rumor_n018_acc_m
+acc_f = pf_pa_rumor_n018_acc_f
+
+[number_019]
+nom_m = pf_pa_rumor_n019_nom_m
+nom_f = pf_pa_rumor_n019_nom_f
+acc_m = pf_pa_rumor_n019_acc_m
+acc_f = pf_pa_rumor_n019_acc_f
+
+[number_020]
+nom_m = pf_pa_rumor_n020_nom_m
+nom_f = pf_pa_rumor_n020_nom_f
+acc_m = pf_pa_rumor_n020_acc_m
+acc_f = pf_pa_rumor_n020_acc_f
+
+[number_021]
+nom_m = pf_pa_rumor_n021_nom_m
+nom_f = pf_pa_rumor_n021_nom_f
+acc_m = pf_pa_rumor_n021_acc_m
+acc_f = pf_pa_rumor_n021_acc_f
+
+[number_022]
+nom_m = pf_pa_rumor_n022_nom_m
+nom_f = pf_pa_rumor_n022_nom_f
+acc_m = pf_pa_rumor_n022_acc_m
+acc_f = pf_pa_rumor_n022_acc_f
+
+[number_023]
+nom_m = pf_pa_rumor_n023_nom_m
+nom_f = pf_pa_rumor_n023_nom_f
+acc_m = pf_pa_rumor_n023_acc_m
+acc_f = pf_pa_rumor_n023_acc_f
+
+[number_024]
+nom_m = pf_pa_rumor_n024_nom_m
+nom_f = pf_pa_rumor_n024_nom_f
+acc_m = pf_pa_rumor_n024_acc_m
+acc_f = pf_pa_rumor_n024_acc_f
+
+[number_025]
+nom_m = pf_pa_rumor_n025_nom_m
+nom_f = pf_pa_rumor_n025_nom_f
+acc_m = pf_pa_rumor_n025_acc_m
+acc_f = pf_pa_rumor_n025_acc_f
+
+[number_026]
+nom_m = pf_pa_rumor_n026_nom_m
+nom_f = pf_pa_rumor_n026_nom_f
+acc_m = pf_pa_rumor_n026_acc_m
+acc_f = pf_pa_rumor_n026_acc_f
+
+[number_027]
+nom_m = pf_pa_rumor_n027_nom_m
+nom_f = pf_pa_rumor_n027_nom_f
+acc_m = pf_pa_rumor_n027_acc_m
+acc_f = pf_pa_rumor_n027_acc_f
+
+[number_028]
+nom_m = pf_pa_rumor_n028_nom_m
+nom_f = pf_pa_rumor_n028_nom_f
+acc_m = pf_pa_rumor_n028_acc_m
+acc_f = pf_pa_rumor_n028_acc_f
+
+[number_029]
+nom_m = pf_pa_rumor_n029_nom_m
+nom_f = pf_pa_rumor_n029_nom_f
+acc_m = pf_pa_rumor_n029_acc_m
+acc_f = pf_pa_rumor_n029_acc_f
+
+[number_030]
+nom_m = pf_pa_rumor_n030_nom_m
+nom_f = pf_pa_rumor_n030_nom_f
+acc_m = pf_pa_rumor_n030_acc_m
+acc_f = pf_pa_rumor_n030_acc_f
+
+[number_031]
+nom_m = pf_pa_rumor_n031_nom_m
+nom_f = pf_pa_rumor_n031_nom_f
+acc_m = pf_pa_rumor_n031_acc_m
+acc_f = pf_pa_rumor_n031_acc_f
+
+[number_032]
+nom_m = pf_pa_rumor_n032_nom_m
+nom_f = pf_pa_rumor_n032_nom_f
+acc_m = pf_pa_rumor_n032_acc_m
+acc_f = pf_pa_rumor_n032_acc_f
+
+[number_033]
+nom_m = pf_pa_rumor_n033_nom_m
+nom_f = pf_pa_rumor_n033_nom_f
+acc_m = pf_pa_rumor_n033_acc_m
+acc_f = pf_pa_rumor_n033_acc_f
+
+[number_034]
+nom_m = pf_pa_rumor_n034_nom_m
+nom_f = pf_pa_rumor_n034_nom_f
+acc_m = pf_pa_rumor_n034_acc_m
+acc_f = pf_pa_rumor_n034_acc_f
+
+[number_035]
+nom_m = pf_pa_rumor_n035_nom_m
+nom_f = pf_pa_rumor_n035_nom_f
+acc_m = pf_pa_rumor_n035_acc_m
+acc_f = pf_pa_rumor_n035_acc_f
+
+[number_036]
+nom_m = pf_pa_rumor_n036_nom_m
+nom_f = pf_pa_rumor_n036_nom_f
+acc_m = pf_pa_rumor_n036_acc_m
+acc_f = pf_pa_rumor_n036_acc_f
+
+[number_037]
+nom_m = pf_pa_rumor_n037_nom_m
+nom_f = pf_pa_rumor_n037_nom_f
+acc_m = pf_pa_rumor_n037_acc_m
+acc_f = pf_pa_rumor_n037_acc_f
+
+[number_038]
+nom_m = pf_pa_rumor_n038_nom_m
+nom_f = pf_pa_rumor_n038_nom_f
+acc_m = pf_pa_rumor_n038_acc_m
+acc_f = pf_pa_rumor_n038_acc_f
+
+[number_039]
+nom_m = pf_pa_rumor_n039_nom_m
+nom_f = pf_pa_rumor_n039_nom_f
+acc_m = pf_pa_rumor_n039_acc_m
+acc_f = pf_pa_rumor_n039_acc_f
+
+[number_040]
+nom_m = pf_pa_rumor_n040_nom_m
+nom_f = pf_pa_rumor_n040_nom_f
+acc_m = pf_pa_rumor_n040_acc_m
+acc_f = pf_pa_rumor_n040_acc_f
+
+[number_041]
+nom_m = pf_pa_rumor_n041_nom_m
+nom_f = pf_pa_rumor_n041_nom_f
+acc_m = pf_pa_rumor_n041_acc_m
+acc_f = pf_pa_rumor_n041_acc_f
+
+[number_042]
+nom_m = pf_pa_rumor_n042_nom_m
+nom_f = pf_pa_rumor_n042_nom_f
+acc_m = pf_pa_rumor_n042_acc_m
+acc_f = pf_pa_rumor_n042_acc_f
+
+[number_043]
+nom_m = pf_pa_rumor_n043_nom_m
+nom_f = pf_pa_rumor_n043_nom_f
+acc_m = pf_pa_rumor_n043_acc_m
+acc_f = pf_pa_rumor_n043_acc_f
+
+[number_044]
+nom_m = pf_pa_rumor_n044_nom_m
+nom_f = pf_pa_rumor_n044_nom_f
+acc_m = pf_pa_rumor_n044_acc_m
+acc_f = pf_pa_rumor_n044_acc_f
+
+[number_045]
+nom_m = pf_pa_rumor_n045_nom_m
+nom_f = pf_pa_rumor_n045_nom_f
+acc_m = pf_pa_rumor_n045_acc_m
+acc_f = pf_pa_rumor_n045_acc_f
+
+[number_046]
+nom_m = pf_pa_rumor_n046_nom_m
+nom_f = pf_pa_rumor_n046_nom_f
+acc_m = pf_pa_rumor_n046_acc_m
+acc_f = pf_pa_rumor_n046_acc_f
+
+[number_047]
+nom_m = pf_pa_rumor_n047_nom_m
+nom_f = pf_pa_rumor_n047_nom_f
+acc_m = pf_pa_rumor_n047_acc_m
+acc_f = pf_pa_rumor_n047_acc_f
+
+[number_048]
+nom_m = pf_pa_rumor_n048_nom_m
+nom_f = pf_pa_rumor_n048_nom_f
+acc_m = pf_pa_rumor_n048_acc_m
+acc_f = pf_pa_rumor_n048_acc_f
+
+[number_049]
+nom_m = pf_pa_rumor_n049_nom_m
+nom_f = pf_pa_rumor_n049_nom_f
+acc_m = pf_pa_rumor_n049_acc_m
+acc_f = pf_pa_rumor_n049_acc_f
+
+[number_050]
+nom_m = pf_pa_rumor_n050_nom_m
+nom_f = pf_pa_rumor_n050_nom_f
+acc_m = pf_pa_rumor_n050_acc_m
+acc_f = pf_pa_rumor_n050_acc_f
+
+[number_051]
+nom_m = pf_pa_rumor_n051_nom_m
+nom_f = pf_pa_rumor_n051_nom_f
+acc_m = pf_pa_rumor_n051_acc_m
+acc_f = pf_pa_rumor_n051_acc_f
+
+[number_052]
+nom_m = pf_pa_rumor_n052_nom_m
+nom_f = pf_pa_rumor_n052_nom_f
+acc_m = pf_pa_rumor_n052_acc_m
+acc_f = pf_pa_rumor_n052_acc_f
+
+[number_053]
+nom_m = pf_pa_rumor_n053_nom_m
+nom_f = pf_pa_rumor_n053_nom_f
+acc_m = pf_pa_rumor_n053_acc_m
+acc_f = pf_pa_rumor_n053_acc_f
+
+[number_054]
+nom_m = pf_pa_rumor_n054_nom_m
+nom_f = pf_pa_rumor_n054_nom_f
+acc_m = pf_pa_rumor_n054_acc_m
+acc_f = pf_pa_rumor_n054_acc_f
+
+[number_055]
+nom_m = pf_pa_rumor_n055_nom_m
+nom_f = pf_pa_rumor_n055_nom_f
+acc_m = pf_pa_rumor_n055_acc_m
+acc_f = pf_pa_rumor_n055_acc_f
+
+[number_056]
+nom_m = pf_pa_rumor_n056_nom_m
+nom_f = pf_pa_rumor_n056_nom_f
+acc_m = pf_pa_rumor_n056_acc_m
+acc_f = pf_pa_rumor_n056_acc_f
+
+[number_057]
+nom_m = pf_pa_rumor_n057_nom_m
+nom_f = pf_pa_rumor_n057_nom_f
+acc_m = pf_pa_rumor_n057_acc_m
+acc_f = pf_pa_rumor_n057_acc_f
+
+[number_058]
+nom_m = pf_pa_rumor_n058_nom_m
+nom_f = pf_pa_rumor_n058_nom_f
+acc_m = pf_pa_rumor_n058_acc_m
+acc_f = pf_pa_rumor_n058_acc_f
+
+[number_059]
+nom_m = pf_pa_rumor_n059_nom_m
+nom_f = pf_pa_rumor_n059_nom_f
+acc_m = pf_pa_rumor_n059_acc_m
+acc_f = pf_pa_rumor_n059_acc_f
+
+[number_060]
+nom_m = pf_pa_rumor_n060_nom_m
+nom_f = pf_pa_rumor_n060_nom_f
+acc_m = pf_pa_rumor_n060_acc_m
+acc_f = pf_pa_rumor_n060_acc_f
+
+[number_061]
+nom_m = pf_pa_rumor_n061_nom_m
+nom_f = pf_pa_rumor_n061_nom_f
+acc_m = pf_pa_rumor_n061_acc_m
+acc_f = pf_pa_rumor_n061_acc_f
+
+[number_062]
+nom_m = pf_pa_rumor_n062_nom_m
+nom_f = pf_pa_rumor_n062_nom_f
+acc_m = pf_pa_rumor_n062_acc_m
+acc_f = pf_pa_rumor_n062_acc_f
+
+[number_063]
+nom_m = pf_pa_rumor_n063_nom_m
+nom_f = pf_pa_rumor_n063_nom_f
+acc_m = pf_pa_rumor_n063_acc_m
+acc_f = pf_pa_rumor_n063_acc_f
+
+[number_064]
+nom_m = pf_pa_rumor_n064_nom_m
+nom_f = pf_pa_rumor_n064_nom_f
+acc_m = pf_pa_rumor_n064_acc_m
+acc_f = pf_pa_rumor_n064_acc_f
+
+[number_065]
+nom_m = pf_pa_rumor_n065_nom_m
+nom_f = pf_pa_rumor_n065_nom_f
+acc_m = pf_pa_rumor_n065_acc_m
+acc_f = pf_pa_rumor_n065_acc_f
+
+[number_066]
+nom_m = pf_pa_rumor_n066_nom_m
+nom_f = pf_pa_rumor_n066_nom_f
+acc_m = pf_pa_rumor_n066_acc_m
+acc_f = pf_pa_rumor_n066_acc_f
+
+[number_067]
+nom_m = pf_pa_rumor_n067_nom_m
+nom_f = pf_pa_rumor_n067_nom_f
+acc_m = pf_pa_rumor_n067_acc_m
+acc_f = pf_pa_rumor_n067_acc_f
+
+[number_068]
+nom_m = pf_pa_rumor_n068_nom_m
+nom_f = pf_pa_rumor_n068_nom_f
+acc_m = pf_pa_rumor_n068_acc_m
+acc_f = pf_pa_rumor_n068_acc_f
+
+[number_069]
+nom_m = pf_pa_rumor_n069_nom_m
+nom_f = pf_pa_rumor_n069_nom_f
+acc_m = pf_pa_rumor_n069_acc_m
+acc_f = pf_pa_rumor_n069_acc_f
+
+[number_070]
+nom_m = pf_pa_rumor_n070_nom_m
+nom_f = pf_pa_rumor_n070_nom_f
+acc_m = pf_pa_rumor_n070_acc_m
+acc_f = pf_pa_rumor_n070_acc_f
+
+[number_071]
+nom_m = pf_pa_rumor_n071_nom_m
+nom_f = pf_pa_rumor_n071_nom_f
+acc_m = pf_pa_rumor_n071_acc_m
+acc_f = pf_pa_rumor_n071_acc_f
+
+[number_072]
+nom_m = pf_pa_rumor_n072_nom_m
+nom_f = pf_pa_rumor_n072_nom_f
+acc_m = pf_pa_rumor_n072_acc_m
+acc_f = pf_pa_rumor_n072_acc_f
+
+[number_073]
+nom_m = pf_pa_rumor_n073_nom_m
+nom_f = pf_pa_rumor_n073_nom_f
+acc_m = pf_pa_rumor_n073_acc_m
+acc_f = pf_pa_rumor_n073_acc_f
+
+[number_074]
+nom_m = pf_pa_rumor_n074_nom_m
+nom_f = pf_pa_rumor_n074_nom_f
+acc_m = pf_pa_rumor_n074_acc_m
+acc_f = pf_pa_rumor_n074_acc_f
+
+[number_075]
+nom_m = pf_pa_rumor_n075_nom_m
+nom_f = pf_pa_rumor_n075_nom_f
+acc_m = pf_pa_rumor_n075_acc_m
+acc_f = pf_pa_rumor_n075_acc_f
+
+[number_076]
+nom_m = pf_pa_rumor_n076_nom_m
+nom_f = pf_pa_rumor_n076_nom_f
+acc_m = pf_pa_rumor_n076_acc_m
+acc_f = pf_pa_rumor_n076_acc_f
+
+[number_077]
+nom_m = pf_pa_rumor_n077_nom_m
+nom_f = pf_pa_rumor_n077_nom_f
+acc_m = pf_pa_rumor_n077_acc_m
+acc_f = pf_pa_rumor_n077_acc_f
+
+[number_078]
+nom_m = pf_pa_rumor_n078_nom_m
+nom_f = pf_pa_rumor_n078_nom_f
+acc_m = pf_pa_rumor_n078_acc_m
+acc_f = pf_pa_rumor_n078_acc_f
+
+[number_079]
+nom_m = pf_pa_rumor_n079_nom_m
+nom_f = pf_pa_rumor_n079_nom_f
+acc_m = pf_pa_rumor_n079_acc_m
+acc_f = pf_pa_rumor_n079_acc_f
+
+[number_080]
+nom_m = pf_pa_rumor_n080_nom_m
+nom_f = pf_pa_rumor_n080_nom_f
+acc_m = pf_pa_rumor_n080_acc_m
+acc_f = pf_pa_rumor_n080_acc_f
+
+[number_081]
+nom_m = pf_pa_rumor_n081_nom_m
+nom_f = pf_pa_rumor_n081_nom_f
+acc_m = pf_pa_rumor_n081_acc_m
+acc_f = pf_pa_rumor_n081_acc_f
+
+[number_082]
+nom_m = pf_pa_rumor_n082_nom_m
+nom_f = pf_pa_rumor_n082_nom_f
+acc_m = pf_pa_rumor_n082_acc_m
+acc_f = pf_pa_rumor_n082_acc_f
+
+[number_083]
+nom_m = pf_pa_rumor_n083_nom_m
+nom_f = pf_pa_rumor_n083_nom_f
+acc_m = pf_pa_rumor_n083_acc_m
+acc_f = pf_pa_rumor_n083_acc_f
+
+[number_084]
+nom_m = pf_pa_rumor_n084_nom_m
+nom_f = pf_pa_rumor_n084_nom_f
+acc_m = pf_pa_rumor_n084_acc_m
+acc_f = pf_pa_rumor_n084_acc_f
+
+[number_085]
+nom_m = pf_pa_rumor_n085_nom_m
+nom_f = pf_pa_rumor_n085_nom_f
+acc_m = pf_pa_rumor_n085_acc_m
+acc_f = pf_pa_rumor_n085_acc_f
+
+[number_086]
+nom_m = pf_pa_rumor_n086_nom_m
+nom_f = pf_pa_rumor_n086_nom_f
+acc_m = pf_pa_rumor_n086_acc_m
+acc_f = pf_pa_rumor_n086_acc_f
+
+[number_087]
+nom_m = pf_pa_rumor_n087_nom_m
+nom_f = pf_pa_rumor_n087_nom_f
+acc_m = pf_pa_rumor_n087_acc_m
+acc_f = pf_pa_rumor_n087_acc_f
+
+[number_088]
+nom_m = pf_pa_rumor_n088_nom_m
+nom_f = pf_pa_rumor_n088_nom_f
+acc_m = pf_pa_rumor_n088_acc_m
+acc_f = pf_pa_rumor_n088_acc_f
+
+[number_089]
+nom_m = pf_pa_rumor_n089_nom_m
+nom_f = pf_pa_rumor_n089_nom_f
+acc_m = pf_pa_rumor_n089_acc_m
+acc_f = pf_pa_rumor_n089_acc_f
+
+[number_090]
+nom_m = pf_pa_rumor_n090_nom_m
+nom_f = pf_pa_rumor_n090_nom_f
+acc_m = pf_pa_rumor_n090_acc_m
+acc_f = pf_pa_rumor_n090_acc_f
+
+[number_091]
+nom_m = pf_pa_rumor_n091_nom_m
+nom_f = pf_pa_rumor_n091_nom_f
+acc_m = pf_pa_rumor_n091_acc_m
+acc_f = pf_pa_rumor_n091_acc_f
+
+[number_092]
+nom_m = pf_pa_rumor_n092_nom_m
+nom_f = pf_pa_rumor_n092_nom_f
+acc_m = pf_pa_rumor_n092_acc_m
+acc_f = pf_pa_rumor_n092_acc_f
+
+[number_093]
+nom_m = pf_pa_rumor_n093_nom_m
+nom_f = pf_pa_rumor_n093_nom_f
+acc_m = pf_pa_rumor_n093_acc_m
+acc_f = pf_pa_rumor_n093_acc_f
+
+[number_094]
+nom_m = pf_pa_rumor_n094_nom_m
+nom_f = pf_pa_rumor_n094_nom_f
+acc_m = pf_pa_rumor_n094_acc_m
+acc_f = pf_pa_rumor_n094_acc_f
+
+[number_095]
+nom_m = pf_pa_rumor_n095_nom_m
+nom_f = pf_pa_rumor_n095_nom_f
+acc_m = pf_pa_rumor_n095_acc_m
+acc_f = pf_pa_rumor_n095_acc_f
+
+[number_096]
+nom_m = pf_pa_rumor_n096_nom_m
+nom_f = pf_pa_rumor_n096_nom_f
+acc_m = pf_pa_rumor_n096_acc_m
+acc_f = pf_pa_rumor_n096_acc_f
+
+[number_097]
+nom_m = pf_pa_rumor_n097_nom_m
+nom_f = pf_pa_rumor_n097_nom_f
+acc_m = pf_pa_rumor_n097_acc_m
+acc_f = pf_pa_rumor_n097_acc_f
+
+[number_098]
+nom_m = pf_pa_rumor_n098_nom_m
+nom_f = pf_pa_rumor_n098_nom_f
+acc_m = pf_pa_rumor_n098_acc_m
+acc_f = pf_pa_rumor_n098_acc_f
+
+[number_099]
+nom_m = pf_pa_rumor_n099_nom_m
+nom_f = pf_pa_rumor_n099_nom_f
+acc_m = pf_pa_rumor_n099_acc_m
+acc_f = pf_pa_rumor_n099_acc_f
+
+[number_100]
+nom_m = pf_pa_rumor_n100_nom_m
+nom_f = pf_pa_rumor_n100_nom_f
+acc_m = pf_pa_rumor_n100_acc_m
+acc_f = pf_pa_rumor_n100_acc_f
+
+[template_report_01]
+form = acc
+order = place_subject
+evidence = reported
+text = pf_pa_rumor_template_report_01
+
+[template_report_02]
+form = acc
+order = subject_place
+evidence = reported
+text = pf_pa_rumor_template_report_02
+
+[template_report_03]
+form = acc
+order = place_subject
+evidence = reported
+text = pf_pa_rumor_template_report_03
+
+[template_report_04]
+form = nom
+order = place_subject
+evidence = reported
+text = pf_pa_rumor_template_report_04
+
+[template_report_05]
+form = acc
+order = subject_place
+evidence = reported
+text = pf_pa_rumor_template_report_05
+
+[template_report_06]
+form = acc
+order = subject_place
+evidence = reported
+text = pf_pa_rumor_template_report_06
+
+[template_seen_01]
+form = acc
+order = subject_place
+evidence = observed
+text = pf_pa_rumor_template_seen_01
+
+[template_seen_02]
+form = acc
+order = subject_place
+evidence = observed
+text = pf_pa_rumor_template_seen_02
+
+[template_seen_03]
+form = acc
+order = subject_place
+evidence = observed
+text = pf_pa_rumor_template_seen_03
+
+[template_seen_04]
+form = acc
+order = subject_place
+evidence = observed
+text = pf_pa_rumor_template_seen_04

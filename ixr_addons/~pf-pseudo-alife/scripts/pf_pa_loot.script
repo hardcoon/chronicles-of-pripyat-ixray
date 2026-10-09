@@ -1,0 +1,128 @@
+-- The facade supplies bounded, validated corpse records from the world manager.
+-- No callbacks, ALife scans, stash calls or shared stash RNG.
+local impl = {}
+local pools = {
+    materials={"pf_hf_fabric","pf_hf_straps","pf_hf_rubber","pf_hf_plastic","pf_hf_scrap","pf_hf_oil"},
+    provisions={{"conserva",20},{"bread",30},{"kolbasa",20},{"energy_drink",20},
+        {"mineral_water",30},{"flyaga",30},{"vodka",40}},
+    hydration={"energy_drink","mineral_water","flyaga"},
+    ammo={"ammo_9x18_fmj","ammo_9x18_pmm","ammo_9x19_fmj","ammo_11.43x23_fmj",
+        "ammo_12x70_buck","ammo_7.62x25_p","ammo_7.62x25_ps"},
+}
+
+function impl.random(record, limit)
+    if not record.loot_seed then
+        local seed = 4261016
+        for i = 1, #record.name do seed = (seed * 31 + string.byte(record.name, i)) % 2147483647 end
+        record.loot_seed = math.max(1, seed)
+    end
+    record.loot_seed = record.loot_seed * 16807 % 2147483647
+    return math.floor(record.loot_seed / 2147483647 * limit) + 1
+end
+
+function impl.uniform(record)
+    return (impl.random(record,2147483646)-1)/2147483646
+end
+function impl.add(manifest,section,amount)
+    if not system_ini():section_exist(section) then return end
+    for i=1,amount or 1 do manifest[#manifest+1]=section end
+end
+function impl.hydration(section)
+    for _,name in ipairs(pools.hydration) do if name==section then return true end end
+    return false
+end
+function impl.provisions(record,manifest,rules)
+    local total,nonhydration,no_followup=0,0,1
+    for _,entry in ipairs(pools.provisions) do total=total+entry[2] end
+    if impl.random(record,100)<=(rules.provisions or 20) then
+        local roll,selected=impl.random(record,total),1
+        for index,entry in ipairs(pools.provisions) do roll=roll-entry[2];if roll<=0 then selected=index;break end end
+        for index,entry in ipairs(pools.provisions) do
+            local weight=entry[2]/total
+            local followup=(entry[2]/100-weight)/(1-weight)
+            if index==selected or impl.uniform(record)<followup then impl.add(manifest,entry[1]) end
+        end
+    end
+    for _,entry in ipairs(pools.provisions) do
+        if impl.hydration(entry[1]) then
+            local weight=entry[2]/total
+            no_followup=no_followup*(1-(entry[2]/100-weight)/(1-weight))
+        else nonhydration=nonhydration+entry[2] end
+    end
+    for _,section in ipairs(manifest) do if impl.hydration(section) then return end end
+    local base=(rules.provisions or 20)/100*(1-nonhydration/total*no_followup)
+    local target=(rules.hydration or 23)/100
+    if target>base and base<1 and impl.uniform(record)<(target-base)/(1-base) then
+        impl.add(manifest,pools.hydration[impl.random(record,#pools.hydration)])
+    end
+end
+function impl.manifest(record,rules)
+    local manifest={}
+    if impl.random(record,100)<=rules.bandage then impl.add(manifest,"bandage") end
+    impl.provisions(record,manifest,rules)
+    if impl.random(record,100)<=(rules.ammo or 72) then
+        local lo,hi=rules.ammo_min or 1,rules.ammo_max or 2
+        local amount=lo+impl.random(record,math.max(1,hi-lo+1))-1
+        for i=1,amount do impl.add(manifest,pools.ammo[impl.random(record,#pools.ammo)]) end
+    end
+    for _,roll in ipairs({{rules.chance,rules.min,rules.max},{rules.extra,rules.extra_min,rules.extra_max}}) do
+        if impl.random(record,100)<=roll[1] then
+            impl.add(manifest,pools.materials[impl.random(record,#pools.materials)],
+                roll[2]+impl.random(record,math.max(1,roll[3]-roll[2]+1))-1)
+        end
+    end
+    return manifest
+end
+function impl.fill(entry, rules, budget)
+    local record = entry.record
+    local server = alife():object(record.id)
+    if record.loot_done or not server or server:alive() or not server.death_droped
+        or server:section_name() ~= record.section or server:name() ~= record.name then return end
+    if not record.loot_manifest then
+        record.loot_manifest, record.loot_created = impl.manifest(record,rules), 0
+    end
+    for i = (record.loot_created or 0) + 1, #record.loot_manifest do
+        if budget<=0 then return end
+        local item = alife():create(record.loot_manifest[i], server.position,
+            server.m_level_vertex_id, server.m_game_vertex_id, server.id)
+        assert(item, "corpse loot creation failed")
+        record.loot_created = i
+        budget=budget-1
+    end
+    record.loot_done = true
+end
+
+function impl.weapon_condition(item, section)
+    -- Stable private draw for this actual item, unaffected by its owner or load.
+    -- No shared RNG/pstor: transferred items retain their native ID/name.
+    local key = section .. ":" .. item:name()
+    local seed = 4261016
+    for i = 1, #key do seed = (seed * 31 + string.byte(key, i)) % 2147483647 end
+    seed = math.max(1, seed) * 16807 % 2147483647
+    seed = seed * 16807 % 2147483647
+    return (1 + math.floor(seed / 2147483647 * 10)) / 100
+end
+
+-- Loot balance only: never repair a weapon already below its private draw.
+function limit_weapon(item)
+    local section = item:section()
+    if section:match("^wpn_") and section ~= "wpn_binoc" then
+        local target = impl.weapon_condition(item, section)
+        if item:condition() > target then item:set_condition(target) end
+    end
+end
+
+function process(entries, rules)
+    if not entries then return end
+    local budget=8
+    for _, entry in ipairs(entries) do
+        if budget<=0 then break end
+        local before=entry.record.loot_created or 0
+        local ok, why = pcall(impl.fill, entry, rules, budget)
+        budget=budget-math.max(0,(entry.record.loot_created or 0)-before)
+        if not ok and entry.record.loot_error ~= tostring(why) then
+            entry.record.loot_error = tostring(why)
+            _G.log("[PF_PSEUDO_ALIFE] corpse loot retry: " .. tostring(why))
+        end
+    end
+end

@@ -1,0 +1,211 @@
+-- The facade owns dialog actions and NPC-persistent question counters.
+local impl = {}
+local state = {data = nil, last = nil}
+
+function impl.owned(speaker)
+    local kind = type(speaker)
+    if kind ~= "userdata" and kind ~= "table" then return false end
+    local section = speaker:section()
+    return string.match(section, "^pf_pa_s_%d+$") ~= nil
+        or string.match(section, "^pf_pa_s_[dfobeac]_%d+$") ~= nil
+end
+
+function impl.npc(first, second)
+    if impl.owned(first) then return first end
+    if impl.owned(second) then return second end
+end
+
+function impl.section(ini, section)
+    local result = {}
+    if not ini:section_exist(section) then return result end
+    for index = 0, ini:line_count(section) - 1 do
+        local valid, key, value = ini:r_line(section, index, "", "")
+        if valid then result[key] = value end
+    end
+    return result
+end
+
+function impl.data()
+    if state.data then return state.data end
+    local grammar = ini_file("pf_pa_rumors\\grammar.ltx")
+    local fixed = ini_file("pf_pa_rumors\\static.ltx")
+    local names = ini_file("pf_pa_rumors\\places.ltx")
+    local geo = ini_file("pf_pa_rumors\\coordinates.ltx")
+    local extra = ini_file("pf_pa_rumors\\extra.ltx")
+    local result = {grammar = {}, fixed = {}, choices = {}, places = {}, coordinates = {}, extras = {}, templates = {}}
+    for _, key in ipairs({"limits", "grammar", "factions", "species", "templates", "composition_science_escort"}) do
+        result.grammar[key] = impl.section(grammar, key)
+    end
+    result.extras.extra = impl.section(extra, "extra")
+    for id in string.gmatch(result.extras.extra.ids or "", "[^,%s]+") do
+        result.grammar["subject_" .. id] = impl.section(grammar, "subject_" .. id)
+        result.extras[id] = impl.section(extra, id)
+        if result.grammar["subject_" .. id].group_kind == "human" then
+            result.extras["speaker_" .. id] = impl.section(extra, "speaker_" .. id)
+        end
+    end
+    for _, key in ipairs({"same_faction", "science_escort"}) do result.extras[key] = impl.section(extra, key) end
+    for number = 1, 100 do
+        local key = string.format("number_%03d", number)
+        result.grammar[key] = impl.section(grammar, key)
+    end
+    for id in string.gmatch(result.grammar.templates.ids or "", "[^,%s]+") do
+        local row = impl.section(grammar, "template_" .. id)
+        result.grammar["template_" .. id] = row
+        if row.evidence == "reported" then result.templates[#result.templates + 1] = id end
+    end
+    result.places.places = impl.section(names, "places")
+    for id in string.gmatch(result.places.places.ids or "", "[^,%s]+") do result.places[id] = impl.section(names, id) end
+    result.coordinates.coordinates = impl.section(geo, "coordinates")
+    for id in string.gmatch(result.coordinates.coordinates.ids or "", "[^,%s]+") do result.coordinates[id] = impl.section(geo, id) end
+    result.index = pf_pa_rumor_source.compile(result.places, result.coordinates)
+    result.fixed.static = impl.section(fixed, "static")
+    result.fixed.dynamic_policy = impl.section(fixed, "dynamic_policy")
+    for topic in string.gmatch(result.fixed.static.ids or "", "[^,%s]+") do
+        local row = impl.section(fixed, topic)
+        result.fixed[topic] = row
+        local count = 0
+        for _ in string.gmatch(row.texts or "", "[^,%s]+") do
+            count = count + 1
+            result.choices[#result.choices + 1] = {topic = topic, index = count}
+        end
+    end
+    state.data = result
+    return result
+end
+
+function impl.dynamic(npc, data, seed)
+    if data.index.rows == 0 or data.index.level_name ~= level.name() or #data.templates == 0 then return end
+    local stored = xr_logic.pstor_retrieve(npc, "pf_pa_news_sources", "")
+    local seen, history = {}, {}
+    if type(stored) == "string" then
+        for key in stored:gmatch("[^|]+") do
+            if #history < 3 and not seen[key] then seen[key] = true; history[#history + 1] = key end
+        end
+    end
+    local objects = {}
+    for _, row in ipairs(pf_pa_world.rumor_objects()) do
+        if pf_pa_rumor_text.dynamic_eligible(data.fixed, row) then
+            row.subject = pf_pa_rumor_text.subject_id(data.grammar, row.kind, row.faction, row.species)
+            if row.subject then objects[#objects + 1] = row end
+        end
+    end
+    local facts = pf_pa_rumor_source.candidates(data.index, objects, npc:id(), seen)
+    if #facts == 0 then return end
+    local fact = facts[seed % #facts + 1]
+    local community = character_community(npc) or "stalker"
+    fact.speaker = data.extras["speaker_" .. community] and community or "stalker"
+    local template = data.templates[math.floor(seed / 17) % #data.templates + 1]
+    local variants = tonumber(data.extras.extra.variants_per_number) or 6
+    local comment = math.floor(seed / 101) % variants + 1
+    local reply = pf_pa_rumor_text.render(data.grammar, data.places, data.extras,
+        fact, template, comment, game.translate_string)
+    if reply then
+        if #history < 3 then history[#history + 1] = fact.key end
+        return reply, table.concat(history, "|")
+    end
+end
+
+function impl.count(npc)
+    if not npc or not db.storage[npc:id()] then return 0 end
+    local value = tonumber(xr_logic.pstor_retrieve(npc, "pf_pa_news_count", 0)) or 0
+    if value ~= value then value = 0 end
+    return math.max(0, math.min(3, math.floor(value)))
+end
+
+function impl.same_speaker(npc)
+    local last = state.last
+    -- game_object userdata has no __eq in IX-Ray; wrappers may also differ.
+    return last and last.id == npc:id() and last.name == npc:name()
+        and last.section == npc:section()
+end
+
+function impl.remember(npc, stamp, progress, reply)
+    state.last = {id = npc:id(), name = npc:name(), section = npc:section(),
+        stamp = stamp, progress = progress, reply = reply}
+end
+
+function allowed(first_speaker, second_speaker)
+    return impl.npc(first_speaker, second_speaker) ~= nil
+end
+
+function has_news(first_speaker, second_speaker)
+    local npc = impl.npc(first_speaker, second_speaker)
+    return npc ~= nil and db.storage[npc:id()] ~= nil and impl.count(npc) < 3
+end
+
+-- script_text supplies (npc, dialog_id, phrase_id), not two game objects.
+function hello_text(speaker)
+    local npc = impl.npc(speaker)
+    if npc and impl.count(npc) >= 3 then return game.translate_string("pf_pa_rumor_exhausted") end
+    return game.translate_string("pf_pa_city_news_hello")
+end
+
+function request_news(first_speaker, second_speaker)
+    local npc = impl.npc(first_speaker, second_speaker)
+    if not npc or not db.storage[npc:id()] then return end
+    local count = impl.count(npc)
+    local stamp = time_global()
+    if impl.same_speaker(npc) and state.last.stamp == stamp
+        and state.last.progress.count == count then return end
+    if count >= 3 then
+        impl.remember(npc, stamp, {count = count}, game.translate_string("pf_pa_rumor_exhausted"))
+        return
+    end
+    local data, progress = impl.data(), {count = count}
+    local seed = pf_pa_rumor_source.seed(tostring(npc:id()) .. ":" .. npc:section() .. ":" .. count .. ":" .. stamp)
+    local answer = game.translate_string("pf_pa_city_news_answer")
+    local dynamic, history
+    -- Prefer a live fact on the first question; later questions can occasionally
+    -- mention Yanov/bunker (one in five). Missing live facts use the fixed fallback.
+    if count == 0 or seed % 5 ~= 0 then dynamic, history = impl.dynamic(npc, data, seed) end
+    if dynamic then answer = dynamic
+    elseif #data.choices > 0 then
+        local choice = data.choices[(npc:id() + count * 5) % #data.choices + 1]
+        answer = pf_pa_rumor_text.static_text(data.fixed, choice.topic, choice.index, game.translate_string) or answer
+    end
+    local token = tostring(npc:id()) .. ":" .. count .. ":" .. stamp
+    local reply = pf_pa_rumor_text.consume_answer(data.grammar, progress, token, answer, game.translate_string)
+    if not reply then return end
+    if progress.count ~= count then
+        xr_logic.pstor_store(npc, "pf_pa_news_count", progress.count)
+        if history then xr_logic.pstor_store(npc, "pf_pa_news_sources", history) end
+        if progress.count == 3 then
+            reply = reply .. " " .. game.translate_string("pf_pa_rumor_exhausted")
+            progress.reply = reply
+        end
+    end
+    impl.remember(npc, stamp, progress, reply)
+end
+
+function news_text(speaker)
+    local npc = impl.npc(speaker)
+    if npc and impl.same_speaker(npc) and impl.count(npc) == state.last.progress.count then
+        return state.last.reply
+    end
+    if npc and impl.count(npc) >= 3 then return game.translate_string("pf_pa_rumor_exhausted") end
+    return game.translate_string("pf_pa_city_news_answer")
+end
+
+function reset()
+    -- Immutable dictionaries/index survive loading; the last speaker identity does not.
+    state.last = nil
+end
+
+function configure(npc)
+    if not impl.owned(npc) then return end
+    local storage = db.storage[npc:id()]
+    local meet = storage and storage.meet
+    -- Stock init_meet parses a condlist, but Cmeet_manager:update expects a bool.
+    -- Normalize only our NPCs after reset_meet, retaining the original meet action.
+    if meet and type(meet.meet_on_talking) == "table" then
+        meet.meet_on_talking = xr_logic.pick_section_from_condlist(db.actor, npc, meet.meet_on_talking) == "true"
+    end
+    npc:set_start_dialog("pf_pa_city_news")
+    npc:disable_trade()
+    if db.actor and character_community(npc) == "bandit" then
+        npc:set_relation(game_object.enemy, db.actor)
+        npc:force_set_goodwill(-1000, db.actor)
+        db.actor:set_relation(game_object.enemy, npc)
+    end
+end

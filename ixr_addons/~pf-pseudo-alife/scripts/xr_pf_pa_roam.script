@@ -1,0 +1,135 @@
+-- A peaceful GOAP action. Combat, danger and anomalies take priority.
+local NEED = 39001
+
+class "pf_pa_need_roam" (property_evaluator)
+function pf_pa_need_roam:__init(storage, name) super(nil, name)
+    self.st = storage
+end
+function pf_pa_need_roam:evaluate()
+    return xr_logic.is_active(self.object, self.st)
+end
+
+class "pf_pa_roam_action" (action_base)
+function pf_pa_roam_action:__init(npc, storage) super(nil, "pf_pa_roam")
+    self.st = storage
+end
+function pf_pa_roam_action:initialize()
+    action_base.initialize(self)
+    -- Match vanilla reach_task: explicit destinations must not use random branches.
+    self.object:set_movement_selection_type(game_object.alifeMovementTypeMask)
+    self.serial = nil
+    self.object:set_desired_position()
+    self.object:set_desired_direction()
+end
+function pf_pa_roam_action:activate_scheme()
+    self.serial = nil
+end
+function pf_pa_roam_action:reset_scheme()
+    self.serial = nil
+end
+function pf_pa_roam_action:execute()
+    action_base.execute(self)
+    if self.object:is_talking() then
+        -- Stop immediately if the stock meet planner has not taken over yet.
+        -- Invalidate the applied order so the same route resumes after talking.
+        self.serial = nil
+        self.object:set_desired_position()
+        self.object:set_desired_direction()
+        self.object:set_path_type(game_object.no_path)
+        state_mgr.set_state(self.object, "talk_default", nil, nil, {look_object = db.actor})
+        return
+    end
+    local storage = db.storage[self.object:id()]
+    local command = storage and storage.pf_pa_command
+    if not command then
+        self.object:set_path_type(game_object.no_path)
+        state_mgr.set_state(self.object, "guard_na")
+        return
+    end
+    -- The meet/combat planner can replace the target state while retaining our order.
+    -- Reassert the state without rebuilding the same path on every frame.
+    if command.kind == "rest" then
+        state_mgr.set_state(self.object, command.pose or "sit", nil, nil,
+            {look_position = vector():set(command.look.x, command.look.y, command.look.z)})
+    else state_mgr.set_state(self.object, command.kind == "idle" and "guard_na" or "patrol") end
+    if self.serial ~= command.serial then
+        if time_global() < (self.retry_at or 0) then return end
+        if command.kind == "level" and (not level.valid_vertex_id(command.lv)
+            or not self.object:accessible(command.lv)) then
+            self.retry_at = time_global() + 1000
+            return
+        end
+        self.retry_at = nil
+        self.object:set_desired_position()
+        self.object:set_desired_direction()
+        if command.kind == "idle" or command.kind == "rest" then
+            self.object:set_path_type(game_object.no_path)
+        elseif command.kind == "game" then
+            state_mgr.set_state(self.object, "patrol")
+            -- A new order must restart a stale native path even to the same ID.
+            -- The serial guard keeps this out of the per-frame state refresh.
+            self.object:inactualize_game_path()
+            self.object:inactualize_level_path()
+            self.object:set_path_type(game_object.game_path)
+            self.object:set_dest_game_vertex_id(command.gv)
+        elseif level.valid_vertex_id(command.lv) and self.object:accessible(command.lv) then
+            state_mgr.set_state(self.object, "patrol")
+            self.object:inactualize_level_path()
+            self.object:set_path_type(game_object.level_path)
+            self.object:set_dest_level_vertex_id(command.lv)
+        end
+        self.serial = command.serial
+    end
+end
+function pf_pa_roam_action:death_callback()
+    -- CEntityAlive calls this before CAI_Stalker::Die removes active-weapon ammo.
+    -- SetActiveSlot is synchronous; activate_slot only requests an animation.
+    local owner = self.object:cast_InventoryOwner()
+    if owner then owner:inventory():SetActiveSlot(CInventory.NO_ACTIVE_SLOT) end
+    -- Event only: never scan inventory in update. Remove any acquired forbidden loot.
+    local remove = {}
+    self.object:iterate_inventory(function(_, item)
+        local section = item:section()
+        if string.match(section, "^grenade_") or string.match(section, "^detector_") then
+            remove[#remove + 1] = item:id()
+        else
+            pf_pa_loot.limit_weapon(item)
+        end
+        return false
+    end, self.object)
+    for _, id in ipairs(remove) do
+        local server = alife():object(id)
+        if server and server.parent_id == self.object:id() then alife():release(server, true) end
+    end
+end
+function pf_pa_roam_action:finalize()
+    -- Release selector ownership before stock meet/combat/scavenging takes over.
+    self.object:set_movement_selection_type(game_object.alifeMovementTypeRandom)
+    self.serial = nil
+    self.object:set_desired_position()
+    self.object:set_desired_direction()
+    action_base.finalize(self)
+end
+
+function add_to_binder(npc, ini, scheme, section, storage)
+    local manager = npc:motivation_action_manager()
+    manager:add_evaluator(NEED, pf_pa_need_roam(storage, "pf_pa_need_roam"))
+    local a = pf_pa_roam_action(npc, storage)
+    a:add_precondition(world_property(stalker_ids.property_alive, true))
+    a:add_precondition(world_property(stalker_ids.property_enemy, false))
+    a:add_precondition(world_property(stalker_ids.property_danger, false))
+    a:add_precondition(world_property(stalker_ids.property_anomaly, false))
+    a:add_precondition(world_property(NEED, true))
+    xr_motivator.addCommonPrecondition(a)
+    a:add_effect(world_property(NEED, false))
+    a:add_effect(world_property(xr_evaluators_id.state_mgr + 4, false))
+    manager:add_action(NEED, a)
+    xr_logic.subscribe_action_for_events(npc, storage, a)
+    manager:action(xr_actions_id.alife):add_precondition(world_property(NEED, false))
+end
+
+function set_scheme(npc, ini, scheme, section)
+    local st = xr_logic.assign_storage_and_bind(npc, ini, scheme, section)
+    st.logic = xr_logic.cfg_get_switch_conditions(ini, section, npc)
+    pf_pa_dialogs.configure(npc)
+end

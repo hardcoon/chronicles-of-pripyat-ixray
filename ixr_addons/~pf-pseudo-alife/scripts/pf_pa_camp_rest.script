@@ -1,0 +1,295 @@
+-- Optional human travel destination. The facade exchanges data with the world;
+-- this subsystem never calls its sibling or owns engine callbacks/planners.
+local KEY = "pf_pa_camp_rest_v1"
+local impl = {}
+local rt = {}
+
+function impl.distance2(a, b)
+    return (a.x-b.x)^2 + (a.y-b.y)^2 + (a.z-b.z)^2
+end
+function impl.copy(p)
+    return {x=p.x,y=p.y,z=p.z}
+end
+function impl.random(n)
+    rt.root.seed = (rt.root.seed * 16807) % 2147483647
+    return 1 + math.floor(rt.root.seed / 2147483647 * n)
+end
+function impl.seconds()
+    -- Same game calendar origin survives F9; sleep and time-factor are included.
+    return math.max(0, game.get_game_time():diffSec(level.get_start_time()))
+end
+function impl.number(ini, key, default, lo, hi)
+    local value = ini:line_exist("catalog",key) and ini:r_float("catalog",key) or default
+    return math.max(lo,math.min(hi,value))
+end
+function impl.init(ctx)
+    local ini = ini_file("pf_pa_campfires.ltx")
+    rt.cfg = {enabled=ini:r_bool("catalog","runtime_enabled"),
+        chance=impl.number(ini,"destination_chance_percent",25,0,100),
+        min=impl.number(ini,"rest_min_game_hours",2,2,12),
+        max=impl.number(ini,"rest_max_game_hours",12,2,12),
+        cooldown=impl.number(ini,"cooldown_game_hours",6,1,72)*3600,
+        approach=impl.number(ini,"approach_timeout_seconds",180,30,600),
+        failed=impl.number(ini,"failed_fire_cooldown_seconds",300,30,1800)}
+    rt.cfg.max=math.max(rt.cfg.min,rt.cfg.max)
+    rt.root=rt.pending or {version=1,seed=426136,groups={}}
+    rt.pending=nil
+    assert(rt.root.version==1 and type(rt.root.groups)=="table","unsupported camp rest save")
+    rt.fires,rt.order,rt.reserved,rt.blocked,rt.seats={},{},{},{},{}
+    local names={}
+    for id in string.gmatch(ini:r_string("catalog","ids"),"[^,%s]+") do
+        local x,y,z=string.match(ini:r_string(id,"position"),"([^,]+),([^,]+),([^,]+)")
+        local p={x=assert(tonumber(x)),y=assert(tonumber(y)),z=assert(tonumber(z))}
+        local fire={id=id,name=ini:r_string(id,"object_name"),section=ini:r_string(id,"section"),
+            x=p.x,y=p.y,z=p.z,lv=ini:r_u32(id,"anchor_level_vertex"),gv=ini:r_u32(id,"anchor_game_vertex"),
+            reserved=ini:r_bool(id,"reserved_story")}
+        rt.fires[id]=fire
+        names[fire.name]=fire
+    end
+    -- One identity reconciliation per load, never in update's bounded work loop.
+    for _,server in alife():objects() do
+        local fire=names[server:name()]
+        if fire and server:section_name()==fire.section and impl.distance2(server.position,fire)<0.25 then
+            fire.object_id=server.id
+            if not fire.reserved then rt.order[#rt.order+1]=fire.id end
+        end
+    end
+    table.sort(rt.order)
+    rt.cursor,rt.next=1,0
+    local present={}
+    for _,g in ipairs(ctx.groups) do present[g.id]=true end
+    for id,s in pairs(rt.root.groups) do
+        if not present[id] then rt.root.groups[id]=nil
+        elseif s.fire and rt.fires[s.fire] and not rt.fires[s.fire].reserved then rt.reserved[s.fire]=id
+        elseif s.fire then s.invalid=true end
+    end
+    rt.initialized=true
+end
+function impl.valid(fire)
+    local server=fire.object_id and alife():object(fire.object_id)
+    return not fire.reserved and server and server:name()==fire.name
+        and server:section_name()==fire.section and impl.distance2(server.position,fire)<0.25
+end
+function impl.ray(p,direction,range,npc)
+    local ray=ray_pick()
+    ray:set_flags(3);ray:set_range(range);ray:set_ignore_object(npc or db.actor)
+    ray:set_position(p);ray:set_direction(direction)
+    if ray:query() then return ray:get_distance() end
+end
+
+-- Bounded geometry query, also used by the external native QA (no QA spawns).
+-- No cached AI node is trusted as proof of collision, floor or visibility.
+function probe(fire, npc, used, offset, budget)
+    used=used or {}
+    for i=1,16 do
+        if budget then
+            if budget.left<=0 then return nil,"budget" end
+            budget.left=budget.left-1
+        end
+        local angle=((offset or 0)+i)*math.pi/8
+        local radius=i%2==0 and 2.8 or 2.2
+        local lv=level.vertex_id(vector():set(fire.x+math.cos(angle)*radius,fire.y,fire.z+math.sin(angle)*radius))
+        if level.valid_vertex_id(lv) and (not npc or npc:accessible(lv)) then
+            local p=level.vertex_position(lv)
+            local d=impl.distance2(p,fire)
+            local free=math.abs(p.y-fire.y)<=0.65 and d>=1.7^2 and d<=3.5^2
+            for _,seat in pairs(used) do if impl.distance2(p,seat)<1.4^2 then free=false;break end end
+            if free then
+                local hit=impl.ray(vector():set(p.x,p.y+0.8,p.z),vector():set(0,-1,0),1.6,npc)
+                free=hit and math.abs(hit-0.8)<=0.3
+                if free then
+                    p=vector():set(p.x,p.y+0.85-hit,p.z)
+                    free=not impl.ray(vector():set(p.x,p.y+0.1,p.z),vector():set(0,1,0),1.8,npc)
+                    for j=1,4 do
+                        if free and impl.ray(vector():set(p.x,p.y+0.7,p.z),
+                            vector():set(math.cos(j*math.pi/2),0,math.sin(j*math.pi/2)),0.5,npc) then free=false end
+                    end
+                    if free then
+                        local direction=vector():set(fire.x-p.x,fire.y+0.7-p.y-0.7,fire.z-p.z)
+                        local length=math.sqrt(direction.x^2+direction.y^2+direction.z^2)
+                        direction:normalize()
+                        local wall=impl.ray(vector():set(p.x,p.y+0.7,p.z),direction,math.max(0.1,length-0.65),npc)
+                        if not wall then return {x=p.x,y=p.y,z=p.z,lv=lv,gv=fire.gv} end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function impl.members(g,ctx)
+    local members,leader={},nil
+    for _,key in ipairs(g.members) do
+        local r=ctx.slots[key]
+        local server=r and alife():object(r.id)
+        if r and server and server:alive() and server:name()==r.name and server:section_name()==r.section then
+            local m={key=key,record=r,server=server,npc=server.online and level.object_by_id(r.id)}
+            members[#members+1]=m
+            if not leader or string.match(r.section,"^pf_pa_s_a_") then leader=m end
+        end
+    end
+    return members,leader
+end
+function impl.busy(m)
+    local n=m.npc
+    if not n then return m.server.online end
+    if n:is_talking() or n:best_enemy() then return true end
+    local manager=n:motivation_action_manager()
+    return not manager:initialized() or manager:current_action_id()~=39001
+end
+function impl.order(orders,m,op,token,activity)
+    orders[#orders+1]={key=m.key,name=m.record.name,op=op,token=token,activity=activity}
+end
+function impl.finish(g,s,members,ctx,orders,bad)
+    for _,m in ipairs(members) do impl.order(orders,m,"finish",s.token) end
+    if rt.reserved[s.fire]==g.id then rt.reserved[s.fire]=nil end
+    rt.seats[g.id]=nil
+    if bad then rt.blocked[s.fire]=ctx.clock+rt.cfg.failed end
+    rt.root.groups[g.id]={next_game=impl.seconds()+rt.cfg.cooldown,last_fire=s.fire}
+end
+function impl.choose(g,s,leader,ctx,orders)
+    if not leader.record.route_requested_at then return end
+    local order={op="decision",key=leader.key,name=leader.record.name}
+    orders[#orders+1]=order
+    if not rt.cfg.enabled or impl.seconds()<(s.next_game or 0) or #rt.order==0
+        or impl.random(100)>rt.cfg.chance then return end
+    local start=impl.random(#rt.order)
+    for i=0,2 do
+        local fire=rt.fires[rt.order[(start+i-1)%#rt.order+1]]
+        if fire.id~=s.last_fire and not rt.reserved[fire.id]
+            and ctx.clock>=(rt.blocked[fire.id] or 0) and impl.valid(fire)
+            and ctx.graph.vertices[fire.gv] and game_graph():accessible(fire.gv) then
+            -- Far-away fires remain candidates. Final arrival always uses an exact
+            -- verified point, never merely a matching coarse game vertex.
+            local seat,reason=probe(fire,nil,{},impl.random(16),rt.budget)
+            if seat then
+                local token=leader.record.name..":"..tostring(impl.random(2147483646))
+                order.token,order.destination=token,seat
+                rt.root.groups[g.id]={fire=fire.id,token=token,leader=leader.record.name,phase="travel"}
+                rt.reserved[fire.id]=g.id
+                return
+            end
+            if reason=="budget" then return end
+            rt.blocked[fire.id]=ctx.clock+rt.cfg.failed
+        end
+    end
+end
+function impl.process(g,ctx,orders)
+    if g.kind~="s" then return end
+    local members,leader=impl.members(g,ctx)
+    local s=rt.root.groups[g.id] or {}
+    if not leader then
+        if s.fire then impl.finish(g,s,members,ctx,orders,false) end
+        return
+    end
+    if not s.fire then impl.choose(g,s,leader,ctx,orders);return end
+    local fire=rt.fires[s.fire]
+    if s.invalid or not fire or not impl.valid(fire) or leader.record.name~=s.leader
+        or leader.record.destination_failed then impl.finish(g,s,members,ctx,orders,true);return end
+    if s.until_game and impl.seconds()>=s.until_game then impl.finish(g,s,members,ctx,orders,false);return end
+    if s.phase=="travel" then
+        if not leader.record.destination_arrived then return end
+        if impl.distance2(leader.server.position,fire)>6^2 or math.abs(leader.server.position.y-fire.y)>0.8 then
+            impl.finish(g,s,members,ctx,orders,true);return
+        end
+        s.phase,s.approach_left="seating",rt.cfg.approach
+    end
+    for _,m in ipairs(members) do
+        if m.npc and (m.npc:best_enemy() or xr_wounded.is_wounded(m.npc)) then
+            impl.finish(g,s,members,ctx,orders,false);return
+        end
+    end
+    local seats=rt.seats[g.id] or {}
+    rt.seats[g.id]=seats
+    local living={}
+    for _,m in ipairs(members) do living[m.record.name]=true end
+    for name in pairs(seats) do if not living[name] then seats[name]=nil end end
+    local all_ready,any_busy=true,false
+    for index,m in ipairs(members) do
+        local name=m.record.name
+        if impl.busy(m) then
+            seats[name]=nil
+            impl.order(orders,m,"unseat",s.token)
+            any_busy,all_ready=true,false
+        else
+            local seat=seats[name]
+            -- Accessible masks and obstacles may change after dialogue/combat/F9.
+            if seat and (seat.online~=m.server.online or (m.npc and not m.npc:accessible(seat.lv))) then
+                seat=nil;seats[name]=nil
+            end
+            if not seat then
+                seat=probe(fire,m.npc,seats,index*3,rt.budget)
+                if seat then seat.online=m.server.online;seats[name]=seat else all_ready=false end
+            end
+            if seat then
+                local arrived=impl.distance2(m.server.position,seat)<=1
+                    and math.abs(m.server.position.y-seat.y)<=0.5
+                local a={kind=arrived and "rest" or "level",token=s.token,
+                    x=seat.x,y=seat.y,z=seat.z,lv=seat.lv,gv=seat.gv,
+                    look=impl.copy(fire),pose=({"sit","sit_ass","sit_knee"})[(index-1)%3+1]}
+                impl.order(orders,m,"member",s.token,a)
+                if not arrived then all_ready=false end
+            end
+        end
+    end
+    local elapsed=math.max(0,ctx.clock-(s.last_clock or ctx.clock))
+    s.last_clock=ctx.clock
+    if all_ready and not s.until_game then
+        s.hours=rt.cfg.min+impl.random(math.floor(rt.cfg.max-rt.cfg.min)+1)-1
+        s.until_game=impl.seconds()+s.hours*3600
+        s.phase="rest"
+    elseif not all_ready and not any_busy then
+        s.approach_left=(s.approach_left or rt.cfg.approach)-elapsed
+        if s.approach_left<=0 then impl.finish(g,s,members,ctx,orders,true) end
+    end
+end
+function update(ctx)
+    if not ctx or rt.failed or (rt.initialized and time_global()<rt.next) then return end
+    local orders={}
+    local ok,err=pcall(function()
+        if not rt.initialized then impl.init(ctx) end
+        if time_global()<rt.next then return end
+        rt.next=time_global()+250
+        rt.budget={left=48}
+        if rt.group_list~=ctx.groups then
+            -- Only population-plan replacement/load, never a per-frame scan.
+            local present={}
+            for _,g in ipairs(ctx.groups) do present[g.id]=true end
+            for id,s in pairs(rt.root.groups) do
+                if not present[id] then
+                    if s.fire and rt.reserved[s.fire]==id then rt.reserved[s.fire]=nil end
+                    rt.root.groups[id],rt.seats[id]=nil,nil
+                end
+            end
+            rt.group_list=ctx.groups
+            rt.cursor=1
+        end
+        for i=1,math.min(8,#ctx.groups) do
+            local g=ctx.groups[rt.cursor]
+            rt.cursor=rt.cursor%#ctx.groups+1
+            impl.process(g,ctx,orders)
+        end
+    end)
+    if not ok then
+        rt.failed=tostring(err)
+        log("[PF_PA_CAMP_REST] disabled: "..rt.failed)
+        -- Fail closed and release only our existing activity tokens.
+        for _,g in ipairs(ctx.groups) do
+            local s=rt.root and rt.root.groups[g.id]
+            if s and s.fire then
+                local members=impl.members(g,ctx)
+                impl.finish(g,s,members,ctx,orders,false)
+            end
+        end
+    end
+    return orders
+end
+function reset()
+    rt={pending=rt.pending}
+end
+function save(data)
+    if rt.root then data[KEY]=rt.root end
+end
+function load(data)
+    rt.pending=data and data[KEY] or nil
+end

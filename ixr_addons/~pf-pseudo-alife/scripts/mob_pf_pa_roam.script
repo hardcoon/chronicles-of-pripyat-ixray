@@ -1,0 +1,47 @@
+-- Native home movement handles both roaming and temporary migration goals.
+-- No script capture/actions: those register skeleton visual callbacks in C++.
+class "pf_pa_monster_roam"
+function pf_pa_monster_roam:__init(npc, storage)
+    self.object = npc
+    self.st = storage
+end
+function pf_pa_monster_roam:reset_scheme()
+    -- A live scheme switch can still carry a capture from version 0.1.0.
+    if xr_logic.mob_captured(self.object) then xr_logic.mob_release(self.object) end
+    self.serial = nil
+    self.next_update = 0
+    self.object:set_home(self.object:level_vertex_id(), 4, 24, true, 12)
+end
+function pf_pa_monster_roam:activate_scheme()
+    self:reset_scheme()
+end
+function pf_pa_monster_roam:update()
+    local now = time_global()
+    if now < (self.next_update or 0) then return end
+    self.next_update = now + 1000
+    if not self.object:alive() or self.object:get_enemy() then return end
+    local storage = db.storage[self.object:id()]
+    local c = storage and storage.pf_pa_command
+    if not c or self.serial == c.serial then return end
+    if c.kind == "idle" then
+        self.object:set_home(self.object:level_vertex_id(), 4, 24, true, 12)
+    elseif level.valid_vertex_id(c.lv) and self.object:accessible(c.lv) then
+        -- Native Home chooses a reachable cell within the manager's 2 m arrival
+        -- tolerance. Enemy/danger states retain their normal native priority.
+        self.object:set_home(c.lv, 0.5, 1.5, true, 1)
+    else
+        return
+    end
+    self.serial = c.serial
+end
+function pf_pa_monster_roam:deactivate()
+    self.object:remove_home()
+    if xr_logic.mob_captured(self.object) then xr_logic.mob_release(self.object) end
+end
+function add_to_binder(npc, ini, scheme, section, storage)
+    xr_logic.subscribe_action_for_events(npc, storage, pf_pa_monster_roam(npc, storage))
+end
+function set_scheme(npc, ini, scheme, section)
+    local st = xr_logic.assign_storage_and_bind(npc, ini, scheme, section)
+    st.logic = xr_logic.cfg_get_switch_conditions(ini, section, npc)
+end

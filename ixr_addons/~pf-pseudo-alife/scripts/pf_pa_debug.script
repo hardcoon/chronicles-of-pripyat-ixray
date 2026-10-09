@@ -1,0 +1,53 @@
+-- Optional PDA-only, non-serialized markers. The facade owns update/load callbacks.
+local state = {enabled = false, marks = {}, hints = {}, next_update = 0}
+local labels = {
+    factions = {[""]="stalker", d="dolg", f="freedom", o="monolith", b="bandit", e="ecolog", a="army", c="killer"},
+    species = {"dog","boar","flesh","pseudodog","snork","bloodsucker","burer","controller","chimera","gigant","tushkano"},
+}
+
+function reset()
+    for id, spot in pairs(state.marks) do level.map_remove_object_spot(id, spot) end
+    state.marks = {}
+    state.hints = {}
+    state.next_update = 0
+end
+
+function set_enabled(value)
+    if value == nil then state.enabled = not state.enabled else state.enabled = value == true end
+    if not state.enabled then reset() else state.next_update = 0 end
+    return state.enabled
+end
+
+function needs_refresh()
+    return state.enabled and time_global() >= state.next_update
+end
+
+function refresh(objects)
+    if not state.enabled then return end
+    local seen, hints = {}, {}
+    for _, object in ipairs(objects) do
+        local spot = object.kind == "s" and "pf_pa_debug_human" or "pf_pa_debug_mutant"
+        local name
+        if object.kind == "s" then
+            name = "faction_" .. (labels.factions[object.faction or ""] or "stalker")
+        else
+            name = "species_" .. (labels.species[object.species or 0] or "unknown")
+        end
+        local hint = game.translate_string("pf_pa_debug_" .. (object.online and "online" or "offline"))
+            .. " / " .. game.translate_string("pf_pa_debug_" .. name)
+            .. " / " .. game.translate_string("pf_pa_debug_count") .. ": " .. tostring(object.count or 1)
+        if level.map_has_object_spot(object.id, spot) == 0 then
+            level.map_add_object_spot(object.id, spot, hint)
+        elseif state.hints[object.id] ~= hint then
+            level.map_change_spot_hint(object.id, spot, hint)
+        end
+        seen[object.id] = spot
+        hints[object.id] = hint
+    end
+    for id, spot in pairs(state.marks) do
+        if seen[id] ~= spot then level.map_remove_object_spot(id, spot) end
+    end
+    state.marks = seen
+    state.hints = hints
+    state.next_update = time_global() + 2000
+end

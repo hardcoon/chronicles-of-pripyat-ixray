@@ -1,0 +1,316 @@
+-- Scoped replacement for the generic corpse scheme. Other NPCs use the original.
+-- No callbacks, ALife enumeration or persistent copies of inventory items.
+local impl = {}
+local rt = {next_scan = 0, recent = {}, ring = {}, cursor = 0}
+local limits = {radius2 = 400, reach2 = 2, scan_ms = 250, retry_ms = 3000,
+    timeout_ms = 45000, cooldown_ms = 15000, candidates = 16,
+    failed_ms = 300000, approach_ms = 10000, animation_ms = 15000,
+    inventory = 64, transfer = 8, recent = 128, weight = 40}
+local extra = {pf_hf_fabric = true, pf_hf_straps = true, pf_hf_rubber = true,
+    pf_hf_plastic = true, pf_hf_scrap = true, pf_hf_oil = true,
+    mineral_water = true, flyaga = true}
+
+function reset()
+    rt = {next_scan = 0, recent = {}, ring = {}, cursor = 0}
+end
+
+function impl.owned(npc)
+    return npc:section():match("^pf_pa_s_[a-z]*_?%d+$") ~= nil
+end
+
+function impl.peaceful(npc, st)
+    local storage = db.storage[npc:id()]
+    local manager = npc:motivation_action_manager()
+    if not manager:initialized() then return false end
+    -- Do not claim a corpse during vanilla post-combat, wounded or meet actions.
+    local action = manager:current_action_id()
+    if action ~= 39001 and action ~= xr_actions_id.corpse_exist then return false end
+    -- A remembered corpse remains best_danger after the vanilla planner ignores it.
+    local danger = npc:best_danger() and (not manager:initialized()
+        or manager:evaluator(stalker_ids.property_danger):evaluate())
+    return npc:alive() and st.corpse_detection_enabled ~= false
+        and storage and storage.active_scheme == "pf_pa_roam"
+        and not npc:best_enemy() and not danger
+        and not manager:evaluator(stalker_ids.property_enemy):evaluate()
+        and not xr_wounded.is_wounded(npc) and not npc:is_talking() and not xr_meet.is_meet(npc)
+end
+
+function impl.remember(body, until_time, npc)
+    local id = npc and (npc:id() .. ":" .. body:id()) or body:id()
+    local previous = rt.recent[id]
+    if not previous then
+        rt.cursor = rt.cursor % limits.recent + 1
+        local old = rt.ring[rt.cursor]
+        if old then rt.recent[old] = nil end
+        rt.ring[rt.cursor] = id
+    end
+    rt.recent[id] = {name = body:name(), owner = npc and npc:name(), until_time = until_time}
+end
+
+function impl.cooling(body, npc, now)
+    local common = rt.recent[body:id()]
+    local failed = rt.recent[npc:id() .. ":" .. body:id()]
+    return (common and common.name == body:name() and now < common.until_time)
+        or (failed and failed.name == body:name() and failed.owner == npc:name() and now < failed.until_time)
+end
+
+function impl.allowed(item)
+    local section = item:section()
+    if section:match("^grenade_") or section:match("^detector_")
+        or section == "ammo_vog-25" or section == "ammo_m209"
+        or section == "ammo_og-7b" or section == "device_pda"
+        or section:match("^pf_stash_pda_") or section:match("^lz_ph_") then return false end
+    -- Protect quest items even when their section looks like an ordinary weapon.
+    if get_object_story_id(item:id()) ~= nil then return false end
+    local ini = system_ini()
+    if ini:line_exist(section, "quest_item") and ini:r_bool(section, "quest_item") then return false end
+    if not rt.protected then
+        rt.protected = {}
+        local death = ini_file("misc\\death_generic.ltx")
+        if death:section_exist("keep_items") then
+            for index = 0, death:line_count("keep_items") - 1 do
+                local _, name = death:r_line("keep_items", index, "", "")
+                rt.protected[name] = true
+            end
+        end
+    end
+    if rt.protected[section] then return false end
+    return extra[section] == true or section:match("^ammo_") ~= nil
+        or (section:match("^wpn_") ~= nil and section ~= "wpn_binoc")
+        or xr_corpse_detection.lootable_table[section] == true
+end
+
+function impl.release(npc, st, delay)
+    local storage = st.selected_corpse_id and db.storage[st.selected_corpse_id]
+    if storage and storage.corpse_already_selected == npc:id()
+        and storage.pf_pa_claim_name == npc:name() then
+        storage.corpse_already_selected = nil
+        storage.pf_pa_claim_name, storage.pf_pa_claim_until = nil, nil
+    end
+    st.selected_corpse_id, st.pf_pa_body_name, st.pf_pa_deadline = nil, nil, nil
+    st.pf_pa_searching = nil
+    st.pf_pa_search_until, st.pf_pa_motion, st.pf_pa_motion_at = nil, nil, nil
+    st.pf_pa_check_at = math.max(st.pf_pa_check_at or 0, time_global() + delay)
+end
+
+function impl.abort(npc, st, failed)
+    local body = impl.body(st)
+    if failed and body then impl.remember(body, time_global() + limits.failed_ms, npc) end
+    impl.release(npc, st, limits.retry_ms)
+    st.pf_pa_done = true
+end
+
+function impl.body(st)
+    local storage = st.selected_corpse_id and db.storage[st.selected_corpse_id]
+    local body = storage and storage.object
+    if body and body:name() == st.pf_pa_body_name and not body:alive() then return body, storage end
+end
+
+function impl.valid(npc, st, now)
+    local body, storage = impl.body(st)
+    return body and now < (st.pf_pa_deadline or 0)
+        and storage.corpse_already_selected == npc:id()
+        and storage.pf_pa_claim_name == npc:name()
+        and npc:position():distance_to_sqr(body:position()) < limits.radius2
+        and level.valid_vertex_id(st.vertex_id) and npc:accessible(st.vertex_id)
+end
+
+function impl.available(storage, now)
+    if storage.pf_pa_claim_name then
+        local owner = storage.corpse_already_selected and db.storage[storage.corpse_already_selected]
+        local object = owner and owner.object
+        if not object or not object:alive() or object:name() ~= storage.pf_pa_claim_name
+            or now >= (storage.pf_pa_claim_until or 0) then
+            storage.corpse_already_selected = nil
+            storage.pf_pa_claim_name, storage.pf_pa_claim_until = nil, nil
+        end
+    end
+    return storage.corpse_already_selected == nil
+end
+
+function impl.select(npc, st, now)
+    -- At most four NPCs per second inspect a bounded slice of the native registry.
+    if now < rt.next_scan then return false end
+    rt.next_scan = now + limits.scan_ms
+    st.pf_pa_check_at = now + limits.retry_ms
+    local bodies = release_body_manager.get_release_body_manager().release_objects_table
+    local count = #bodies
+    local nearest, vertex, distance = nil, nil, limits.radius2
+    local position = npc:position()
+    for _ = 1, math.min(count, limits.candidates) do
+        st.pf_pa_cursor = (st.pf_pa_cursor or npc:id()) % count + 1
+        local entry = bodies[st.pf_pa_cursor]
+        local storage = entry and db.storage[entry.id]
+        local body = storage and storage.object
+        if body and not body:alive() and impl.available(storage, now) then
+            local d = position:distance_to_sqr(body:position())
+            if d < distance and not impl.cooling(body, npc, now) then
+                local server = alife():object(body:id())
+                if server and IsStalker(server) and server.death_droped
+                    and get_object_story_id(body:id()) == nil and npc:see(body) then
+                    local lv = level.vertex_id(body:position())
+                    if level.valid_vertex_id(lv) and npc:accessible(lv) then
+                        nearest, vertex, distance = body, lv, d
+                    end
+                end
+            end
+        end
+    end
+    if not nearest then return false end
+    -- Only one inventory is inspected, at most 64 objects, never once per frame.
+    local valuable = false
+    for index = 0, math.min(nearest:object_count(), limits.inventory) - 1 do
+        local item = nearest:object(index)
+        if item and impl.allowed(item) then valuable = true; break end
+    end
+    if not valuable then impl.remember(nearest, now + 30000); return false end
+    st.selected_corpse_id, st.pf_pa_body_name = nearest:id(), nearest:name()
+    st.vertex_id, st.vertex_position = vertex, nearest:position()
+    st.pf_pa_deadline = now + limits.timeout_ms
+    st.pf_pa_motion_at = now
+    st.pf_pa_motion = {x = position.x, y = position.y, z = position.z}
+    local storage = db.storage[nearest:id()]
+    storage.corpse_already_selected = npc:id()
+    storage.pf_pa_claim_name, storage.pf_pa_claim_until = npc:name(), st.pf_pa_deadline
+    return true
+end
+
+class "pf_pa_corpse_evaluator" (property_evaluator)
+function pf_pa_corpse_evaluator:__init(st) super(nil, "pf_pa_corpse")
+    self.st = st
+end
+function pf_pa_corpse_evaluator:evaluate()
+    local npc, st, now = self.object, self.st, time_global()
+    if st.pf_pa_done then
+        local manager = npc:motivation_action_manager()
+        -- Keep the completed task false until GOAP has relinquished its action.
+        if manager:initialized() and manager:current_action_id() == xr_actions_id.corpse_exist then return false end
+        st.pf_pa_done = nil
+    end
+    if not impl.peaceful(npc, st) then
+        if st.selected_corpse_id then impl.release(npc, st, limits.retry_ms) end
+        return false
+    end
+    if st.selected_corpse_id then
+        if impl.valid(npc, st, now) then return true end
+        impl.abort(npc, st, true)
+    end
+    if now < (st.pf_pa_check_at or 0) or npc:object_count() >= limits.inventory
+        or npc:get_total_weight() >= limits.weight then return false end
+    return impl.select(npc, st, now)
+end
+
+-- Runs after dinamit_1, through the native animation manager, exactly once.
+function finish_search(npc)
+    local storage = db.storage[npc:id()]
+    local st = storage and storage.corpse_detection
+    if not st or not st.pf_pa_searching or not impl.peaceful(npc, st)
+        or not impl.valid(npc, st, time_global()) then return end
+    local body = impl.body(st)
+    if npc:position():distance_to_sqr(body:position()) > limits.reach2 then return end
+    local manager = npc:motivation_action_manager()
+    if not manager:initialized() or manager:current_action_id() ~= xr_actions_id.corpse_exist then return end
+    st.pf_pa_searching = nil -- Consume the animation callback before queueing network transfers.
+    local items, weight = {}, npc:get_total_weight()
+    local cap = math.min(limits.transfer, limits.inventory - npc:object_count())
+    for index = 0, math.min(body:object_count(), limits.inventory) - 1 do
+        local item = body:object(index)
+        if #items >= cap then break end
+        if item and impl.allowed(item) and weight + item:weight() <= limits.weight then
+            weight = weight + item:weight()
+            items[#items + 1] = item:id()
+        end
+    end
+    for _, id in ipairs(items) do
+        local item, server = level.object_by_id(id), alife():object(id)
+        if item and server and server.parent_id == body:id() then
+            pf_pa_loot.limit_weapon(item)
+            body:transfer_item(item, npc)
+        end
+    end
+    impl.remember(body, time_global() + limits.cooldown_ms)
+    impl.release(npc, st, limits.cooldown_ms)
+    st.pf_pa_done = true
+end
+
+-- Adopted luabind wrappers must derive directly from the C++ action_base.
+-- A Lua -> Lua -> C++ chain loses its strong reference after add_action;
+-- reuse stock methods explicitly instead of inheriting their Lua class.
+class "pf_pa_corpse_action" (action_base)
+function pf_pa_corpse_action:__init(npc, st) super(nil, "pf_pa_search_corpse")
+    self.a, self.st = st, st
+end
+function pf_pa_corpse_action:initialize()
+    -- The original approach action; explicitly leave our previous game_path.
+    self.object:set_path_type(game_object.level_path)
+    xr_corpse_detection.action_search_corpse.initialize(self)
+end
+function pf_pa_corpse_action:execute()
+    action_base.execute(self)
+    local npc, st = self.object, self.st
+    if st.pf_pa_done then return end
+    if not impl.peaceful(npc, st) or not impl.valid(npc, st, time_global()) then
+        impl.abort(npc, st, impl.peaceful(npc, st)); return
+    end
+    local body = impl.body(st)
+    local now, position = time_global(), npc:position()
+    if position:distance_to_sqr(body:position()) > limits.reach2 then
+        if st.pf_pa_searching then impl.abort(npc, st, true); return end
+        local previous = st.pf_pa_motion
+        if not previous or (position.x-previous.x)^2 + (position.y-previous.y)^2 + (position.z-previous.z)^2 >= 0.25 then
+            st.pf_pa_motion = {x = position.x, y = position.y, z = position.z}
+            st.pf_pa_motion_at = now
+        elseif now - (st.pf_pa_motion_at or now) >= limits.approach_ms then
+            impl.abort(npc, st, true); return
+        end
+        state_mgr.set_state(npc, "patrol")
+        return
+    end
+    if not st.pf_pa_searching then
+        st.pf_pa_searching = true
+        st.pf_pa_search_until = now + limits.animation_ms
+        xr_sound.set_sound_play(npc:id(), "corpse_loot_begin")
+    elseif now >= (st.pf_pa_search_until or st.pf_pa_deadline) then
+        impl.abort(npc, st, true); return
+    end
+    state_mgr.set_state(npc, "pf_pa_search_corpse", nil, nil, {look_position = body:position()})
+end
+function pf_pa_corpse_action:finalize()
+    impl.release(self.object, self.st, limits.retry_ms)
+    self.st.pf_pa_done = nil
+    -- Match stock ownership: GOAP finalizes the search, then the next action
+    -- sets its movement/state. Never change state_mgr inside an animation callback.
+    xr_corpse_detection.action_search_corpse.finalize(self)
+end
+
+function add_to_binder(npc, ini, scheme, section, st)
+    if not impl.owned(npc) then
+        return xr_corpse_detection.add_to_binder(npc, ini, scheme, section, st)
+    end
+    if not state_lib.states.pf_pa_search_corpse then
+        local state = {}
+        for key, value in pairs(state_lib.states.search_corpse) do state[key] = value end
+        state.animation = "pf_pa_search_corpse"
+        state_lib.states.pf_pa_search_corpse = state
+        state_mgr_animation_list.animations.pf_pa_search_corpse = {
+            prop = {maxidle = 1, sumidle = 1, rnd = 100},
+            into = {[0] = {"dinamit_1", {f = finish_search}}}}
+    end
+    local manager = npc:motivation_action_manager()
+    manager:add_evaluator(xr_evaluators_id.corpse_exist, pf_pa_corpse_evaluator(st))
+    local action = pf_pa_corpse_action(npc, st)
+    action:add_precondition(world_property(stalker_ids.property_alive, true))
+    action:add_precondition(world_property(stalker_ids.property_enemy, false))
+    action:add_precondition(world_property(stalker_ids.property_danger, false))
+    action:add_precondition(world_property(stalker_ids.property_anomaly, false))
+    action:add_precondition(world_property(stalker_ids.property_items, false))
+    action:add_precondition(world_property(xr_evaluators_id.corpse_exist, true))
+    action:add_precondition(world_property(xr_evaluators_id.sidor_wounded_base, false))
+    action:add_precondition(world_property(xr_evaluators_id.wounded_exist, false))
+    action:add_precondition(world_property(xr_evaluators_id.stohe_meet_base + 1, false))
+    action:add_effect(world_property(xr_evaluators_id.corpse_exist, false))
+    action:add_effect(world_property(xr_evaluators_id.state_mgr + 4, false))
+    manager:add_action(xr_actions_id.corpse_exist, action)
+    manager:action(xr_actions_id.alife):add_precondition(world_property(xr_evaluators_id.corpse_exist, false))
+    manager:action(xr_actions_id.state_mgr + 2):add_precondition(world_property(xr_evaluators_id.corpse_exist, false))
+end

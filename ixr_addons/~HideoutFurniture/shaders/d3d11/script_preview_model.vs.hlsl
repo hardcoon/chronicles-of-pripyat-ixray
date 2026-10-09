@@ -9,9 +9,12 @@ struct PreviewOutput
 PreviewOutput main(v_TL input)
 {
     PreviewOutput output;
-    output.position = mul(m_WVP, input.P);
+    // COP-ENG-114: engine UI preview tag. Coordinates never enter world space.
+    bool cameraRelative = input.Color.a == 0;
+    output.position = cameraRelative ? mul(m_P, input.P) : mul(m_WVP, input.P);
     output.uv = input.Tex0;
-    output.depth = mul(m_WV, input.P).z;
+    output.depth = cameraRelative ? -input.P.z : mul(m_WV, input.P).z;
     output.color = input.Color.bgra;
+    if (cameraRelative) output.color.a = 1;
     return output;
 }

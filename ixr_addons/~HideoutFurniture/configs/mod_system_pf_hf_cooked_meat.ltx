@@ -1,0 +1,154 @@
+; Existing LZ cooked items become edible; raw meat stays an inedible cooking ingredient.
+; Both raw and cooked weights are rounded to 0.1 kg; names/models/icons/prices stay intact.
+![mutant_part_tushkano_meat]
+inv_weight = 0.1
+description = pf_hf_raw_meat_tushkano_desc
+
+![mutant_part_krovosos_meat]
+inv_weight = 0.4
+description = pf_hf_raw_meat_bloodsucker_desc
+
+![mutant_part_boar_chop]
+inv_weight = 0.4
+description = pf_hf_raw_meat_boar_desc
+
+![mutant_part_flesh_meat]
+inv_weight = 0.3
+description = pf_hf_raw_meat_flesh_desc
+
+![mutant_part_dog_meat]
+inv_weight = 0.1
+description = pf_hf_raw_meat_dog_desc
+
+![mutant_part_psevdodog_meat]
+inv_weight = 0.3
+description = pf_hf_raw_meat_pseudodog_desc
+
+![mutant_part_chimera_meat]
+inv_weight = 0.5
+description = pf_hf_raw_meat_chimera_desc
+
+[pf_hf_cooked_meat_base]
+class = S_FOOD
+use_text = st_eat
+use_sound = interface\inv_food
+eat_portions_num = 1
+remove_after_use = true
+eat_health = 0
+eat_power = 0
+eat_max_power = 0
+eat_radiation = 0
+eat_alcohol = 0
+eat_thirst = 0
+wounds_heal_perc = 0
+boost_radiation_restore = 0
+boost_burn_immunity = 0
+boost_shock_immunity = 0
+boost_radiation_immunity = 0
+boost_telepat_immunity = 0
+boost_chemburn_immunity = 0
+boost_strike_immunity = 0
+boost_wound_immunity = 0
+boost_explosion_immunity = 0
+boost_fire_wound_immunity = 0
+boost_chemburn_protection = 0
+
+![mutant_part_tushkano_meat_cook]:pf_hf_cooked_meat_base
+inv_weight = 0.1
+class = S_FOOD
+use_text = st_eat
+description = pf_hf_meat_tushkano_desc
+eat_satiety = 0.1
+boost_time = 120
+boost_health_restore = 0
+boost_power_restore = 0.005
+boost_bleeding_restore = 0
+boost_max_weight = 0
+boost_radiation_protection = 0
+boost_telepat_protection = 0
+
+![mutant_part_krovosos_meat_cook]:pf_hf_cooked_meat_base
+inv_weight = 0.2
+class = S_FOOD
+use_text = st_eat
+description = pf_hf_meat_bloodsucker_desc
+; Same radiation-removal strength as the installed vodka; meat duration is 30 s.
+boost_radiation_restore = 0.005
+eat_satiety = 0.5
+boost_time = 30
+boost_health_restore = 0
+boost_power_restore = 0
+boost_bleeding_restore = 0.03
+boost_max_weight = 0
+boost_radiation_protection = 0
+boost_telepat_protection = 0
+
+![mutant_part_boar_chop_cook]:pf_hf_cooked_meat_base
+inv_weight = 0.3
+class = S_FOOD
+use_text = st_eat
+description = pf_hf_meat_boar_desc
+eat_satiety = 0.7
+boost_time = 150
+boost_health_restore = 0
+boost_power_restore = 0
+boost_bleeding_restore = 0
+boost_max_weight = 10
+boost_radiation_protection = 0
+boost_telepat_protection = 0
+
+![mutant_part_flesh_meat_cook]:pf_hf_cooked_meat_base
+inv_weight = 0.2
+class = S_FOOD
+use_text = st_eat
+description = pf_hf_meat_flesh_desc
+eat_satiety = 0.6
+boost_time = 150
+boost_health_restore = 0
+boost_power_restore = 0
+boost_bleeding_restore = 0
+boost_max_weight = 5
+boost_radiation_protection = 0
+boost_telepat_protection = 0
+
+![mutant_part_dog_meat_cook]:pf_hf_cooked_meat_base
+inv_weight = 0.1
+class = S_FOOD
+use_text = st_eat
+description = pf_hf_meat_dog_desc
+eat_satiety = 0.3
+boost_time = 60
+boost_health_restore = 0
+boost_power_restore = 0.002
+boost_bleeding_restore = 0
+boost_max_weight = 0
+boost_radiation_protection = 0.015
+boost_telepat_protection = 0
+
+![mutant_part_psevdodog_meat_cook]:pf_hf_cooked_meat_base
+inv_weight = 0.2
+class = S_FOOD
+use_text = st_eat
+description = pf_hf_meat_pseudodog_desc
+eat_satiety = 0.45
+boost_time = 60
+boost_health_restore = 0
+boost_power_restore = 0
+boost_bleeding_restore = 0
+boost_max_weight = 5
+boost_radiation_protection = 0
+boost_telepat_protection = 0.05
+
+![mutant_part_chimera_meat_cook]:pf_hf_cooked_meat_base
+inv_weight = 0.3
+class = S_FOOD
+use_text = st_eat
+description = pf_hf_meat_chimera_desc
+eat_satiety = 0.8
+boost_time = 30
+boost_health_restore = 0.02
+boost_power_restore = 0
+boost_bleeding_restore = 0.02
+boost_max_weight = 0
+boost_radiation_protection = 0
+boost_telepat_protection = 0

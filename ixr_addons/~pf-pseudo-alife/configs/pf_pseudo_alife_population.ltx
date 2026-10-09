@@ -1,0 +1,109 @@
+; Начальные значения. В игре: Настройки -> A-LIFE -> Применить, без перезапуска.
+; Сохранённые пользовательские значения: userdata/pf_pa_options.setting.
+[pf_pseudo_alife]
+enabled = false
+level_name = pripyat_full
+; Военные сопровождения добавляются СВЕРХ этого лимита; наёмники доступны в меню.
+; Текущий профиль: 40 NPC + 4 военных = 44 человека. Мутанты отдельно.
+; Сюжетное и базовое население не входит в эти лимиты.
+stalkers = 40
+mutants = 80
+; Начальная задержка 72 игровых часа: при time_factor=10 это 25920 реальных секунд.
+; Меню использует respawn_hours ниже и текущий коэффициент времени.
+; Сон/ускорение времени не ускоряют таймер. Диапазон 60..86400.
+respawn_seconds = 25920
+; Не более одного участника за интервал; группа заполняется постепенно рядом.
+spawn_interval_ms = 250
+offline_move_min_distance = 220
+; Разнос разных групп; члены одной группы появляются в 4..7 м друг от друга.
+spawn_spacing = 45
+tick_ms = 250
+records_per_tick = 16
+orders_per_tick = 2
+waypoint_distance = 100
+offline_speed = 1.2
+rest_seconds = 20
+stuck_seconds = 25
+
+; Действующие настройки обычных групп. Научные группы создаются отдельно.
+; При невозможном составе приоритет имеют лимит и сопровождение учёных.
+; В резервном плане доли округляются по людям.
+[pf_pa_squad_plan]
+enabled = true
+squads_of_5 = 1
+squads_of_3 = 3
+squads_of_2 = 5
+follow_distance = 6
+regroup_distance = 35
+; Остаток — одиночные NPC. Научная группа: один учёный + два военных сверх stalkers.
+; Пополнение потерь только после полной гибели отряда и respawn_seconds выше.
+
+[pf_pa_faction_plan]
+loners_percent = 30
+duty_percent = 10
+freedom_percent = 10
+monolith_percent = 20
+bandits_percent = 20
+scientists_percent = 10
+; Бандиты аддона персонально враждебны игроку, глобальная матрица не меняется.
+
+[pf_pa_mutant_group_plan]
+enabled = true
+min_members = 1
+max_members = 4
+pseudogigant_max = 1
+chimera_max = 2
+; Лимиты по особям на всю карту, не по группам. 0 отключает вид.
+; Случайный вид на группу, одинаковый у всех участников. Тушканов нет.
+; Собака, кабан, плоть, псевдособака, снорк, кровосос, бюрер, контролёр,
+; химера, псевдогигант. Общий лимит — mutants выше.
+
+[pf_pa_loot]
+; Только после штатной обработки смерти, один раз. Оружие и КПК сохраняют
+; общие правила выпадения. Гранаты и детекторы запрещены.
+bandage_chance = 25
+; Только обычные категории зелёного тайника; документы и прогрессия не вызываются.
+provisions_chance = 20
+; Итоговый шанс напитка с учётом продовольственного броска.
+hydration_chance = 23
+ammo_chance = 72
+ammo_min = 1
+ammo_max = 2
+; Базовый пул зелёного: ткань, ремешки, резина, пластик, лом и масло.
+materials_chance = 40
+materials_min = 1
+materials_max = 1
+extra_materials_chance = 0
+extra_materials_min = 1
+extra_materials_max = 3
+
+; Точные количества групп в меню. Обычные размеры НЕ включают научные группы.
+; Сумма обычных групп по размерам и по группировкам должна совпадать.
+; Лимиты не удаляют уже живых: новые группы ждут освобождения мест.
+[pf_pa_menu_defaults]
+debug_map = false
+respawn_hours = 72
+mutant_group_max = 4
+human_size_1 = 8
+human_size_2 = 5
+human_size_3 = 4
+human_size_4 = 2
+human_size_5 = 0
+faction_stalker = 8
+faction_bandit = 6
+faction_dolg = 2
+faction_freedom = 2
+faction_monolith = 1
+faction_ecolog = 2
+faction_killer = 0
+mutant_dog = 6
+mutant_boar = 5
+mutant_flesh = 5
+mutant_pseudodog = 4
+mutant_snork = 2
+mutant_bloodsucker = 2
+mutant_burer = 2
+mutant_controller = 2
+mutant_chimera = 1
+mutant_gigant = 1
+mutant_tushkano = 0

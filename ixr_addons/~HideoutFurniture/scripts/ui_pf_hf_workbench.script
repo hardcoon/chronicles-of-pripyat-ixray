@@ -75,10 +75,6 @@ local function craft_description(section)
 	return paragraph:match("^(.-[%.%!%?])") or paragraph
 end
 
-local function item_description(item)
-	return item and section_description(item:section()) or ""
-end
-
 local function tint_selected_tab(button, selected)
 	-- The underline remains visible on engines without button text tinting.
 	pcall(function()
@@ -191,6 +187,8 @@ function pf_hf_workbench_dialog:__init() super()
 	self.saved_camera_direction = nil
 	self.saved_active_slot = nil
 	self.hovered_upgrade_id = nil
+	self.tab_down = false
+	self.preview_active = false
 	self:InitControls()
 end
 
@@ -205,7 +203,9 @@ function pf_hf_workbench_dialog:InitControls()
 	self.item_panel = xml:InitStatic("main:item_panel", self)
 	self.item_icon = xml:InitStatic("main:item_icon", self)
 	self.item_caption = xml:InitTextWnd("main:item_caption", self)
-	self.item_description = xml:InitTextWnd("main:item_description", self)
+	for _, control in ipairs({self.item_panel, self.item_icon, self.item_caption}) do
+		control:Enable(false)
+	end
 	self.tree_panel = xml:InitStatic("main:tree", self)
 	self.tree_accent = xml:InitStatic("main:tree:accent", self.tree_panel)
 	self.tree_heading = xml:InitTextWnd("main:tree:heading", self.tree_panel)
@@ -400,6 +400,7 @@ function pf_hf_workbench_dialog:Open(bench_id)
 		return false
 	end
 	self.bench_id = bench_id
+	self.tab_down = false
 	self.tab = "repair"
 	self.source = "equipped"
 	self.craft_filter_id = "all"
@@ -456,6 +457,9 @@ function pf_hf_workbench_dialog:Open(bench_id)
 end
 
 function pf_hf_workbench_dialog:OnClose()
+	pf_hf_workbench_preview.close(self.preview)
+	self.preview = nil
+	self.preview_active = false
 	self:HideDialog()
 	if level.remove_cam_effector_at then level.remove_cam_effector_at(CAMERA_EFFECT_ID) end
 	local actor = db.actor
@@ -477,6 +481,7 @@ function pf_hf_workbench_dialog:OnClose()
 	self.saved_active_slot = nil
 	self.hovered_upgrade_id = nil
 	self.bench_id = nil
+	self.tab_down = false
 end
 
 function pf_hf_workbench_dialog:OnPickup()
@@ -495,6 +500,19 @@ function pf_hf_workbench_dialog:Update()
 	if not db.actor or not bench or distance_to_bench(bench) > MAX_DISTANCE then
 		self:OnClose()
 		return
+	end
+	if self.preview_active then
+		if self.preview.drag then
+			if type(level.editor_key_down) == "function" and not pf_runtime_editor.key_down(DIK_keys.MOUSE_1) then
+				pf_hf_workbench_preview.mouse(self.preview, false)
+			else pf_hf_workbench_preview.drag(self.preview, GetCursorPosition()) end
+		end
+		if not pf_hf_workbench_preview.update(self.preview, device()) then
+			pf_hf_workbench_preview.close(self.preview)
+			self.preview_active = false
+			self.item_panel:Show(true)
+			self.item_icon:Show(true)
+		end
 	end
 	local pending = self.inventory_refresh
 	if pending then
@@ -694,11 +712,19 @@ function pf_hf_workbench_dialog:RefreshSelected()
 	self.item_panel:Show(preview_section ~= nil)
 	self.item_caption:Show(preview_section ~= nil)
 	self.item_caption:SetText(preview_section and section_name(preview_section) or "")
-	self.item_description:Show(preview_section ~= nil and self.tab == "repair")
-	self.item_description:SetText(preview_section and
-		section_description(preview_section) or "")
+	self.item_caption:SetWndPos(vector2():set(369, self.tab == "repair" and 548 or 501))
 	fit_section_icon(self.item_icon, preview_section,
 		455, 354, 120, 76, false)
+	if self.tab == "repair" and item then
+		if not self.preview then self.preview = pf_hf_workbench_preview.create() end
+		self.preview_active = pf_hf_workbench_preview.select(self.preview, preview_section, item:id()) and
+			pf_hf_workbench_preview.update(self.preview, device())
+		self.item_panel:Show(not self.preview_active)
+		self.item_icon:Show(not self.preview_active)
+	else
+		pf_hf_workbench_preview.close(self.preview)
+		self.preview_active = false
+	end
 	if self.tab == "upgrade" then
 		self.repair:Show(false)
 		self:RefreshUpgrade(item)
@@ -1072,6 +1098,22 @@ function pf_hf_workbench_dialog:OnCraft()
 end
 
 function pf_hf_workbench_dialog:OnKeyboard(dik, keyboard_action)
+	if dik == DIK_keys.MOUSE_1 and
+		(keyboard_action == ui_events.WINDOW_KEY_PRESSED or keyboard_action == ui_events.WINDOW_KEY_RELEASED) and
+		pf_hf_workbench_preview.mouse(self.preview, keyboard_action == ui_events.WINDOW_KEY_PRESSED, GetCursorPosition()) then
+		return true
+	end
+	if dik == DIK_keys.DIK_TAB then
+		if keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+			self.tab_down = false
+		elseif keyboard_action == ui_events.WINDOW_KEY_PRESSED and not self.tab_down then
+			self.tab_down = true
+			if self.tab == "repair" then self:OnUpgradeTab()
+			elseif self.tab == "upgrade" then self:OnCraftTab()
+			else self:OnRepairTab() end
+		end
+		return true
+	end
 	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
 		local binding = dik_to_bind(dik)
 		if dik == DIK_keys.DIK_F5 or dik == DIK_keys.DIK_F9 or
