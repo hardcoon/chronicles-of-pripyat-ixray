@@ -1,7 +1,23 @@
--- Base-material yields for dismantling weapons, outfits, and helmets.
--- Guaranteed bundles prevent bad rolls from breaking the salvage economy.
--- Armor equipment components retain their separate legacy deterministic rolls.
+-- Every material has a fixed amount or an inclusive, independent range.
+-- The item ID fixes each draw across preview, save/load and both salvage tools.
 local core = lz_nm_core
+local RECOVERED_FIELD_TOOLS = {
+	rough = "itm_repairkit_tier_1", fine = "itm_repairkit_tier_2",
+	soft = "itm_repairkit_tier_soft", calibration = "itm_repairkit_tier_3",
+	magazine = "itm_field_upgrade_kit_blue", reload = "itm_field_upgrade_kit_red",
+	caliber = "itm_field_upgrade_kit_yellow", weight = "itm_field_upgrade_kit_green",
+	anomalous_nozzle = "itm_field_upgrade_kit_anomalous_nozzle",
+	anomalous_barrel = "itm_field_upgrade_kit_anomalous_barrel"
+}
+
+function recovered_field_tool(upgrade_id)
+	if not upgrade_id or string.sub(upgrade_id, 1, 9) ~= "lz_nm_up_" then return nil end
+	for kind, section in pairs(RECOVERED_FIELD_TOOLS) do
+		if string.match(upgrade_id, "_" .. kind .. "_%d+$") or
+			string.match(upgrade_id, "_" .. kind .. "$") then return section, kind end
+	end
+	return nil
+end
 
 local BASE_MATERIALS = {
 	pf_hf_fabric = true,
@@ -22,168 +38,161 @@ local TECH_COMPONENTS = {
 	"jup_b200_tech_materials_textolite"
 }
 
+-- Both detector families share per-material tiers. There is no shared pool
+-- or total limit: every section gets its own amount draw.
+local DETECTOR_SECTIONS = {
+	detector_simple = 1, detector_advanced = 2, detector_elite = 3,
+	detector_scientific = 4, pf_metal_detector_homemade = 1,
+	pf_metal_detector_wave = 2, pf_metal_detector_magnet = 3
+}
+local DETECTOR_PROFILES = {
+	{ min = 0, max = 1, sections = {
+		"jup_b200_tech_materials_wire", "jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor" } },
+	{ min = 1, max = 2, sections = TECH_COMPONENTS },
+	{ min = 2, max = 3, sections = {
+		"jup_b200_tech_materials_wire", "jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor", "jup_b200_tech_materials_textolite",
+		"jup_b200_tech_materials_acetone" } },
+	{ min = 3, max = 4, sections = {
+		"jup_b200_tech_materials_wire", "jup_b200_tech_materials_capacitor",
+		"jup_b200_tech_materials_transistor", "jup_b200_tech_materials_textolite",
+		"jup_b200_tech_materials_acetone" } }
+}
+for _, definition in ipairs(DETECTOR_PROFILES) do
+	definition.materials = {}
+	for index, section in ipairs(definition.sections) do
+		definition.materials[#definition.materials + 1] =
+			{ section, definition.min, definition.max, 420 + index }
+	end
+	for _, entry in ipairs({
+		{ "lz_nm_krona_battery", 0, 1, 401 }, { "pf_hf_plastic", 0, 1, 402 },
+		{ "pf_hf_scrap", 0, 1, 403 }, { "pf_hf_electronics", 0, 1, 405 }
+	}) do definition.materials[#definition.materials + 1] = entry end
+end
+
 local WEAPON_PROFILES = {
 	cheap = {
-		guaranteed = {
-			{ "lz_nm_metal_part", 1 }, { "pf_hf_scrap", 1 }
-		},
-		bonus = {
-			{ "pf_hf_plastic", 1, 50, 101 },
-			{ "pf_hf_electronics", 1, 15, 102 }
+		materials = {
+			{ "lz_nm_metal_part", 1 }, { "pf_hf_scrap", 1 },
+			{ "pf_hf_plastic", 0, 1, 101 }
 		}
 	},
 	standard = {
-		guaranteed = {
-			{ "lz_nm_metal_part", 2 }, { "pf_hf_scrap", 2 },
+		materials = {
+			{ "lz_nm_metal_part", 2 }, { "pf_hf_scrap", 2, 3, 111 },
 			{ "pf_hf_plastic", 1 }
-		},
-		bonus = {
-			{ "pf_hf_scrap", 1, 50, 111 },
-			{ "pf_hf_electronics", 1, 30, 112 }
 		}
 	},
 	advanced = {
-		guaranteed = {
+		materials = {
 			{ "lz_nm_metal_part", 3 }, { "pf_hf_scrap", 3 },
-			{ "pf_hf_plastic", 2 }, { "pf_hf_electronics", 1 }
-		},
-		bonus = {
-			{ "pf_hf_electronics", 1, 50, 121 },
-			{ "pf_hf_ceramic", 1, 40, 122 }
-		},
-		special = {
-			{ pool = TECH_COMPONENTS, count = 1, chance = 20, salt = 123 }
+			{ "pf_hf_plastic", 2 }, { "pf_hf_ceramic", 0, 1, 122 }
 		}
 	}
 }
 
 local EQUIPMENT_PROFILES = {
 	light = {
-		guaranteed = {
-			{ "pf_hf_fabric", 6 }, { "pf_hf_straps", 3 },
+		materials = {
+			{ "pf_hf_fabric", 6, 8, 201 }, { "pf_hf_straps", 3 },
 			{ "pf_hf_rubber", 3 }
-		},
-		bonus = { { "pf_hf_fabric", 2, 40, 201 } }
+		}
 	},
 	sealed = {
-		guaranteed = {
-			{ "pf_hf_rubber", 6 }, { "pf_hf_fabric", 3 },
-			{ "pf_hf_plastic", 3 }
-		},
-		bonus = {
-			{ "pf_hf_rubber", 2, 45, 211 },
-			{ "pf_hf_electronics", 1, 25, 212 }
-		},
-		special = {
-			{ "lz_nm_used_filter", 1, 35, 214 }
+		materials = {
+			{ "pf_hf_rubber", 6, 8, 211 }, { "pf_hf_fabric", 3 },
+			{ "pf_hf_plastic", 3 }, { "pf_hf_electronics", 0, 1, 212 },
+			{ "lz_nm_used_filter", 0, 1, 214 }
 		}
 	},
 	medium = {
-		guaranteed = {
+		materials = {
 			{ "pf_hf_scrap", 6 }, { "pf_hf_straps", 3 },
-			{ "pf_hf_fabric", 3 }
-		},
-		bonus = {
-			{ "pf_hf_plastic", 2, 40, 221 },
-			{ "pf_hf_dampers", 1, 30, 222 }
+			{ "pf_hf_fabric", 3 }, { "pf_hf_plastic", 0, 2, 221 },
+			{ "pf_hf_dampers", 0, 1, 222 }
 		}
 	},
 	heavy = {
-		guaranteed = {
-			{ "pf_hf_scrap", 8 }, { "pf_hf_fabric", 4 },
-			{ "pf_hf_ceramic", 3 }, { "pf_hf_straps", 3 }
-		},
-		bonus = {
-			{ "pf_hf_dampers", 2, 50, 231 },
-			{ "pf_hf_scrap", 2, 40, 232 }
+		materials = {
+			{ "pf_hf_scrap", 8, 10, 232 }, { "pf_hf_fabric", 4 },
+			{ "pf_hf_ceramic", 3 }, { "pf_hf_straps", 3 },
+			{ "pf_hf_dampers", 0, 2, 231 }
 		}
 	},
 	exo = {
-		guaranteed = {
-			{ "pf_hf_scrap", 8 }, { "pf_hf_electronics", 6 },
-			{ "pf_hf_dampers", 4 }, { "pf_hf_ceramic", 3 },
-			{ "pf_hf_plastic", 2 }, { "pf_hf_rubber", 2 },
-			{ "pf_hf_fabric", 2 }, { "pf_hf_straps", 2 }
-		},
-		bonus = {
-			{ "pf_hf_scrap", 2, 70, 241 },
-			{ "pf_hf_electronics", 2, 70, 242 },
-			{ "pf_hf_dampers", 2, 50, 243 },
-			{ "pf_hf_ceramic", 2, 50, 244 },
-			{ "pf_hf_plastic", 2, 40, 245 },
-			{ "pf_hf_rubber", 1, 35, 246 },
-			{ "pf_hf_fabric", 1, 35, 247 },
-			{ "pf_hf_straps", 1, 35, 248 }
-		},
-		special = {
-			{ pool = TECH_COMPONENTS, count = 1, chance = 40, salt = 251 }
+		materials = {
+			{ "pf_hf_scrap", 8, 11, 241 }, { "pf_hf_electronics", 6, 9, 242 },
+			{ "pf_hf_dampers", 4, 6, 243 }, { "pf_hf_ceramic", 3, 5, 244 },
+			{ "pf_hf_plastic", 2, 4, 245 }, { "pf_hf_rubber", 2, 3, 246 },
+			{ "pf_hf_fabric", 2, 3, 247 }, { "pf_hf_straps", 2, 3, 248 },
+			{ "jup_b200_tech_materials_wire", 0, 1, 251 },
+			{ "jup_b200_tech_materials_capacitor", 0, 1, 252 },
+			{ "jup_b200_tech_materials_transistor", 0, 1, 253 },
+			{ "jup_b200_tech_materials_textolite", 0, 1, 254 }
 		}
 	},
 	helmet = {
-		guaranteed = {
-			{ "pf_hf_plastic", 5 }, { "pf_hf_straps", 3 },
+		materials = {
+			{ "pf_hf_plastic", 5, 6, 301 }, { "pf_hf_straps", 3 },
 			{ "pf_hf_fabric", 2 }
-		},
-		bonus = { { "pf_hf_plastic", 1, 35, 301 } }
+		}
 	},
 	helmet_heavy = {
-		guaranteed = {
-			{ "pf_hf_scrap", 6 }, { "pf_hf_plastic", 3 },
-			{ "pf_hf_straps", 2 }, { "pf_hf_ceramic", 2 }
-		},
-		bonus = {
-			{ "pf_hf_scrap", 2, 40, 311 },
-			{ "pf_hf_ceramic", 1, 50, 312 }
+		materials = {
+			{ "pf_hf_scrap", 6, 8, 311 }, { "pf_hf_plastic", 3 },
+			{ "pf_hf_straps", 2 }, { "pf_hf_ceramic", 2, 3, 312 }
 		}
 	},
 	helmet_sealed = {
-		guaranteed = {
-			{ "pf_hf_rubber", 5 }, { "pf_hf_plastic", 3 },
-			{ "pf_hf_fabric", 2 }, { "pf_hf_electronics", 2 }
-		},
-		bonus = {
-			{ "pf_hf_electronics", 1, 40, 321 },
-			{ "pf_hf_rubber", 1, 35, 322 }
-		},
-		special = { { "lz_nm_used_filter", 1, 60, 323 } }
+		materials = {
+			{ "pf_hf_rubber", 5, 6, 322 }, { "pf_hf_plastic", 3 },
+			{ "pf_hf_fabric", 2 }, { "pf_hf_electronics", 2, 3, 321 },
+			{ "lz_nm_used_filter", 0, 1, 323 }
+		}
 	}
 }
 
--- These are equipment parts, not the workbench's basic materials. Preserve
--- the original item-id formula, multipliers, offsets and cost brackets so
--- rolls stay stable across save/load. Chances use the user-approved balance.
+-- Cost brackets retain approximately the previous average component yield.
+-- Components use the same range draw as basic and electronic materials.
 local ARMOR_COMPONENTS = {
-	{ section = "lz_nm_armor_pouch", multiplier = 48271, offset = 1013904223, multiple = true },
-	{ section = "lz_nm_rubber_padding", multiplier = 69621, offset = 1664525, multiple = true },
-	{ section = "lz_nm_combat_boots", multiplier = 16807, offset = 12345, multiple = false }
+	{ section = "lz_nm_armor_pouch", salt = 261, multiple = true },
+	{ section = "lz_nm_rubber_padding", salt = 262, multiple = true },
+	{ section = "lz_nm_combat_boots", salt = 263, multiple = false }
 }
 
 local ARMOR_COMPONENT_TIERS = {
-	{ max_cost = 7500, max_count = 1, chance = 25 },
-	{ max_cost = 15000, max_count = 2, chance = 35 },
-	{ max_cost = 30000, max_count = 3, chance = 45 },
-	{ max_cost = math.huge, max_count = 4, chance = 55 }
-}
-
-local COMPONENT_MATERIAL_ORDER = {
-	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
-	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_electronics", "pf_hf_dampers"
+	{ max_cost = 7500, min = 0, max = 1 },
+	{ max_cost = 15000, min = 0, max = 1 },
+	{ max_cost = 30000, min = 0, max = 3 },
+	{ max_cost = math.huge, min = 0, max = 4 }
 }
 
 local COMPONENT_PROFILES = {
 	lz_nm_armor_pouch = {
 		profile = "component_pouch",
 		craft_output = "lz_nm_armor_pouch",
+		workbench_category = "armor",
 		return_fraction = 0.5
 	},
 	lz_nm_rubber_padding = {
 		profile = "component_lead_insert",
 		craft_output = "lz_nm_rubber_padding",
+		workbench_category = "armor",
 		return_fraction = 0.5
+	},
+	lz_nm_radio_beacon = {
+		profile = "crafted_radio_beacon", craft_output = "lz_nm_radio_beacon",
+		workbench_category = "detectors", return_fraction = 0.5
+	},
+	pf_anomaly_scanner = {
+		profile = "crafted_anomaly_scanner", craft_output = "pf_anomaly_scanner",
+		workbench_category = "detectors", return_fraction = 0.5
 	},
 	lz_nm_combat_boots = {
 		profile = "component_boots",
-		guaranteed = {
+		workbench_category = "armor",
+		materials = {
 			{ "pf_hf_rubber", 2 }, { "pf_hf_fabric", 1 }
 		}
 	}
@@ -197,8 +206,10 @@ local function deterministic_value(item_id, salt)
 	return value
 end
 
-local function succeeds(item_id, salt, chance)
-	return deterministic_value(item_id, salt) % 100 < chance
+local function material_amount(entry, item_id)
+	local minimum, maximum = entry[2], entry[3] or entry[2]
+	if minimum == maximum then return minimum end
+	return minimum + deterministic_value(item_id, entry[4]) % (maximum - minimum + 1)
 end
 
 local function item_cost(section)
@@ -220,44 +231,34 @@ local function append_reward(rewards, counts, section, amount)
 	counts[section] = (counts[section] or 0) + amount
 end
 
-local function append_armor_components(rewards, counts, target)
-	local maximum, chance = 5, 65
+local function armor_component_tier(target)
+	local minimum, maximum = 1, 5
 	local section = target:section()
 	if not string.find(section, "exo", 1, true) then
 		local cost = item_cost(section)
 		for _, tier in ipairs(ARMOR_COMPONENT_TIERS) do
 			if cost <= tier.max_cost then
-				maximum, chance = tier.max_count, tier.chance
+				minimum, maximum = tier.min, tier.max
 				break
 			end
 		end
 	end
-	for _, component in ipairs(ARMOR_COMPONENTS) do
-		local count = 0
-		for roll_index = 1, component.multiple and maximum or 1 do
-			local multiplier = component.multiplier + roll_index * 997
-			local offset = component.offset + roll_index * 104729
-			local value = tonumber(target:id()) or 0
-			for _ = 1, 2 do value = (value * multiplier + offset) % 2147483647 end
-			if value % 100 < chance then count = count + 1 end
-		end
-		append_reward(rewards, counts, component.section, count)
-	end
+	return minimum, maximum
 end
 
-local function append_entries(rewards, counts, entries, item_id, rolled)
+local function armor_component_entries(target)
+	local minimum, maximum = armor_component_tier(target)
+	local entries = {}
+	for _, component in ipairs(ARMOR_COMPONENTS) do
+		entries[#entries + 1] = { component.section, component.multiple and minimum or 0,
+			component.multiple and maximum or 1, component.salt }
+	end
+	return entries
+end
+
+local function append_entries(rewards, counts, entries, item_id)
 	for _, entry in ipairs(entries or {}) do
-		local section, amount = entry[1], entry[2]
-		local chance = entry.pool and entry.chance or entry[3]
-		local salt = entry.pool and entry.salt or entry[4]
-		if not rolled or succeeds(item_id, salt, chance) then
-			if entry.pool then
-				local index = deterministic_value(item_id, entry.salt + 500) %
-					#entry.pool + 1
-				section, amount = entry.pool[index], entry.count
-			end
-			append_reward(rewards, counts, section, amount)
-		end
+		append_reward(rewards, counts, entry[1], material_amount(entry, item_id))
 	end
 end
 
@@ -272,19 +273,42 @@ function is_component(item_or_section)
 	return COMPONENT_PROFILES[item_section(item_or_section)] ~= nil
 end
 
+-- A category also marks products/devices that may only be dismantled at
+-- the workbench. Inventory callbacks must not accept these objects.
+function workbench_category(item_or_section)
+	local section = item_section(item_or_section)
+	if DETECTOR_SECTIONS[section] then return "detectors" end
+	local definition = COMPONENT_PROFILES[section]
+	return definition and definition.workbench_category or nil
+end
+
+function detector_profile(item_or_section)
+	return DETECTOR_SECTIONS[item_section(item_or_section)]
+end
+
+-- Compatibility for inventory text; these are per-kind bounds, not a total.
+function detector_range(item_or_section)
+	local definition = DETECTOR_PROFILES[detector_profile(item_or_section)]
+	if definition then return definition.min, definition.max end
+end
+
 local function component_definition(target)
 	local definition = COMPONENT_PROFILES[item_section(target)]
 	if not definition or not definition.craft_output then return definition end
 	local recipe = pf_hf_workbench_craft.recipe(definition.craft_output)
 	if not recipe or not recipe.materials then return nil end
 
-	local guaranteed = {}
-	for _, section in ipairs(COMPONENT_MATERIAL_ORDER) do
+	local materials, sections = {}, {}
+	-- Read every ingredient, including technical parts and future recipe
+	-- additions; a UI/basic-material whitelist would silently lose resources.
+	for section in pairs(recipe.materials) do sections[#sections + 1] = section end
+	table.sort(sections)
+	for _, section in ipairs(sections) do
 		local amount = math.floor((recipe.materials[section] or 0) *
 			definition.return_fraction)
-		if amount > 0 then guaranteed[#guaranteed + 1] = { section, amount } end
+		if amount > 0 then materials[#materials + 1] = { section, amount } end
 	end
-	return { profile = definition.profile, guaranteed = guaranteed }
+	return { profile = definition.profile, materials = materials }
 end
 
 function rewards(target)
@@ -292,7 +316,11 @@ function rewards(target)
 	local profile
 	local definition
 	local armor = false
-	if is_component(target) then
+	local detector_tier = detector_profile(target)
+	if detector_tier then
+		profile = "detector_" .. detector_tier
+		definition = DETECTOR_PROFILES[detector_tier]
+	elseif is_component(target) then
 		definition = component_definition(target)
 		profile = definition and definition.profile or nil
 	elseif core.is_weapon_mechanics_target(target) then
@@ -307,10 +335,8 @@ function rewards(target)
 
 	local item_id = target:id()
 	local result, counts = {}, {}
-	append_entries(result, counts, definition.guaranteed, item_id, false)
-	append_entries(result, counts, definition.bonus, item_id, true)
-	append_entries(result, counts, definition.special, item_id, true)
-	if armor then append_armor_components(result, counts, target) end
+	append_entries(result, counts, definition.materials, item_id)
+	if armor then append_entries(result, counts, armor_component_entries(target), item_id) end
 
 	local base_total, special_total = 0, 0
 	for section, amount in pairs(counts) do
@@ -326,4 +352,78 @@ function rewards(target)
 		base_total = base_total,
 		special_total = special_total
 	}
+end
+
+-- The portable kit and workbench share the complete result, including the
+-- installed weapon modules. Previewing never rolls a second set of rewards.
+function equipment_rewards(target)
+	local result, metadata = rewards(target)
+	if not result then return nil end
+	metadata.upgrade_ids = {}
+	if not core.is_weapon_mechanics_target(target) then return result, metadata end
+	if type(target.iterate_installed_upgrades) ~= "function" then return nil end
+	local unique, last_regular = {}, nil
+	target:iterate_installed_upgrades(function(id)
+		id = tostring(id)
+		local _, kind = recovered_field_tool(id)
+		if kind == "anomalous_nozzle" or kind == "anomalous_barrel" then
+			if not unique[kind] then
+				unique[kind] = true
+				metadata.upgrade_ids[#metadata.upgrade_ids + 1] = id
+			end
+		else last_regular = id end
+		return false
+	end)
+	if last_regular then metadata.upgrade_ids[#metadata.upgrade_ids + 1] = last_regular end
+	for _, id in ipairs(metadata.upgrade_ids) do
+		local section = recovered_field_tool(id) or "lz_nm_recovered_upgrade"
+		result[#result + 1] = { section = section, count = 1, id = id }
+		metadata.counts[section] = (metadata.counts[section] or 0) + 1
+	end
+	return result, metadata
+end
+
+-- Describe possibilities from the same profiles that produce the rewards.
+-- Zero-drop materials still appear with their possible range. UI descriptions
+-- never reroll or hide sections based on the current item's actual result.
+function reward_options(target, actual_rewards, metadata)
+	if not target or not metadata then return {} end
+	local tier = detector_profile(target)
+	local definition = tier and DETECTOR_PROFILES[tier] or
+		WEAPON_PROFILES[metadata.profile] or EQUIPMENT_PROFILES[metadata.profile] or
+		component_definition(target)
+	local result, by_section = {}, {}
+	local function row(section)
+		if not by_section[section] then
+			by_section[section] = { section = section, minimum = 0, maximum = 0 }
+			-- Preserve material order, including rows whose current draw is zero.
+			result[#result + 1] = by_section[section]
+		end
+		return by_section[section]
+	end
+	local function entries(values)
+		for _, entry in ipairs(values or {}) do
+			local reward = row(entry[1])
+			reward.minimum = reward.minimum + entry[2]
+			reward.maximum = reward.maximum + (entry[3] or entry[2])
+		end
+	end
+	if definition then
+		entries(definition.materials)
+		if not tier and not is_component(target) and core.is_outfit_or_helmet(target) and not core.is_helmet(target) then
+			entries(armor_component_entries(target))
+		end
+	end
+	-- Installed modules are guaranteed. Future provider extensions without a
+	-- profile description still appear; never filter returned sections in UI.
+	local described = {}
+	for section in pairs(by_section) do described[section] = true end
+	for _, reward in ipairs(actual_rewards or {}) do
+		if reward.id or not described[reward.section] then
+			local option = row(reward.section)
+			option.minimum = option.minimum + reward.count
+			option.maximum = option.maximum + reward.count
+		end
+	end
+	return result
 end

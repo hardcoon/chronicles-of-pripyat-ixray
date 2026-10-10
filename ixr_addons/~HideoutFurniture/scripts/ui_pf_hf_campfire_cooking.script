@@ -7,6 +7,15 @@ local CAMERA_BLEND_MS=600
 local CAMERA_MAX_STEP_MS=50
 local CAMERA_ADVANCE=.7
 local CAMERA_MIN_DISTANCE=.9
+local action_sound = nil
+
+local function play_action_sound()
+    if not db.actor or not sound_object then return end
+    -- Match the native inventory transfer, including its 2D playback.
+    action_sound = action_sound or sound_object("interface\\inv_ruck")
+    action_sound:play(nil, 0, sound_object.s2d)
+end
+
 local function tr(id) return game.translate_string(id) end
 local function label(section)
     local ini=system_ini()
@@ -116,7 +125,7 @@ function pf_hfc_cooking_dialog:__init() super()
     self.controls={}
     for _,name in ipairs({"fade","left","right","footer","title_rule","footer_accent",
         "result_rule","result_icon","ingredient_icon","ingredient_icon_2",
-        "ingredient_bg","ingredient_bg_2","cooking_selected","recipes_selected"}) do
+        "ingredient_bg","ingredient_bg_2","cooking_selected","recipes_selected","action_background"}) do
         self.controls[name]=xml:InitStatic("main:"..name,self)
         self.controls[name]:Enable(false)
     end
@@ -214,7 +223,7 @@ function pf_hfc_cooking_dialog:Open(id)
     self.id=id;self.actor_id=db.actor:id();self.world=level.name();self.keys={};self.pending=nil;self.tab="cooking"
     self.saved_slot=tonumber(db.actor:active_slot()) or 0
     self.controls.title:SetText(tr(entry.title:gsub("_name$","_heading")))
-    self.controls.feedback:SetText("")
+    self:ClearFeedback()
     self.selected=nil;self.visible_output=nil
     -- Start at the current eye, then smoothly aim at the flame's emitter center.
     -- The zero-motion ANM holds each anchor; only the camera moves, never the actor.
@@ -235,13 +244,35 @@ function pf_hfc_cooking_dialog:Open(id)
     return true
 end
 
+function pf_hfc_cooking_dialog:ClearFeedback()
+    self.feedback_until=nil
+    self.controls.feedback:SetText("")
+    self.controls.feedback:Show(false)
+end
+
+function pf_hfc_cooking_dialog:LayoutAction()
+    local view=device()
+    -- Match the workbench's screen proportions and longest action caption.
+    local width=200*(1024/768)*(tonumber(view.height) or 768)/math.max(tonumber(view.width) or 1024,1)
+    if self.action_width==width then return end
+    self.action_width=width
+    for _,control in ipairs({self.controls.cook,self.controls.action_background}) do
+        -- Resize the native button frame through its virtual width setter.
+        control:SetWidth(width)
+        control:SetWndPos(vector2():set((1024-width)*.5,632))
+    end
+end
+
 function pf_hfc_cooking_dialog:Refresh()
     if not self.id then return end
+    self:LayoutAction()
+    if self.feedback_until and time_global()>=self.feedback_until then self:ClearFeedback() end
     local recipe=pf_hf_campfire_cooking.recipe(self.selected)
     if not recipe or recipe.tab~=self.tab then recipe=pf_hf_campfire_cooking.recipes(self.tab)[1] end
     if not recipe then self:OnClose();return end
     self.selected=recipe.output
     if self.visible_output~=recipe.output then
+        self:ClearFeedback()
         self.visible_output=recipe.output
         self.controls.result_name:SetText(label(recipe.output))
         self.controls.footer_title:SetText(label(recipe.output))
@@ -306,7 +337,7 @@ function pf_hfc_cooking_dialog:Refresh()
     self.controls.status:SetText(tr(self.pending and "pf_hfc_cook_wait" or message))
     self.controls.cook:SetText(tr("pf_hfc_cook_button"))
     self.controls.cook:Show(true);self.controls.cook:Enable(ready and not self.pending)
-    self.controls.feedback:Show(true)
+    self.controls.feedback:Show(self.feedback_until~=nil)
     for _,name in ipairs({"cooking","recipes"}) do
         local selected=self.tab==name
         self.controls[name.."_selected"]:Show(selected)
@@ -360,9 +391,13 @@ end
 function pf_hfc_cooking_dialog:OnCook()
     if not self.id or self.pending or not pf_hf_campfire_cooking.recipe(self.selected) then return end
     local ok,message,consumed=pf_hf_campfire_cooking.cook(self.id,self.selected)
-    if ok then self.pending=consumed end
+    if ok then
+        self.pending=consumed
+        play_action_sound()
+    end
     self.controls.feedback:SetText(tr(message))
     self.controls.feedback:SetTextColor(ok and GetARGB(255,178,222,154) or GetARGB(255,231,121,104))
+    self.feedback_until=time_global()+3000
     self:Refresh()
 end
 
@@ -440,6 +475,7 @@ function pf_hfc_cooking_dialog:OnKeyboard(key,action)
 end
 
 function pf_hfc_cooking_dialog:OnClose()
+    self:ClearFeedback()
     pf_hf_cooking_preview.close(self.preview)
     self.preview=nil;self.preview_active=false
     self:HideDialog()

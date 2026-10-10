@@ -845,16 +845,36 @@ local function update_preacher_retreat(server_npc)
 	client_npc:set_sight(look.path_dir, nil, 0)
 end
 
-local function add_stash_marker(box)
-	if not box or db.actor:has_info("pf_story_legendary_searched") then return end
-	if level.map_has_object_spot(box.id, STASH_MARKER) == 0 then
-		level.map_add_object_spot_ser(box.id, STASH_MARKER, STASH_HINT)
+local function remove_stash_marker(box_id)
+	if not box_id then return end
+	for _, marker in ipairs({ STASH_MARKER, STASH_MARKER .. "_eye" }) do
+		local attempts = 0
+		while attempts < 16 and level.map_has_object_spot(box_id, marker) ~= 0 do
+			level.map_remove_object_spot(box_id, marker)
+			attempts = attempts + 1
+		end
 	end
 end
 
-local function remove_stash_marker(box_id)
-	if box_id and level.map_has_object_spot(box_id, STASH_MARKER) ~= 0 then
-		level.map_remove_object_spot(box_id, STASH_MARKER)
+local function add_stash_marker(box)
+	if not box or not db.actor then return end
+	local has_items = false
+	for _ in alife():get_children(box) do has_items = true break end
+	if not has_items then remove_stash_marker(box.id) return end
+	-- The story flag already records first pickup. Keep its quest rewards,
+	-- while the map continues to show the remaining contents with an eye.
+	local taken = db.actor:has_info("pf_story_legendary_searched")
+	local marker = STASH_MARKER .. (taken and "_eye" or "")
+	local previous = STASH_MARKER .. (taken and "" or "_eye")
+	if level.map_has_object_spot(box.id, marker) == 0 then
+		level.map_add_object_spot_ser(box.id, marker, STASH_HINT)
+	end
+	if level.map_has_object_spot(box.id, marker) ~= 0 then
+		local attempts = 0
+		while attempts < 16 and level.map_has_object_spot(box.id, previous) ~= 0 do
+			level.map_remove_object_spot(box.id, previous)
+			attempts = attempts + 1
+		end
 	end
 end
 
@@ -1295,11 +1315,11 @@ function on_actor_item_take(item, previous_owner_id)
 		pf_dynamic_stashes.apply_story_legendary_item_condition(item, previous_owner_id)
 		if not db.actor:has_info("pf_story_legendary_searched") then
 			db.actor:give_info_portion("pf_story_legendary_searched")
-			remove_stash_marker(owner.id)
 			news_manager.send_tip(db.actor, "pf_story_legendary_searched_news", nil, nil, nil, nil)
 			xr_effects.scenario_autosave(
 				db.actor, nil, {"st_save_pf_story_legendary_searched"})
 		end
+		add_stash_marker(owner)
 	end
 end
 

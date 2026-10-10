@@ -1,0 +1,59 @@
+; DCPA creature physics: exact donor physical values, 2026-10-10.
+; Source: mod_zzz_dcp.xdb0, config/creatures/monsters/*.ltx.
+; No vehicle-name checks or synthetic collision damage.
+; Giant retains donor crash thresholds 100/300; chimera uses 10/30.
+
+![chimera_immunities]
+strike_immunity = 0.1
+
+![chimera_immunities_normal]
+strike_immunity = 0.1
+
+![giant_immunities]
+strike_immunity = 0.3
+
+![m_bloodsucker_e]
+ph_box0_size = 0.2,  0.9,  0.2
+ph_box1_size = 0.20, 0.6,  0.20
+ph_mass = 90
+
+![m_boar_e]
+ph_mass = 90
+
+![m_chimera_e]
+ph_collision_damage_factor = 0.02
+ph_mass = 140
+
+![m_controller_e]
+ph_box0_size = 0.2, 0.9,  0.2
+ph_box1_size = 0.2, 0.6,  0.2
+ph_mass = 70
+
+![m_dog_e]
+ph_mass = 10
+ph_skeleton_airr_lin_factor = 0.5
+
+![m_flesh_e]
+ph_mass = 60
+
+![m_gigant_e]
+ph_mass = 240
+
+![m_pseudodog_e]
+ph_crash_speed_max = 30
+ph_crash_speed_min = 10
+ph_mass = 20
+ph_skeleton_airr_lin_factor = 1.0
+
+![m_snork_e]
+ph_mass = 80
+
+![m_tushkano_e]
+ph_box0_size = 0.35, 0.9,  0.35
+ph_mass = 3
+ph_skeleton_airr_lin_factor = 0.1
+
+![stalker]
+ph_box0_size = 0.15, 0.9,  0.15
+ph_box1_size = 0.15, 0.6,  0.15
+

@@ -18,6 +18,26 @@
     <texture id="ui_pf_hf_repair_fade" x="0" y="0" width="1024" height="768"/>
   </file>
   <file name="ui\ui_pf_hf_repair_style">
+    <!-- Native frame tiles preserve one-pixel borders at every aspect ratio.
+         Corners and edges include an inner guard pixel from the same fill. -->
+    <texture id="ui_pf_hf_action_frame_back" x="132" y="52" width="8" height="8"/>
+    <texture id="ui_pf_hf_action_frame_l" x="128" y="52" width="2" height="8"/>
+    <texture id="ui_pf_hf_action_frame_r" x="254" y="52" width="2" height="8"/>
+    <texture id="ui_pf_hf_action_frame_t" x="132" y="48" width="8" height="2"/>
+    <texture id="ui_pf_hf_action_frame_b" x="132" y="94" width="8" height="2"/>
+    <texture id="ui_pf_hf_action_frame_lt" x="128" y="48" width="2" height="2"/>
+    <texture id="ui_pf_hf_action_frame_rt" x="254" y="48" width="2" height="2"/>
+    <texture id="ui_pf_hf_action_frame_lb" x="128" y="94" width="2" height="2"/>
+    <texture id="ui_pf_hf_action_frame_rb" x="254" y="94" width="2" height="2"/>
+    <texture id="ui_pf_hf_action_frame_hover_back" x="132" y="120" width="8" height="8"/>
+    <texture id="ui_pf_hf_action_frame_hover_l" x="128" y="120" width="2" height="8"/>
+    <texture id="ui_pf_hf_action_frame_hover_r" x="254" y="120" width="2" height="8"/>
+    <texture id="ui_pf_hf_action_frame_hover_t" x="132" y="116" width="8" height="2"/>
+    <texture id="ui_pf_hf_action_frame_hover_b" x="132" y="162" width="8" height="2"/>
+    <texture id="ui_pf_hf_action_frame_hover_lt" x="128" y="116" width="2" height="2"/>
+    <texture id="ui_pf_hf_action_frame_hover_rt" x="254" y="116" width="2" height="2"/>
+    <texture id="ui_pf_hf_action_frame_hover_lb" x="128" y="162" width="2" height="2"/>
+    <texture id="ui_pf_hf_action_frame_hover_rb" x="254" y="162" width="2" height="2"/>
     <texture id="ui_pf_hf_repair_selected" x="4" y="264" width="128" height="48"/>
     <texture id="ui_pf_hf_repair_hover" x="140" y="264" width="128" height="48"/>
     <texture id="ui_pf_hf_repair_down" x="4" y="320" width="128" height="48"/>
@@ -38,8 +58,10 @@
     <texture id="ui_pf_hf_repair_tab_active" x="140" y="376" width="128" height="32"/>
   </file>
   <file name="ui\ui_pf_hf_dropdown">
-    <texture id="ui_pf_hf_dropdown_black" x="0" y="0" width="8" height="8"/>
-    <texture id="ui_pf_hf_dropdown_gold" x="8" y="0" width="8" height="8"/>
+    <!-- Sample inside each solid tile; bilinear filtering must not pick up
+         the neighbouring gold tile when the black background is stretched. -->
+    <texture id="ui_pf_hf_dropdown_black" x="2" y="2" width="4" height="4"/>
+    <texture id="ui_pf_hf_dropdown_gold" x="10" y="2" width="4" height="4"/>
   </file>
   <file name="ui\ui_pf_hf_upgrade_cells">
     <texture id="ui_pf_hf_upgrade_cell_clear" x="8" y="4" width="72" height="44"/>

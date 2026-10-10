@@ -1,0 +1,146 @@
+-- Lifetime photo collection. The stash manager owns search, slots and streaming.
+-- This leaf module keeps only thirty issued numbers; no callbacks or polling.
+local STATE_KEY = "pf_photo_cards_distribution"
+local CARD_COUNT = 30
+local ROLL_CHANCE = 35
+local impl = {}
+
+function impl.saved(create)
+    local root = alife_storage_manager.get_state()
+    local saved = root[STATE_KEY]
+    if type(saved) ~= "table" then
+        if not create then return nil end
+        saved = { version = 1, issued = {} }
+        root[STATE_KEY] = saved
+    end
+    return saved
+end
+
+function impl.section(index)
+    index = tonumber(index)
+    if not index or index ~= math.floor(index) or index < 1 or index > CARD_COUNT then return nil end
+    return string.format("pf_photo_card_%02d_item", index)
+end
+
+function impl.record(slot)
+    local index = slot and slot.state and tonumber(slot.state.photo_card_index)
+    local saved = index and impl.saved(false)
+    local record = saved and saved.issued[index]
+    if type(record) ~= "table" or record.slot_index ~= slot.index or
+        record.generation ~= (tonumber(slot.state.loot_generation) or 0) then return nil end
+    return record, index
+end
+
+function impl.matches(object, record, index)
+    return object and object.id == record.object_id and
+        object:name() == record.object_name and object:section_name() == impl.section(index)
+end
+
+function impl.finish(slot, record)
+    record.status = "issued"
+    record.object_id = nil
+    record.object_name = nil
+    record.box_id = nil
+    slot.state.photo_card_index = nil
+end
+
+-- The two supplied seeds are independent of notes and the normal loot RNG.
+-- Reserve before physical creation: failure owes this same number to this slot.
+function search(slot, roll, selection_seed, box, spawn_item)
+    if not slot or not slot.state or slot.state.depleted or slot.state.photo_roll_checked then
+        return materialize(slot, box, spawn_item)
+    end
+    local ini = system_ini()
+    local available = {}
+    local saved = impl.saved(false)
+    for index = 1, CARD_COUNT do
+        if not (saved and saved.issued[index]) and ini:section_exist(impl.section(index)) then
+            available[#available + 1] = index
+        end
+    end
+    -- A disabled/missing addon must not spend a rotation's opportunity.
+    if #available == 0 and not saved then return false end
+    slot.state.photo_roll_checked = true
+    if #available == 0 or (tonumber(roll) or 100) > ROLL_CHANCE then return false end
+    local index = available[math.floor(math.abs(tonumber(selection_seed) or 0)) % #available + 1]
+    saved = impl.saved(true)
+    saved.issued[index] = { slot_index = slot.index,
+        generation = tonumber(slot.state.loot_generation) or 0, status = "pending" }
+    slot.state.photo_card_index = index
+    return materialize(slot, box, spawn_item)
+end
+
+function materialize(slot, box, spawn_item)
+    if not slot or not slot.state or slot.state.depleted or not box then return false end
+    local record, index = impl.record(slot)
+    if not record then return false end
+    local sim = alife()
+    if record.status == "live" then
+        local object = record.object_id and sim:object(record.object_id, true)
+        if impl.matches(object, record, index) and tonumber(object.parent_id) == box.id then
+            return true
+        end
+        -- A taken, moved, destroyed or replaced item stays issued forever.
+        impl.finish(slot, record)
+        return false
+    end
+    if record.status ~= "pending" then
+        slot.state.photo_card_index = nil
+        return false
+    end
+    local section = impl.section(index)
+    if not section or not system_ini():section_exist(section) then return false end
+    local created_ids = {}
+    local ok, created = pcall(spawn_item, { section = section }, box.id, created_ids)
+    local valid, object, object_name = pcall(function()
+        local item = ok and created and created_ids[1] and sim:object(created_ids[1], true)
+        if item and item:section_name() == section and tonumber(item.parent_id) == box.id then
+            return item, item:name()
+        end
+    end)
+    if valid and object and object_name then
+        record.status = "live"
+        record.object_id = object.id
+        record.object_name = object_name
+        record.box_id = box.id
+        return true
+    end
+    for _, id in ipairs(created_ids) do
+        local item = sim:object(id, true)
+        if item then sim:release(item, true) end
+    end
+    return false
+end
+
+function pending(slot)
+    local record = impl.record(slot)
+    return record and record.status == "pending" or false
+end
+
+function taken(slot, item)
+    local record, index = impl.record(slot)
+    if record and item and record.object_id == item:id() and item:section() == impl.section(index) then
+        impl.finish(slot, record)
+    end
+end
+
+-- Only an intentional manager-owned container removal can restore the same
+-- logical photo after streaming. Losing the item itself cannot repeat its drop.
+function before_container_release(box)
+    local saved = impl.saved(false)
+    if not saved or not box then return end
+    local sim = alife()
+    for index, record in pairs(saved.issued) do
+        if record.status == "live" and record.box_id == box.id then
+            local object = record.object_id and sim:object(record.object_id, true)
+            if impl.matches(object, record, index) and tonumber(object.parent_id) == box.id then
+                record.status = "pending"
+            else
+                record.status = "issued"
+            end
+            record.object_id = nil
+            record.object_name = nil
+            record.box_id = nil
+        end
+    end
+end

@@ -53,65 +53,6 @@ local upgrade_tools = {
 	itm_field_upgrade_kit_anomalous_barrel = "anomalous_barrel"
 }
 
-local recovered_field_upgrade_tools = {
-	rough = "itm_repairkit_tier_1",
-	fine = "itm_repairkit_tier_2",
-	soft = "itm_repairkit_tier_soft",
-	calibration = "itm_repairkit_tier_3",
-	magazine = "itm_field_upgrade_kit_blue",
-	reload = "itm_field_upgrade_kit_red",
-	caliber = "itm_field_upgrade_kit_yellow",
-	weight = "itm_field_upgrade_kit_green",
-	anomalous_nozzle = "itm_field_upgrade_kit_anomalous_nozzle",
-	anomalous_barrel = "itm_field_upgrade_kit_anomalous_barrel"
-}
-
-
-local detector_disassembly = {
-	detector_simple = {
-		min = 1, max = 3,
-		pool = {
-			"jup_b200_tech_materials_wire",
-			"jup_b200_tech_materials_capacitor",
-			"jup_b200_tech_materials_transistor"
-		}
-	},
-	detector_advanced = {
-		min = 2, max = 4,
-		pool = {
-			"jup_b200_tech_materials_wire",
-			"jup_b200_tech_materials_capacitor",
-			"jup_b200_tech_materials_transistor",
-			"jup_b200_tech_materials_textolite"
-		}
-	},
-	detector_elite = {
-		min = 3, max = 5,
-		pool = {
-			"jup_b200_tech_materials_wire",
-			"jup_b200_tech_materials_capacitor",
-			"jup_b200_tech_materials_transistor",
-			"jup_b200_tech_materials_textolite",
-			"jup_b200_tech_materials_acetone"
-		}
-	},
-	detector_scientific = {
-		min = 5, max = 5,
-		guaranteed = {
-			"jup_b200_tech_materials_wire",
-			"jup_b200_tech_materials_capacitor",
-			"jup_b200_tech_materials_transistor",
-			"jup_b200_tech_materials_textolite",
-			"jup_b200_tech_materials_acetone"
-		}
-	}
-}
-
--- Stash-detector variants reuse the corresponding stock detector salvage.
-detector_disassembly.pf_metal_detector_homemade = detector_disassembly.detector_simple
-detector_disassembly.pf_metal_detector_wave = detector_disassembly.detector_advanced
-detector_disassembly.pf_metal_detector_magnet = detector_disassembly.detector_elite
-
 -- These are two distinct device families. Both use ordinary saved condition as
 -- battery charge and accept the same Krona cell, but must remain separate in UI
 -- wording and gameplay classification.
@@ -355,54 +296,42 @@ end
 
 
 function can_disassemble_item(section, condition, partner_profile_name)
-	return detector_disassembly[section] ~= nil
+	return pf_hf_salvage.detector_profile(section) ~= nil and
+		not pf_hf_salvage.workbench_category(section)
 end
 
 function question_disassemble_item(section, condition, can_disassemble, partner_profile_name)
-	local recipe = detector_disassembly[section]
-	if not can_disassemble or not recipe then
+	local minimum, maximum = pf_hf_salvage.detector_range(section)
+	if not can_disassemble or not minimum then
 		return game.translate_string("lz_nm_disassemble_unavailable")
 	end
-	if recipe.min == recipe.max then
+	if minimum == maximum then
 		return string.format(
-			game.translate_string("lz_nm_disassemble_question_exact"), recipe.min
+			game.translate_string("lz_nm_disassemble_question_exact"), minimum
 		)
 	end
 	return string.format(
-		game.translate_string("lz_nm_disassemble_question_range"), recipe.min, recipe.max
+		game.translate_string("lz_nm_disassemble_question_range"), minimum, maximum
 	)
 end
 
 function effect_disassemble_item(section, condition, partner_profile_name)
-	local recipe = detector_disassembly[section]
-	if not recipe or not db.actor then return end
-
-	local created = 0
-	if recipe.guaranteed then
-		for _, part_section in ipairs(recipe.guaranteed) do
-			if core.create_for_actor(part_section) then created = created + 1 end
-		end
-	else
-		local count = math.random(recipe.min, recipe.max)
-		for _ = 1, count do
-			local part_section = recipe.pool[math.random(1, #recipe.pool)]
-			if core.create_for_actor(part_section) then created = created + 1 end
-		end
-	end
-	printf(
-		"lz_new_mechanics: disassembled [%s], created [%s] salvage parts",
-		tostring(section), tostring(created)
-	)
-	core.message(string.format(game.translate_string("pf_hf_salvage_component_result"), created))
+	if not db.actor or pf_hf_salvage.workbench_category(section) then return false end
+	-- Legacy trader callback only supplies a section. Resolve its actual owned
+	-- instance rather than rolling a second, unrelated set of components.
+	local target
+	db.actor:iterate_inventory(function(_, item)
+		if not target and item:section() == section then target = item end
+	end, db.actor)
+	if not target or not pf_hf_salvage.detector_profile(target) then return false end
+	return impl.create_detector_salvage(target)
 end
 
--- Ordinary inventory context-menu action. Salvage is created first and the
--- exact detector instance selected by the player is then removed. Returning
--- false prevents the engine from also trying to use it as a consumable.
+-- Keep old saved/context callbacks harmless for workbench-only detectors.
 function disassemble_detector(item)
-	if not item or not db.actor then return false end
+	if not item or not db.actor or pf_hf_salvage.workbench_category(item) then return false end
 	local section = item:section()
-	if not detector_disassembly[section] then return false end
+	if not pf_hf_salvage.detector_profile(section) then return false end
 	if not core.require_actor_owned_item(item) then return false end
 	impl.queue_inventory_tool_action(item, item, "disassemble_detector")
 	return false
@@ -412,7 +341,8 @@ end
 -- exact selected stack object and does not require a separate tool.
 function disassemble_component(item)
 	if not item or not db.actor or db.actor:is_talking() then return false end
-	if not pf_hf_salvage.is_component(item) or not core.require_actor_owned_item(item) then
+	if pf_hf_salvage.workbench_category(item) or not pf_hf_salvage.is_component(item) or
+		not core.require_actor_owned_item(item) then
 		return false
 	end
 	impl.queue_inventory_tool_action(item, item, "disassemble_component")
@@ -420,17 +350,33 @@ function disassemble_component(item)
 end
 
 function impl.complete_detector_disassembly(item)
-	if not item or not core.is_actor_owned_item(item) then return false end
-	local section = item:section()
-	if not detector_disassembly[section] then return false end
-	effect_disassemble_item(section, item:condition(), nil)
+	if not item or not core.is_actor_owned_item(item) or
+		pf_hf_salvage.workbench_category(item) then return false end
+	if not pf_hf_salvage.detector_profile(item) then return false end
+	if not impl.create_detector_salvage(item) then return false end
 	impl.release_item(item)
+	return true
+end
+
+function impl.create_detector_salvage(item)
+	if pf_hf_salvage.workbench_category(item) then return false end
+	local rewards, salvage = pf_hf_salvage.rewards(item)
+	if not rewards then return false end
+	local created, reason = impl.create_disassembly_rewards(rewards)
+	if not created then
+		core.message("pf_hf_disassemble_failed")
+		printf("! [salvage] detector salvage rolled back: %s", tostring(reason))
+		return false
+	end
+	core.message(string.format(game.translate_string("pf_hf_salvage_component_result"), #created))
+	printf("lz_new_mechanics: disassembled detector [%s], profile [%s], base materials [%s], special components [%s]",
+		tostring(item:section()), tostring(salvage.profile), tostring(salvage.base_total), tostring(salvage.special_total))
 	return true
 end
 
 function impl.complete_component_disassembly(item)
 	if not item or not core.is_actor_owned_item(item) or
-		not pf_hf_salvage.is_component(item) then
+		pf_hf_salvage.workbench_category(item) or not pf_hf_salvage.is_component(item) then
 		return false
 	end
 	local rewards, salvage = pf_hf_salvage.rewards(item)
@@ -1188,14 +1134,7 @@ function impl.last_installed_upgrade(target)
 end
 
 function impl.recovered_field_tool(upgrade_id)
-	if not upgrade_id or string.sub(upgrade_id, 1, 9) ~= "lz_nm_up_" then return nil end
-	for upgrade_type, tool_section in pairs(recovered_field_upgrade_tools) do
-		if string.match(upgrade_id, "_" .. upgrade_type .. "_%d+$") or
-			string.match(upgrade_id, "_" .. upgrade_type .. "$") then
-			return tool_section
-		end
-	end
-	return nil
+	return pf_hf_salvage.recovered_field_tool(upgrade_id)
 end
 
 function impl.create_recovered_upgrade(upgrade_id)
@@ -1247,6 +1186,7 @@ function impl.disassemble_equipment(tool, target)
 	if not tool or not target then
 		return false
 	end
+	if pf_hf_salvage.workbench_category(target) then return false end
 	if not disassembly_tools[core.canonical_item_section(tool:section())] then return false end
 	if core.is_weapon_mechanics_target(target) then
 		-- Keep every unique module once, plus the last non-unique native upgrade.
@@ -1255,34 +1195,12 @@ function impl.disassemble_equipment(tool, target)
 			core.message("lz_nm_disassemble_weapon_failed")
 			return false
 		end
-		local upgrade_ids, seen_unique, last_regular = {}, {}, nil
-		if type(target.iterate_installed_upgrades) == "function" then
-			target:iterate_installed_upgrades(function(id)
-				id = tostring(id)
-				local section = impl.recovered_field_tool(id)
-				local kind = section and upgrade_tools[section]
-				if FIELD_UPGRADE_UNIQUE[kind] then
-					if not seen_unique[kind] then
-						seen_unique[kind] = true
-						table.insert(upgrade_ids, id)
-					end
-				else
-					last_regular = id
-				end
-				return false
-			end)
-		end
-		if last_regular then table.insert(upgrade_ids, last_regular) end
-		local rewards, salvage = pf_hf_salvage.rewards(target)
+		local rewards, salvage = pf_hf_salvage.equipment_rewards(target)
 		if not rewards then
 			core.message("lz_nm_disassemble_weapon_failed")
 			return false
 		end
-		for _, id in ipairs(upgrade_ids) do
-			table.insert(rewards, {
-				section = impl.recovered_field_tool(id) or "lz_nm_recovered_upgrade", id = id
-			})
-		end
+		local upgrade_ids = salvage.upgrade_ids
 		local created, reason = impl.create_disassembly_rewards(rewards)
 		if not created then
 			core.message("lz_nm_disassemble_weapon_failed")

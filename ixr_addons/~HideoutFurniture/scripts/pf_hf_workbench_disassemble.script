@@ -1,0 +1,152 @@
+-- Workbench transaction and inventory selection. Yield rules belong to the
+-- shared salvage provider; this module has no per-weapon/per-outfit recipes.
+local core = lz_nm_core
+local pending = {}
+local RECOVERED_PREFIX = "lz_nm_recovered_upgrade_"
+
+local function equipped_ids()
+	local ids = {}
+	-- Use the engine's full range, including custom slots. 23 is IX-Ray's
+	-- exported LAST_SLOT fallback, not a shortlist of weapons/outfit slots.
+	local last_slot = CInventory and tonumber(CInventory.LAST_SLOT) or 23
+	for slot = 1, last_slot do
+		local worn = db.actor:item_in_slot(slot)
+		if worn then ids[worn:id()] = true end
+	end
+	return ids
+end
+
+function eligible(item, slots)
+	if not item or not core.is_actor_owned_item(item) then return false end
+	if (slots or equipped_ids())[item:id()] or db.actor:is_on_belt(item) then return false end
+	if pending[item:id()] == item then return false end
+	if not core.is_weapon_mechanics_target(item) and not core.is_outfit_or_helmet(item) and
+		not pf_hf_salvage.detector_profile(item) and not pf_hf_salvage.workbench_category(item) then return false end
+	local ini, section = core.get_sysini(), item:section()
+	if ini:line_exist(section, "quest_item") then
+		local value = string.lower(ini:r_string(section, "quest_item"))
+		if value == "true" or value == "1" then return false end
+	end
+	return true
+end
+
+function owned_items(category)
+	local items = {}
+	if not db.actor then return items end
+	for id, item in pairs(pending) do
+		if level.object_by_id(id) ~= item then pending[id] = nil end
+	end
+	local slots = equipped_ids()
+	db.actor:iterate_inventory(function(_, item)
+		if eligible(item, slots) and (not category or category == "all" or
+			category == pf_hf_salvage.workbench_category(item) or
+			(category == "weapons" and core.is_weapon_mechanics_target(item)) or
+			(category == "armor" and core.is_outfit_or_helmet(item)) or
+			(category == "detectors" and pf_hf_salvage.detector_profile(item))) then
+			items[#items + 1] = item
+		end
+	end, db.actor)
+	table.sort(items, function(a, b) return a:id() < b:id() end)
+	return items
+end
+
+function find_owned_target(id)
+	local item = id and level.object_by_id(id)
+	return eligible(item) and item or nil
+end
+
+-- Group only the list. Each entry still points to one physical object, so
+-- charge, deterministic rewards and ownership checks retain its saved ID.
+function item_groups(items, selected_id)
+	local groups, by_section = {}, {}
+	for _, item in ipairs(items) do
+		if core.is_weapon_mechanics_target(item) or core.is_outfit_or_helmet(item) then
+			groups[#groups + 1] = { item = item }
+		else
+			local section = item:section()
+			local group = by_section[section]
+			if not group then
+				group = { item = item, count = 0 }
+				by_section[section] = group
+				groups[#groups + 1] = group
+			end
+			group.count = group.count + 1
+			if item:id() == selected_id then group.item = item end
+		end
+	end
+	return groups
+end
+
+function preview(id)
+	local target = find_owned_target(id)
+	if not target then return nil end
+	local rewards, metadata = pf_hf_salvage.equipment_rewards(target)
+	if not rewards then return nil end
+	local display_rows = pf_hf_salvage.reward_options(target, rewards, metadata)
+	-- A valid 0..N profile can produce no loot. It must remain selectable and
+	-- use the same transaction; hiding it would reveal its roll before salvage.
+	if #display_rows == 0 then return nil end
+	local parts, counts, sections = {}, {}, {}
+	for _, reward in ipairs(rewards) do
+		local count = tonumber(reward.count) or 1
+		parts[#parts + 1] = reward.section .. ":" .. count .. ":" .. (reward.id or "")
+		if not counts[reward.section] then sections[#sections + 1] = reward.section end
+		counts[reward.section] = (counts[reward.section] or 0) + count
+	end
+	-- Sort every returned section, including components absent from craft's
+	-- material_order. The UI must never silently omit the eighth or later row.
+	table.sort(sections)
+	local rows = {}
+	for _, section in ipairs(sections) do rows[#rows + 1] = { section = section, count = counts[section] } end
+	table.sort(parts)
+	return { id = target:id(), section = target:section(), condition = target:condition(),
+		rewards = rewards, rows = rows, metadata = metadata,
+		display_rows = display_rows,
+		signature = target:id() .. ":" .. target:section() .. ":" ..
+			string.format("%.6f", target:condition()) .. "|" .. table.concat(parts, "|") }
+end
+
+local function rollback(created)
+	local storage = db.actor and db.storage[db.actor:id()]
+	for _, entry in ipairs(created) do
+		if entry.key and storage and storage.pstor then storage.pstor[entry.key] = nil end
+		alife():release(entry.object, true)
+	end
+end
+
+function disassemble(id, expected_signature)
+	local plan = preview(id)
+	if not plan then return false, "pf_hf_disassemble_unavailable" end
+	if not expected_signature or plan.signature ~= expected_signature then
+		return false, "pf_hf_disassemble_changed"
+	end
+	local target = find_owned_target(id)
+	if not target or not core.server_object(target) then return false, "pf_hf_disassemble_unavailable" end
+	local created = {}
+	local ok, reason = pcall(function()
+		for _, reward in ipairs(plan.rewards) do
+			for _ = 1, reward.count or 1 do
+				local object = core.create_for_actor(reward.section)
+				if not object then error("cannot create " .. reward.section) end
+				local entry = { object = object }
+				created[#created + 1] = entry
+				if reward.section == "lz_nm_recovered_upgrade" and reward.id then
+					entry.key = RECOVERED_PREFIX .. tostring(object.id)
+					xr_logic.pstor_store(db.actor, entry.key, reward.id)
+				end
+			end
+		end
+	end)
+	if not ok then
+		rollback(created)
+		printf("! [HideoutFurniture] workbench disassembly rolled back: %s", tostring(reason))
+		return false, "pf_hf_disassemble_failed"
+	end
+	pending[id] = target
+	core.release_item(target)
+	return true, "pf_hf_disassembled", { id }
+end
+
+function reset()
+	pending = {}
+end

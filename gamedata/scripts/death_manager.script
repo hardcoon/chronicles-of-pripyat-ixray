@@ -8,6 +8,12 @@ ammo_sections = {}
 
 local death_ini = ini_file("misc\\death_generic.ltx")
 local weapon_drop_state = {}
+local grenade_drop_state = {}
+local corpse_grenade_sections = {
+    grenade_f1 = true,
+    grenade_rgd5 = true,
+    ["grenade_gd-05"] = true
+}
 
 local zombie_weapon_chance = {
 	novice = 5,
@@ -134,6 +140,16 @@ local function release_item(item)
 	end
 end
 
+-- One shared corpse limit covers retained supplies and newly generated grenades.
+local function allow_grenade_drop(npc, chance)
+    local state = grenade_drop_state[npc:id()]
+    if state == nil or state.kept >= 1 or math.random(100) > chance then
+        return false
+    end
+    state.kept = state.kept + 1
+    return true
+end
+
 local function prepare_weapon_drop(npc)
 	local community = character_community(npc)
 	local rank = npc_rank(npc)
@@ -241,6 +257,7 @@ function drop_manager:create_release_item()
 	end
 	se_obj.death_droped = true
 
+	grenade_drop_state[self.npc:id()] = {kept = 0}
 	prepare_weapon_drop(self.npc)
 	self.npc:iterate_inventory(keep_item, self.npc)
 	weapon_drop_state[self.npc:id()] = nil
@@ -248,16 +265,19 @@ function drop_manager:create_release_item()
 
 	local ini = self.npc:spawn_ini()
 	if ini and ini:section_exist("dont_spawn_loot") then
+		grenade_drop_state[self.npc:id()] = nil
 		return
 	end
 	local storage = db.storage[self.npc:id()]
 	local storage_ini = storage and storage.ini
 	if storage_ini and storage_ini:line_exist(storage.section_logic, "dont_spawn_loot") then
+		grenade_drop_state[self.npc:id()] = nil
 		return
 	end
 
 	local spawn_items = item_by_community[character_community(self.npc)]
 	if spawn_items == nil then
+		grenade_drop_state[self.npc:id()] = nil
 		return
 	end
 	for section, chance in pairs(spawn_items) do
@@ -269,6 +289,7 @@ function drop_manager:create_release_item()
 			create_items(self.npc, section, number, chance)
 		end
 	end
+	grenade_drop_state[self.npc:id()] = nil
 end
 
 function keep_item(npc, item)
@@ -289,6 +310,13 @@ function keep_item(npc, item)
 		return
 	end
 	if isArtefact(item) or section == "bolt" or always_keep_item[section] == true then
+		return
+	end
+
+	if corpse_grenade_sections[section] then
+		if not allow_grenade_drop(npc, 25) then
+			release_item(item)
+		end
 		return
 	end
 
@@ -326,7 +354,7 @@ function create_items(npc, section, number, rnd)
 	if ammo_sections[section] == true then
 		local chances = community == "zombied" and zombie_ammo_chance or npc_ammo_chance
 		if number > 0 and math.random(100) <= (chances[rank] or chances.novice) then
-			local cap = community == "zombied" and 8 or 18
+			local cap = community == "zombied" and 10 or 20
 			create_ammo(section, npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id(), math.min(number, cap))
 		end
 		return
@@ -334,6 +362,14 @@ function create_items(npc, section, number, rnd)
 
 	local multiplier = community == "zombied" and 0.35 or 0.65
 	local adjusted_chance = rnd * multiplier
+	if corpse_grenade_sections[section] then
+		for i = 1, number do
+			if allow_grenade_drop(npc, adjusted_chance * 0.25) then
+				alife():create(section, npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id())
+			end
+		end
+		return
+	end
 	for i = 1, number do
 		if math.random(100) <= adjusted_chance then
 			alife():create(section, npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id())

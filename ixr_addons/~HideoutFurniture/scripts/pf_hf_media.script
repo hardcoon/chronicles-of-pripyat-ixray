@@ -55,6 +55,11 @@ function radio_selection(own)
     own.track=math.max(1,math.min(#collection.tracks,own.track or 1))
     if own.play_order~="shuffle" then own.play_order="ordered" end
     own.repeat_track=own.repeat_track==true
+    -- A changed Yanov list invalidates saved positional history/shuffle entries.
+    if collection.id=="yanov" and own.yanov_track_count~=#collection.tracks then
+        own.yanov_track_count=#collection.tracks
+        reset_sequence(own)
+    end
     if type(own.radio_history)~="table" or #own.radio_history==0 then reset_sequence(own) end
     own.radio_history_pos=math.max(1,math.min(#own.radio_history,own.radio_history_pos or 1))
     return collection,collection.tracks[own.track]
@@ -63,6 +68,7 @@ function radio_copy_settings(source,target)
     target.play_order=source and source.play_order or "ordered"
     target.repeat_track=source and source.repeat_track==true or false
     target.radio_history_pos=source and source.radio_history_pos or 1
+    target.yanov_track_count=source and source.yanov_track_count or nil
     for _,key in ipairs({"shuffle_tracks","radio_history"}) do
         target[key]=nil
         if source and type(source[key])=="table" then

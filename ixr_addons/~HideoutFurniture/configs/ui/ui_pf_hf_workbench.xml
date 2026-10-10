@@ -1,6 +1,38 @@
 <?xml version='1.0' encoding='utf-8'?>
 <w>
   <main x="0" y="0" width="1024" height="768">
+    <action_background x="422" y="632" width="180" height="38" stretch="1">
+      <texture>ui_pf_hf_dropdown_black</texture>
+    </action_background>
+    <action_note x="382" y="610" width="260" height="20">
+      <text align="c" vert_align="c" font="ui_font_pf_fa_small" r="220" g="187" b="126" />
+    </action_note>
+    <repair x="422" y="632" width="180" height="38" frame_mode="2">
+      <texture_e>ui_pf_hf_action_frame</texture_e>
+      <texture_h>ui_pf_hf_action_frame_hover</texture_h>
+      <texture_t>ui_pf_hf_action_frame_hover</texture_t>
+      <texture_d>ui_pf_hf_action_frame</texture_d>
+      <text align="c" vert_align="c" font="ui_font_pf_fa_button" r="247" g="226" b="182">pf_hf_repair_button</text>
+      <text_color>
+        <e r="231" g="219" b="197" />
+        <h r="255" g="228" b="180" />
+        <t r="255" g="236" b="194" />
+        <d r="101" g="97" b="88" />
+      </text_color>
+    </repair>
+    <upgrade_action x="422" y="632" width="180" height="38" frame_mode="2">
+      <texture_e>ui_pf_hf_action_frame</texture_e>
+      <texture_h>ui_pf_hf_action_frame_hover</texture_h>
+      <texture_t>ui_pf_hf_action_frame_hover</texture_t>
+      <texture_d>ui_pf_hf_action_frame</texture_d>
+      <text align="c" vert_align="c" font="ui_font_pf_fa_button" r="247" g="226" b="182">pf_hf_upgrade_action</text>
+      <text_color>
+        <e r="231" g="219" b="197" />
+        <h r="255" g="228" b="180" />
+        <t r="255" g="236" b="194" />
+        <d r="101" g="97" b="88" />
+      </text_color>
+    </upgrade_action>
     <repair_fade x="0" y="0" width="1024" height="768" stretch="1">
       <texture>ui_pf_hf_repair_fade</texture>
     </repair_fade>
@@ -506,6 +538,28 @@
           <d r="98" g="98" b="94" />
         </text_color>
       </source_inventory>
+      <craft_mode_create x="0" y="0" width="84" height="35" stretch="1">
+        <texture_e>ui_pf_hf_repair_clear</texture_e><texture_h>ui_pf_hf_repair_tab_hover</texture_h><texture_t>ui_pf_hf_repair_tab_active</texture_t><texture_d>ui_pf_hf_repair_clear</texture_d>
+        <text align="c" vert_align="c" font="ui_font_pf_fa_button">pf_hf_craft_mode_create</text>
+        <text_color>
+          <e r="185" g="184" b="177" />
+          <h r="232" g="179" b="94" />
+          <t r="239" g="195" b="120" />
+          <d r="98" g="98" b="94" />
+        </text_color>
+      </craft_mode_create>
+      <craft_mode_create_selected x="0" y="34" width="84" height="2" stretch="1"><texture>ui_pf_hf_repair_rule_gold</texture></craft_mode_create_selected>
+      <craft_mode_disassemble x="94" y="0" width="84" height="35" stretch="1">
+        <texture_e>ui_pf_hf_repair_clear</texture_e><texture_h>ui_pf_hf_repair_tab_hover</texture_h><texture_t>ui_pf_hf_repair_tab_active</texture_t><texture_d>ui_pf_hf_repair_clear</texture_d>
+        <text align="c" vert_align="c" font="ui_font_pf_fa_button">pf_hf_craft_mode_disassemble</text>
+        <text_color>
+          <e r="185" g="184" b="177" />
+          <h r="232" g="179" b="94" />
+          <t r="239" g="195" b="120" />
+          <d r="98" g="98" b="94" />
+        </text_color>
+      </craft_mode_disassemble>
+      <craft_mode_disassemble_selected x="94" y="34" width="84" height="2" stretch="1"><texture>ui_pf_hf_repair_rule_gold</texture></craft_mode_disassemble_selected>
       <craft_filter_button_bg x="0" y="0" width="178" height="35" stretch="1">
         <texture>ui_pf_hf_dropdown_black</texture>
         <top x="0" y="0" width="178" height="1" stretch="1">
@@ -583,6 +637,14 @@
           <text x="9" y="0" width="158" height="34" align="l" vert_align="c" font="ui_font_pf_fa_small">pf_hf_craft_filter_misc</text>
           <text_color><e r="185" g="184" b="177"/><h r="232" g="179" b="94"/><t r="239" g="195" b="120"/><d r="98" g="98" b="94"/></text_color>
         </misc>
+        <detectors x="2" y="107" width="174" height="34" stretch="1">
+          <texture_e>ui_pf_hf_repair_clear</texture_e>
+          <texture_h>ui_pf_hf_repair_tab_hover</texture_h>
+          <texture_t>ui_pf_hf_repair_tab_active</texture_t>
+          <texture_d>ui_pf_hf_repair_clear</texture_d>
+          <text x="9" y="0" width="158" height="34" align="l" vert_align="c" font="ui_font_pf_fa_small">pf_hf_disassemble_filter_detectors</text>
+          <text_color><e r="185" g="184" b="177"/><h r="232" g="179" b="94"/><t r="239" g="195" b="120"/><d r="98" g="98" b="94"/></text_color>
+        </detectors>
       </craft_filter_panel>
       <group x="0" y="41" width="178" height="19">
         <text align="l" vert_align="c" font="letterica16" r="151" g="157" b="145">pf_hf_item_groups</text>
@@ -590,11 +652,10 @@
       <divider x="0" y="40" width="178" height="1" stretch="1">
         <texture>ui_pf_hf_repair_clear</texture>
       </divider>
-      <!-- The outer view clips the inner view's off-screen bar. The 493 px
-           viewport shows 8 full 55 px rows and roughly half of row 9. -->
-      <item_clip x="0" y="56" width="178" height="493" right_ident="0" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="0" always_show_scroll="0" scroll_profile="default" />
-      <item_scroll_wrapper x="0" y="0" width="178" height="493" />
-      <item_scroll x="0" y="0" width="210" height="493" right_ident="0" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="3" always_show_scroll="0" scroll_profile="default" />
+      <!-- Page sizes are fixed when native scroll views are initialized.
+           Both viewports end at 549; only the active one receives input. -->
+      <item_scroll x="0" y="56" width="178" height="493" right_ident="0" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="3" always_show_scroll="0" scroll_profile="pf_hf_hidden" />
+      <craft_item_scroll x="0" y="98" width="178" height="451" right_ident="0" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="3" always_show_scroll="0" scroll_profile="pf_hf_hidden" />
       <item_01 x="0" y="56" width="178" height="55" stretch="1">
         <texture_e>ui_pf_hf_repair_clear</texture_e>
         <texture_h>ui_pf_hf_repair_hover</texture_h>
@@ -927,19 +988,6 @@
       <status x="0" y="398" width="180" height="32">
         <text align="l" vert_align="c" font="ui_font_pf_fa_small" r="205" g="192" b="165" />
       </status>
-      <repair x="0" y="342" width="180" height="45" stretch="1">
-        <texture_e>ui_pf_hf_repair_action</texture_e>
-        <texture_h>ui_pf_hf_repair_action_hover</texture_h>
-        <texture_t>ui_pf_hf_repair_down</texture_t>
-        <texture_d>ui_pf_hf_repair_action</texture_d>
-        <text align="c" vert_align="c" font="ui_font_pf_fa_button" r="247" g="226" b="182">pf_hf_repair_button</text>
-        <text_color>
-          <e r="231" g="219" b="197" />
-          <h r="255" g="228" b="180" />
-          <t r="255" g="236" b="194" />
-          <d r="101" g="97" b="88" />
-        </text_color>
-      </repair>
       <upgrade_name x="0" y="53" width="180" height="43">
         <text align="l" vert_align="c" font="ui_font_pf_fa_body" complex_mode="1" r="233" g="228" b="212" />
       </upgrade_name>
@@ -1039,19 +1087,11 @@
       <upgrade_material_count_07 x="143" y="486" width="35" height="32">
         <text align="r" vert_align="c" font="ui_font_pf_fa_small" />
       </upgrade_material_count_07>
-      <upgrade_action x="0" y="525" width="180" height="38" stretch="1">
-        <texture_e>ui_pf_hf_repair_action</texture_e>
-        <texture_h>ui_pf_hf_repair_action_hover</texture_h>
-        <texture_t>ui_pf_hf_repair_down</texture_t>
-        <texture_d>ui_pf_hf_repair_action</texture_d>
-        <text align="c" vert_align="c" font="ui_font_pf_fa_button" r="247" g="226" b="182">pf_hf_upgrade_action</text>
-        <text_color>
-          <e r="231" g="219" b="197" />
-          <h r="255" g="228" b="180" />
-          <t r="255" g="236" b="194" />
-          <d r="101" g="97" b="88" />
-        </text_color>
-      </upgrade_action>
+      <disassemble_condition_title x="0" y="95" width="180" height="20"><text font="ui_font_pf_fa_small" r="184" g="184" b="170">pf_hf_disassemble_condition_title</text></disassemble_condition_title>
+      <disassemble_condition x="0" y="118" width="180" height="20"><text font="ui_font_pf_fa_button" r="220" g="187" b="126" /></disassemble_condition>
+      <disassemble_condition_track x="0" y="141" width="180" height="4" stretch="1"><texture>ui_pf_hf_repair_track</texture></disassemble_condition_track>
+      <disassemble_condition_bar x="0" y="141" width="180" height="4" horz="1" min="0" max="100" inertion="-1000"><progress stretch="1"><texture>ui_pf_hf_repair_meter</texture></progress></disassemble_condition_bar>
+      <disassemble_results x="0" y="185" width="180" height="433" right_ident="0" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="2" always_show_scroll="0" scroll_profile="pf_hf_hidden" />
       <craft_detail x="0" y="55" width="180" height="73">
         <text align="l" vert_align="c" font="ui_font_pf_fa_small" complex_mode="1" r="184" g="184" b="170">pf_hf_craft_detail_empty</text>
       </craft_detail>
@@ -1180,4 +1220,9 @@
       </progress>
     </bar>
   </item_row>
+  <disassemble_reward_row x="0" y="0" width="180" height="32">
+    <icon x="2" y="1" width="32" height="30"><texture>ui_pf_hf_row</texture></icon>
+    <name x="38" y="0" width="102" height="32"><text align="l" vert_align="c" font="ui_font_pf_fa_small" r="207" g="223" b="194" /></name>
+    <count x="144" y="0" width="36" height="32"><text align="r" vert_align="c" font="ui_font_pf_fa_small" r="220" g="187" b="126" /></count>
+  </disassemble_reward_row>
 </w>

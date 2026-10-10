@@ -12,7 +12,22 @@ local CRAFT_FILTERS = {
 	{ id = "upgrades", text = "pf_hf_craft_filter_upgrades" },
 	{ id = "misc", text = "pf_hf_craft_filter_misc" }
 }
+local DISASSEMBLE_FILTERS = {
+	{ id = "all", text = "pf_hf_craft_filter_all" },
+	{ id = "weapons", text = "pf_hf_disassemble_filter_weapons" },
+	{ id = "armor", text = "pf_hf_disassemble_filter_armor" },
+	{ id = "detectors", text = "pf_hf_disassemble_filter_detectors" }
+}
 local active_dialog = nil
+
+local action_sound = nil
+
+local function play_action_sound()
+	if not db.actor or not sound_object then return end
+	-- Match the native inventory transfer, including its 2D playback.
+	action_sound = action_sound or sound_object("interface\\inv_ruck")
+	action_sound:play(nil, 0, sound_object.s2d)
+end
 
 local function tr(id)
 	return game.translate_string(id)
@@ -122,7 +137,7 @@ end
 
 class "pf_hf_workbench_item_row" (CUIScriptWnd)
 
-function pf_hf_workbench_item_row:__init(owner, item, recipe, selected) super()
+function pf_hf_workbench_item_row:__init(owner, item, recipe, selected, stack_count) super()
 	self.owner = owner
 	self.item_id = item and item:id() or nil
 	self.recipe_output = recipe and recipe.output or nil
@@ -145,7 +160,10 @@ function pf_hf_workbench_item_row:__init(owner, item, recipe, selected) super()
 	if item then
 		local condition = math.floor(item:condition() * 100 + 0.5)
 		self.button:SetText(item_name(item))
-		self.percent:SetText(string.format("%d%%", condition))
+		self.percent:SetText(stack_count and string.format("x%d", stack_count) or
+			string.format("%d%%", condition))
+		self.track:Show(stack_count == nil)
+		self.bar:Show(stack_count == nil)
 		self.bar:SetProgressPos(condition)
 		fit_section_icon(self.icon, item:section(), 4, 6, 46, 38, false)
 	else
@@ -167,6 +185,36 @@ function pf_hf_workbench_item_row:Select()
 	self.owner:OnSelectEntry(self.item_id, self.recipe_output)
 end
 
+class "pf_hf_workbench_reward_row" (CUIScriptWnd)
+
+local function reward_amount_text(reward)
+	local minimum, maximum = reward.minimum, reward.maximum
+	if minimum == maximum then return tostring(minimum) end
+	return string.format("%d–%d", minimum, maximum)
+end
+
+function pf_hf_workbench_reward_row:__init(reward) super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_pf_hf_workbench.xml")
+	xml:InitWindow("disassemble_reward_row", 0, self)
+	local icon = xml:InitStatic("disassemble_reward_row:icon", self)
+	local name = xml:InitTextWnd("disassemble_reward_row:name", self)
+	local count = xml:InitTextWnd("disassemble_reward_row:count", self)
+	name:SetEllipsis(true)
+	name:SetText(section_name(reward.section))
+	count:SetText(reward_amount_text(reward))
+	fit_section_icon(icon, reward.section, 2, 1, 32, 30, false)
+	icon:Enable(false)
+	self:SetAutoDelete(false)
+	-- CUIScriptWnd inherits the initially hidden dialog state. ScrollView
+	-- skips invisible children, unlike text/icon widgets initialized by XML.
+	self:Show(true)
+	self:Enable(true)
+end
+
+function pf_hf_workbench_reward_row:__finalize()
+end
+
 class "pf_hf_workbench_dialog" (CUIScriptWnd)
 
 function pf_hf_workbench_dialog:__init() super()
@@ -182,6 +230,10 @@ function pf_hf_workbench_dialog:__init() super()
 	self.source = "equipped"
 	self.craft_filter_id = "all"
 	self.craft_filter_open = false
+	self.craft_mode = "create"
+	self.disassemble_rows = {}
+	self.disassemble_plan = nil
+	self.disassemble_section = nil
 	self.bench_id = nil
 	self.saved_position = nil
 	self.saved_camera_direction = nil
@@ -255,19 +307,15 @@ function pf_hf_workbench_dialog:InitControls()
 	for _, mark in pairs(self.footer_selected_tabs) do mark:Enable(false) end
 	self.source_equipped_selected:Enable(false)
 	self.source_inventory_selected:Enable(false)
-	-- The outer scroll view is a 178 px clipping window with a same-height
-	-- ordinary child, so it never needs its own bar. The real 210 px scroll
-	-- view sits inside that child; its bar is outside the outer scissor while
-	-- wheel input still reaches it through the wrapper.
-	self.item_clip = xml:InitScrollView("main:left:item_clip", self.left)
-	self.item_clip:SetFixedScrollBar(false)
-	self.item_scroll_wrapper = CUIWindow()
-	xml:InitWindow("main:left:item_scroll_wrapper", 0, self.item_scroll_wrapper)
-	self.item_clip:AddWindow(self.item_scroll_wrapper, true)
-	self.item_scroll_wrapper:SetAutoDelete(false)
-	self.item_scroll = xml:InitScrollView(
-		"main:left:item_scroll", self.item_scroll_wrapper)
-	self.item_scroll:SetFixedScrollBar(false)
+	-- Native SetWndSize does not update the scrollbar's page size. Initialize
+	-- each viewport at its final height so wheel scrolling reaches the last row.
+	self.equipment_item_scroll = xml:InitScrollView("main:left:item_scroll", self.left)
+	self.craft_item_scroll = xml:InitScrollView("main:left:craft_item_scroll", self.left)
+	for _, scroll in ipairs({ self.equipment_item_scroll, self.craft_item_scroll }) do
+		scroll:SetFixedScrollBar(false)
+	end
+	self.item_scroll = self.equipment_item_scroll
+	self.item_scroll_mode = "equipment"
 	for _, panel in ipairs({ { "left", self.left },
 		{ "right", self.right }, { "footer", self.footer } }) do
 		xml:InitStatic("main:" .. panel[1] .. ":accent", panel[2])
@@ -347,28 +395,38 @@ function pf_hf_workbench_dialog:InitControls()
 		"main:left:craft_filter_panel", self.left)
 	self.craft_filter_blocker = xml:Init3tButton(
 		"main:left:craft_filter_panel:blocker", self.craft_filter_panel)
+	self.craft_filter_borders = {}
 	for _, edge in ipairs({ "border_top", "border_bottom",
 		"border_left", "border_right" }) do
 		local border = xml:InitStatic(
 			"main:left:craft_filter_panel:" .. edge, self.craft_filter_panel)
 		border:Enable(false)
+		self.craft_filter_borders[edge] = border
 	end
 	self.craft_filter_options = {}
-	for _, entry in ipairs(CRAFT_FILTERS) do
-		local control_name = "craft_filter_" .. entry.id
+	for index, name in ipairs({ "all", "upgrades", "misc", "detectors" }) do
+		local control_name = "craft_filter_" .. name
 		local button = xml:Init3tButton(
-			"main:left:craft_filter_panel:" .. entry.id, self.craft_filter_panel)
-		button:SetText(tr(entry.text))
-		self.craft_filter_options[entry.id] = button
+			"main:left:craft_filter_panel:" .. name, self.craft_filter_panel)
+		self.craft_filter_options[index] = button
 		self:Register(button, control_name)
-		local filter_id = entry.id
+		local filter_index = index
 		self:AddCallback(control_name, ui_events.BUTTON_CLICKED,
-			function(dialog) dialog:SetCraftFilter(filter_id) end, self)
+			function(dialog)
+				local entry = dialog:CraftFilters()[filter_index]
+				if entry then dialog:SetCraftFilter(entry.id) end
+			end, self)
 	end
 	self:Register(self.craft_filter_button, "craft_filter_toggle")
 	self:AddCallback("craft_filter_toggle", ui_events.BUTTON_CLICKED,
 		self.OnCraftFilterToggle, self)
+	self.action_background = xml:InitStatic("main:action_background", self)
+	self.action_background:Enable(false)
+	self.action_note = xml:InitTextWnd("main:action_note", self)
+	self.action_note:Enable(false)
 	local buttons = {
+		{ "main:left:craft_mode_create", self.left, "craft_mode_create", self.OnCreateMode },
+		{ "main:left:craft_mode_disassemble", self.left, "craft_mode_disassemble", self.OnDisassembleMode },
 		{ "main:footer:pickup", self.footer, "pickup", self.OnPickup },
 		{ "main:footer:tab_repair", self.footer, "tab_repair", self.OnRepairTab },
 		{ "main:footer:tab_upgrade", self.footer, "tab_upgrade", self.OnUpgradeTab },
@@ -376,8 +434,8 @@ function pf_hf_workbench_dialog:InitControls()
 		{ "main:footer:close", self.footer, "close", self.OnClose },
 		{ "main:left:source_equipped", self.left, "source_equipped", self.OnEquipped },
 		{ "main:left:source_inventory", self.left, "source_inventory", self.OnInventory },
-		{ "main:right:repair", self.right, "repair", self.OnRepair },
-		{ "main:right:upgrade_action", self.right, "upgrade_action", self.OnInstallUpgrade }
+		{ "main:repair", self, "repair", self.OnRepair },
+		{ "main:upgrade_action", self, "upgrade_action", self.OnInstallUpgrade }
 	}
 	for _, entry in ipairs(buttons) do
 		local button = xml:Init3tButton(entry[1], entry[2])
@@ -387,6 +445,32 @@ function pf_hf_workbench_dialog:InitControls()
 	end
 	-- Pickup is the common held world USE gesture.
 	self.pickup:Show(false)
+	self.craft_mode_marks = {
+		create = xml:InitStatic("main:left:craft_mode_create_selected", self.left),
+		disassemble = xml:InitStatic("main:left:craft_mode_disassemble_selected", self.left)
+	}
+	for _, mark in pairs(self.craft_mode_marks) do mark:Enable(false) end
+	self.disassemble_results = xml:InitScrollView("main:right:disassemble_results", self.right)
+	self.disassemble_results:SetFixedScrollBar(false)
+	self.disassemble_condition_title = xml:InitTextWnd("main:right:disassemble_condition_title", self.right)
+	self.disassemble_condition = xml:InitTextWnd("main:right:disassemble_condition", self.right)
+	self.disassemble_condition_track = xml:InitStatic("main:right:disassemble_condition_track", self.right)
+	self.disassemble_condition_bar = xml:InitProgressBar("main:right:disassemble_condition_bar", self.right)
+end
+
+function pf_hf_workbench_dialog:IsDisassemble()
+	return self.tab == "craft" and self.craft_mode == "disassemble"
+end
+
+function pf_hf_workbench_dialog:CraftFilters()
+	return self:IsDisassemble() and DISASSEMBLE_FILTERS or CRAFT_FILTERS
+end
+
+function pf_hf_workbench_dialog:IsPendingItem(id)
+	for _, pending_id in ipairs(self.inventory_refresh and self.inventory_refresh.ids or {}) do
+		if pending_id == id then return true end
+	end
+	return false
 end
 
 function pf_hf_workbench_dialog:Open(bench_id)
@@ -400,6 +484,7 @@ function pf_hf_workbench_dialog:Open(bench_id)
 		return false
 	end
 	self.bench_id = bench_id
+	self.craft_mode = "create"
 	self.tab_down = false
 	self.tab = "repair"
 	self.source = "equipped"
@@ -457,6 +542,7 @@ function pf_hf_workbench_dialog:Open(bench_id)
 end
 
 function pf_hf_workbench_dialog:OnClose()
+	self.disassemble_plan = nil
 	pf_hf_workbench_preview.close(self.preview)
 	self.preview = nil
 	self.preview_active = false
@@ -525,7 +611,7 @@ function pf_hf_workbench_dialog:Update()
 			self:Refresh()
 			if self.tab == pending.tab and self.selected_id == pending.item and
 				self.selected_recipe == pending.recipe and
-				self.selected_upgrade_id == pending.upgrade then
+				self.selected_upgrade_id == pending.upgrade and self.craft_mode == pending.mode then
 				self:SetTransactionStatus(true, pending.message)
 			end
 		end
@@ -554,7 +640,36 @@ function pf_hf_workbench_dialog:Update()
 	end
 end
 
+function pf_hf_workbench_dialog:LayoutAction()
+	local view = device()
+	-- Keep a 200:38 screen ratio, with room for the longest action caption.
+	local width = 200 * (1024 / 768) * (tonumber(view.height) or 768) /
+		math.max(tonumber(view.width) or 1024, 1)
+	if self.action_width == width then return end
+	self.action_width = width
+	for _, control in ipairs({self.repair, self.upgrade_action, self.action_background}) do
+		-- SetWidth also resizes CUI3tButton's native frame; SetWndSize does not.
+		control:SetWidth(width)
+		control:SetWndPos(vector2():set((1024 - width) * 0.5, 632))
+	end
+end
+
 function pf_hf_workbench_dialog:Refresh()
+	self:LayoutAction()
+	local disassemble = self:IsDisassemble()
+	local creating = self.tab == "craft" and not disassemble
+	local scroll_mode = self.tab == "craft" and "craft" or "equipment"
+	local scroll = self.tab == "craft" and self.craft_item_scroll or self.equipment_item_scroll
+	local inactive_scroll = self.tab == "craft" and self.equipment_item_scroll or self.craft_item_scroll
+	-- CUIScrollView has no __eq binding; compare the mode, never native handles.
+	if self.item_scroll_mode ~= scroll_mode then
+		self.item_scroll:Clear()
+		self.item_rows = {}
+		self.item_scroll = scroll
+		self.item_scroll_mode = scroll_mode
+	end
+	inactive_scroll:Show(false)
+	inactive_scroll:Enable(false)
 	-- Repair is the layout reference for every tab. Switching modes must not
 	-- move the inventory, detail column, title or footer by a single pixel.
 	self.left:SetWndPos(vector2():set(34, 138))
@@ -578,24 +693,48 @@ function pf_hf_workbench_dialog:Refresh()
 	self.craft_filter_button_bg:Show(self.tab == "craft")
 	self.craft_filter_button:Show(self.tab == "craft")
 	self.craft_filter_arrow:Show(self.tab == "craft")
+	self.craft_mode_create:Show(self.tab == "craft")
+	self.craft_mode_disassemble:Show(self.tab == "craft")
+	tint_selected_tab(self.craft_mode_create, self.craft_mode == "create")
+	tint_selected_tab(self.craft_mode_disassemble, disassemble)
+	for mode, mark in pairs(self.craft_mode_marks) do
+		mark:Show(self.tab == "craft" and self.craft_mode == mode)
+	end
+	self.craft_filter_button_bg:SetWndPos(vector2():set(0, 42))
+	self.craft_filter_button:SetWndPos(vector2():set(0, 42))
+	self.craft_filter_arrow:SetWndPos(vector2():set(151, 42))
+	self.craft_filter_panel:SetWndPos(vector2():set(0, 79))
 	local filter_open = self.tab == "craft" and self.craft_filter_open
 	self.craft_filter_panel:Show(filter_open)
 	self.craft_filter_panel:Enable(filter_open)
 	self.item_scroll:Enable(not filter_open)
-	for _, entry in ipairs(CRAFT_FILTERS) do
-		if entry.id == self.craft_filter_id then
-			self.craft_filter_button:SetText(tr(entry.text))
+	local filters = self:CraftFilters()
+	local filter_height = 4 + #filters * 35
+	self.craft_filter_panel:SetWndSize(vector2():set(178, filter_height))
+	self.craft_filter_blocker:SetWndSize(vector2():set(178, filter_height))
+	self.craft_filter_borders.border_bottom:SetWndPos(vector2():set(0, filter_height - 1))
+	self.craft_filter_borders.border_left:SetWndSize(vector2():set(1, filter_height))
+	self.craft_filter_borders.border_right:SetWndSize(vector2():set(1, filter_height))
+	for index, button in ipairs(self.craft_filter_options) do
+		local entry = filters[index]
+		button:Show(entry ~= nil)
+		button:Enable(entry ~= nil)
+		if entry then
+			if entry.id == self.craft_filter_id then self.craft_filter_button:SetText(tr(entry.text)) end
+			button:SetText(tr(entry.text))
+			tint_selected_tab(button, entry.id == self.craft_filter_id)
 		end
-		tint_selected_tab(self.craft_filter_options[entry.id],
-			entry.id == self.craft_filter_id)
 	end
 	for name, mark in pairs(self.footer_selected_tabs) do mark:Show(name == self.tab) end
 	self.items = {}
-	self.craft_recipes = pf_hf_workbench_craft.recipes(self.craft_filter_id)
-	if self.tab ~= "craft" then
+	self.craft_recipes = creating and pf_hf_workbench_craft.recipes(self.craft_filter_id) or {}
+	if disassemble then
+		self.items = pf_hf_workbench_disassemble.owned_items(self.craft_filter_id)
+	elseif self.tab ~= "craft" then
 		local equipped = equipped_ids()
 		for _, item in ipairs(pf_hf_workbench_repair.owned_items()) do
-			if (equipped[item:id()] == true) == (self.source == "equipped") and
+			if not self:IsPendingItem(item:id()) and
+				(equipped[item:id()] == true) == (self.source == "equipped") and
 				(self.tab ~= "upgrade" or
 					(lz_nm_core.is_outfit_or_helmet(item) and pf_hf_workbench_upgrade.tree(item))) then
 				self.items[#self.items + 1] = item
@@ -606,7 +745,8 @@ function pf_hf_workbench_dialog:Refresh()
 	self.group:SetText(tr(self.tab == "craft" and "pf_hf_recipe_list" or
 		self.tab == "upgrade" and "pf_hf_upgrade_groups" or "pf_hf_item_groups"))
 	self.right_heading:SetText(tr(self.tab == "repair" and "pf_hf_details_title" or
-		self.tab == "upgrade" and "pf_hf_tab_upgrade" or "pf_hf_craft_details_title"))
+		self.tab == "upgrade" and "pf_hf_tab_upgrade" or disassemble and
+		"pf_hf_disassemble_details_title" or "pf_hf_craft_details_title"))
 	self.source_equipped:SetText(tr("pf_hf_source_equipped"))
 	self.source_inventory:SetText(tr("pf_hf_source_inventory"))
 	self.tab_repair:SetText(tr("pf_hf_tab_repair"))
@@ -620,11 +760,13 @@ function pf_hf_workbench_dialog:Refresh()
 	tint_selected_tab(self.tab_craft, self.tab == "craft")
 	self.hint:SetText(tr(self.tab == "repair" and "pf_hf_controls_hint" or
 		self.tab == "upgrade" and "pf_hf_controls_hint_upgrade" or
-		"pf_hf_controls_hint_craft"))
-	local entry_count = self.tab == "craft" and #self.craft_recipes or #self.items
+		disassemble and "pf_hf_controls_hint_disassemble" or "pf_hf_controls_hint_craft"))
+	local entry_count = creating and #self.craft_recipes or #self.items
+	local item_groups = disassemble and
+		pf_hf_workbench_disassemble.item_groups(self.items, self.selected_id) or nil
 	local selection_exists = false
 	for index = 1, entry_count do
-		if self.tab == "craft" then
+		if creating then
 			if self.craft_recipes[index].output == self.selected_recipe then
 				selection_exists = true
 				break
@@ -635,29 +777,38 @@ function pf_hf_workbench_dialog:Refresh()
 		end
 	end
 	if not selection_exists then
-		if self.tab == "craft" then
+		if creating then
 			self.selected_recipe = self.craft_recipes[1] and
 				self.craft_recipes[1].output or nil
 		else
-			self.selected_id = self.items[1] and self.items[1]:id() or nil
+			local first = self.items[1]
+			for _, group in ipairs(item_groups or {}) do
+				if group.count and group.item:section() == self.disassemble_section then
+					first = group.item
+					break
+				end
+			end
+			self.selected_id = first and first:id() or nil
 			self.selected_upgrade_id = nil
 		end
 	end
+	self.disassemble_section = nil
+	if item_groups then entry_count = #item_groups end
 	local scroll_position = self.list_scroll_reset and 0 or
 		self.item_scroll:GetCurrentScrollPos()
 	self.item_scroll:Clear()
 	self.item_rows = {}
 	for index = 1, entry_count do
-		local item = self.tab ~= "craft" and self.items[index] or nil
-		local recipe = self.tab == "craft" and self.craft_recipes[index] or nil
+		local group = item_groups and item_groups[index] or nil
+		local item = group and group.item or not creating and self.items[index] or nil
+		local recipe = creating and self.craft_recipes[index] or nil
 		local selected = item and item:id() == self.selected_id or
 			recipe and recipe.output == self.selected_recipe
-		local row = pf_hf_workbench_item_row(self, item, recipe, selected)
+		local row = pf_hf_workbench_item_row(self, item, recipe, selected, group and group.count)
 		self.item_scroll:AddWindow(row, true)
 		row:SetAutoDelete(false)
 		self.item_rows[#self.item_rows + 1] = row
 	end
-	self.item_clip:Show(entry_count > 0)
 	self.item_scroll:Show(entry_count > 0)
 	self.item_scroll:SetScrollPos(scroll_position)
 	self.list_scroll_reset = false
@@ -681,43 +832,58 @@ function pf_hf_workbench_dialog:Refresh()
 		self.material_backgrounds[index]:Show(visible)
 	end
 	self.craft_note:Show(self.tab == "craft" and entry_count == 0)
-	self.craft_detail:Show(self.tab == "craft" and entry_count == 0)
+	self.craft_note:SetText(tr(disassemble and "pf_hf_disassemble_empty" or "pf_hf_craft_empty"))
+	self.craft_detail:Show(creating and entry_count == 0)
 	self.empty:Show(self.tab ~= "craft" and #self.items == 0)
 	self.empty:SetText(tr(self.tab == "upgrade" and "pf_hf_no_upgrade_items" or "pf_hf_no_items"))
 	self.tree_panel:Show(self.tab == "upgrade")
 	local details_visible = self.tab == "upgrade" or self.tab == "craft"
 	self.upgrade_name:Show(details_visible)
-	self.upgrade_description:Show(details_visible)
+	self.upgrade_description:Show(details_visible and not disassemble)
 	self.upgrade_effect:Show(details_visible)
-	self.upgrade_state:Show(details_visible)
+	self.upgrade_state:Show(details_visible and not disassemble)
 	self.upgrade_cost_title:Show(details_visible)
 	for index, line in ipairs(self.upgrade_material_lines) do
 		local visible = (self.tab == "upgrade" and self.selected_id ~= nil) or
-			(self.tab == "craft" and self.selected_recipe ~= nil)
+			(creating and self.selected_recipe ~= nil)
 		line:Show(visible)
 		self.upgrade_material_counts[index]:Show(visible)
 		self.upgrade_material_icons[index]:Show(visible)
 		self.upgrade_material_backgrounds[index]:Show(visible)
 	end
+	for _, control in ipairs({ self.disassemble_results, self.disassemble_condition_title,
+		self.disassemble_condition, self.disassemble_condition_track, self.disassemble_condition_bar }) do
+		control:Show(disassemble and self.selected_id ~= nil)
+	end
+	self.upgrade_description:SetWndSize(vector2():set(180, disassemble and 49 or 94))
+	self.upgrade_cost_title:SetWndPos(vector2():set(0, disassemble and 161 or 260))
+	self.upgrade_state:SetWndPos(vector2():set(0, 236))
+	self.upgrade_effect:Show(not disassemble and details_visible)
 	self:RefreshSelected()
 end
 
 function pf_hf_workbench_dialog:RefreshSelected()
-	local item = self.tab ~= "craft" and self.selected_id and
-		pf_hf_workbench_repair.find_owned_target(self.selected_id)
-	local craft_recipe = self.tab == "craft" and self.selected_recipe and
+	local disassemble = self:IsDisassemble()
+	self.action_note:Show(false)
+	local item = nil
+	if self.selected_id and not self:IsPendingItem(self.selected_id) then
+		if disassemble then item = pf_hf_workbench_disassemble.find_owned_target(self.selected_id)
+		elseif self.tab ~= "craft" then item = pf_hf_workbench_repair.find_owned_target(self.selected_id) end
+	end
+	local craft_recipe = self.tab == "craft" and not disassemble and self.selected_recipe and
 		pf_hf_workbench_craft.recipe(self.selected_recipe) or nil
-	local preview_section = self.tab == "repair" and item and item:section() or
+	local preview_section = (self.tab == "repair" or disassemble) and item and item:section() or
 		craft_recipe and craft_recipe.output or nil
 	self.item_panel:Show(preview_section ~= nil)
 	self.item_caption:Show(preview_section ~= nil)
 	self.item_caption:SetText(preview_section and section_name(preview_section) or "")
-	self.item_caption:SetWndPos(vector2():set(369, self.tab == "repair" and 548 or 501))
+	self.item_caption:SetWndPos(vector2():set(369, 548))
 	fit_section_icon(self.item_icon, preview_section,
 		455, 354, 120, 76, false)
-	if self.tab == "repair" and item then
+	if preview_section and self.tab ~= "upgrade" and
+		pf_hf_workbench_preview.supports(preview_section) then
 		if not self.preview then self.preview = pf_hf_workbench_preview.create() end
-		self.preview_active = pf_hf_workbench_preview.select(self.preview, preview_section, item:id()) and
+		self.preview_active = pf_hf_workbench_preview.select(self.preview, preview_section, item and item:id() or nil) and
 			pf_hf_workbench_preview.update(self.preview, device())
 		self.item_panel:Show(not self.preview_active)
 		self.item_icon:Show(not self.preview_active)
@@ -732,7 +898,8 @@ function pf_hf_workbench_dialog:RefreshSelected()
 	end
 	if self.tab == "craft" then
 		self.repair:Show(false)
-		self:RefreshCraft(craft_recipe)
+		if disassemble then self:RefreshDisassemble(item)
+		else self:RefreshCraft(craft_recipe) end
 		return
 	end
 	self.upgrade_action:Show(false)
@@ -740,6 +907,7 @@ function pf_hf_workbench_dialog:RefreshSelected()
 	self.condition_bar:Show(self.tab == "repair" and item ~= nil)
 	self.condition_track:Show(self.tab == "repair" and item ~= nil)
 	self.repair:Show(self.tab == "repair" and item ~= nil and item:condition() < 0.9999)
+	self.action_background:Show(self.tab == "repair" and item ~= nil and item:condition() < 0.9999)
 	self.repair:Enable(self.inventory_refresh == nil)
 	if not item then
 		self.selected_name:SetText(tr("pf_hf_no_selection"))
@@ -793,6 +961,36 @@ function pf_hf_workbench_dialog:RefreshSelected()
 	end
 end
 
+function pf_hf_workbench_dialog:RefreshDisassemble(item)
+	local plan = item and pf_hf_workbench_disassemble.preview(item:id()) or nil
+	self.disassemble_plan = plan
+	self.upgrade_name:SetText(item and item_name(item) or tr("pf_hf_no_selection"))
+	self.upgrade_description:SetText("")
+	self.upgrade_effect:SetText("")
+	self.action_note:SetText(plan and tr("pf_hf_disassemble_warning") or
+		item and tr("pf_hf_disassemble_unavailable") or "")
+	self.action_note:SetTextColor(GetARGB(255, 220, 187, 126))
+	self.action_note:Show(item ~= nil)
+	self.upgrade_cost_title:SetText(plan and tr("pf_hf_disassemble_result_title") or "")
+	self.disassemble_results:Clear()
+	self.disassemble_rows = {}
+	for _, reward in ipairs(plan and plan.display_rows or {}) do
+		local row = pf_hf_workbench_reward_row(reward)
+		self.disassemble_results:AddWindow(row, true)
+		row:SetAutoDelete(false)
+		self.disassemble_rows[#self.disassemble_rows + 1] = row
+	end
+	self.disassemble_results:SetScrollPos(0)
+	self.disassemble_condition_title:SetText(tr(item and pf_hf_salvage.detector_profile(item) and
+		"pf_hf_disassemble_charge_title" or "pf_hf_disassemble_condition_title"))
+	self.disassemble_condition:SetText(item and string.format("%d%%", item:condition() * 100 + 0.5) or "")
+	self.disassemble_condition_bar:SetProgressPos(item and item:condition() * 100 or 0)
+	self.upgrade_action:SetText(tr("pf_hf_disassemble_action"))
+	self.upgrade_action:Show(item ~= nil)
+	self.action_background:Show(item ~= nil)
+	self.upgrade_action:Enable(plan ~= nil and self.inventory_refresh == nil)
+end
+
 function pf_hf_workbench_dialog:RefreshCraft(recipe)
 	local output = recipe and recipe.output or nil
 	local counts = pf_hf_workbench_craft.material_counts()
@@ -835,6 +1033,7 @@ function pf_hf_workbench_dialog:RefreshCraft(recipe)
 	end
 	self.upgrade_action:SetText(tr("pf_hf_craft_action"))
 	self.upgrade_action:Show(output ~= nil)
+	self.action_background:Show(output ~= nil)
 	self.upgrade_action:Enable(available and self.inventory_refresh == nil)
 end
 
@@ -949,6 +1148,7 @@ function pf_hf_workbench_dialog:RefreshUpgrade(item)
 		self.upgrade_material_backgrounds[index]:Show(false)
 	end
 	self.upgrade_action:Show(state == "available")
+	self.action_background:Show(state == "available")
 	self.upgrade_action:Enable(state == "available" and self.inventory_refresh == nil)
 	self.upgrade_action:SetText(tr("pf_hf_upgrade_action"))
 end
@@ -981,7 +1181,7 @@ function pf_hf_workbench_dialog:OnInstallUpgrade()
 end
 
 function pf_hf_workbench_dialog:OnSelectEntry(item_id, recipe_output)
-	if self.tab == "craft" then
+	if self.tab == "craft" and not self:IsDisassemble() then
 		if not recipe_output then return end
 		self.selected_recipe = recipe_output
 		self:Refresh()
@@ -1033,7 +1233,51 @@ function pf_hf_workbench_dialog:SetCraftFilter(filter_id)
 	self.craft_filter_id = filter_id
 	self.list_scroll_reset = true
 	self.selected_recipe = nil
+	if self:IsDisassemble() then self.selected_id = nil end
 	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:SetCraftMode(mode)
+	if self.tab ~= "craft" or self.craft_mode == mode then return end
+	self.craft_mode = mode
+	self.craft_filter_id = "all"
+	self.craft_filter_open = false
+	self.selected_recipe = nil
+	self.selected_id = nil
+	self.disassemble_plan = nil
+	self.list_scroll_reset = true
+	self:Refresh()
+end
+
+function pf_hf_workbench_dialog:OnCreateMode()
+	self:SetCraftMode("create")
+end
+
+function pf_hf_workbench_dialog:OnDisassembleMode()
+	self:SetCraftMode("disassemble")
+end
+
+function pf_hf_workbench_dialog:OnDisassemble()
+	if not self:IsDisassemble() or self.inventory_refresh then return end
+	local plan = self.disassemble_plan
+	if not plan or plan.id ~= self.selected_id then return end
+	if not self.bench_id then return end
+	local bench = level.object_by_id(self.bench_id)
+	if not bench or distance_to_bench(bench) > MAX_DISTANCE then self:OnClose() return end
+	-- Release the native preview's reference before GE_DESTROY can remove its
+	-- selected inventory object. Do not touch the original until all rewards exist.
+	pf_hf_workbench_preview.close(self.preview)
+	self.preview_active = false
+	local ok, message, consumed = pf_hf_workbench_disassemble.disassemble(plan.id, plan.signature)
+	self:QueueInventoryRefresh(ok, message, consumed)
+	if ok then
+		self.disassemble_plan = nil
+		self.disassemble_section = plan.section
+		self.upgrade_action:Enable(false)
+		self.item_icon:Show(false)
+		self.item_panel:Show(false)
+	else self:Refresh() end
+	self:SetTransactionStatus(ok, message)
 end
 
 function pf_hf_workbench_dialog:OnRepairTab()
@@ -1063,17 +1307,19 @@ function pf_hf_workbench_dialog:OnUpgradeTab()
 end
 
 function pf_hf_workbench_dialog:QueueInventoryRefresh(ok, message, consumed)
+	if ok then play_action_sound() end
 	-- Online ALife release queues GE_DESTROY; both inventories can still contain
 	-- the consumed objects in this callback. Wait for these specific IDs only,
 	-- then rebuild counts and availability once, without a timed inventory scan.
 	if not ok or not consumed or #consumed == 0 then return end
 	self.inventory_refresh = { ids = consumed, message = message, tab = self.tab,
 		item = self.selected_id, recipe = self.selected_recipe,
-		upgrade = self.selected_upgrade_id }
+		upgrade = self.selected_upgrade_id, mode = self.craft_mode }
 end
 
 function pf_hf_workbench_dialog:SetTransactionStatus(ok, message)
-	local control = self.tab == "repair" and self.status or self.upgrade_state
+	local control = self:IsDisassemble() and self.action_note or
+		self.tab == "repair" and self.status or self.upgrade_state
 	control:SetText(tr(message))
 	control:SetTextColor(ok and GetARGB(255, 178, 222, 154) or
 		GetARGB(255, 231, 121, 104))
@@ -1090,6 +1336,7 @@ end
 
 function pf_hf_workbench_dialog:OnCraft()
 	if self.inventory_refresh then return end
+	if self:IsDisassemble() then self:OnDisassemble() return end
 	if self.tab ~= "craft" or not self.selected_recipe then return end
 	local ok, message_id, consumed = pf_hf_workbench_craft.craft(self.selected_recipe)
 	self:QueueInventoryRefresh(ok, message_id, consumed)
@@ -1145,4 +1392,5 @@ function force_close()
 	if active_dialog and active_dialog.bench_id then active_dialog:OnClose() end
 	-- This entry point is used by load/teardown; IDs belong to the old world.
 	if active_dialog then active_dialog.inventory_refresh = nil end
+	pf_hf_workbench_disassemble.reset()
 end

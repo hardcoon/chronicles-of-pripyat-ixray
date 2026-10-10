@@ -1,0 +1,10 @@
+-- Empty rendered window supplies UI-thread updates only while waiting for HUD.
+class "pf_photo_cards_dispatcher" (CUIScriptWnd)
+function pf_photo_cards_dispatcher:__init() super()
+    self:SetWndRect(Frect():set(0,0,1,1))
+    self:Show(false)
+end
+function pf_photo_cards_dispatcher:Update()
+    pf_photo_cards.update_inspect()
+end
+function create_dispatcher() return pf_photo_cards_dispatcher() end

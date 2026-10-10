@@ -1,0 +1,73 @@
+-- Photo cards extend the existing furniture adapters with pure catalog data.
+local catalog=pf_hf_furniture_catalog
+local animators={}
+for _,entry in ipairs(pf_photo_cards_catalog.entries) do
+    catalog.by_item[entry.item]=entry
+    catalog.by_object[entry.object]=entry
+    animators[entry.item]=entry.animator
+end
+local pending=nil
+local dispatcher=nil
+local registered=false
+
+function cancel_inspect()
+    pending=nil
+    if dispatcher then
+        dispatcher:Show(false)
+        level.remove_dialog_to_render(dispatcher)
+    end
+end
+
+-- Runs only while an inspection is queued, on the UI thread. In particular,
+-- let the inventory backpack finish closing before starting another animator.
+function update_inspect()
+    local queued=pending
+    if not queued then return end
+    local actor=db.actor
+    local sim=alife()
+    local source=sim and sim:object(queued.id,true)
+    if not actor or not actor:alive() or actor:id()~=queued.actor_id or
+        level.name()~=queued.level_name or time_global()-queued.started>5000 or
+        not source or source:section_name()~=queued.section or
+        tonumber(source.parent_id)~=queued.actor_id or
+        pf_runtime_editor.is_active() or level.main_input_receiver() then
+        cancel_inspect();return
+    end
+    if actor:is_hud_animator_active() then
+        if actor:get_hud_animator_section()~="pf_hoc_backpack_open" then cancel_inspect() end
+        return
+    end
+    local animator=animators[queued.section]
+    cancel_inspect()
+    if animator then actor:start_hud_animator(animator) end
+end
+
+function inspect(item)
+    local actor=db.actor
+    local section=item and item:section()
+    if not actor or not actor:alive() or not animators[section] or pending or
+        pf_runtime_editor.is_active() then return false end
+    if actor:is_hud_animator_active() and
+        actor:get_hud_animator_section()~="pf_hoc_backpack_open" then return false end
+    pending={id=item:id(),section=section,actor_id=actor:id(),
+        level_name=level.name(),started=time_global()}
+    local queued=pending
+    local accepted=pf_runtime_editor.defer_start(function()
+        if pending~=queued then return end
+        local hud=get_hud()
+        if hud then hud:HideActorMenu() end
+        dispatcher=dispatcher or ui_pf_photo_cards.create_dispatcher()
+        dispatcher:Show(true)
+        level.add_dialog_to_render(dispatcher)
+    end,cancel_inspect)
+    if not accepted then cancel_inspect() end
+    -- The same item remains in inventory after inspection.
+    return false
+end
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("load",cancel_inspect)
+    registered=true
+end
+on_game_start()

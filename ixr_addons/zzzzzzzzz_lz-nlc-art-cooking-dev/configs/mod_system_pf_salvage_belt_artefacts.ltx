@@ -1,8 +1,8 @@
 ; Technical ARTEFACT class is used only so these salvage components can be
 ; equipped on the belt and handled by the existing artefact bonus code. They
 ; are explicitly excluded from the PDA's "artefacts found" statistic.
-; Their original section IDs, visuals, names, dismantling drops and order logic
-; remain unchanged in the lower lz-new-mechanics layer.
+; Section IDs, visuals, names and order logic remain in the lower layer.
+; Pouches, lead inserts and boots are dismantled only at the workbench.
 
 ![lz_nm_armor_pouch]:af_base
 class = ARTEFACT
@@ -23,8 +23,8 @@ additional_inventory_weight = 2
 hit_absorbation_sect = lz_nm_armor_pouch_absorbation
 use_condition = false
 degrade_rate = 0
-use1_text = lz_nm_action_disassemble_equipment
-use1_functor = lz_nm_equipment.disassemble_component
+!use1_text
+!use1_functor
 
 [lz_nm_armor_pouch_absorbation]
 burn_immunity = 0
@@ -56,8 +56,8 @@ additional_inventory_weight = 0
 hit_absorbation_sect = lz_nm_rubber_padding_absorbation
 use_condition = false
 degrade_rate = 0
-use1_text = lz_nm_action_disassemble_equipment
-use1_functor = lz_nm_equipment.disassemble_component
+!use1_text
+!use1_functor
 
 [lz_nm_rubber_padding_absorbation]
 burn_immunity = 0
@@ -89,8 +89,8 @@ additional_inventory_weight = 0
 hit_absorbation_sect = lz_nm_combat_boots_absorbation
 use_condition = false
 degrade_rate = 0
-use1_text = lz_nm_action_disassemble_equipment
-use1_functor = lz_nm_equipment.disassemble_component
+!use1_text
+!use1_functor
 
 [lz_nm_combat_boots_absorbation]
 burn_immunity = 0

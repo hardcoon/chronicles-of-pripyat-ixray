@@ -102,7 +102,12 @@ local marker_types = {
 	"pf_stash_purple",
 	"pf_stash_red",
 	"pf_stash_orange",
-	"pf_stash_green"
+	"pf_stash_green",
+	"pf_stash_cyan_eye",
+	"pf_stash_purple_eye",
+	"pf_stash_red_eye",
+	"pf_stash_orange_eye",
+	"pf_stash_green_eye"
 }
 
 local stash_hint_messages = {
@@ -1171,7 +1176,11 @@ end
 function impl.release_object(id)
 	impl.remove_all_markers(id)
 	local object = alife():object(id, true)
-	if object then alife():release(object, true) end
+	if object then
+		local photos = rawget(_G, "pf_photo_cards_distribution")
+		if photos and photos.before_container_release then photos.before_container_release(object) end
+		alife():release(object, true)
+	end
 end
 
 function impl.build_mapping_cleanup_grid()
@@ -3557,6 +3566,27 @@ function apply_story_legendary_item_condition(item, previous_owner_id)
 	impl.apply_stash_item_condition(item, "orange", impl.stash_protects_player_items(box))
 end
 
+-- Photo lifetime reservations belong to the optional photo addon; the
+-- manager retains ownership of per-rotation searches and physical containers.
+function impl.ensure_photo_card(slot, box)
+	local photos = rawget(_G, "pf_photo_cards_distribution")
+	return photos and photos.materialize and photos.materialize(slot, box, impl.spawn_item) or false
+end
+
+function impl.photo_card_pending(slot)
+	local photos = rawget(_G, "pf_photo_cards_distribution")
+	return photos and photos.pending and photos.pending(slot) or false
+end
+
+function impl.try_spawn_photo_card(slot)
+	local photos = rawget(_G, "pf_photo_cards_distribution")
+	if not photos or not photos.search then return false end
+	local box = slot and slot.id and alife():object(slot.id, true) or nil
+	return photos.search(slot,
+		impl.slot_deterministic_percent(slot, "pf_stash_photo_roll_v1"),
+		impl.slot_loot_seed(slot, "pf_stash_photo_number_v1"), box, impl.spawn_item)
+end
+
 function impl.ghost_city_note_section(index)
 	if not lz_new_mechanics or not lz_new_mechanics.ghost_city_note_section then return nil end
 	return lz_new_mechanics.ghost_city_note_section(index)
@@ -3842,6 +3872,7 @@ function impl.spawn_slot(slot)
 	impl.ensure_hacking_usb(slot, box)
 	impl.ensure_ghost_city_note(slot, box)
 	impl.ensure_pripyat_city_note(slot, box)
+	impl.ensure_photo_card(slot, box)
 	if slot.state.story_doc then impl.spawn_story_document(slot) end
 	return true
 end
@@ -3869,6 +3900,7 @@ end
 function impl.retire_empty_slot(slot)
 	-- A failed supplemental spawn remains owed to this searched cache.
 	if slot and slot.state and slot.state.ordinary_detector_pending then return false end
+	if impl.photo_card_pending(slot) then return false end
 	local box_id = impl.deplete_slot(slot)
 	if not box_id then return false end
 	local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
@@ -3891,6 +3923,10 @@ function impl.reconcile_legacy_box_state(slot, box)
 	if slot.state.ordinary_detector_pending then
 		impl.materialize_ordinary_detector_rewards(slot, box)
 		if slot.state.ordinary_detector_pending then return box end
+	end
+	if impl.photo_card_pending(slot) then
+		impl.ensure_photo_card(slot, box)
+		if impl.photo_card_pending(slot) then return box end
 	end
 	if slot.state.depleted then
 		if impl.has_items(box) then
@@ -4008,17 +4044,29 @@ function impl.enable_tier_marker(location)
 	return false
 end
 
+function impl.sync_stash_marker(id, tier, item_taken)
+	local data = tier_data[tier]
+	if not id or not data then return false end
+	local marker = data.marker .. (item_taken and "_eye" or "")
+	local previous = data.marker .. (item_taken and "" or "_eye")
+	if level.map_has_object_spot(id, marker) == 0 then
+		level.map_add_object_spot_ser(id, marker, SPOT_HINT)
+		if level.map_has_object_spot(id, marker) == 0 then return false end
+	end
+	-- Keep the previous spot until its replacement exists. Remove only this
+	-- tier's alternate variant; user marks and other spot types stay intact.
+	local attempts = 0
+	while attempts < 16 and level.map_has_object_spot(id, previous) ~= 0 do
+		level.map_remove_object_spot(id, previous)
+		attempts = attempts + 1
+	end
+	level.map_manager():MapLocationsForEach(marker, id, impl.enable_tier_marker)
+	return true
+end
+
 function impl.sync_tier_marker(slot)
 	if not slot.state.discovered or not impl.marker_box(slot) then return false end
-	local marker = tier_data[slot.tier].marker
-	if level.map_has_object_spot(slot.id, marker) == 0 then
-		level.map_add_object_spot_ser(slot.id, marker, SPOT_HINT)
-		return level.map_has_object_spot(slot.id, marker) ~= 0
-	end
-	-- Existence alone does not imply visibility. Enable this exact type/ID
-	-- in place, without deleting map locations or allocating user-marker IDs.
-	level.map_manager():MapLocationsForEach(marker, slot.id, impl.enable_tier_marker)
-	return true
+	return impl.sync_stash_marker(slot.id, slot.tier, slot.state.item_taken == true)
 end
 
 function impl.log_marker_error(slot, err)
@@ -4489,6 +4537,7 @@ function grant_lore_note_hint(coordinate_id)
 	else
 		impl.ensure_ghost_city_note(slot, box)
 		impl.ensure_pripyat_city_note(slot, box)
+		impl.ensure_photo_card(slot, box)
 	end
 	if not box or not impl.stash_contains_section(box, section) or not impl.add_tier_marker(slot) then
 		return false, "pending", slot
@@ -4843,13 +4892,11 @@ function impl.collect_fixed_pda_boxes(reserved)
 	return eligible
 end
 
-function impl.add_fixed_pda_marker(box, tier)
-	local data = tier_data[tier]
-	if not box or not data then return false end
-	if level.map_has_object_spot(box.id, data.marker) == 0 then
-		level.map_add_object_spot_ser(box.id, data.marker, SPOT_HINT)
-	end
-	return true
+function impl.add_fixed_pda_marker(box, tier, item_taken)
+	if not box or not tier_data[tier] or not impl.has_items(box) then return false end
+	local ok, result = pcall(impl.sync_stash_marker, box.id, tier, item_taken == true)
+	if not ok then impl.log_marker_error(nil, result) end
+	return ok and result == true
 end
 
 function impl.complete_fixed_stash_pda_hack(server_pda, section, pda_id, reward_spec)
@@ -4925,7 +4972,7 @@ function impl.update_fixed_pda_rewards(now)
 		if not box or not FIXED_PDA_SECTIONS[box:section_name()] or not tier_data[tier] then
 			claimed[key] = nil
 		else
-			impl.add_fixed_pda_marker(box, tier)
+			impl.add_fixed_pda_marker(box, tier, record.item_taken)
 			impl.apply_box_item_conditions(box, tier)
 		end
 	end
@@ -5090,12 +5137,15 @@ end
 
 function impl.process_stash_search(slot)
 	if not impl.record_stash_search(slot) then
+		local box = slot and slot.id and alife():object(slot.id, true) or nil
+		impl.ensure_photo_card(slot, box)
 		impl.materialize_ordinary_detector_rewards(slot)
 		return
 	end
 	impl.assign_ordinary_detector_search_rewards(slot)
 	impl.materialize_ordinary_detector_rewards(slot)
 	impl.try_spawn_lore_note(slot)
+	impl.try_spawn_photo_card(slot)
 	if slot.tier ~= "orange" and slot.tier ~= "red" then
 		impl.process_stash_ambush(slot, false)
 	end
@@ -5125,9 +5175,11 @@ function impl.prepare_stash_search(slot, server_box)
 	impl.ensure_hacking_usb(slot, server_box)
 	impl.ensure_ghost_city_note(slot, server_box)
 	impl.ensure_pripyat_city_note(slot, server_box)
+	impl.ensure_photo_card(slot, server_box)
 	impl.process_stash_search(slot)
 	impl.ensure_ghost_city_note(slot, server_box)
 	impl.ensure_pripyat_city_note(slot, server_box)
+	impl.ensure_photo_card(slot, server_box)
 	impl.apply_slot_item_conditions(server_box, slot)
 	return true
 end
@@ -5166,6 +5218,12 @@ function on_actor_item_take(item, previous_owner_id)
 		end
 	end
 	if slot then
+		-- Opening a cache spends search rolls, but only pickup marks it as looted.
+		-- This flag belongs to the saved rotation, not the transient object ID.
+		slot.state.item_taken = true
+		impl.add_tier_marker(slot)
+		local photos = rawget(_G, "pf_photo_cards_distribution")
+		if photos and photos.taken then photos.taken(slot, item) end
 		local box = previous_owner_id and alife():object(previous_owner_id, true) or nil
 		impl.apply_stash_item_condition(item, slot.tier, impl.stash_protects_player_items(box))
 		local ghost_city_index = lz_new_mechanics and lz_new_mechanics.ghost_city_note_index and
@@ -5190,6 +5248,14 @@ function on_actor_item_take(item, previous_owner_id)
 		-- Check both ownership lists later, after transfer events settle.
 		impl.queue_empty_slot_check(slot)
 	else
+		local box = previous_owner_id and alife():object(previous_owner_id, true) or nil
+		if box and FIXED_PDA_SECTIONS[box:section_name()] then
+			local record = impl.get_fixed_pda_state().claimed[tostring(previous_owner_id)]
+			if type(record) == "table" and tier_data[record.tier] then
+				record.item_taken = true
+				impl.add_fixed_pda_marker(box, record.tier, true)
+			end
+		end
 		-- Corpses can contain physical consumable PDAs rolled at death or as
 		-- managed loot, but taking an arbitrary item never reveals coordinates.
 		pf_dynamic_corpses.on_actor_item_take(item, previous_owner_id)
@@ -5333,6 +5399,7 @@ function impl.rotate_slot(slot)
 	slot.state.depleted = false
 	slot.state.hinted = false
 	slot.state.hint_checked = nil
+	slot.state.item_taken = nil
 	slot.state.lore_hint_given = nil
 	slot.state.ordinary_detector_pending = nil
 	slot.ordinary_detector_spawn_error = nil
@@ -5342,6 +5409,8 @@ function impl.rotate_slot(slot)
 	slot.state.ghost_city_note = nil
 	slot.state.pripyat_city_note = nil
 	slot.state.ghost_city_roll_checked = nil
+	slot.state.photo_roll_checked = nil
+	slot.state.photo_card_index = nil
 	slot.state.usb_roll_checked = nil
 	slot.state.usb_reserved_level = nil
 	slot.state.usb_roll = nil
@@ -5393,6 +5462,7 @@ function impl.update_slot(slot, actor_position, allow_materialize)
 		impl.ensure_hacking_usb(slot, box)
 		impl.ensure_ghost_city_note(slot, box)
 		impl.ensure_pripyat_city_note(slot, box)
+		impl.ensure_photo_card(slot, box)
 		if slot.loot_materialized then impl.apply_slot_item_conditions(box, slot) end
 		impl.update_slot_marker(slot, actor_position, true, false)
 		if slot.state.discovered then return true, materialized end
