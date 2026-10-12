@@ -1,0 +1,29 @@
+-- Stable facade: one startup application, no polling and no edits to user.ltx.
+function on_game_start()
+    local values = pf_sss_settings.get()
+    local pending = pf_sss_settings.profile_update_pending or pf_sss_settings.author_profile_pending
+    if pending and pending() then
+        local saved, why = pf_sss_settings.save(values)
+        if not saved then
+            if printf then printf("[SSS] compatible profile could not be saved: %s", tostring(why)) end
+            pf_sss_settings.apply(values)
+        end
+    else
+        pf_sss_settings.apply(values)
+    end
+end
+
+-- Native common-script loading evaluates modules; initialize like the other project facades.
+on_game_start()
+
+-- Original map/LUT transition API; only private transient renderer state changes.
+function set_lut(group, intensity, instant)
+    group=tonumber(group);intensity=tonumber(intensity)
+    if not group or group~=group or group<0 or group>3 or group%1~=0 then return false end
+    if not intensity or intensity~=intensity or intensity<0 or intensity>1 then return false end
+    get_console():execute(string.format("pf_sss_lut_override 1,%.6f,%d,%d",intensity,group,instant and 1 or 0))
+    return true
+end
+function reset_lut()
+    get_console():execute("pf_sss_lut_override 0,0,0,0")
+end

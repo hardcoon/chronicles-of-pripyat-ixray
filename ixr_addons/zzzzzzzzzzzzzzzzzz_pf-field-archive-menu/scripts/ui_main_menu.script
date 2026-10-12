@@ -18,7 +18,7 @@ local function launcher_game_version()
             return version
         end
     end
-    return "2026.10.10-dev.79"
+    return "2026.10.12-dev.80"
 end
 
 class "main_menu" (CUIScriptWnd)
@@ -45,6 +45,11 @@ function main_menu:InitControls()
     local xml						= CScriptXmlInit()
     xml:ParseFile					("ui_mm_main.xml")
 
+    -- A loaded session keeps the paused scene behind the menu.
+    -- Startup artwork is initialized first, below the shared fading overlay.
+    if alife() == nil then
+        xml:InitStatic("startup_background", self)
+    end
     xml:InitStatic					("background", self)
 	self.use_instant_main_hover = alife() == nil
 	if self.use_instant_main_hover then

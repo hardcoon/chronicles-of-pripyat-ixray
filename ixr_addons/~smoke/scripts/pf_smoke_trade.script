@@ -1,0 +1,38 @@
+-- Seed the new product once in existing saves; daily restocks remain Hawaiian's.
+local state = {done = false, next_check = 0, registered = false}
+
+function reset()
+    state.done = false
+    state.next_check = 0
+end
+
+function update()
+    local actor = db.actor
+    if state.done or not actor then return end
+    local now = time_global()
+    if now < state.next_check then return end
+    state.next_check = now + 1000
+    if xr_logic.pstor_retrieve(actor, "pf_smoke_hawaiian_stock_v1", "") == "1" then
+        state.done = true
+        return
+    end
+    local npc = get_story_object("pf_yanov_hawaiian")
+    if not npc or not npc:alive() or actor:is_talking() or npc:is_talking() then return end
+    local count = 0
+    npc:iterate_inventory(function(_, item)
+        if item and item:section() == "pf_cigarettes" then count = count + 1 end
+    end, npc)
+    for i = count + 1, 3 do
+        if not alife():create("pf_cigarettes", npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id()) then return end
+    end
+    xr_logic.pstor_store(actor, "pf_smoke_hawaiian_stock_v1", "1")
+    state.done = true
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", reset)
+    state.registered = true
+end
+on_game_start()

@@ -1,0 +1,68 @@
+; Iskra pack: native CEatableItem consumption; no imported Anomaly gameplay scripts.
+[pf_cigarettes]:booster
+$spawn = "food and drugs\pf_cigarettes"
+class = S_FOOD
+visual = pf_smoke\pack_world.ogf
+description = st_pf_cigarettes_descr
+inv_name = st_pf_cigarettes
+inv_name_short = st_pf_cigarettes
+inv_weight = 0.025
+empty_weight = 0.005
+cost = 300
+icons_texture = pf_smoke\icon
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+use_condition = true
+max_uses = 8
+eat_portions_num = 8
+eat_condition = 1
+condition = 1.0
+remove_after_use = true
+eat_health = 0
+eat_satiety = 0
+eat_power = 0
+eat_radiation = 0
+eat_alcohol = 0
+eat_thirst = 0
+wounds_heal_perc = 0
+; Vodka: boost_radiation_restore = 0.005. Cigarettes show -1 instead of -5.
+boost_radiation_restore = 0.001
+boost_time = 10
+use_sound = $silent
+animator_sect = pf_smoke_short_use
+default_use_text = st_pf_smoke_short
+use1_text = st_pf_smoke_long
+use1_functor = pf_smoke.select_long
+
+[pf_smoke_short_use]:hud_base
+item_visual = pf_smoke\pack_hud.ogf
+; COP-ENG-137: warm HUD flashes follow the same bones as the visible flame.
+fx_light_bone = pf_flame_base
+fx_light_tip_bone = pf_flame_tip
+fx_light_color = 2.0, 1.1, 0.25
+fx_light_range = 0.35
+fx_light_pulse_time = 0.35
+; Bring the donor rig 5.55 cm closer, so the mouth gesture reaches the screen edge.
+; Lower the cigarette and gripping hand by 2 mm.
+hands_position = 0, -0.002, -0.015
+hands_position_16x9 = 0, -0.002, -0.015
+hands_orientation = 0, 0, 0
+hands_orientation_16x9 = 0, 0, 0
+item_position = 0, 0, 0
+item_orientation = 0, 0, 0
+attach_place_idx = 0
+item_attached = true
+anm_show = pf_smoke_short, pf_smoke_short_item, 2
+sound_1 = pf_smoke\short
+modify_sect_lua_callback = pf_smoke.select_animator
+blend = false
+can_sprint = false
+nonmodal_ui = false
+hold_after_end = false
+defer_inventory_use = false
+
+[pf_smoke_long_use]:pf_smoke_short_use
+anm_show = pf_smoke_long, pf_smoke_long_item, 2
+sound_1 = pf_smoke\long

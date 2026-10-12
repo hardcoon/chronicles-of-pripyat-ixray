@@ -11,9 +11,11 @@ function pf_runtime_editor_hud:__init() super()
     for index=1,14 do
         local key=xml:InitTextWnd("main:control_key",self)
         local action=xml:InitTextWnd("main:control_action",self)
+        local accent=xml:InitTextWnd("main:control_action",self)
         key:SetWndPos(vector2():set(20,286+(index-1)*24))
         action:SetWndPos(vector2():set(96,286+(index-1)*24))
-        self.control_rows[index]={key=key,action=action}
+        accent:Show(false)
+        self.control_rows[index]={key=key,action=action,accent=accent}
     end
 end
 function pf_runtime_editor_hud:refresh(session)
@@ -29,8 +31,8 @@ function pf_runtime_editor_hud:refresh(session)
     local message=game.translate_string("pf_rt_controls_"..mode)
     local labels=pf_runtime_editor.control_labels()
     message=message:gsub("%$([%w_]+)",function(key) return labels[key] or key end)
-    -- Separate widgets keep every shortcut gold, without color-run wrapping
-    -- or dependence on the font's multibyte newline parser.
+    -- Every row remains single-line. The coloured axis suffix uses its own
+    -- sibling widget, so inline colouring cannot enable automatic wrapping.
     local index=0
     local key_width=0
     for line in message:gsub("\\n","\n"):gmatch("[^\r\n]+") do
@@ -38,15 +40,27 @@ function pf_runtime_editor_hud:refresh(session)
         if key and index<#self.control_rows then
             index=index+1
             local row=self.control_rows[index]
-            row.key:SetText(key);row.action:SetText(action)
+            local prefix,a,r,g,b,suffix=action:match("^(.-)%%c%[(%d+),(%d+),(%d+),(%d+)%](.-)%%c%[[^%]]+%]$")
+            row.key:SetText(key)
+            row.action:SetText(action:gsub("%%c%[[^%]]+%]",""))
             row.key:AdjustWidthToText();row.action:AdjustWidthToText()
+            row.width=row.action:GetWidth()
+            row.accent:Show(suffix~=nil)
+            if suffix then
+                row.accent:SetText(suffix)
+                row.accent:SetTextColor(GetARGB(tonumber(a),tonumber(r),tonumber(g),tonumber(b)))
+                row.accent:AdjustWidthToText()
+                -- Full text minus suffix keeps the font's inter-letter spacing.
+                row.action:SetText(prefix)
+                row.action:SetWidth(row.width-row.accent:GetWidth())
+            end
             key_width=math.max(key_width,row.key:GetWidth())
             row.key:Show(true);row.action:Show(true)
         end
     end
     for hidden=index+1,#self.control_rows do
         local row=self.control_rows[hidden]
-        row.key:Show(false);row.action:Show(false)
+        row.key:Show(false);row.action:Show(false);row.accent:Show(false)
     end
     -- Measure with the active engine font and UI scale, including rebound keys.
     local action_x=20+key_width+10
@@ -54,7 +68,10 @@ function pf_runtime_editor_hud:refresh(session)
     for visible=1,index do
         local row=self.control_rows[visible]
         row.action:SetWndPos(vector2():set(action_x,286+(visible-1)*24))
-        right=math.max(right,action_x+row.action:GetWidth())
+        if row.accent:IsShown() then
+            row.accent:SetWndPos(vector2():set(action_x+row.action:GetWidth(),286+(visible-1)*24))
+        end
+        right=math.max(right,action_x+row.width)
     end
     local width=right+12-8
     local height=50+index*24

@@ -5,6 +5,7 @@ local CAMERA_EFFECT = "camera_effects\\pf_hf_workbench_view.anm"
 local CAMERA_BASE_HEIGHT = 1.64
 local UPGRADE_ITEM_Y = 69
 local UPGRADE_NODE_BASE_Y = 211
+local UPGRADE_NODE = { width = 72, height = 44, span = 232, action_gap = 12 }
 local REPAIR_MATERIAL_ICON_Y = 244
 local UPGRADE_MATERIAL_ICON_Y = 283
 local CRAFT_FILTERS = {
@@ -908,7 +909,7 @@ function pf_hf_workbench_dialog:RefreshSelected()
 	self.condition_track:Show(self.tab == "repair" and item ~= nil)
 	self.repair:Show(self.tab == "repair" and item ~= nil and item:condition() < 0.9999)
 	self.action_background:Show(self.tab == "repair" and item ~= nil and item:condition() < 0.9999)
-	self.repair:Enable(self.inventory_refresh == nil)
+	self.repair:Enable(false)
 	if not item then
 		self.selected_name:SetText(tr("pf_hf_no_selection"))
 		self.selected_source:SetText("")
@@ -932,10 +933,12 @@ function pf_hf_workbench_dialog:RefreshSelected()
 		math.floor(math.min(1, item:condition() + 0.10) * 100 + 0.5)))
 	self.condition_bar:SetProgressPos(math.floor(item:condition() * 100 + 0.5))
 	local counts = pf_hf_workbench_repair.owned_materials()
+	local available = item:condition() < 0.9999 and self.inventory_refresh == nil
 	local line_index = 1
 	for _, material in ipairs(pf_hf_workbench_repair.material_order()) do
 		local required = recipe[material]
 		if required then
+			if (counts[material] or 0) < required then available = false end
 			local line = self.material_lines[line_index]
 			local name = material == "lz_nm_metal_part" and tr("pf_hf_weapon_part_name") or
 				tr(material .. "_name")
@@ -959,6 +962,7 @@ function pf_hf_workbench_dialog:RefreshSelected()
 		self.material_icons[index]:Show(false)
 		self.material_backgrounds[index]:Show(false)
 	end
+	self.repair:Enable(available)
 end
 
 function pf_hf_workbench_dialog:RefreshDisassemble(item)
@@ -1048,6 +1052,26 @@ function pf_hf_workbench_dialog:RefreshUpgrade(item)
 		end
 	end
 	local native_layout = scheme and pf_hf_workbench_upgrade_layout.has_scheme(scheme)
+	local node_scale = 1
+	if graph and native_layout then
+		local tree_height = 0
+		for column = 0, 2 do
+			for row = 0, 8 do
+				local id = graph.coordinates[column .. ":" .. row]
+				local place = pf_hf_workbench_upgrade_layout.position(scheme, column, row)
+				if id and graph.nodes[id] and place then
+					tree_height = math.max(tree_height, place.y + UPGRADE_NODE.height)
+				end
+			end
+		end
+		local bottom = self.upgrade_action:GetWndPos().y -
+			self.tree_panel:GetWndPos().y - UPGRADE_NODE.action_gap
+		-- Fit only overflowing trees; keep native proportions and branch spacing.
+		node_scale = math.min(1, (bottom - UPGRADE_NODE_BASE_Y) / math.max(tree_height, 1))
+	end
+	local node_width, node_height = UPGRADE_NODE.width * node_scale,
+		UPGRADE_NODE.height * node_scale
+	local node_left = 71 + UPGRADE_NODE.span * (1 - node_scale) * 0.5
 	if graph and self.selected_upgrade_id and
 		not graph.nodes[self.selected_upgrade_id] then
 		self.selected_upgrade_id = nil
@@ -1072,16 +1096,16 @@ function pf_hf_workbench_dialog:RefreshUpgrade(item)
 			icon:Show(visible)
 			bar:Show(false)
 			if visible then
-				-- These are the exact cell and anchor coordinates used by the
-				-- technician's native inventory upgrade window.
-				local cell_x, cell_y = 71 + place.x,
-					UPGRADE_NODE_BASE_Y + place.y
+				-- Scale the native layout as a whole, centred above the action.
+				local cell_x, cell_y = node_left + place.x * node_scale,
+					UPGRADE_NODE_BASE_Y + place.y * node_scale
 				button:SetWndPos(vector2():set(cell_x, cell_y))
-				button:SetWndSize(vector2():set(72, 44))
+				button:SetWidth(node_width)
+				button:SetHeight(node_height)
 				icon:SetWndPos(vector2():set(cell_x, cell_y))
-				icon:SetWndSize(vector2():set(72, 44))
-				bar:SetWndPos(vector2():set(cell_x + 2, cell_y + 3))
-				bar:SetWndSize(vector2():set(5, 38))
+				icon:SetWndSize(vector2():set(node_width, node_height))
+				bar:SetWndPos(vector2():set(cell_x + 2 * node_scale, cell_y + 3 * node_scale))
+				bar:SetWndSize(vector2():set(5 * node_scale, 38 * node_scale))
 				local state = pf_hf_workbench_upgrade.state(item, node, graph, counts)
 				button:SetText("")
 				local selected = node.id == self.selected_upgrade_id

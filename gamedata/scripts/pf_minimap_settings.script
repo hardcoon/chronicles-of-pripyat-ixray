@@ -1,0 +1,55 @@
+-- Use the installed IX-Ray minimap API; keep the choice outside save games.
+local state = {disabled = nil, registered = false}
+
+local function setting_path()
+    return getFS():update_path("$app_data_root$", "pf_disable_minimap.setting")
+end
+
+function is_disabled()
+    if state.disabled ~= nil then return state.disabled end
+    local file = io.open(setting_path(), "r")
+    local value = ""
+    if file then
+        value = string.lower(file:read("*l") or "")
+        file:close()
+    end
+    value = string.match(value, "^%s*(.-)%s*$")
+    state.disabled = value == "1" or value == "true" or value == "on"
+    return state.disabled
+end
+
+function apply()
+    if not (db and db.actor and ActorMenu and ActorMenu.get_maingame) then return end
+    -- Fetch the current HUD each time: it can be recreated on load/level change.
+    local main = ActorMenu.get_maingame()
+    local map = main and main.UIZoneMap
+    if not map then return end
+    local disabled = is_disabled()
+    if map.disabled ~= disabled then map.disabled = disabled end
+end
+
+function set_disabled(disabled)
+    disabled = disabled == true
+    local file = io.open(setting_path(), "w")
+    if not file then
+        printf("[PF MINIMAP] Unable to save minimap setting")
+        return false
+    end
+    local written = file:write(disabled and "1\n" or "0\n")
+    local closed = file:close()
+    if not written or not closed then
+        printf("[PF MINIMAP] Unable to write minimap setting")
+        return false
+    end
+    state.disabled = disabled
+    apply()
+    return true
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update", apply)
+    state.registered = true
+end
+
+on_game_start()

@@ -1,0 +1,439 @@
+-- Leaf: independent SSS settings. No native graphics commands or per-frame callbacks.
+local impl = {}
+local state = {}
+local schema = {
+    {key="enabled",kind="check",default=false,command="ssfx_enabled"},
+    {key="shadow_sun",kind="check",default=true,group="shadows"},
+    {key="shadow_local",kind="check",default=true},
+    {key="shadow_sun_quality",kind="list",default=12,values={6,12,18,24}},
+    {key="shadow_local_quality",kind="list",default=4,values={2,4,6,8}},
+    {key="shadow_sun_length",default=1,min=0.1,max=2,step=0.1},
+    {key="shadow_local_length",default=1,min=0.1,max=2,step=0.1},
+    {key="shadow_intensity",default=0.7,min=0,max=1,step=0.05},
+    {key="shadow_detail",default=0.003,min=0.0001,max=0.1,step=0.0001},
+    {key="shadow_hud_length",default=0.09,min=0.01,max=0.2,step=0.01},
+    {key="shadow_distance",default=150,min=10,max=300,step=10},
+    {key="ao_enabled",kind="check",default=true,group="ao"},
+    {key="ao_quality",kind="list",default=8,values={2,4,8}},
+    {key="ao_radius",default=2.5,min=0.1,max=4,step=0.1},
+    {key="ao_intensity",default=0.8,min=0,max=5,step=0.1},
+    {key="ao_distance",default=150,min=10,max=300,step=10},
+    {key="ao_minimum",default=0.5,min=0,max=1,step=0.05},
+    {key="ao_hud_intensity",default=0.35,min=0,max=2,step=0.1},
+    {key="ao_temporal",default=0.9,min=0,max=0.95,step=0.01},
+    {key="ao_blur",default=2,min=0,max=4,step=0.25},
+    {key="ssr_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="ssr"},
+    {key="ssr_quality",default=3,min=0,max=5,step=0.01,kind="list",values={0,1,2,3,4,5}},
+    {key="ssr_render_scale",default=1,min=0.3,max=1,step=0.1},
+    {key="ssr_blur",default=0.18000000715256,min=0,max=1,step=0.01},
+    {key="ssr_noise",default=false,min=0,max=1,step=0.01,kind="check"},
+    {key="ssr_intensity",default=1.25,min=0,max=2,step=0.01},
+    {key="ssr_sky",default=0.5,min=0,max=2,step=0.01},
+    {key="ssr_weapon",default=0.5,min=0,max=2,step=0.01},
+    {key="ssr_weapon_max",default=0.019999999552965,min=0,max=1,step=0.01},
+    {key="ssr_temporal",default=0.80000001192093,min=0,max=0.95,step=0.01},
+    {key="ssr_rain_only",default=false,min=0,max=1,step=0.01,kind="check"},
+    {key="puddles_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="puddles"},
+    {key="puddles_always",default=false,min=0,max=1,step=0.01,kind="check"},
+    {key="puddles_global_size",default=0.9,min=0.1,max=4,step=0.1},
+    {key="puddles_size",default=0.6,min=0,max=1,step=0.01},
+    {key="puddles_border",default=0.55000001192093,min=0,max=0.99,step=0.01},
+    {key="puddles_extra_wet",default=0.18000000715256,min=0,max=1,step=0.01},
+    {key="puddles_reflectivity",default=0.69999998807907,min=0,max=1,step=0.01},
+    {key="puddles_tint_r",default=0.66000002622604,min=0,max=1,step=0.01},
+    {key="puddles_tint_g",default=0.62999999523163,min=0,max=1,step=0.01},
+    {key="puddles_tint_b",default=0.60000002384186,min=0,max=1,step=0.01},
+    {key="puddles_ripples",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="puddles_ripple_scale",default=1,min=0.1,max=4,step=0.1},
+    {key="puddles_ripple_int",default=1,min=0,max=4,step=0.1},
+    {key="puddles_ripple_rain",default=0.10000000149012,min=0,max=2,step=0.01},
+    {key="puddles_ripple_speed",default=1,min=0,max=4,step=0.1},
+    {key="puddles_rain_int",default=1,min=0,max=4,step=0.1},
+    {key="puddles_rain_scale",default=1,min=0.1,max=4,step=0.1},
+    {key="puddles_refraction",default=1,min=0,max=4,step=0.1},
+    {key="water_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="water"},
+    {key="water_quality",default=1,min=0,max=4,step=0.01,kind="list",values={0,1,2,3,4}},
+    {key="water_render_scale",default=1,min=0.2,max=1,step=0.1},
+    {key="water_parallax_quality",default=2,min=0,max=3,step=0.01,kind="list",values={0,1,2,3}},
+    {key="water_parallax_height",default=0.05,min=0.01,max=0.1,step=0.01},
+    {key="water_blur",default=0.8,min=0,max=1,step=0.1},
+    {key="water_blur_pattern",default=1,min=0,max=1,step=0.1},
+    {key="water_distortion",default=0.6,min=0,max=2,step=0.1},
+    {key="water_turbidity",default=0.3,min=0,max=1,step=0.1},
+    {key="water_softborder",default=0.3,min=0,max=1,step=0.1},
+    {key="water_reflection",default=0.8,min=0,max=1,step=0.1},
+    {key="water_specular",default=1,min=0,max=1,step=0.1},
+    {key="water_caustics",default=0.3,min=0,max=1,step=0.1},
+    {key="water_ripples",default=0.5,min=0,max=1,step=0.1},
+    {key="water_ice",default=false,min=0,max=1,step=0.01,hidden=true,kind="check"},
+    {key="il_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="il"},
+    {key="il_quality",default=32,min=16,max=64,step=0.01,kind="list",values={16,24,32,48,64}},
+    {key="il_render_scale",default=0.15,min=0.15,max=1,step=0.05},
+    {key="il_distance",default=150,min=20,max=300,step=1},
+    {key="il_blur",default=1,min=0,max=1,step=0.1},
+    {key="il_vibrance",default=0.5,min=0,max=2,step=0.1},
+    {key="il_intensity",default=0.15,min=0,max=4,step=0.1},
+    {key="il_hud",default=1,min=0,max=1,step=0.1},
+    {key="il_flora",default=0.2,min=0,max=1,step=0.1},
+    {key="ao_flora",default=0.25,min=0,max=1,step=0.1,group="ao"},
+    {key="wet_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="wet"},
+    {key="wet_distance",default=150,min=20,max=250,step=1},
+    {key="wet_ripple_size",default=1,min=0.1,max=4,step=0.1},
+    {key="wet_ripple_speed",default=1,min=0.1,max=4,step=0.1},
+    {key="wet_ripple_min",default=1,min=0,max=2,step=0.1},
+    {key="wet_ripple_int",default=1,min=0,max=4,step=0.1},
+    {key="wet_fall_size",default=1,min=0.1,max=4,step=0.1},
+    {key="wet_fall_speed",default=1,min=0.1,max=4,step=0.1},
+    {key="wet_fall_min",default=1,min=0,max=2,step=0.1},
+    {key="wet_fall_int",default=1,min=0,max=4,step=0.1},
+    {key="wet_gloss",default=1,min=0,max=4,step=0.1},
+    {key="dof_enabled",default=false,min=0,max=1,step=0.01,hidden=true,kind="check",group="dof"},
+    {key="dof_start",default=0.15,min=0,max=3,step=0.01,hidden=true},
+    {key="dof_length",default=0.25,min=0,max=1.3,step=0.01,hidden=true},
+    {key="dof_blur",default=1.1,min=0,max=2,step=0.01,hidden=true},
+    {key="dof_edge",default=0.3,min=0,max=1,step=0.01,hidden=true},
+    {key="dof_aim_start",default=0.1,min=0,max=3,step=0.01,hidden=true},
+    {key="dof_aim_length",default=0.25,min=0,max=1.3,step=0.01,hidden=true},
+    {key="dof_aim_blur",default=1.6,min=0,max=2,step=0.01,hidden=true},
+    {key="dof_aim_edge",default=1,min=0,max=1,step=0.01,hidden=true},
+    {key="dof_reload",default=true,min=0,max=1,step=0.01,hidden=true,kind="check"},
+    {key="dof_pda",default=true,min=0,max=1,step=0.01,hidden=true,kind="check"},
+    {key="dof_inventory",default=true,min=0,max=1,step=0.01,hidden=true,kind="check"},
+    {key="mb_enabled",default=false,min=0,max=1,step=0.01,kind="check",group="mb"},
+    {key="mb_samples",default=6,min=4,max=12,step=0.01,kind="list",values={4,6,8,12}},
+    {key="mb_intensity",default=1,min=0,max=2,step=0.1},
+    {key="mb_camera",default=1,min=0,max=1,step=0.1},
+    {key="mb_hud_only",default=false,min=0,max=1,step=0.01,kind="check"},
+    {key="taa_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="taa"},
+    {key="taa_sharpness",default=0.15,min=0,max=1,step=0.05},
+    {key="taa_jitter",default=0.5,min=0,max=1,step=0.05},
+    {key="taa_hud_spatial",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="bloom_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="bloom"},
+    {key="bloom_threshold",default=3.5,min=1,max=10,step=0.1},
+    {key="bloom_exposure",default=1,min=1,max=100,step=1},
+    {key="bloom_blur",default=3,min=1,max=5,step=0.1},
+    {key="bloom_vibrance",default=0.8,min=0,max=10,step=0.1},
+    {key="bloom_sky",default=0.6,min=0,max=10,step=0.1},
+    {key="bloom_lens",default=0.15,min=0,max=10,step=0.1},
+    {key="bloom_dirt",default=0,min=0,max=10,step=0.1},
+    {key="lut_enabled",default=false,min=0,max=1,step=0.01,kind="check",group="lut"},
+    {key="lut_table",default=1,min=0,max=3,step=0.01,kind="list",values={0,1,2,3}},
+    {key="lut_intensity",default=0,min=0,max=1,step=0.05},
+    {key="wind_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="wind"},
+    {key="wind_min",default=0.1,min=0,max=1,step=0.01},
+    {key="wind_grass_speed",default=9.5,min=0,max=20,step=0.01},
+    {key="wind_grass_turbulence",default=1.4,min=0,max=4,step=0.01},
+    {key="wind_grass_push",default=1.5,min=0,max=4,step=0.01},
+    {key="wind_grass_wave",default=0.4,min=0,max=2,step=0.01},
+    {key="wind_tree_speed",default=11,min=0,max=20,step=0.01},
+    {key="wind_tree_trunk",default=0.15,min=0,max=1,step=0.01},
+    {key="wind_tree_bend",default=0.5,min=0,max=2,step=0.01},
+    {key="grass_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="grass"},
+    {key="grass_player",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="grass_mutants",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="grass_entities",default=8,min=0,max=15,step=0.01,kind="list",values={0,4,8,12,15}},
+    {key="grass_distance",default=44.721359549995796,min=10,max=100,step=1},
+    {key="grass_radius",default=1,min=0.1,max=4,step=0.1},
+    {key="grass_horizontal",default=1,min=0,max=4,step=0.1},
+    {key="grass_vertical",default=1,min=0,max=4,step=0.1},
+    {key="flora_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="flora"},
+    {key="flora_sss",default=0.5,min=0,max=4,step=0.1},
+    {key="flora_sun_color",default=1,min=0,max=1,step=0.1},
+    {key="flora_grass_specular",default=0.3,min=0,max=1,step=0.01},
+    {key="flora_grass_wet_specular",default=0.21,min=0,max=1,step=0.01},
+    {key="flora_tree_specular",default=0.3,min=0,max=1,step=0.01},
+    {key="flora_tree_wet_specular",default=0.21,min=0,max=1,step=0.01},
+    {key="flora_grass_variation",default=0,min=0,max=0.5,step=0.01},
+    {key="flora_grass_frequency",default=0.1,min=0,max=1,step=0.01},
+    {key="flora_tree_variation",default=0,min=0,max=0.5,step=0.005},
+    {key="flora_tree_frequency",default=0.1,min=0,max=1,step=0.01},
+    {key="deband_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="deband"},
+    {key="deband_quality",default=2,min=1,max=4,step=0.01,kind="list",values={1,2,3,4}},
+    {key="deband_radius",default=48,min=1,max=128,step=1},
+    {key="parallax_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="parallax"},
+    {key="parallax_samples",default=16,min=8,max=64,step=0.01,kind="list",values={8,16,24,32,48,64}},
+    {key="parallax_refine",default=false,min=0,max=1,step=0.01,kind="check"},
+    {key="parallax_distance",default=12,min=1,max=40,step=1},
+    {key="parallax_height",default=0.035,min=0,max=0.1,step=0.001},
+    {key="parallax_ao",default=0.4,min=0,max=1,step=0.01},
+    {key="fog_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="fog"},
+    {key="fog_height",default=8,min=0.1,max=40,step=0.1},
+    {key="fog_density",default=1.3,min=0,max=5,step=0.1},
+    {key="fog_sun",default=0.1,min=0,max=1,step=0.01},
+    {key="fog_scattering",default=0.7,min=0,max=1,step=0.01},
+    {key="hud_rain_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="hudrain"},
+    {key="hud_rain_density",default=2,min=0.5,max=3,step=0.01},
+    {key="hud_rain_reflection",default=1,min=0,max=3,step=0.01},
+    {key="hud_rain_refraction",default=1,min=0,max=3,step=0.01},
+    {key="hud_rain_speed",default=1,min=0.1,max=4,step=0.01},
+    {key="hud_rain_buildup",default=1,min=0.1,max=4,step=0.01},
+    {key="hud_rain_drying",default=1,min=0.1,max=4,step=0.01},
+    {key="hud_rain_size",default=0.75,min=0.1,max=1.9,step=0.01},
+    {key="hud_rain_gloss",default=2,min=0,max=4,step=0.01},
+    {key="hud_rain_extra_gloss",default=0,min=0,max=1,step=0.01},
+    {key="ice_transparency",default=0.5,min=0,max=1,step=0.01,hidden=true,group="ice"},
+    {key="ice_reflection",default=0.3,min=0,max=1,step=0.01,hidden=true},
+    {key="ice_refraction",default=1,min=0,max=3,step=0.01,hidden=true},
+    {key="ice_bump_size",default=6,min=0.1,max=20,step=0.01,hidden=true},
+    {key="ice_bump_intensity",default=2,min=0,max=5,step=0.01,hidden=true},
+    {key="ice_cracks_size",default=5,min=0.1,max=20,step=0.01,hidden=true},
+    {key="ice_cracks_intensity",default=0.6,min=0,max=2,step=0.01,hidden=true},
+    {key="ice_parallax_depth",default=1,min=0,max=3,step=0.01,hidden=true},
+    {key="ice_parallax_intensity",default=0.8,min=0,max=1,step=0.01,hidden=true},
+    {key="ice_border",default=0.25,min=0.01,max=1,step=0.01,hidden=true},
+    {key="ice_parallax",default=true,min=0,max=1,step=0.01,hidden=true,kind="check"},
+    {key="ice_parallax_steps",default=6,min=3,max=12,step=0.01,hidden=true,kind="list",values={3,6,9,12}},
+    {key="shadow_map_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="shadowmap"},
+    {key="shadow_map_quality",default=4,min=1,max=5,step=0.01,kind="list",values={1,2,3,4,5}},
+    {key="shadow_cascade_near",default=20,min=5,max=40,step=1},
+    {key="shadow_cascade_mid",default=60,min=40,max=120,step=1},
+    {key="shadow_cascade_far",default=160,min=120,max=400,step=1},
+    {key="shadow_lod_quality",default=1,min=0.1,max=3,step=0.1},
+    {key="shadow_lod_min",default=256,min=64,max=512,step=0.01,kind="list",values={64,128,256,512}},
+    {key="shadow_lod_max",default=1536,min=512,max=2048,step=0.01,kind="list",values={512,1024,1536,2048}},
+    {key="shadow_grass_quality",default=0,min=0,max=3,step=0.01,kind="list",values={0,1,2,3}},
+    {key="glass_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="glass"},
+    {key="glass_refraction",default=0.003,min=0,max=0.03,step=0.001},
+    {key="glass_scale",default=0.5,min=0.1,max=4,step=0.1},
+    {key="glass_fresnel",default=0.1,min=0,max=1,step=0.01},
+    {key="glass_ca",default=2,min=0,max=4,step=0.1},
+    {key="blood_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="blood"},
+    {key="blood_color",default=1,min=0,max=2,step=0.1},
+    {key="blood_alpha",default=1,min=0,max=1,step=0.01},
+    {key="terrain_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="terrain"},
+    {key="terrain_distance",default=8,min=1,max=100,step=1},
+    {key="terrain_pom_samples",default=12,min=8,max=48,step=0.01,kind="list",values={8,12,16,24,32,48}},
+    {key="terrain_pom_refine",default=false,min=0,max=1,step=0.01,kind="check"},
+    {key="terrain_pom_distance",default=20,min=1,max=80,step=1},
+    {key="terrain_pom_height",default=0.04,min=0,max=0.1,step=0.001},
+    {key="terrain_water_level",default=1.6000000238419,min=0,max=2,step=0.01},
+    {key="terrain_pom_ao",default=0.125,min=0,max=1,step=0.01},
+    {key="terrain_offset_r",default=0,min=-0.5,max=0.5,step=0.01},
+    {key="terrain_offset_g",default=0,min=-0.5,max=0.5,step=0.01},
+    {key="terrain_offset_b",default=0,min=-0.5,max=0.5,step=0.01},
+    {key="terrain_offset_a",default=0,min=-0.5,max=0.5,step=0.01},
+    {key="rain_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="rain"},
+    {key="rain_quality",default=2,min=0,max=2,step=0.01,kind="list",values={0,1,2}},
+    {key="rain_max_drops",default=2500,min=100,max=10000,step=100},
+    {key="rain_radius",default=15,min=5,max=40,step=1},
+    {key="rain_alpha",default=0.8,min=0,max=1,step=0.01},
+    {key="rain_brightness",default=0.3,min=0,max=2,step=0.01},
+    {key="rain_refraction",default=1,min=0,max=3,step=0.01},
+    {key="rain_reflection",default=1,min=0,max=3,step=0.01},
+    {key="rain_length",default=2,min=0.1,max=5,step=0.1},
+    {key="rain_width",default=0.1,min=0.01,max=0.5,step=0.01},
+    {key="rain_speed",default=0.6,min=0.1,max=2,step=0.01},
+    {key="rain_splash_alpha",default=0.5,min=0,max=1,step=0.01},
+    {key="rain_splash_refraction",default=1.5,min=0,max=3,step=0.01},
+    {key="footsteps_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="footsteps"},
+    {key="footsteps_volume",default=0.4,min=0,max=1,step=0.01},
+    {key="footsteps_variation",default=0.15,min=0,max=1,step=0.01},
+    {key="footsteps_without_rain",default=0.3,min=0,max=1,step=0.01},
+    {key="footsteps_walk",default=0.33,min=0,max=1,step=0.01},
+    {key="footsteps_run",default=1.4,min=0,max=3,step=0.01},
+    {key="footsteps_jump",default=0.7,min=0,max=1,step=0.01},
+    {key="footsteps_land",default=0.7,min=0,max=1,step=0.01},
+    {key="volume_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="volume"},
+    {key="volume_force",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="volume_scale",default=0.25,min=0.125,max=1,step=0.01,kind="list",values={0.125,0.25,0.5,1}},
+    {key="volume_intensity",default=0.02,min=0,max=1,step=0.01},
+    {key="volume_quality",default=1.5,min=1,max=5,step=0.1},
+    {key="volume_blur",default=1,min=0,max=4,step=0.1},
+    {key="volume_sun",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="volume_sun_quality",default=2,min=1,max=3,step=0.01,kind="list",values={1,2,3}},
+    {key="volume_sun_intensity",default=1,min=0,max=3,step=0.1},
+    {key="grass_explosion_strength",default=1,min=0,max=4,step=0.1,group="grass"},
+    {key="grass_explosion_speed",default=5,min=0.1,max=20,step=0.1},
+    {key="grass_shooting_strength",default=0.3,min=0,max=2,step=0.05},
+    {key="grass_shooting_radius",default=2,min=0.1,max=10,step=0.1},
+    {key="grass_anomalies",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="grass_anomaly_distance",default=25,min=0,max=100,step=1},
+    {key="shadow_grass_ratio",default=0.35,min=0,max=1,step=0.01,group="shadowmap"},
+    {key="shadow_grass_distance",default=30,min=0,max=100,step=1},
+    {key="terrain_auto_offsets",default=true,min=0,max=1,step=0.01,kind="check",group="terrain"},
+    {key="terrain_grass_align",default=false,min=0,max=1,step=0.01,kind="check"},
+    {key="terrain_grass_slope",default=90,min=0,max=90,step=1},
+    {key="bloom_weather",default=false,min=0,max=1,step=0.01,kind="check",group="bloom"},
+    {key="bloom_emissive",default=1,min=0,max=4,step=0.1},
+    {key="puddles_min_wetness",default=0,min=0,max=1,step=0.05,group="puddles"},
+    {key="wind_vanilla_emission",default=true,min=0,max=1,step=0.01,kind="check",group="wind"},
+    {key="wet_gloss_min",default=0.60000002384186,min=0,max=0.95,step=0.01,group="wet"},
+    {key="wet_gloss_max",default=0.89999997615814,min=0,max=0.99,step=0.01},
+    {key="wet_gloss_auto",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="wet_gloss_auto_max",default=1,min=0,max=1,step=0.01},
+    {key="wet_specular",default=0.34999999403954,min=0,max=2,step=0.01},
+    {key="wet_specular_color",default=0.5,min=0,max=1,step=0.01},
+    {key="wet_buildup",default=1,min=0.1,max=10,step=0.1},
+    {key="wet_drying",default=0.30000001192093,min=0.1,max=10,step=0.1},
+    {key="wet_cover_resolution",default=256,min=64,max=2048,step=0.01,kind="list",values={64,128,256,512,1024,2048}},
+}
+local visible = {}
+for _, item in ipairs(schema) do
+    local key=item.key
+    item.hidden=key:match("^puddles_tint_")~=nil or not (key=="footsteps_enabled" or key=="footsteps_volume" or key:match("^puddles_") or key=="ssr_quality" or key=="ssr_render_scale" or key=="ssr_blur" or key=="ssr_intensity" or key=="ssr_sky" or key=="ssr_temporal" or key=="wet_buildup" or key=="wet_drying")
+    item.group=nil
+    if key=="puddles_enabled" then item.group="puddles";item.default=true end
+    if key=="ssr_quality" then item.group="ssr" end
+    if key=="footsteps_enabled" then item.group="footsteps" end
+    if (key:match("_enabled$") and key~="puddles_enabled" and key~="footsteps_enabled") or key=="shadow_sun" or key=="shadow_local" then item.default=false end
+end
+-- Puddle controls first, then their reflection controls; no global checkbox.
+for _, item in ipairs(schema) do if item.key:match("^puddles_") then visible[#visible+1]=item end end
+for _, item in ipairs(schema) do if not item.hidden and not item.key:match("^puddles_") then visible[#visible+1]=item end end
+for _, item in ipairs(schema) do if item.hidden then visible[#visible+1]=item end end
+function rows() return visible end
+function defaults()
+    local values = {}
+    for _, item in ipairs(schema) do values[item.key] = item.default end
+    return values
+end
+function impl.copy(values)
+    local result = {}
+    for _, item in ipairs(schema) do result[item.key] = values[item.key] end
+    return result
+end
+function validate(values)
+    for _, item in ipairs(schema) do
+        local value = values[item.key]
+        if item.kind == "check" then
+            if type(value) ~= "boolean" then return false,"pf_sss_invalid" end
+        elseif type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+            return false,"pf_sss_invalid"
+        elseif item.kind == "list" then
+            local found = false
+            for _, option in ipairs(item.values) do if option == value then found = true end end
+            if not found then return false,"pf_sss_invalid" end
+        elseif value < item.min or value > item.max then return false,"pf_sss_invalid" end
+    end
+    return true
+end
+function impl.normalize(values)
+    local result=impl.copy(values)
+    for _,item in ipairs(schema)do
+        if item.key:match("_enabled$") and item.key~="puddles_enabled" and item.key~="footsteps_enabled" then result[item.key]=false end
+    end
+    result.shadow_sun=false;result.shadow_local=false
+    result.enabled=result.puddles_enabled;result.ssr_enabled=result.puddles_enabled
+    result.water_ice=false
+    return result
+end
+function impl.path(suffix)
+    return getFS():update_path("$app_data_root$", "pf_sss.setting" .. (suffix or ""))
+end
+function get()
+    if not state.values then
+        local values = defaults()
+        local file = io.open(impl.path(), "rb")
+        if file then
+            local stored = {}
+            for line in file:lines() do
+                local key,value = line:match("^([%w_]+)=(.-)%s*$")
+                if key then stored[key] = value end
+            end
+            file:close()
+            if stored.settings_version == "1" or stored.settings_version == "2" or stored.settings_version == "3" or stored.settings_version == "4" or stored.settings_version == "5" or stored.settings_version == "6" then
+                for _, item in ipairs(schema) do
+                    local text = stored[item.key]
+                    if stored.settings_version == "1" and not text then
+                        -- Valid v1 migrates only newly added fields; old mandatory fields remain strict.
+                        for index=21,#schema do
+                            if schema[index].key == item.key then text = tostring(item.default) end
+                        end
+                    end
+                    -- A truncated file must never enable SSS using missing-field defaults.
+                    if item.kind == "check" then
+                        if text == "true" then values[item.key] = true
+                        elseif text == "false" then values[item.key] = false
+                        else values[item.key] = nil end
+                    else values[item.key] = tonumber(text) end
+                end
+                if not validate(values) then values = defaults();values.puddles_enabled=false
+                elseif stored.settings_version == "5" then
+                    -- v6: permit complete drying and enable the restored rain-step sounds.
+                    -- Keep the player's puddle switch, colours, drying speed and reflection settings.
+                    values.puddles_min_wetness=0;values.puddles_always=false
+                    values.footsteps_enabled=true;values.ssr_sky=0.5
+                    state.profile_update_pending=true
+                elseif stored.settings_version ~= "6" then
+                    -- Preserve OFF and restore the admired puddle profile from its backup.
+                    local puddles=values.enabled and values.puddles_enabled
+                    values=defaults();values.puddles_enabled=puddles
+                    state.profile_update_pending=true
+                end
+            end
+        end
+        state.values = impl.normalize(values)
+    end
+    return impl.copy(state.values)
+end
+function available()
+    return get_console():get_string("ssfx_enabled") ~= nil
+end
+function apply(values)
+    local valid,why = validate(values)
+    if not valid then return false,why end
+    if not available() then return false,"pf_sss_unavailable" end
+    values=impl.normalize(values)
+    -- Gate off first; enable only after every validated SSS parameter is installed.
+    local console = get_console()
+    console:execute("ssfx_enabled 0")
+    for _, item in ipairs(schema) do
+        if item.key ~= "enabled" then
+            local value = values[item.key]
+            if item.key == "footsteps_variation" or item.key == "footsteps_jump" or item.key == "footsteps_land" then
+                -- One volume control also scales random variation and jump/landing splashes.
+                value = math.min(item.max, value * values.footsteps_volume / 0.4)
+            end
+            if item.key == "dof_enabled" or item.key == "water_ice" then value=false end
+            if item.kind == "check" then value = value and 1 or 0 end
+            console:execute("ssfx_" .. item.key .. " " .. string.format("%.6f", value))
+        end
+    end
+    console:execute("ssfx_enabled " .. (values.enabled and "1" or "0"))
+    if printf then printf("[SSS] applied master=%s AO=%s SSR=%s puddles=%s water=%s IL=%s",tostring(values.enabled),tostring(values.ao_enabled),tostring(values.ssr_enabled),tostring(values.puddles_enabled),tostring(values.water_enabled),tostring(values.il_enabled)) end
+    return true
+end
+function save(values)
+    local valid, why = validate(values)
+    if not valid then return false,why end
+    if not available() then return false,"pf_sss_unavailable" end
+    values=impl.normalize(values)
+    local lines = {"settings_version=6"}
+    for _, item in ipairs(schema) do lines[#lines+1] = item.key .. "=" .. tostring(values[item.key]) end
+    local target,temp,previous = impl.path(),impl.path(".tmp"),impl.path(".previous")
+    local file = io.open(temp,"wb")
+    if not file then return false,"pf_sss_write_error" end
+    local written = file:write(table.concat(lines,"\n") .. "\n")
+    local closed = file:close()
+    if not written or not closed then os.remove(temp); return false,"pf_sss_write_error" end
+    local old = io.open(target,"rb")
+    if old then
+        old:close(); os.remove(previous)
+        if not os.rename(target,previous) then os.remove(temp);return false,"pf_sss_write_error" end
+    end
+    if not os.rename(temp,target) then
+        if old then os.rename(previous,target) end
+        os.remove(temp); return false,"pf_sss_write_error"
+    end
+    if old then os.remove(previous) end
+    state.values = impl.copy(values)
+    state.profile_update_pending = false
+    return apply(state.values)
+end
+
+-- Puddle switch acts immediately; numeric controls are drafts until Apply.
+function set_enabled(enabled)
+    local values=get();values.puddles_enabled=enabled==true
+    return save(values)
+end
+
+-- Reading the options remains read-only; startup persists a valid legacy reset once.
+function profile_update_pending()
+    get()
+    return state.profile_update_pending == true
+end
+
+-- Keep the prior facade's query available while an existing session owns it.
+function author_profile_pending()
+    return profile_update_pending()
+end

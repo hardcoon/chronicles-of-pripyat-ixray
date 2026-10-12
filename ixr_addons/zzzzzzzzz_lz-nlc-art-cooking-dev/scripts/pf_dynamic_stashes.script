@@ -4775,8 +4775,25 @@ function cancel_story_document_hint(index)
 	return removed
 end
 
-function impl.roll_hint(tier, chance, message)
-	return chance and math.random(100) <= chance and grant_hint(tier, message)
+function impl.roll_hint(tier, chance, message, source_slot)
+	-- Calls without a source keep the existing grant path. Search chains
+	-- also cover saves made before hint_checked was set: both success and
+	-- failure belong to the source slot's saved world seed and rotation.
+	if not source_slot then
+		return chance and math.random(100) <= chance and grant_hint(tier, message)
+	end
+	if not SYSTEM_ENABLED or not chance or not source_slot.state or not db.actor or
+		level.name() ~= LEVEL_NAME or not tier_data[tier] then return false end
+	if impl.slot_deterministic_percent(source_slot,
+		"pf_stash_search_hint_roll_v1:" .. tier) > chance then return false end
+	-- Keep choosing an existing hidden slot and allocating a reserve point
+	-- independent of the session RNG, just like the chance roll above.
+	local point_roll = impl.slot_loot_seed(source_slot,
+		"pf_stash_search_hint_point_v1:" .. tier)
+	local eligible = impl.collect_or_allocate_hint_slots(tier, nil, point_roll)
+	local target = impl.deterministic_slot(eligible, impl.slot_loot_seed(source_slot,
+		"pf_stash_search_hint_target_v1:" .. tier))
+	return target and impl.reveal_hint_slot(target, message, false) or false
 end
 
 function impl.deterministic_pda_roll(...)
@@ -5132,15 +5149,16 @@ function impl.process_stash_search(slot)
 	if slot.tier ~= "orange" and slot.tier ~= "red" then
 		impl.process_stash_ambush(slot, false)
 	end
-	local message = stash_hint_messages[math.random(1, #stash_hint_messages)]
+	local message = stash_hint_messages[impl.slot_loot_seed(slot,
+		"pf_stash_search_hint_message_v1") % #stash_hint_messages + 1]
 	if slot.tier == "cyan" then
-		impl.roll_hint("purple", 9, message)
-		impl.roll_hint("red", 1, message)
+		impl.roll_hint("purple", 9, message, slot)
+		impl.roll_hint("red", 1, message, slot)
 	elseif slot.tier == "purple" then
-		impl.roll_hint("orange", 12, message)
-		impl.roll_hint("red", 5, message)
+		impl.roll_hint("orange", 12, message, slot)
+		impl.roll_hint("red", 5, message, slot)
 	elseif slot.tier == "orange" then
-		impl.roll_hint("red", 25, message)
+		impl.roll_hint("red", 25, message, slot)
 	end
 end
 

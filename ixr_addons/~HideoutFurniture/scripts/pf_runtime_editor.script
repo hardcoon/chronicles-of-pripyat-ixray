@@ -16,6 +16,7 @@ local KEY_ADVANCED=DIK_keys.DIK_2
 local KEY_PREVIEW=DIK_keys.DIK_3
 local KEY_DISPLAY=DIK_keys.DIK_Q
 local KEY_AXIS=DIK_keys.DIK_R
+local AXIS_LABELS={"pf_rt_axis_vertical","pf_rt_axis_side","pf_rt_axis_side_z"}
 local KEY_ALIGN=DIK_keys.DIK_CAPITAL or DIK_keys.DIK_CAPSLOCK
 local KEY_COLLISION=DIK_keys.DIK_TAB
 
@@ -93,7 +94,7 @@ function control_labels()
         key_preview=key_label(keys.preview),key_escape=key_label(keys.cancel),
         key_display=key_label(keys.display),key_axis=key_label(keys.rotation_axis),
         display_mode=game.translate_string("pf_rt_display_"..(session and session.display_mode or default_display)),
-        rotation_axis=game.translate_string(session and session.side_axis and "pf_rt_axis_side" or "pf_rt_axis_vertical"),
+        rotation_axis=game.translate_string(AXIS_LABELS[session and session.rotation_axis or 1]),
         key_lmb=key_label(keys.move),key_rmb=key_label(keys.rotate),
         key_mouse=game.translate_string("pf_rt_key_mouse"),key_shift=key_label(keys.height),
         key_ctrl=key_label(keys.fine),key_alt=key_label(keys.snap)}
@@ -290,12 +291,18 @@ local function update_pose(s,confirming)
                 s.tilt_offset*math.pi/180):multiply(quaternion)
             quaternion:normalize()
         end
+        if s.roll_offset~=0 then
+            -- Roll around local Z within the tilted/yawed placement frame.
+            quaternion=pf_runtime_editor_math.get_rotation_around(vector():set(0,0,1),
+                s.roll_offset*math.pi/180):multiply(quaternion)
+            quaternion:normalize()
+        end
         position=geometry.sub(anchor,quaternion:rotate_vector(s.spec.bounds.pivot))
         rotation=quaternion:to_euler_angles()
         -- Keep the frame and controls that produced the last visible pose. Mode 3
         -- and its return to mode 2 use this exact frame, including a sloping surface.
         s.pose_frame={position=geometry.copy(cam_pos),direction=geometry.copy(cam_dir),distance=distance,
-            normal=normal and geometry.copy(normal),offset=geometry.copy(s.offset),rotation=s.rotation_offset,tilt=s.tilt_offset}
+            normal=normal and geometry.copy(normal),offset=geometry.copy(s.offset),rotation=s.rotation_offset,tilt=s.tilt_offset,roll=s.roll_offset}
         if s.state=="HOLDING" then s.last_distance=distance end
     end
     local valid=true
@@ -364,13 +371,15 @@ local function set_state(s,new_state)
         s.offset=geometry.copy(s.fixed_frame.offset)
         s.rotation_offset=s.fixed_frame.rotation
         s.tilt_offset=s.fixed_frame.tilt
+        s.roll_offset=s.fixed_frame.roll
     elseif new_state=="HOLDING" then
         s.fixed_frame=nil
         s.drag_frame=nil
         s.offset=geometry.copy(s.spec.initial_offset)
         s.rotation_offset=0
         s.tilt_offset=0
-        s.side_axis=false
+        s.roll_offset=0
+        s.rotation_axis=1
     end
     if s.hud then s.hud:refresh(s) end
 end
@@ -393,10 +402,14 @@ local function toggle_surface(s)
     end
 end
 local function get_active_rotation(s)
-    return s.side_axis and s.tilt_offset or s.rotation_offset
+    if s.rotation_axis==2 then return s.tilt_offset end
+    if s.rotation_axis==3 then return s.roll_offset end
+    return s.rotation_offset
 end
 local function set_active_rotation(s,value)
-    if s.side_axis then s.tilt_offset=value else s.rotation_offset=value end
+    if s.rotation_axis==2 then s.tilt_offset=value
+    elseif s.rotation_axis==3 then s.roll_offset=value
+    else s.rotation_offset=value end
 end
 local function frame_vector(frame,value)
     return geometry.add(geometry.add(geometry.scale(frame.i,value.x),
@@ -535,9 +548,9 @@ function handle_input(event,key,action,dx,dy)
                 default_display=s.display_mode
             elseif s.state~="PREVIEW" then
                 -- End the current gesture before changing which angle it edits.
-                -- Both angles survive; the next RMB drag starts from this pose.
+                -- All three angles survive; the next RMB drag starts from this pose.
                 finish_direct_drag(s)
-                s.side_axis=not s.side_axis
+                s.rotation_axis=s.rotation_axis%3+1
                 if s.controller then
                     s.controller:Reset();read_modifiers(s.controller);s.controller.init=true
                 end
@@ -642,7 +655,7 @@ function begin(spec)
     local controls=spec.controls or {}
     local keys,place_uses_binding=configured_keys(controls)
     local s={spec=own,actor_id=db.actor:id(),level_name=level.name(),state="IDLE",
-        offset=vector():set(0,0,0),rotation_offset=0,tilt_offset=0,side_axis=false,display_mode=default_display,
+        offset=vector():set(0,0,0),rotation_offset=0,tilt_offset=0,roll_offset=0,rotation_axis=1,display_mode=default_display,
         check_collision=spec.check_collision==true or (spec.check_collision==nil and default_collision),
         align_surface=(spec.align_surface==true or (spec.align_surface==nil and default_surface)) and spec.orientation_mode~="local_minus_z_front",
         keys=keys,place_uses_binding=place_uses_binding,

@@ -33,6 +33,8 @@ local DEVELOPER_ENVIRONMENT_READY_PSTOR = "pf_developer_environment_ready"
 local DEVELOPER_CLEAR_WEATHER = "default_clear"
 local DEVELOPER_START_HOUR = 10
 local DEVELOPER_ACCESS_SETTING_FILE = "pf_developer_access.setting"
+local DEVELOPER_ACHIEVEMENT_PSTOR = "pf_developer_achievement_gained"
+local developer_achievement_access_enabled = nil
 local NEW_GAME_MODE_REQUEST_FILE = "pf_new_game_mode.request"
 local NEW_GAME_DIFFICULTIES = {
 	novice = "gd_novice",
@@ -148,6 +150,39 @@ function is_developer_access_enabled()
 	return value == "1" or value == "true"
 end
 
+function developer_achievement_functor()
+	local actor = db.actor
+	return actor ~= nil and db.storage[actor:id()] ~= nil and
+		xr_logic.pstor_retrieve(actor, DEVELOPER_ACHIEVEMENT_PSTOR, false) == true
+end
+
+function award_developer_achievement()
+	local actor = db.actor
+	if not actor or not db.storage[actor:id()] or developer_achievement_functor() then
+		return false
+	end
+	-- This flag belongs to the save and is never cleared by disabling access.
+	xr_logic.pstor_store(actor, DEVELOPER_ACHIEVEMENT_PSTOR, true)
+	xr_sound.set_sound_play(actor:id(), "pda_tips")
+	actor:give_game_news(
+		game.translate_string("pf_developer_achievement_name"),
+		game.translate_string("pf_developer_achievement_descr"),
+		"pf_developer_achievement_icon", 0, 10000)
+	printf("[PF STASH QA] Developer achievement awarded to the current save")
+	return true
+end
+
+local function check_developer_achievement()
+	if developer_achievement_functor() then return end
+	-- Read the installation setting once per load, rather than every frame.
+	if developer_achievement_access_enabled == nil then
+		developer_achievement_access_enabled = is_developer_access_enabled()
+	end
+	if developer_achievement_access_enabled or is_developer_mode() then
+		award_developer_achievement()
+	end
+end
+
 function set_developer_access_enabled(enabled)
 	local file = io.open(developer_access_setting_path(), "w")
 	if not file then
@@ -156,6 +191,8 @@ function set_developer_access_enabled(enabled)
 	end
 	file:write(enabled == true and "1\n" or "0\n")
 	file:close()
+	developer_achievement_access_enabled = enabled == true
+	if enabled == true then award_developer_achievement() end
 	return true
 end
 
@@ -192,6 +229,7 @@ end
 function set_developer_mode(enabled)
 	if not db.actor then return false end
 	xr_logic.pstor_store(db.actor, DEVELOPER_MODE_PSTOR, enabled == true)
+	if enabled == true then award_developer_achievement() end
 	if enabled ~= true then
 		xr_logic.pstor_store(db.actor, DEVELOPER_ENVIRONMENT_READY_PSTOR, false)
 	end
@@ -812,6 +850,7 @@ end
 local function qa_actor_on_update()
 	if not db.actor then return end
 	process_new_game_mode_request()
+	check_developer_achievement()
 	enforce_developer_clear_weather()
 	if qa_tools_checked then return end
 	if time_global() < qa_tools_check_due then return end
@@ -819,6 +858,7 @@ local function qa_actor_on_update()
 end
 
 local function qa_on_game_load()
+	developer_achievement_access_enabled = nil
 	qa_tools_checked = false
 	qa_tools_check_due = time_global() + 1000
 	qa_issue_actor_id = nil

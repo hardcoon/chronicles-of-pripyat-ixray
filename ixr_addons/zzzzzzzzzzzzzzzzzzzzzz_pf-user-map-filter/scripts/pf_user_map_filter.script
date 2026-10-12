@@ -6,6 +6,9 @@ local state = {
     enabled = nil,
     applied = false,
     checkbox = nil,
+    pda_cookie = nil,
+    ui_generation = 0,
+    checkbox_needs_sync = false,
     map_open = false,
     next_scan = 0,
     callbacks_registered = false
@@ -69,22 +72,36 @@ function set_enabled(enabled)
     return true
 end
 
-local function discard_ui_handles()
-    -- Load callbacks run after native PDA reconstruction. Do not call into
-    -- the previous windows, even just to hide or detach them.
+local function validate_pda(pda)
+    if not pda then return false end
+    -- Getters return fresh userdata wrappers with no usable pointer equality.
+    -- A string cookie on the current native PDA survives tab switches/Reset,
+    -- but not destruction. Its Tasks page has the same native lifetime.
+    -- Check only the freshly obtained PDA before touching a cached checkbox.
+    if state.pda_cookie and pda:WindowName() == state.pda_cookie then
+        return true
+    end
+    local replacing = state.pda_cookie ~= nil
     state.checkbox = nil
-    state.map_open = false
+    state.ui_generation = state.ui_generation + 1
+    state.pda_cookie = "pf_user_map_filter_pda_" .. state.ui_generation
+    pda:SetWindowName(state.pda_cookie)
+    state.applied = false
+    if replacing then
+        printf("* pf_user_map_filter: PDA replaced; restoring visibility=%s", state.enabled and "on" or "off")
+    end
+    return true
 end
 
 local function capture_checkbox(pda)
-    -- Native window getters create fresh Lua userdata wrappers. They expose
-    -- no __eq, and rawequal cannot identify the underlying C++ window either.
-    -- The native Tasks page owns this control until UI/load teardown.
-    if not pda then
-        discard_ui_handles()
-        return
-    end
+    if not validate_pda(pda) then return end
     if state.checkbox then
+        -- A load can reuse the native PDA. Restore the saved preference first;
+        -- its reset UI state must never be mistaken for a player click.
+        if state.checkbox_needs_sync then
+            state.checkbox:SetCheck(state.enabled)
+            state.checkbox_needs_sync = false
+        end
         local checked = state.checkbox:GetCheck()
         if checked ~= state.enabled and not set_enabled(checked) then
             state.checkbox:SetCheck(state.enabled)
@@ -108,6 +125,7 @@ function update()
                 xml:ParseFile("pf_user_map_filter.xml")
                 state.checkbox = xml:InitCheck("filter_user_markers", owner)
                 state.checkbox:SetCheck(state.enabled)
+                state.checkbox_needs_sync = false
             end
         else
             -- Another addon may temporarily bridge a script page through
@@ -128,7 +146,10 @@ function update()
 end
 
 function on_game_load()
-    discard_ui_handles()
+    -- Retain the borrowed handle only for validation against the next live PDA.
+    -- Never dereference it here: UI reconstruction can also happen without load.
+    state.checkbox_needs_sync = true
+    state.map_open = false
     state.enabled = nil
     state.applied = false
     state.next_scan = 0

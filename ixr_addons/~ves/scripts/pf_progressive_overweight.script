@@ -10,7 +10,6 @@ local BONUS_REFRESH_MS = 100
 local MOVEMENT_WISHFUL = 1
 local MOVEMENT_REAL = 2
 local MOVE_ANY = 15
-local MOVE_ACCEL = 32
 local MOVE_JUMP = 128
 local MOVE_CLIMB = 2048
 local MOVE_SPRINT = 4096
@@ -23,8 +22,7 @@ local state = {
 	actor = nil,
 	actor_id = nil,
 	active = false,
-	base_run = nil,
-	base_runback = nil,
+	base_walk = nil,
 	base_jump = nil,
 	equipment_bonus = 0.0,
 	next_bonus_refresh = 0,
@@ -65,12 +63,10 @@ end
 
 local function restore_movement(actor)
 	if not actor or not state.active then return end
-	if state.base_run then actor:set_actor_run_coef(state.base_run) end
-	if state.base_runback then actor:set_actor_runback_coef(state.base_runback) end
+	if state.base_walk then actor:set_actor_walk_accel(state.base_walk) end
 	if state.base_jump then actor:set_actor_jump_speed(state.base_jump) end
 	state.active = false
-	state.base_run = nil
-	state.base_runback = nil
+	state.base_walk = nil
 	state.base_jump = nil
 end
 
@@ -82,8 +78,7 @@ local function bind_actor(actor)
 	state.actor = actor
 	state.actor_id = actor_id
 	state.active = false
-	state.base_run = nil
-	state.base_runback = nil
+	state.base_walk = nil
 	state.base_jump = nil
 	state.equipment_bonus = 0.0
 	state.next_bonus_refresh = 0
@@ -130,22 +125,19 @@ local function update_movement(actor, weight, progressive_start, hard_stop)
 	end
 
 	if not state.active then
-		state.base_run = tonumber(actor:get_actor_run_coef()) or 1.0
-		state.base_runback = tonumber(actor:get_actor_runback_coef()) or 1.0
+		state.base_walk = actor:get_actor_walk_accel()
 		state.base_jump = tonumber(actor:get_actor_jump_speed()) or 0.0
 		state.active = true
 	end
 
 	local progressive_width = hard_stop - progressive_start
 	local factor = clamp((hard_stop - weight) / progressive_width, 0.0, 1.0)
-	actor:set_actor_run_coef(state.base_run * factor)
-	actor:set_actor_runback_coef(state.base_runback * factor)
+	-- IX-Ray derives every movement mode from m_fWalkAccel before applying
+	-- run/backward/strafe/crouch/climb factors. Scale that shared value once.
+	actor:set_actor_walk_accel(state.base_walk * factor)
 	actor:set_actor_jump_speed(0.0)
 
-	-- In this engine mcAccel selects the slower walk branch when it is set.
-	-- Clearing it makes every movement direction use the scaled run factors.
-	actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_ACCEL, false)
-	actor:set_movement_state(MOVEMENT_REAL, MOVE_ACCEL, false)
+	-- Preserve walk/lean/aim input; none of these can bypass the common scale.
 	actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_SPRINT, false)
 	actor:set_movement_state(MOVEMENT_REAL, MOVE_SPRINT, false)
 	actor:set_movement_state(MOVEMENT_WISHFUL, MOVE_JUMP, false)
@@ -191,8 +183,7 @@ local function reset()
 	state.actor = nil
 	state.actor_id = nil
 	state.active = false
-	state.base_run = nil
-	state.base_runback = nil
+	state.base_walk = nil
 	state.base_jump = nil
 	state.equipment_bonus = 0.0
 	state.next_bonus_refresh = 0

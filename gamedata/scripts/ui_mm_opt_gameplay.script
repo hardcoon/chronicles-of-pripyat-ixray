@@ -86,6 +86,11 @@ function opt_gameplay:InitControls(x, y, xml, handler)
     addControl(_st)
 
     _st = xml:InitStatic("video_adv:templ_item", nil)
+    xml:InitStatic("tab_gameplay:cap_disable_minimap", _st)
+    self.check_disable_minimap = xml:InitCheck("tab_gameplay:check_disable_minimap", _st)
+    addControl(_st)
+
+    _st = xml:InitStatic("video_adv:templ_item", nil)
     xml:InitStatic("tab_gameplay:cap_rs_fps_show", _st)
     xml:InitCheck("tab_gameplay:check_rs_fps_show", _st)
     addControl(_st)
@@ -95,6 +100,9 @@ function opt_gameplay:InitControls(x, y, xml, handler)
     self.check_developer_access = xml:InitCheck(
         "tab_gameplay:check_developer_access", _st
     )
+    handler:Register(self.check_developer_access, "pf_developer_access")
+    handler:AddCallback("pf_developer_access", ui_events.BUTTON_CLICKED,
+        self.OnDeveloperAccessClicked, self)
     addControl(_st)
 
     _st = xml:InitStatic("video_adv:templ_item", nil)
@@ -123,6 +131,12 @@ function opt_gameplay:SaveDisableGreenStashSpawningValue()
     return true
 end
 
+function opt_gameplay:OnDeveloperAccessClicked()
+    if self.check_developer_access:GetCheck() == true then
+        pf_stash_qa.award_developer_achievement()
+    end
+end
+
 function opt_gameplay:SetDeveloperAccessValue()
     self.developer_access_backup = pf_stash_qa and
         pf_stash_qa.is_developer_access_enabled and
@@ -138,5 +152,18 @@ function opt_gameplay:SaveDeveloperAccessValue()
         return false
     end
     self.developer_access_backup = enabled
+    return true
+end
+
+function opt_gameplay:SetDisableMinimapValue()
+    self.disable_minimap_backup = pf_minimap_settings.is_disabled()
+    self.check_disable_minimap:SetCheck(self.disable_minimap_backup)
+end
+
+function opt_gameplay:SaveDisableMinimapValue()
+    local disabled = self.check_disable_minimap:GetCheck() == true
+    if disabled == self.disable_minimap_backup then return true end
+    if not pf_minimap_settings.set_disabled(disabled) then return false end
+    self.disable_minimap_backup = disabled
     return true
 end

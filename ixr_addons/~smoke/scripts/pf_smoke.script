@@ -1,0 +1,43 @@
+-- Menu choice is transient. The native eatable animator consumes one charge.
+local pending = nil
+local registered = false
+
+function reset()
+    pending = nil
+end
+
+function select_long(item)
+    reset()
+    local actor = db.actor
+    if not actor or not actor:alive() or not item or
+        item:section() ~= "pf_cigarettes" or item:get_remaining_uses() == 0 then
+        return false
+    end
+    local parent = item:parent()
+    if not parent or parent:id() ~= actor:id() then return false end
+    if actor:is_hud_animator_active() and
+        actor:get_hud_animator_section() ~= "pf_hoc_backpack_open" then
+        return false
+    end
+    pending = {actor_id = actor:id(), level_name = level.name(), started = time_global()}
+    return true
+end
+
+function select_animator(section)
+    local choice = pending
+    reset()
+    local actor = db.actor
+    if section == "pf_smoke_short_use" and choice and actor and
+        choice.actor_id == actor:id() and choice.level_name == level.name() and
+        time_global() - choice.started <= 5000 then
+        return "pf_smoke_long_use"
+    end
+    return section
+end
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("load", reset)
+    registered = true
+end
+on_game_start()

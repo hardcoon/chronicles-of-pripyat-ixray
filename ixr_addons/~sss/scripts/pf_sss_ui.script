@@ -1,0 +1,88 @@
+-- UI leaf: holds drafts; changing a control never changes renderer state.
+class "panel" (CUIWindow)
+function panel:__init() super()
+    self.controls = {}
+    self.captions = {}
+end
+function panel:__finalize() end
+function panel:InitControls(xml, rows)
+    self:SetAutoDelete(true)
+    self.rows = rows
+    self.scroll = xml:InitScrollView("scroll",self)
+    for _, item in ipairs(rows) do
+        if item.key ~= "enabled" and not item.hidden then
+            if item.group then
+                local heading = xml:InitStatic("heading_row",nil)
+                xml:InitStatic("heading",heading):TextControl():SetTextST("pf_sss_group_" .. item.group)
+                self.scroll:AddWindow(heading,true); heading:SetAutoDelete(false)
+            end
+            local row = xml:InitStatic("row",nil)
+            local caption=xml:InitStatic("caption",row)
+            caption:TextControl():SetTextST("pf_sss_" .. item.key)
+            self.captions[item.key]=caption
+            local control
+            if item.kind == "check" then control = xml:InitCheck("check",row)
+            elseif item.kind == "list" then
+                control = xml:InitComboBox("list",row)
+                for index,value in ipairs(item.values) do control:AddItem("pf_sss_value_" .. item.key .. "_" .. index,index) end
+            else
+                control = xml:InitTrackBar("track_" .. item.key,row)
+                control:SetOptFBounds(item.min,item.max)
+            end
+            self.controls[item.key] = control
+            self.scroll:AddWindow(row,true); row:SetAutoDelete(false)
+        end
+    end
+    self.reset = xml:Init3tButton("reset",self)
+end
+function panel:SetValues(values)
+    self.values = values
+    for _, item in ipairs(self.rows) do
+        local control,value = self.controls[item.key],values[item.key]
+        if item.hidden then
+            -- Removed modules have no controls.
+        elseif item.kind == "check" then control:SetCheck(value)
+        elseif item.kind == "list" then
+            for index,option in ipairs(item.values) do
+                if option == value then
+                    control:SetCurrentIdx(index-1)
+                    control:SetText(game.translate_string("pf_sss_value_" .. item.key .. "_" .. index))
+                end
+            end
+        else control:SetFValue(value) end
+    end
+    self:UpdateEnabled()
+end
+function panel:UpdateEnabled()
+    local puddles=self.controls.puddles_enabled:GetCheck()==true
+    local steps=self.controls.footsteps_enabled:GetCheck()==true
+    for key,control in pairs(self.controls) do
+        local master=key=="puddles_enabled"
+        local enabled=true
+        if not master then
+            if key:match("^puddles_") or key:match("^ssr_") or key=="wet_buildup" or key=="wet_drying" or key=="footsteps_enabled" then enabled=puddles
+            elseif key=="footsteps_volume" then enabled=puddles and steps
+            end
+        end
+        control:Enable(enabled)
+        local color=(master or key=="footsteps_enabled" and enabled) and GetARGB(255,220,170,60) or (enabled and GetARGB(255,190,184,169) or GetARGB(255,91,88,80))
+        self.captions[key]:TextControl():SetTextColor(color)
+    end
+end
+function panel:GetValues()
+    local values = {}
+    for _, item in ipairs(self.rows) do
+        local control = self.controls[item.key]
+        if item.hidden then
+            local previous = self.values and self.values[item.key]
+            values[item.key] = previous
+            if previous == nil then values[item.key] = item.default end
+        elseif item.kind == "check" then values[item.key] = control:GetCheck() == true
+        elseif item.kind == "list" then values[item.key] = item.values[control:GetCurrentIdx()+1]
+        else
+            -- Native controls return float32; normalize rounded bounds for strict validation.
+            values[item.key] = math.max(item.min,math.min(item.max,control:GetFValue()))
+        end
+    end
+    return values
+end
