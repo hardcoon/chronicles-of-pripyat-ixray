@@ -1,0 +1,230 @@
+-- Read-only coarse navigation, using the same validated all.spawn graph as pf_pa_world.
+-- Only the small game graph is loaded; fine mesh paths remain native.
+local rt = {metrics = {routes = 0, route_failures = 0}}
+local impl = {}
+local cache, cache_count = {}, 0
+function impl.log(message) printf("[pf_squad_nav] %s", message) end
+function impl.u16(b, offset)
+    local a, c = string.byte(b, offset or 1, (offset or 1) + 1)
+    assert(c, "truncated u16")
+    return a + c * 256
+end
+function impl.u32(b, offset)
+    local a, c, d, e = string.byte(b, offset or 1, (offset or 1) + 3)
+    assert(e, "truncated u32")
+    return a + c * 256 + d * 65536 + e * 16777216
+end
+function impl.f32(b, offset)
+    local value = impl.u32(b, offset)
+    local sign = value >= 2147483648 and -1 or 1
+    local exponent = math.floor(value / 8388608) % 256
+    local fraction = value % 8388608
+    assert(exponent < 255, "non-finite graph coordinate/weight")
+    if exponent == 0 then return sign * fraction * 2 ^ -149 end
+    return sign * (1 + fraction / 8388608) * 2 ^ (exponent - 127)
+end
+function impl.read(file, size)
+    local b = file:read(size)
+    assert(b and #b == size, "truncated navigation data")
+    return b
+end
+function impl.zstring(file)
+    local out = {}
+    for i = 1, 256 do
+        local b = impl.read(file, 1)
+        if b == "\0" then return table.concat(out) end
+        out[#out + 1] = b
+    end
+    error("invalid graph level name")
+end
+
+function impl.open_navigation()
+    local path = getFS():update_path("$game_spawn$", "all.spawn")
+    rt.file = assert(io.open(path, "rb"), "loose all.spawn is required for read-only navigation")
+    local f = rt.file
+    local graph_end
+    while true do
+        local h = impl.read(f, 8)
+        local id, size = impl.u32(h, 1), impl.u32(h, 5)
+        assert(id < 2147483648, "compressed all.spawn chunks are unsupported")
+        if id == 4 then graph_end = f:seek() + size; break end
+        assert(f:seek("cur", size), "invalid all.spawn chunk")
+    end
+    local h = impl.read(f, 28)
+    local g = {version = string.byte(h, 1), count = impl.u16(h, 2),
+        edge_count = impl.u32(h, 4), death_count = impl.u32(h, 8),
+        guid = string.sub(h, 12, 27), vertices = {}, order = {}, cell_cache = {}, cache_count = 0}
+    assert(g.version == 13 and g.count > 0 and g.count < 65535, "unsupported game graph")
+    local levels = string.byte(h, 28)
+    assert(levels == 1, "this prototype requires the single-level Pripyat graph")
+    for i = 1, levels do
+        g.level_name = impl.zstring(f)
+        impl.read(f, 12)
+        g.level_id = string.byte(impl.read(f, 1))
+        impl.zstring(f)
+        g.level_guid = impl.read(f, 16)
+    end
+    assert(g.level_name == "pripyat_full", "unexpected game graph level")
+    local vertices_base = f:seek()
+    for id = 0, g.count - 1 do
+        local b = impl.read(f, 42)
+        local packed = impl.u32(b, 25)
+        local v = {x = impl.f32(b, 1), y = impl.f32(b, 5), z = impl.f32(b, 9),
+            lv = math.floor(packed / 256), level_id = packed % 256,
+            offset = impl.u32(b, 33), edge_count = string.byte(b, 41), edges = {}}
+        assert(v.level_id == g.level_id and game_graph():valid_vertex_id(id), "graph ID mismatch")
+        local native = game_graph():vertex(id)
+        assert(native:level_vertex_id() == v.lv, "all.spawn differs from the running graph")
+        g.vertices[id] = v
+        g.order[#g.order + 1] = id
+    end
+    for id = 0, g.count - 1 do
+        local v = g.vertices[id]
+        f:seek("set", vertices_base + v.offset)
+        for j = 1, v.edge_count do
+            local b = impl.read(f, 6)
+            local to, distance = impl.u16(b, 1), impl.f32(b, 3)
+            assert(to < g.count and distance > 0, "invalid graph edge")
+            v.edges[#v.edges + 1] = {to = to, distance = distance}
+        end
+    end
+    local cross = vertices_base + g.count * 42 + g.edge_count * 6 + g.death_count * 20
+    f:seek("set", cross)
+    local c = impl.read(f, 48)
+    local cross_size = impl.u32(c, 1)
+    g.mesh_count = impl.u32(c, 9)
+    assert(impl.u32(c, 5) == g.version and impl.u32(c, 13) == g.count, "cross table header mismatch")
+    assert(string.sub(c, 17, 32) == g.level_guid and string.sub(c, 33, 48) == g.guid,
+        "cross table GUID mismatch")
+    assert(cross_size == 48 + g.mesh_count * 6 and cross + cross_size <= graph_end,
+        "cross table size mismatch")
+    g.cells_base = cross + 48
+    local ai_path = getFS():update_path("$level$", "level.ai")
+    local ai_file = assert(io.open(ai_path, "rb"), "loose level.ai is required to verify navigation")
+    local ai_header = ai_file:read(56)
+    ai_file:close()
+    assert(ai_header and #ai_header == 56 and impl.u32(ai_header, 5) == g.mesh_count
+        and string.sub(ai_header, 41, 56) == g.level_guid, "AI mesh/cross table mismatch")
+    rt.graph = g
+    for id = 0, g.count - 1 do
+        local v = g.vertices[id]
+        assert(level.valid_vertex_id(v.lv), "invalid graph anchor level vertex")
+        assert(impl.cross_cell(v.lv).gv == id, "graph anchor/cross table mismatch")
+        -- Arrivals and native destinations must use the same mesh-cell centre.
+        local p = level.vertex_position(v.lv)
+        v.x, v.y, v.z = p.x, p.y, p.z
+    end
+    impl.log(string.format("navigation ready: %d game vertices, %d edges, %d mesh nodes; mesh not loaded into Lua",
+        g.count, g.edge_count, g.mesh_count))
+end
+
+function impl.cross_cell(lv)
+    local g = rt.graph
+    if type(lv) ~= "number" or lv < 0 or lv >= g.mesh_count or lv ~= math.floor(lv) then return nil end
+    if g.cell_cache[lv] then return g.cell_cache[lv] end
+    rt.file:seek("set", g.cells_base + lv * 6)
+    local b = impl.read(rt.file, 6)
+    local cell = {gv = impl.u16(b, 1), distance = impl.f32(b, 3)}
+    if cell.gv >= g.count then return nil end
+    if g.cache_count >= 2048 then g.cell_cache = {}; g.cache_count = 0 end
+    g.cell_cache[lv] = cell
+    g.cache_count = g.cache_count + 1
+    return cell
+end
+
+function impl.heap_push(heap, id, cost)
+    local n = #heap + 1
+    while n > 1 do
+        local parent = math.floor(n / 2)
+        if heap[parent].cost <= cost then break end
+        heap[n] = heap[parent]
+        n = parent
+    end
+    heap[n] = {id = id, cost = cost}
+end
+function impl.heap_pop(heap)
+    local first, last = heap[1], table.remove(heap)
+    if #heap > 0 then
+        local i = 1
+        while i * 2 <= #heap do
+            local child = i * 2
+            if child < #heap and heap[child + 1].cost < heap[child].cost then child = child + 1 end
+            if last.cost <= heap[child].cost then break end
+            heap[i] = heap[child]
+            i = child
+        end
+        heap[i] = last
+    end
+    return first
+end
+
+function impl.route(start, goal)
+    local g = rt.graph
+    if not g.vertices[start] or not g.vertices[goal] then return nil end
+    local distances, previous, heap = {[start] = 0}, {}, {}
+    impl.heap_push(heap, start, 0)
+    while #heap > 0 do
+        local item = impl.heap_pop(heap)
+        if item.cost == distances[item.id] then
+            if item.id == goal then
+                local result, id = {}, goal
+                while id do table.insert(result, 1, id); id = previous[id] end
+                rt.metrics.routes = rt.metrics.routes + 1
+                return result
+            end
+            for _, edge in ipairs(g.vertices[item.id].edges) do
+                if game_graph():accessible(edge.to) then
+                    local cost = item.cost + edge.distance
+                    if not distances[edge.to] or cost < distances[edge.to] then
+                        distances[edge.to], previous[edge.to] = cost, item.id
+                        impl.heap_push(heap, edge.to, cost)
+                    end
+                end
+            end
+        end
+    end
+    rt.metrics.route_failures = rt.metrics.route_failures + 1
+end
+
+
+function ready()
+    if rt.graph then return true end
+    local now = time_global()
+    if now < (rt.retry_at or 0) then return false end
+    local ok, reason = pcall(impl.open_navigation)
+    if not ok then
+        reset()
+        rt.retry_at = now + 60000
+        impl.log("navigation unavailable: " .. tostring(reason))
+    end
+    return ok
+end
+function cell(lv)
+    return rt.graph and impl.cross_cell(lv)
+end
+function vertex(gv)
+    return rt.graph and rt.graph.vertices[gv]
+end
+function route(start, goal)
+    if not rt.graph then return nil end
+    local key = tostring(start) .. ":" .. tostring(goal)
+    local now = time_global()
+    local saved = cache[key]
+    if saved and now < saved.until_time then
+        local accessible = true
+        for _, gv in ipairs(saved.path or {}) do
+            if not game_graph():accessible(gv) then accessible = false; break end
+        end
+        if accessible then return saved.path end
+    end
+    local path = impl.route(start, goal)
+    if cache_count >= 64 then cache, cache_count = {}, 0 end
+    if not cache[key] then cache_count = cache_count + 1 end
+    cache[key] = {path = path, until_time = now + (path and 10000 or 2000)}
+    return path
+end
+function reset()
+    if rt.file then rt.file:close() end
+    rt.file, rt.graph, rt.retry_at = nil, nil, nil
+    cache, cache_count = {}, 0
+end

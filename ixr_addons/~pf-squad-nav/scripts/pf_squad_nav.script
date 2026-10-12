@@ -1,0 +1,187 @@
+-- Scoped replacement of peaceful reach_task, preserving the native squad target
+-- and its GOAP combat/danger priorities. No population, save or offline changes.
+local installed, registered = false, false
+local budget = {at = -1, left = 0}
+local metrics = {bound = 0, orders = 0, stalled = 0, waits = 0}
+local FACTIONS = {zombied = true, monolith = true, killer = true}
+local TICK, STEP, STALL, RETRY = 250, 25, 3000, 5000
+
+local function distance2(a, b)
+    return (a.x - b.x)^2 + (a.y - b.y)^2 + (a.z - b.z)^2
+end
+local function coordinates(p) return {x = p.x, y = p.y, z = p.z} end
+local function position(p) return vector():set(p.x, p.y, p.z) end
+local function token(now)
+    if budget.at < 0 or now >= budget.at + TICK or now < budget.at then budget.at, budget.left = now, 2 end
+    if budget.left == 0 then return false end
+    budget.left = budget.left - 1
+    return true
+end
+function eligible(npc)
+    if level.name() ~= "pripyat_full" or not npc:alive() then return false end
+    local server = alife():object(npc:id())
+    if not server or not string.match(server:section_name(), "^sim_default_") then return false end
+    local squad = get_object_squad(npc)
+    return squad ~= nil and FACTIONS[npc:character_community()] == true
+end
+
+class "squad_reach_action" (action_base)
+function squad_reach_action:__init() super(nil, "pf_squad_reach") end
+function squad_reach_action:initialize()
+    action_base.initialize(self)
+    self.next_tick, self.route, self.command, self.retry_at = 0, nil, nil, nil
+    self.goal_gv, self.goal_lv, self.goal_id = nil, nil, nil
+    self.object:set_desired_position()
+    self.object:set_desired_direction()
+    self.object:set_movement_selection_type(game_object.alifeMovementTypeMask)
+    self.object:set_detail_path_type(move.line)
+    self.object:set_body_state(move.standing)
+    self.object:set_item(object.idle, self.object:best_weapon())
+    self.object:set_path_type(game_object.no_path)
+    self.object:set_movement_type(move.stand)
+    local storage = db.storage[self.object:id()]
+    if storage then storage.pf_squad_nav = true end
+end
+function squad_reach_action:stop()
+    self.command = nil
+    self.object:set_desired_position()
+    self.object:set_desired_direction()
+    self.object:set_path_type(game_object.no_path)
+    self.object:set_movement_type(move.stand)
+end
+function squad_reach_action:order(lv, p, now)
+    if not level.valid_vertex_id(lv) or not self.object:accessible(lv) then return false end
+    -- Keep an unchanged destination intact; native path invalidation is expensive.
+    self.object:set_desired_position()
+    self.object:set_desired_direction()
+    self.object:inactualize_level_path()
+    self.object:set_path_type(game_object.level_path)
+    self.object:set_dest_level_vertex_id(lv)
+    self.command = {lv = lv, point = coordinates(p)}
+    self.progress, self.progress_at = coordinates(self.object:position()), now
+    metrics.orders = metrics.orders + 1
+    return true
+end
+function squad_reach_action:waypoint(target, now)
+    local p, lv, gv = target:get_location()
+    if not level.valid_vertex_id(lv) or not pf_squad_route.vertex(gv) then return nil end
+    local id = target.id
+    if id ~= self.goal_id or gv ~= self.goal_gv then
+        self.route, self.command, self.retry_at = nil, nil, nil
+        self.goal_id, self.goal_gv = id, gv
+    end
+    self.goal_lv = lv
+    local current = pf_squad_route.cell(self.object:level_vertex_id())
+    if not current then return nil end
+    if current.gv == gv and not self.route then return p, lv end
+    if not self.route then
+        self.route = pf_squad_route.route(current.gv, gv)
+        self.leg = 2
+    end
+    if not self.route then return nil end
+    local next_gv = self.route[self.leg]
+    while next_gv do
+        local v = pf_squad_route.vertex(next_gv)
+        if not v or not game_graph():accessible(next_gv) then self.route = nil; return nil end
+        if distance2(self.object:position(), v) > 9 then return position(v), v.lv end
+        self.leg = self.leg + 1
+        next_gv = self.route[self.leg]
+    end
+    return p, lv
+end
+function squad_reach_action:execute()
+    action_base.execute(self)
+    local now = time_global()
+    if now < self.next_tick then return end
+    self.next_tick = now + TICK
+    local npc = self.object
+    local squad = get_object_squad(npc)
+    local target = squad and squad.assigned_target_id and alife():object(squad.assigned_target_id)
+    if not target or npc:is_talking() then self:stop(); return end
+    if now < (self.retry_at or 0) then return end
+    local moving_target = target:clsid() == clsid.online_offline_group_s
+    npc:set_movement_type((moving_target or xr_conditions.surge_started()) and move.run or move.walk)
+    npc:set_mental_state(moving_target and anim.danger or anim.free)
+    npc:set_sight(look.path_dir, nil, 0)
+    local p = npc:position()
+    if self.command then
+        if target.id ~= self.goal_id or target.m_game_vertex_id ~= self.goal_gv then
+            self:stop(); self.route = nil
+        elseif distance2(p, self.command.point) <= 2.25 then
+            self.command = nil
+        else
+            if distance2(p, self.progress) >= 0.25 then
+                self.progress, self.progress_at = coordinates(p), now
+            elseif now - self.progress_at >= STALL then
+                metrics.stalled = metrics.stalled + 1
+                self:stop()
+                self.retry_at = now + RETRY
+                return
+            end
+            return
+        end
+    end
+    if not token(now) then metrics.waits = metrics.waits + 1; return end
+    if not pf_squad_route.ready() then self:stop(); self.retry_at = now + RETRY; return end
+    local goal, goal_lv = self:waypoint(target, now)
+    if not goal then self:stop(); self.retry_at = now + RETRY; return end
+    if distance2(p, goal) <= 1 then self:stop(); return end
+    -- Like pseudo-ALife: prefer a verified connected straight mesh leg.
+    local direction = vector():set(goal.x - p.x, 0, goal.z - p.z)
+    local length = math.min(STEP, math.sqrt(direction.x^2 + direction.z^2))
+    local lv = npc:vertex_in_direction(npc:level_vertex_id(), direction, length)
+    local point = level.valid_vertex_id(lv) and level.vertex_position(lv)
+    if point and length >= 2 and distance2(p, point) >= (length * 0.85)^2
+        and distance2(point, goal) < distance2(p, goal) then
+        self:order(lv, point, now)
+    elseif npc:accessible(goal_lv) then
+        -- Adjacent coarse anchor, never the distant end of the whole map route.
+        self:order(goal_lv, goal, now)
+    else
+        self:stop(); self.retry_at = now + RETRY
+    end
+end
+function squad_reach_action:finalize()
+    self.command, self.route = nil, nil
+    self.object:set_desired_position()
+    self.object:set_desired_direction()
+    self.object:set_movement_selection_type(game_object.alifeMovementTypeRandom)
+    local storage = db.storage[self.object:id()]
+    if storage then storage.pf_squad_nav = nil end
+    action_base.finalize(self)
+end
+function squad_reach_action:death_callback() end
+function squad_reach_action:net_destroy() end
+
+local function install()
+    if installed then return end
+    local original = xr_reach_task.add_reach_task_action
+    xr_reach_task.add_reach_task_action = function(npc)
+        if not eligible(npc) then return original(npc) end
+        local manager = cast_planner(npc:motivation_action_manager():action(stalker_ids.action_alife_planner))
+        manager:remove_evaluator(stalker_ids.property_smart_terrain_task)
+        manager:add_evaluator(stalker_ids.property_smart_terrain_task,
+            xr_reach_task.evaluator_reached_task_location("reached_task_location", nil))
+        manager:remove_action(stalker_ids.action_smart_terrain_task)
+        local action = squad_reach_action()
+        action:add_precondition(world_property(stalker_ids.property_alife, true))
+        action:add_precondition(world_property(stalker_ids.property_smart_terrain_task, true))
+        action:add_effect(world_property(stalker_ids.property_smart_terrain_task, false))
+        manager:add_action(stalker_ids.action_smart_terrain_task, action)
+        metrics.bound = metrics.bound + 1
+    end
+    installed = true
+end
+function on_load()
+    pf_squad_route.reset()
+    budget = {at = -1, left = 0}
+    metrics = {bound = 0, orders = 0, stalled = 0, waits = 0}
+end
+function status()
+    return string.format("bound=%d orders=%d stalled=%d waits=%d", metrics.bound, metrics.orders, metrics.stalled, metrics.waits)
+end
+function on_game_start()
+    install()
+    if not registered then RegisterScriptCallback("load", on_load); registered = true end
+end
+on_game_start()
