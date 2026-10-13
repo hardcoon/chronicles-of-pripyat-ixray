@@ -1,0 +1,20 @@
+-- Replace the saved placeholder before inventory physics state is loaded.
+-- The normal artefact binder still owns registration, updates and destruction.
+function bind(obj)
+	local visual = system_ini():r_string(obj:section(), "visual")
+	obj:set_visual_name(visual)
+	obj:bind_object(pouch_binder(obj))
+end
+
+class "pouch_binder" (bind_artefact.artefact_binder)
+function pouch_binder:__init(obj) super(obj)
+end
+
+function pouch_binder:net_spawn(server_object)
+	local visual = system_ini():r_string(self.object:section(), "visual")
+	-- Keep ALife's visual in sync so subsequent saves contain the new model.
+	if server_object and server_object.set_visual then
+		server_object:set_visual(visual)
+	end
+	return bind_artefact.artefact_binder.net_spawn(self, server_object)
+end

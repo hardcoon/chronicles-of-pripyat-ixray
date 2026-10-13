@@ -5,16 +5,22 @@ struct PreviewOutput
     float2 uv : TEXCOORD0;
     float depth : TEXCOORD1;
     float4 color : COLOR0;
+    float twoSided : TEXCOORD2;
 };
 PreviewOutput main(v_TL input)
 {
     PreviewOutput output;
     // COP-ENG-114: engine UI preview tag. Coordinates never enter world space.
     bool cameraRelative = input.Color.a == 0;
+    // Cooking requests its original two-sided preview through reserved RGB 255/254/255.
+    bool twoSidedUi = cameraRelative && input.Color.r == 1 && input.Color.b == 1 &&
+        abs(input.Color.g - 254.0 / 255.0) < 0.5 / 255.0;
     output.position = cameraRelative ? mul(m_P, input.P) : mul(m_WVP, input.P);
     output.uv = input.Tex0;
     output.depth = cameraRelative ? -input.P.z : mul(m_WV, input.P).z;
     output.color = input.Color.bgra;
+    output.twoSided = twoSidedUi ? 1 : 0;
+    if (twoSidedUi) output.color.g = 1;
     if (cameraRelative) output.color.a = 1;
     return output;
 }

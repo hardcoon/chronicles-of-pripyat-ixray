@@ -1,0 +1,93 @@
+-- One common-script entry point; no replacement of stock scripts or binders.
+local registered=false
+local input_wrapper=nil
+local codec=pf_interiors_codec
+local function setting(ini,section,key,default,minimum,maximum)
+    local value=ini and ini:section_exist(section) and ini:line_exist(section,key) and tonumber(ini:r_string(section,key))
+    if not codec.finite(value,maximum) or value<minimum then return default end
+    return value
+end
+settings={default_radius=12,maximum_radius=100,coordinate_tolerance=.08,rotation_tolerance=.02,maximum_objects=512}
+local key_name="DIK_HOME"
+local open_key=DIK_keys.DIK_HOME
+local function configure()
+    local ok,ini=pcall(ini_file,"pf_interiors.ltx")
+    if not ok then ini=nil end
+    settings.maximum_radius=setting(ini,"capture","maximum_radius",100,1,100)
+    settings.default_radius=setting(ini,"capture","default_radius",math.min(12,settings.maximum_radius),1,settings.maximum_radius)
+    settings.coordinate_tolerance=setting(ini,"capture","coordinate_tolerance",.08,.001,.5)
+    settings.rotation_tolerance=setting(ini,"safety","rotation_tolerance",.02,.001,.1)
+    settings.maximum_objects=math.floor(setting(ini,"safety","maximum_objects",512,1,512))
+    if ini and ini:section_exist("controls") and ini:line_exist("controls","open_key") then
+        local value=ini:r_string("controls","open_key"):upper():gsub("^DIK_","")
+        if DIK_keys["DIK_"..value] then key_name="DIK_"..value;open_key=DIK_keys[key_name] end
+    end
+    pf_interiors_world.configure(settings)
+end
+function key() return open_key end
+function key_label()
+    local value=key_name:gsub("^DIK_","")
+    local names={HOME="Home",END="End",INSERT="Insert",DELETE="Delete",CAPITAL="CapsLock",SPACE="Space",RETURN="Enter",TAB="Tab"}
+    return names[value] or value
+end
+function translate(id,argument)
+    local value=game.translate_string(id)
+    if argument~=nil then local ok,text=pcall(string.format,value,argument);if ok then return text end end
+    return value
+end
+function report(message)
+    local line="[pf_interiors] "..tostring(message)
+    if SemiLog then SemiLog(line) end
+    pcall(function()
+        local file=io.open(getFS():update_path("$logs$","pf_interiors_runtime.log"),"ab")
+        if file then file:write(line.."\r\n");file:close() end
+    end)
+end
+function on_key_press(dik)
+    if dik==DIK_keys.DIK_F9 or dik==DIK_keys.DIK_F5 then
+        ui_pf_interiors.force_close();pf_interiors_files.cancel()
+    end
+    if dik~=open_key then return false end
+    -- CLevel calls the actor callback before dispatching the same key to UI.
+    -- An existing dialog handles this key itself, including edit-box navigation.
+    if ui_pf_interiors.is_active() then return true end
+    if not db.actor or not db.actor:alive() or pf_runtime_editor.is_active() then return false end
+    report("open key pressed")
+    local ok,handled=xpcall(ui_pf_interiors.toggle,debug.traceback)
+    if not ok then report("UI unavailable: "..tostring(handled)) end
+    return ok and handled==true
+end
+local function connect_input()
+    -- The stock actor's existing input dispatch resolves this function on each
+    -- key press, including after F9. Chain it without replacing bind_stalker.
+    if type(pf_door_qa.on_key_press)~="function" or pf_door_qa.on_key_press==input_wrapper then return end
+    local previous=pf_door_qa.on_key_press
+    input_wrapper=function(dik,...)
+        if on_key_press(dik) then return true end
+        return previous(dik,...)
+    end
+    pf_door_qa.on_key_press=input_wrapper
+end
+local function on_load()
+    ui_pf_interiors.force_close()
+    pf_interiors_files.cancel()
+    pf_interiors_menu.reset()
+end
+local function on_update()
+    connect_input()
+    pf_interiors_menu.update()
+end
+function on_game_start()
+    if registered then return end
+    pf_interiors_menu.install()
+    if not getFS():exist("$game_scripts$","pf_hf_furniture.script") or
+        not getFS():exist("$game_scripts$","pf_runtime_editor.script") then
+        if SemiLog then SemiLog("[pf_interiors] disabled: Hideout Furniture is unavailable") end
+        registered=true;return
+    end
+    configure();connect_input()
+    RegisterScriptCallback("update",on_update)
+    RegisterScriptCallback("load",on_load)
+    registered=true
+end
+on_game_start()

@@ -1,0 +1,659 @@
+; Lost Alpha Definitive Car Pack port for IX-Ray.
+; Exact donor: vehicle_lada_2107 / veh_lada_u_01.ogf / veh_lada_u_06.ltx.
+; Effective donor order: official patch layer, then base extract.
+; This file is embedded verbatim into veh_dcp_lada_2107.ogf UserData.
+;-- ;physics\vehicles\lada\veh_lada_u_01 (vehicle_lada_2107)
+;-- ���-2107 Definitive Car Pack
+;-- ����������� � �������: Videoton
+
+[disable]
+linear_factor				= 0.4
+angular_factor				= 0.4
+
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------
+
+[car_free_cam]
+apply_inert             	= false
+lim_zoom                	= 1.5, 8
+
+[car_look_cam]
+apply_inert             	= false
+lim_zoom                	= 1.5, 8
+
+[car_definition]
+character_scraper
+time_to_explosion			= 0 ;-- time to explode when damaged (ms)
+vehicle_feature_profile      = dcp_vehicle_v1
+camera_dynamics_profile      = vehicle_comfort_v1
+fuel_profile                 = dcp_vehicle_fuel_v1
+part_damage_mode             = body_only
+durability_factor            = 3.0
+vehicle_condition_profile    = dcp_vehicle_condition_v1
+collision_sound_profile      = dcp_vehicle_collision_v1
+door_air_resistance_scale    = 0.001
+interior_volume              = 0.65
+hit_stall_threshold           = 0.09
+fuel_speed_factor             = 2
+fuel_speed_optimal            = 55
+fuel_rpm_factor               = 1
+fuel_gas_factor               = 1
+tire_trail_wallmark_size      = 0.1
+tire_trails                   = true
+tire_trail_notsimilars        = false
+tire_sounds                   = true
+wheels_sound_delay            = 0.05
+slip_sliding_threshold        = 0.4
+vel_sliding_threshold         = 5
+wheels_spin_factor_start      = 0.86
+wheels_spin_factor_stop       = 0.88
+friction_slip_factor          = 0.8
+friction2_slip_factor         = 0.64
+friction_spin_factor          = 0.64
+friction2_spin_factor         = 0.41
+friction_slip_speed           = 0.004
+friction2_brp_boost           = 1.2
+handbrake_rpm_threshold       = 1.6
+steer_spin_boost              = 8
+steer_speed_boost             = 1
+steer_turn_factor             = 1.9
+steer_counter_turn_factor     = 1
+steer_turn_compensation       = 0.4
+steer_turn_compensation_max   = 0.2
+steer_turn_delta              = 0.6
+drift_start_boost             = 1.5
+drift_boost_time              = 0.25
+firsteye_panel                = false
+camera_pos					= -0.364, 1.26, 0.26
+
+camera_pos_firsteye			= -0.364, 1.26, 0.26
+;camera_pos_lookat			= 0.0, 1.55, -0.33
+;camera_pos_free				= 0.0, 1.65, -0.53
+camera_pos_lookat			= 0.0, 1.62, -0.08
+camera_pos_free				= 0.0, 1.58, -0.08
+
+camera_inertion_n            = 0
+camera_inertion_k            = 0
+camera_angle_factor			= 0.97
+
+driving_wheels				= back_left_wheel,back_right_wheel  ; ������� �����
+steering_wheels				= front_left_wheel,front_right_wheel                                    ; ������� �����
+breaking_wheels				= front_left_wheel, front_right_wheel, back_left_wheel, back_right_wheel ; ���������� �����
+doors						= left_door, right_door, back_left_door, back_right_door, front_door;, back_door                                                   ; �����
+steer						= stearing_wheel                                                      ; ����
+stearing_wheel_factor		= 6 ;
+driver_place				= seat_left                                                            ; ����� ��������
+exhausts					= exhausts                                                              ; ��������� �����
+;exhaust_particles			= vehiclefx\exhaust_1
+damage						= damage_bones ;-- bones damage coeffs
+trunk_bone                 = back_door
+trunk_use_mode             = open_inventory
+trunk_use_distance         = 3.0
+trunk_interaction_padding  = 0.05, 0.05, 0.05
+trunk_interaction_offset   = 0.0, 0.0, 0.0
+
+collision_hit_threshold 	= 0.2 ; [LA DC] minimum physical collision damage to be applied to car (vanilla is 5.0)
+
+;-------------------------------------------------------------------------------
+;------ Factory parameters of Engine -------------------------------------------
+
+fuel_tank                    = 43
+fuel_consumption             = 7
+engine_power      			= 18.5 ;18.1        	; horse_power (kW=hp*0.808) max power
+max_power_rpm     			= 3900 ;4200        	; (nominal rpm ) on this rpm value engine power reaches maximum, must be within every diapason 	- shift down/ shift up
+max_torque_rpm    			= 1700 ;2900       	; on this rpm engine torque reaches maximum
+sound_rpm					= 3150
+
+power_increment_factor		= 0.011
+power_decrement_factor		= 0.22 ;0.065
+rpm_increment_factor		= 0.1
+rpm_decrement_factor		= 0.2
+rpm_brp_increment_factor	= 0.9
+rpm_brp_decrement_factor	= 0.9
+power_neutral_factor		= 0.3
+
+; additional engine parameters
+
+max_engine_rpm    			= 5000			; rpm (5000) rpm will never be more
+idling_engine_rpm			= 900       	; rpm (750) min rpm - starts from this rpm value
+
+;-------------------------------------------------------------------------------
+;------ Adjustment a wheel -----------------------------------------------------
+
+reference_radius  			= 0.31			; ������ ������, ������������ ��� �������� ���������
+axle_friction     			= 2 ;0.00001      	; ���������� �������� � ����������� �������. (N*m)
+steering_speed    			= 0.92         	; ����� �������� �������� ������, � ��������. rps (1)
+steering_torque   			= 100000    	; ���� �������������� ����. (N*m)
+break_torque      			= 0.02        	; ���� ��������� �������. (N*m)
+break_time        			= 0.85         	; ����� ���������� ���� ���������� �� ���������, ��� ��������������� (������� �����)
+hand_break_torque 			= 0.02        	; ���� ���������� �������� (�� ��������� = break_torque)
+steer_nonlinear				= true
+steer_invert				= false
+break_abs					= false
+
+;-------------------------------------------------------------------------------
+;------ Gearbox ----------------------------------------------------------------
+
+main_gear_ratio    			= 8.8 ;11.5        	; ������������ ���������
+auto_transmission  			= on            ; �������������� ������� (on/off)
+transmission_switch_delay	= 0.4
+;transmission_switch_power 	= 0.5
+;transmission_switch_volume = 0.9
+;transmission_clutch_factor = 1
+;transmission_clutch_time 	= 0.5
+;transmission_type			= 0
+
+[transmission_gear_ratio]
+										; shift down/ shift up. (rpm, ����������� ��� ������������)
+R 	= 3.42, 1900, 4600
+N1 	= 3.42, 1900, 4600, 14
+N2 	= 1.70, 1900, 4600, 22
+N3	= 1.07, 2025, 3900
+N4 	= 0.73, 2150, 4600
+
+;-------------------------------------------------------------------------------
+;------ Rest Adjustment --------------------------------------------------------
+
+[lights]
+headlights         			= f1, f2, f1o, f2o, f3o, f4o
+stoplights 					= f5o, f6o
+reverselights 				= f9o, f10o
+indoorlights 				= f7o, f8o
+indoorlightdoors			= left_door, right_door, back_left_door, back_right_door
+
+[f1]
+bone               			= left_light
+color              			= 1.18,1.13,0.98,1.0
+range              			= 43
+cone_angle         			= 59
+spot_texture       			= dcp_lada_2107\lights_bspot01_car
+glow_texture       			= glow\glow_Yellow
+glow_radius        			= 0.4
+volumetric 					= true
+volumetric_distance 		= 0.8
+volumetric_intensity 		= 0.05
+volumetric_quality 			= 1
+flare 						= flares_headlights_mid
+;flare_color 				= 1.0,1.0,1.0,1
+flare_position				= 0.0,0.0,0.0
+[f2]
+bone               			= right_light
+color              			= 1.18,1.13,0.98,1.0
+range              			= 43
+cone_angle         			= 59
+spot_texture       			= dcp_lada_2107\lights_bspot01_car
+glow_texture       			= glow\glow_Yellow
+glow_radius        			= 0.4
+volumetric 					= true
+volumetric_distance 		= 0.8
+volumetric_intensity 		= 0.05
+volumetric_quality 			= 1
+flare 						= flares_headlights_mid
+;flare_color 				= 1.0,1.0,1.0,1
+flare_position				= 0.0,0.0,0.0
+
+[f1o]
+bone               			= left_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 1.08,1.03,0.88,1.0
+range              			= 0.14
+[f2o]
+bone               			= right_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 1.08,1.03,0.88,1.0
+range              			= 0.14
+
+[f3o]
+bone               			= left_back_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.53,0,0,1
+range              			= 0.22
+[f4o]
+bone               			= right_back_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.53,0,0,1
+range              			= 0.22
+
+[f5o]
+bone               			= left_stop_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.7,0,0,1
+range              			= 0.34
+[f6o]
+bone               			= right_stop_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.7,0,0,1
+range              			= 0.34
+
+[f7o]
+bone               			= left_interior_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.35,0.3,0.18,1
+range              			= 1.3
+[f8o]
+bone               			= right_interior_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.35,0.3,0.18,1
+range              			= 1.3
+
+[f9o]
+bone               			= left_reverse_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.6,0.59,0.56,1
+range              			= 0.4
+[f10o]
+bone               			= right_reverse_light
+type 						= 1; 1 - point, 2 - spot, 3 - omnipart
+position 					= 0.0,0.0,0.0
+color              			= 0.6,0.59,0.56,1
+range              			= 0.4
+
+
+[car_sound]
+snd_volume         			= 1.0
+snd_name           			= dcp_lada_2107\o_niva2_run
+engine_sound_start_dellay	= 0.25
+engine_start				= dcp_lada_2107\o_car2_start
+engine_stop					= dcp_lada_2107\o_car2_stop
+transmission_switch         = dcp_lada_2107\o_car_gear
+explosion_sound    			=
+relative_pos       			= -0.15,0.5,1.6
+
+horn_sound					= dcp_lada_2107\ac_horn
+decel_sound					= dcp_lada_2107\o_niva2_low
+idle_sound					= dcp_lada_2107\o_niva_idle
+;limiter_sound				= car\nfs_mustang_lim
+;gas_sound					= car\zaz_rev1
+;valve_sound				= car\valve4
+;turbo_sound				= car\turbo4
+whine_sound					= dcp_lada_2107\nfs_whine3
+whine_speed					= 50
+whine_reverse				= true
+wheel_road                    = dcp_lada_2107\wheel_road
+wheel_dirt                    = dcp_lada_2107\wheel_dirt
+wheel_grass                   = dcp_lada_2107\wheel_grass
+wheel_water                   = dcp_lada_2107\wheel_water
+dirt_skid                     = dcp_lada_2107\dirt_skid
+;engine_sound_scale_max		= 2.0
+;engine_sound_scale_min		= 0.5
+;engine_sound_scale_factor	= 1.0
+;engine_idle_volume			= 0.8
+;valve_volume				= 1.0
+;engine_state_scale_min		= 0.85
+;engine_state_scale_max		= 1.05
+;turbo_scale_max			= 1.0
+;turbo_scale_min			= 0.2
+;turbo_power				= true
+;turbo_power_factor			= 1
+
+left_door_open				= dcp_lada_2107\id_car3_door_open
+left_door_close				= dcp_lada_2107\id_car3_door_close
+right_door_open				= dcp_lada_2107\id_car3_door_open
+right_door_close			= dcp_lada_2107\id_car3_door_close
+back_left_door_open			= dcp_lada_2107\id_car3_door_open
+back_left_door_close		= dcp_lada_2107\id_car3_door_close
+back_right_door_open		= dcp_lada_2107\id_car3_door_open
+back_right_door_close		= dcp_lada_2107\id_car3_door_close
+back_door_open				= dcp_lada_2107\gta_trunk_open
+back_door_close				= dcp_lada_2107\gta_trunk_close
+front_door_open				= dcp_lada_2107\gta_trunk_open
+front_door_close			= dcp_lada_2107\gta_trunk_close
+
+;-------------------------------------------------------------------------------
+;------ animations params ------------------------------------------------------
+
+[doors]
+open_torque_factor	= 5		;��������� ������� ��� ��� ���������� ����� (default = 2)
+
+[left_door]
+use_distance 			= 2.2
+linear_factor			= 200
+angular_factor			= 500
+
+[right_door]
+use_distance 			= 2.2
+linear_factor			= 200
+angular_factor			= 500
+
+[back_left_door]
+use_distance 			= 2.2
+linear_factor			= 200
+angular_factor			= 500
+non_enterable			= true
+
+[back_right_door]
+use_distance 			= 2.2
+linear_factor			= 200
+angular_factor			= 500
+non_enterable			= true
+
+[front_door]
+use_distance			= 2.5
+linear_factor			= 200
+angular_factor			= 1000
+spring_loaded			= true
+non_enterable			= true
+pos_open_invert			= true
+
+[back_door]
+use_distance			= 3
+linear_factor			= 200
+angular_factor			= 1000
+non_enterable			= true
+pos_open_invert			= true
+
+[speedometer]
+speedometer_profile = dcp_body_speed_v1
+speedometer
+speedometer_min_speed	= 0
+speedometer_max_speed 	= 180
+speedometer_factor 		= 0.795
+speedometer_offset	 	= 0
+speedometer_direction       = -1
+
+[tachometer]
+tachometer
+tachometer_factor 		= 1.3
+tachometer_min_rpm	 	= 550
+tachometer_direction        = -1
+
+[fuel]
+fuel
+fuel_angle				= -63
+fuel_offset				= 0
+
+[battery]
+battery
+battery_angle			= 36
+battery_factor			= 0.1
+
+[temp]
+temp
+temp_angle 				= 56
+
+[gauge]
+gauge
+gauge_angle				= -30
+
+[clock_minutes]
+clock_minutes
+clock_minutes_offset	= 0
+
+[clock_hours]
+clock_hours
+clock_hours_offset		= 0
+
+[fan]
+fan
+fan_speed				= -25
+fan_engine				= true
+
+[gear]
+gear
+gear_manual				= true
+gear_speed				= 1
+gear_drive_angle_x		= 10
+gear_park_angle_x		= 0
+gear_reverse_angle_x	= -10
+gear_left_angle			= 0
+gear_middle_angle		= -10
+gear_right_angle		= -20
+
+[back_axle]
+suspension
+steer					= true
+move					= true
+first_wheel				= back_left_wheel
+second_wheel			= back_right_wheel
+suspension_offset		= 0
+
+[left_caliper]
+suspension
+steer					= true
+move					= true
+first_wheel				= front_left_wheel
+suspension_offset		= 0
+[right_caliper]
+suspension
+steer					= true
+move					= true
+first_wheel				= front_right_wheel
+suspension_offset		= 0
+
+[front_left_axle]
+suspension
+steer					= true
+move					= false
+first_wheel				= front_left_wheel
+second_wheel			= front_left_axle
+suspension_offset		= 0
+[front_left_axle2]
+suspension
+steer					= true
+move					= false
+first_wheel				= front_left_wheel
+second_wheel			= front_left_axle2
+suspension_offset		= 0
+[front_right_axle]
+suspension
+steer					= true
+move					= false
+first_wheel				= front_right_axle
+second_wheel			= front_right_wheel
+suspension_offset		= 0
+[front_right_axle2]
+suspension
+steer					= true
+move					= false
+first_wheel				= front_right_axle2
+second_wheel			= front_right_wheel
+suspension_offset		= 0
+
+[grass_coll_sphere_1]
+position 				= 0, 0.8, -1.25
+radius 					= 1.35
+;scale_save 				= true
+
+[grass_coll_sphere_2]
+position 				= 0, 0.8, -0.1
+radius 					= 1.35
+;scale_save 				= true
+
+[grass_coll_sphere_3]
+position 				= 0, 0.8, 1.15
+radius 					= 1.35
+;scale_save 				= true
+
+[animations]
+driver_animation_type       = 0
+
+;-------------------------------------------------------------------------------
+;------ damage params ----------------------------------------------------------
+
+[damage_particles]
+
+explosion_particles		= explosions\expl_car
+car_damage_particles1	= explosions\expl_car_smoke_small
+car_damage_particles2	= explosions\expl_car_smoke_big
+wheels_damage_particles1	= vehiclefx\exhaust_1
+wheels_damage_particles2	= vehiclefx\exhaust_1
+particle_bones1			= front_bamper
+particle_bones2			= root
+
+
+;-------------------------------------------------------------------------------
+;------ particle bones ---------------------------------------------------------
+
+[particle_bones]
+root			= 0, -0.3, 1.9
+front_bamper	= 0, 0, -0.4
+
+;-------------------------------------------------------------------------------
+;------ damage items -----------------------------------------------------------
+
+[damage_items]
+back_left_wheel   		= 0
+back_right_wheel  		= 0
+front_left_wheel  		= 0
+front_right_wheel 		= 0
+left_door				= 0
+right_door				= 0
+back_left_door			= 0
+back_right_door			= 0
+back_door				= 0
+front_door				= 0
+
+;-------------------------------------------------------------------------------
+;------ collisiondamage --------------------------------------------------------
+
+[collision_damage]
+root					= 0.00008
+back_left_wheel   		= 0.00001
+back_right_wheel  		= 0.00001
+front_left_wheel  		= 0.00001
+front_right_wheel 		= 0.00001
+kabina					= 0.00008
+front_bamper			= 0.0001
+back_bamper				= 0.00007
+
+;-------------------------------------------------------------------------------
+;------ damage bones -----------------------------------------------------------
+
+[damage_bones]          ;���������� ������ � ������, �� ��� ��������
+;bone_name     			= <hit_scale>,<-1>,<wound_scale>
+;<hit_scale> 			- �����. ��������� ���� (���������� ��������)
+;<wound_scale> 			- �����. ��������� �������� �������� ���� - ��������������
+
+default       			= 1, -1, 0.1
+
+[immunities]
+;-- 0.0 => 100% invulnerable
+;-- 1.0 => 100% vulnerable
+burn_immunity         	= 0.15		;-- burn (fire)
+strike_immunity       	= 0.02	;-- strike (collision with objects) => collision_damage
+shock_immunity        	= 0.11	;-- shock (anom)
+wound_immunity        	= 0.0		;-- wound
+radiation_immunity    	= 0.0		;-- radiation
+telepatic_immunity    	= 0.0		;-- telepathy
+chemical_burn_immunity 	= 0.11	;-- chemical burn (anom)
+explosion_immunity    	= 0.2		;-- explosion
+fire_wound_immunity   	= 0.025	;-- bullets hits
+
+
+;-------------------------------------------------------------------------------
+;----------------explosion params-----------------------------------------------
+
+[explosion]
+blast					= 1
+blast_r					= 15
+blast_impulse			= 350
+frags		        	= 15
+frags_r					= 30
+frag_hit				= 0.5
+frag_hit_impulse		= 350
+hit_type_blast			= explosion
+hit_type_frag			= fire_wound
+up_throw_factor			= 0.25
+wm_size             	= 0.1
+explode_particles		= explosions\expl_car
+light_color				= 0.6,0.5,0.3
+light_range				= 15.0
+light_time 				= 0.5
+
+;������ �� ��������
+fragment_speed				= 76
+fragment_tracer_max_length	= 3
+explode_duration    		= 50			;���������������� ������ (�)
+
+;�����
+snd_explode 			= weapons\heli_explosion
+;wallmarks
+wallmark_section		= explosion_marks
+
+[explode_effector]
+effect_sect_name= effector_explode_hit
+
+;-------------------------------------------------------------------------------
+;------ Others params ----------------------------------------------------------
+
+[air_resistance]
+linear_factor           = 13200		;
+angular_factor          = 6000 ;12400		;
+;ph_mass			 		= 3900
+
+[wheels_params]
+suspension_distance = 0.20
+suspension_force_inc = 50
+suspension_spring_factor = 1
+suspension_damping_factor = 5
+suspension_inertia = 0.5
+damping_factor          = 2			;
+spring_factor           = 1			;
+friction_factor         = 1.1		;
+
+[front_left_wheel]
+break_torque			= 0.014		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.0			; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor          = 2			;
+spring_factor           = 1			;
+friction_factor         = 1.09		;
+
+[front_right_wheel]
+break_torque			= 0.014		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.0			; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor          = 2			;
+spring_factor           = 1			;
+friction_factor         = 1.09		;
+
+[back_left_wheel]
+break_torque			= 0.008		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.016		; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor          = 2			;
+spring_factor           = 1			;
+friction_factor         = 1.09		;
+
+[back_right_wheel]
+break_torque			= 0.008		; ���� ��������� �������. (N*m
+hand_break_torque		= 0.016		; ���� ���������� �������� (�� ��������� = break_torque)
+damping_factor          = 2			;
+spring_factor           = 1			;
+friction_factor         = 1.09		;
+
+[collide]
+not_collide_parts		= 1
+
+;-------------------------------------------------------------------------------
+;------ destroyed part ---------------------------------------------------------
+
+[destroyed]
+physics\vehicles\veh_empty
+;physics\vehicles\lada\part\veh_lada_u_02_part0 ; car chassis
+;physics\vehicles\niva\part\veh_niva_u_02_part1 ; back-left wheel
+;physics\vehicles\niva\part\veh_niva_u_02_part2 ; front-left wheel
+;physics\vehicles\niva\part\veh_niva_u_02_part3 ; front-right wheel
+;physics\vehicles\niva\part\veh_niva_u_02_part4 ; back-right wheel
+
+[autoremove_parts]
+time					 = 180
+;-------------------------------------------------------------------------------
+;--- part impulse_transition ---------------------------------------------------
+
+[impulse_transition_to_parts]
+random_min               = 10.0    ; �������� �������� ������������� �������� ��������������� ����� ������ �������
+random_hit_imp           = 1.0     ; �������� �������� ������������� �������� ��������������� ������������ ����
+;ref_bone                 =         ; ����� �� �� ������� ������������ �������� ��� ������ � ������� ����� �� ������, �� ��������� ���
+imp_transition_factor    = 1.0     ; ������ � ������� �������������� ��� �� ��������� ������� �� ���� ������
+lv_transition_factor     = 0.5     ; ����������� �������� �������� ��������
+av_transition_factor     = 0.5     ; ����������� �������� ������� ��������
+
+;-------------------------------------------------------------------------------
+;------ End params -------------------------------------------------------------

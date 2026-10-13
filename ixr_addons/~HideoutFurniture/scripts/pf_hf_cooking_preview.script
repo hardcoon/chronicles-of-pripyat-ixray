@@ -58,7 +58,8 @@ function select(state,section)
         local extent=model.extent
         local radius=extent:magnitude()
         if radius<=0 or radius~=radius or radius==math.huge then return end
-        model.color=fcolor():set(1,1,1,1);model.visible=false
+        -- Reserved UI two-sided tag; the preview VS restores the original white.
+        model.color=fcolor():set(1,254/255,1,1);model.visible=false
         state.model=model;state.extent=extent;state.radius=radius
         -- Preserve the old three-quarter pose without baking another mesh copy.
         local yaw=-25*math.pi/180

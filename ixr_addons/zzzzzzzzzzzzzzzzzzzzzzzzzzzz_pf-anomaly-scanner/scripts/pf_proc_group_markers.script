@@ -12,6 +12,15 @@ local EXPECTED_GROUPS = 41
 local MAX_GROUP_RADIUS_SQR = 50 * 50
 local DISCOVERY_MESSAGE = "pf_proc_anomaly_zone_discovered"
 
+-- Color only the hover label, using the real main-aura section.
+-- Psi has no override and keeps its existing white label.
+local MAP_HINT_COLORS = {
+	pf_proc_aura_thermal = "255,255,145,40",
+	pf_proc_aura_chemical = "255,105,220,120",
+	pf_proc_aura_electric = "255,105,185,235",
+	pf_proc_aura_gravitational = "255,255,220,70"
+}
+
 local entries = {
 	{ group_id = 1, object_name = "pf_proc_fixed_g01_a_base", hint = "st_pf_proc_group_01" },
 	{ group_id = 2, object_name = "pf_proc_fixed_g02_a_base", hint = "st_pf_proc_group_02" },
@@ -126,7 +135,11 @@ end
 local function set_marker(entry, visible)
 	local has_spot = level.map_has_object_spot(entry.id, SPOT_TYPE) ~= 0
 	if visible and not has_spot then
-		level.map_add_object_spot_ser(entry.id, SPOT_TYPE, game.translate_string(entry.hint))
+		level.map_add_object_spot_ser(entry.id, SPOT_TYPE,
+			entry.hint_text or game.translate_string(entry.hint))
+	elseif visible and has_spot and entry.hint_text then
+		-- Refresh serialized labels once on load/reveal, preserving map filters.
+		level.map_change_spot_hint(entry.id, SPOT_TYPE, entry.hint_text)
 	elseif not visible and has_spot then
 		level.map_remove_object_spot(entry.id, SPOT_TYPE)
 	end
@@ -177,6 +190,9 @@ local function build_registry()
 		if entry and not entry.id then
 			entry.id = object.id
 			entry.center = copy_position(object.position)
+			local color = MAP_HINT_COLORS[object:section_name()]
+			entry.hint_text = color and ("%c[" .. color .. "]" ..
+				game.translate_string(entry.hint) .. "%c[default]") or nil
 		end
 	end
 	local count = 0
@@ -307,6 +323,7 @@ function reset()
 	for _, entry in ipairs(entries) do
 		entry.id = nil
 		entry.center = nil
+		entry.hint_text = nil
 	end
 	ready = false
 	next_action = 0

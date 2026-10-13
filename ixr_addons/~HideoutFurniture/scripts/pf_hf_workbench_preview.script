@@ -11,7 +11,8 @@ function supports(section)
     local class=ini:line_exist(section,"class") and ini:r_string(section,"class") or ""
     return class:sub(1,3)=="WP_" or class=="E_STLK" or class=="E_HLMET" or
         class:sub(1,4)=="DET_" or class=="S_DETECT" or
-        section=="pf_anomaly_scanner" or section=="lz_nm_radio_beacon"
+        section=="pf_anomaly_scanner" or section=="lz_nm_radio_beacon" or
+        section=="lz_nm_armor_pouch"
 end
 
 function create()
@@ -65,11 +66,12 @@ function select(state,section,item_id)
         local weapon=class:sub(1,3)=="WP_"
         local device=class:sub(1,4)=="DET_" or class=="S_DETECT" or
             section=="pf_anomaly_scanner" or section=="lz_nm_radio_beacon"
+        local pouch=section=="lz_nm_armor_pouch"
         state.zoom=VIEW.zoom*((class=="E_HLMET" or class:sub(1,4)=="DET_" or
             class=="S_DETECT") and .8 or 1)
-        -- Turn device controls toward the player, retaining their top-down tilt.
-        state.yaw=weapon and math.pi/2 or (device and .6 or math.pi+.6)
-        state.pitch=weapon and -.20 or -.80
+        -- Turn device controls and the pouch flap toward the player.
+        state.yaw=weapon and math.pi/2 or ((device or pouch) and .6 or math.pi+.6)
+        state.pitch=weapon and -.20 or (pouch and -.35 or -.80)
         state.roll=weapon and .35 or 0
     end)
     if not ok or not state.model then

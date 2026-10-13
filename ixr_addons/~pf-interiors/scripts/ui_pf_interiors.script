@@ -1,0 +1,371 @@
+-- Native CUIScriptWnd, stock localisation selection, addon-owned textures.
+local active=nil
+local tr=pf_interiors.translate
+local files=pf_interiors_files
+local world=pf_interiors_world
+local codec=pf_interiors_codec
+class "pf_interiors_dialog" (CUIScriptWnd)
+function pf_interiors_dialog:__init() super()
+    pf_interiors.report("UI: constructor")
+    self.actor_id=db.actor:id();self.level_name=level.name()
+    self:SetWindowName("pf_interiors")
+    self.buttons={};self.rects={};self.popup_windows={};self.collision_windows={}
+    self.popup_mode=nil;self.layouts={};self.rows={};self.selected=nil
+    pf_interiors.report("UI: XML")
+    local xml=CScriptXmlInit();xml:ParseFile("ui_pf_interiors.xml");xml:InitWindow("main",0,self)
+    self.xml=xml
+    local function keep(window,options)
+        options=options or {}
+        local p=window:GetWndPos()
+        options.window=window;options.x=p.x;options.y=p.y;options.w=window:GetWidth();options.h=window:GetHeight()
+        self.rects[#self.rects+1]=options
+        return window
+    end
+    self.keep=keep
+    self.panel=keep(xml:InitFrame("main:background",self),{main=true,grow=true})
+    keep(xml:InitFrame("main:list_frame",self),{main=true,grow=true}):Enable(false)
+    for _,name in ipairs({"header_rule","footer_rule"}) do
+        keep(xml:InitStatic("main:"..name,self),{main=true,footer=name=="footer_rule"}):Enable(false)
+    end
+    keep(xml:InitTextWnd("main:title",self),{main=true})
+    self.hint=keep(xml:InitTextWnd("main:close_hint",self),{main=true})
+    self.empty=keep(xml:InitTextWnd("main:empty",self),{main=true})
+    self.row_font=xml:InitTextWnd("main:row_font",self);self.row_font:Show(false)
+    self.status=keep(xml:InitTextWnd("main:status",self),{main=true,footer=true})
+    self.storage_path=keep(xml:InitTextWnd("main:storage_path",self),{main=true,footer=true})
+    self.storage_path:SetEllipsis(true)
+    self.storage_path:SetText(files.display_directory() or "")
+    self.list=keep(xml:InitListBox("main:list",self),{main=true,grow=true})
+    pf_interiors.report("UI: main controls")
+    self:Register(self.list,"layouts")
+    self:AddCallback("layouts",ui_events.LIST_ITEM_CLICKED,self.select,self)
+    self:AddCallback("layouts",ui_events.LIST_ITEM_SELECT,self.select,self)
+    local callbacks={close=function() self:Close() end,
+        save_current=function() self:open_popup("save") end,
+        import=function() self:start_file_dialog("import") end,
+        export=function() self:start_file_dialog("export") end}
+    for name,fn in pairs(callbacks) do
+        local button=keep(xml:Init3tButton("main:"..name,self),{main=true,footer=name~="close"})
+        self.buttons[name]=button;self:Register(button,name)
+        self:AddCallback(name,ui_events.BUTTON_CLICKED,function() self:guard(fn) end,self)
+    end
+    local actions={install=function() self:ask_install() end,remove_world=function() self:ask_remove() end,
+        rename=function() self:open_popup("rename") end,delete=function() self:open_popup("delete") end}
+    for name,fn in pairs(actions) do
+        self:AddCallback("row_"..name,ui_events.BUTTON_CLICKED,function() self:guard(fn) end,self)
+    end
+    keep(xml:InitStatic("main:close_icon",self.buttons.close),{child=true}):Enable(false)
+    local function group(prefix,names,target)
+        for _,name in ipairs(names) do
+            local wnd=keep(xml:InitTextWnd(prefix..":"..name,self),{popup=prefix=="popup",popup_footer=name=="hint"})
+            target[#target+1]=wnd;self[prefix.."_"..name]=wnd
+        end
+    end
+    self.shade=xml:InitStatic("shade",self);self.shade:Enable(false);self.shade:Show(false)
+    pf_interiors.report("UI: popup controls")
+    self.popup_panel=keep(xml:InitFrame("popup:background",self),{popup=true,popup_grow=true});self.popup_windows[#self.popup_windows+1]=self.popup_panel
+    for _,name in ipairs({"header_rule","footer_rule"}) do
+        local rule=keep(xml:InitStatic("popup:"..name,self),{popup=true,popup_footer=name=="footer_rule"});rule:Enable(false)
+        self.popup_windows[#self.popup_windows+1]=rule
+    end
+    group("popup",{"title","name_caption","radius_caption","meters","hint","message"},self.popup_windows)
+    self.name_background=keep(xml:InitFrame("popup:name_background",self),{popup=true});self.name_background:Enable(false)
+    self.radius_background=keep(xml:InitFrame("popup:radius_background",self),{popup=true});self.radius_background:Enable(false)
+    self.popup_windows[#self.popup_windows+1]=self.name_background;self.popup_windows[#self.popup_windows+1]=self.radius_background
+    self.name_edit=keep(xml:InitEditBox("popup:name",self),{popup=true});self.popup_windows[#self.popup_windows+1]=self.name_edit
+    self.radius_edit=keep(xml:InitEditBox("popup:radius",self),{popup=true});self.popup_windows[#self.popup_windows+1]=self.radius_edit
+    self:Register(self.name_edit,"interior_name");self:Register(self.radius_edit,"interior_radius")
+    pf_interiors.report("UI: edit boxes ready")
+    for _,name in ipairs({"confirm","cancel"}) do
+        local button=keep(xml:Init3tButton("popup:"..name,self),{popup=true,popup_footer=true});self.popup_windows[#self.popup_windows+1]=button
+        self["popup_"..name]=button;self:Register(button,"popup_"..name)
+        self:AddCallback("popup_"..name,ui_events.BUTTON_CLICKED,function()
+            self:guard(function() if name=="cancel" then self:hide_popup() else self:confirm_popup() end end)
+        end,self)
+    end
+    self.collision_panel=keep(xml:InitFrame("collision:background",self));self.collision_windows[#self.collision_windows+1]=self.collision_panel
+    for _,name in ipairs({"header_rule","footer_rule"}) do
+        local rule=keep(xml:InitStatic("collision:"..name,self));rule:Enable(false)
+        self.collision_windows[#self.collision_windows+1]=rule
+    end
+    group("collision",{"title","count","message","hint"},self.collision_windows)
+    for _,name in ipairs({"skip","all","cancel"}) do
+        local button=keep(xml:Init3tButton("collision:"..name,self));self.collision_windows[#self.collision_windows+1]=button
+        self:Register(button,"collision_"..name)
+        self:AddCallback("collision_"..name,ui_events.BUTTON_CLICKED,function()
+            self:guard(function()
+                self:hide_popup()
+                if name~="cancel" then self:perform_install(name) end
+            end)
+        end,self)
+    end
+    pf_interiors.report("UI: populate")
+    self:hide_popup();self:fit_aspect();self:reload()
+    pf_interiors.report("UI: ready")
+end
+function pf_interiors_dialog:guard(fn)
+    local ok,err=pcall(fn)
+    if not ok then
+        if SemiLog then SemiLog("[pf_interiors] UI action failed: "..tostring(err)) end
+        self:hide_popup();self:set_status("pf_interiors_world_error")
+    end
+end
+function pf_interiors_dialog:set_status(id,argument)
+    self.status:SetText(tr(id,argument))
+end
+function pf_interiors_dialog:fit_aspect()
+    local screen=device()
+    local width=math.max(1,tonumber(screen.width) or 1024)
+    local height=math.max(1,tonumber(screen.height) or 768)
+    local kx=(4/3)/(width/height)
+    local visible=math.max(1,math.min(6,#self.layouts))
+    local mode=self.popup_mode or "save"
+    local popup_delta=mode=="rename" and -42 or (mode=="delete" or mode=="remove") and -26 or 0
+    if kx==self.kx and visible==self.visible_rows and popup_delta==self.popup_delta then return end
+    local resized=kx~=self.kx
+    local delta=(visible-2)*52
+    for _,rect in ipairs(self.rects) do
+        local x=rect.child and rect.x*kx or 512+(rect.x-512)*kx
+        local y,h=rect.y,rect.h
+        if rect.main then y=y-delta/2+(rect.footer and delta or 0);h=h+(rect.grow and delta or 0) end
+        if rect.popup then y=y-popup_delta/2+(rect.popup_footer and popup_delta or 0);h=h+(rect.popup_grow and popup_delta or 0) end
+        rect.window:SetWndPos(vector2():set(x,y))
+        rect.window:SetWidth(rect.w*kx);rect.window:SetHeight(h)
+    end
+    self.kx=kx;self.visible_rows=visible;self.popup_delta=popup_delta
+    if resized and #self.rows>0 then self:reload(self.selected and self.selected.file_id) end
+end
+function pf_interiors_dialog:reload(prefer)
+    self.layouts,self.invalid=files.list();self.rows={};self.list:RemoveAll();self.selected=nil
+    self:fit_aspect()
+    local selected=0
+    -- Match our six-unit scrollbar profile only when the six-row viewport
+    -- overflows. Set every row explicitly: native insertion uses a pad size
+    -- which is not recalculated until Update and can give mixed row widths.
+    local row_width=self.list:GetWidth()-(#self.layouts>6 and 6 or 0)
+    for index,layout in ipairs(self.layouts) do
+        -- MsgChain lets a row select itself and then forwards the click to its
+        -- child buttons; a plain list item consumes the click before children.
+        local item=CUIListBoxItemMsgChain(52)
+        self.list:AddExistingItem(item)
+        item:SetWidth(row_width)
+        -- Hide the global selection texture and use our own sliced frame.
+        -- Attach it before text so selection never covers the glyphs.
+        item:SetColor(GetARGB(0,255,255,255))
+        local title=item:GetTextItem()
+        title:SetFont(self.row_font:GetFont());title:SetText(layout.name)
+        -- DetachChild deletes auto-owned children in this engine. Preserve the
+        -- existing text window while placing the selection frame behind it.
+        title:SetAutoDelete(false)
+        item:DetachChild(title)
+        local highlight=self.xml:InitFrame("row:selection",item)
+        highlight:SetWidth(item:GetWidth());highlight:Enable(false);highlight:Show(false)
+        item:AttachChild(title)
+        title:SetAutoDelete(true)
+        local controls={};local right=item:GetWidth()-8*self.kx
+        for _,spec in ipairs({{"delete",28,6},{"rename",28,8},{"remove_world",100,8},{"install",112,0}}) do
+            local name,width,gap=spec[1],spec[2],spec[3]
+            local button=self.xml:Init3tButton("row:"..name,item)
+            right=right-width*self.kx;button:SetWndPos(vector2():set(right,20))
+            button:SetWidth(width*self.kx);button:SetHeight(26)
+            self:Register(button,"row_"..name);controls[name]=button
+            if name=="rename" or name=="delete" then
+                local icon=self.xml:InitStatic("row:"..name.."_icon",button);icon:Enable(false)
+                icon:SetWndPos(vector2():set(6*self.kx,5));icon:SetWidth(16*self.kx);icon:SetHeight(16)
+            end
+            right=right-gap*self.kx
+        end
+        local padding=10*self.kx
+        local width=math.max(40,right-2*padding)
+        title:SetWndPos(vector2():set(padding,3));title:SetWidth(width);title:SetHeight(22)
+        title:SetEllipsis(true)
+        local count=item:AddTextField(tr("pf_interiors_item_count",#layout.objects),width)
+        count:SetWndPos(vector2():set(padding,28));count:SetHeight(18)
+        count:SetFont(self.status:GetFont());count:SetTextColor(GetARGB(255,150,145,133))
+        self.rows[index]={item=item,highlight=highlight,title=title,count=count,buttons=controls}
+        if layout.file_id==prefer then selected=index-1 end
+    end
+    if #self.layouts>0 then self.list:SetSelectedIndex(selected) end
+    self:select()
+    if self.invalid>0 then self:set_status("pf_interiors_invalid_local",self.invalid) end
+end
+function pf_interiors_dialog:select()
+    local index=tonumber(self.list:GetSelectedIndex())
+    self.selected=index and self.layouts[index+1] or nil
+    local layout=self.selected
+    for row_index,row in ipairs(self.rows) do
+        local selected=index and row_index==index+1
+        row.highlight:Show(selected==true)
+        row.title:SetTextColor(selected and GetARGB(255,231,218,183) or GetARGB(255,205,197,178))
+        row.count:SetTextColor(selected and GetARGB(255,177,169,146) or GetARGB(255,150,145,133))
+    end
+    self.empty:Show(#self.layouts==0)
+    self.hint:SetText(string.format(tr("pf_interiors_key_hint"),pf_interiors.key_label()))
+    self:enable_main()
+end
+function pf_interiors_dialog:enable_main()
+    local enabled=not self.popup_mode and not files.busy()
+    self.list:Enable(enabled)
+    for _,row in ipairs(self.rows) do for _,button in pairs(row.buttons) do button:Enable(enabled) end end
+    for name,button in pairs(self.buttons) do
+        local selected_action=name=="install" or name=="remove_world" or name=="rename" or name=="delete" or name=="export"
+        button:Enable(name=="close" or (enabled and (not selected_action or self.selected~=nil)))
+    end
+end
+function pf_interiors_dialog:hide_popup()
+    self.popup_mode=nil
+    self.shade:Show(false)
+    for _,wnd in ipairs(self.popup_windows) do wnd:Show(false) end
+    for _,wnd in ipairs(self.collision_windows) do wnd:Show(false) end
+    self:fit_aspect()
+    self:enable_main()
+end
+function pf_interiors_dialog:open_popup(mode,message)
+    if mode~="save" and not self.selected then return end
+    self:hide_popup();self.popup_mode=mode;self.shade:Show(true)
+    for _,wnd in ipairs(self.popup_windows) do wnd:Show(true) end
+    self.popup_title:SetText(tr("pf_interiors_popup_"..mode))
+    self.popup_message:SetText(message or (mode=="delete" and tr("pf_interiors_delete_confirm") or ""))
+    self.popup_hint:SetText(mode=="save" and tr("pf_interiors_remember_radius") or "")
+    self.popup_confirm:SetText(tr(mode=="save" and "ui_mm_save" or mode=="rename" and "pf_interiors_rename" or mode=="delete" and "ui_mm_delete" or "pf_interiors_remove"))
+    self.popup_cancel:SetText(tr("ui_mm_cancel"))
+    local edit=mode=="save" or mode=="rename"
+    self.name_edit:Show(edit);self.popup_name_caption:Show(edit)
+    self.name_background:Show(edit);self.radius_background:Show(mode=="save")
+    self.radius_edit:Show(mode=="save");self.popup_radius_caption:Show(mode=="save");self.popup_meters:Show(mode=="save")
+    if edit then self.name_edit:SetText(mode=="rename" and self.selected.name or tr("pf_interiors_default_name")) end
+    if mode=="save" then
+        local radius=math.min(pf_interiors.settings.maximum_radius,files.radius(pf_interiors.settings.default_radius))
+        self.radius_edit:SetText(string.format("%.9g",radius))
+    end
+    self:fit_aspect()
+    self:enable_main()
+end
+function pf_interiors_dialog:confirm_popup()
+    local mode=self.popup_mode
+    if mode=="save" then
+        local name=codec.name(self.name_edit:GetText())
+        local radius_text=(self.radius_edit:GetText() or ""):gsub(",",".")
+        local radius=tonumber(radius_text)
+        if not name or not codec.finite(radius,pf_interiors.settings.maximum_radius) or radius<1 then self.popup_hint:SetText(tr("pf_interiors_bad_input"));return end
+        files.save_radius(radius)
+        local layout,err=world.capture(name,radius)
+        if not layout then self:hide_popup();self:set_status(err);return end
+        local id,problem=files.store(layout)
+        if not id then self:hide_popup();self:set_status(problem);return end
+        self:hide_popup();self:reload(id);self:set_status("pf_interiors_saved",#layout.objects)
+    elseif mode=="rename" then
+        local name=codec.name(self.name_edit:GetText())
+        if not name then self.popup_hint:SetText(tr("pf_interiors_bad_name"));return end
+        local layout,err=files.load(self.selected.file_id)
+        if not layout then self:hide_popup();self:set_status(err);return end
+        layout.name=name
+        local id,problem=files.store(layout,layout.file_id)
+        self:hide_popup();if id then self:reload(id);self:set_status("pf_interiors_renamed") else self:set_status(problem) end
+    elseif mode=="delete" then
+        local id=self.selected.file_id;local ok,err=files.erase(id)
+        self:hide_popup();if ok then self:reload();self:set_status("pf_interiors_deleted") else self:set_status(err) end
+    elseif mode=="remove" then
+        local ok,result,count=world.remove(self.selected)
+        self:hide_popup();self:set_status(ok and "pf_interiors_removed" or result,ok and result or count)
+    end
+end
+function pf_interiors_dialog:ask_remove()
+    if not self.selected then return end
+    local plan,err,count=world.removable(self.selected)
+    if not plan then self:set_status(err,count);return end
+    self:open_popup("remove",tr("pf_interiors_remove_confirm",#plan))
+end
+function pf_interiors_dialog:ask_install()
+    if not self.selected then return end
+    local ok,err=world.validate(self.selected,true)
+    if not ok then self:set_status(err);return end
+    local matches,problem=world.overlaps(self.selected)
+    if not matches then self:set_status(problem);return end
+    local count=world.count(matches)
+    if count==0 then self:perform_install("all");return end
+    self:hide_popup();self.popup_mode="collision";self.shade:Show(true)
+    for _,wnd in ipairs(self.collision_windows) do wnd:Show(true) end
+    self.collision_count:SetText(string.format(tr("pf_interiors_overlap_count"),count,#self.selected.objects))
+    self:enable_main()
+end
+function pf_interiors_dialog:perform_install(mode)
+    local ok,result,skipped=world.install(self.selected,mode)
+    if ok then
+        self.status:SetText(string.format(tr("pf_interiors_installed"),result,skipped or 0))
+    else self:set_status(result) end
+end
+function pf_interiors_dialog:start_file_dialog(mode)
+    local layout=self.selected
+    if mode=="export" and not layout then return end
+    local ok,err=files.begin(mode,layout,{title=tr("pf_interiors_file_"..mode),filter=tr("pf_interiors_file_filter")})
+    if not ok then self:set_status(err);return end
+    self:set_status("pf_interiors_file_wait");self:enable_main()
+end
+function pf_interiors_dialog:Update()
+    CUIScriptWnd.Update(self)
+    if not db.actor or not db.actor:alive() or db.actor:id()~=self.actor_id or level.name()~=self.level_name then self:Close();return end
+    self:fit_aspect()
+    local result=files.poll()
+    if result then
+        if result.status=="error" then self:set_status(result.error)
+        elseif result.status=="cancel" then self:set_status("pf_interiors_cancelled")
+        elseif result.mode=="export" then self:set_status("pf_interiors_exported")
+        else
+            local valid,problem=world.validate(result.layout,false)
+            if not valid then self:set_status(problem)
+            else
+                local id,err=files.store(result.layout)
+                if not id then self:set_status(err)
+                else
+                    self:reload(id)
+                    local matches,warning=world.overlaps(result.layout)
+                    if warning then self:set_status(warning)
+                    else self:set_status("pf_interiors_imported",world.count(matches)) end
+                end
+            end
+        end
+        self:enable_main()
+    end
+end
+function pf_interiors_dialog:OnKeyboard(dik,action)
+    -- The press which opened us is delivered again by CLevel to the new UI
+    -- receiver. Consume that press and its repeats until the physical release.
+    if dik==pf_interiors.key() and self.opening_key_pending then
+        if action==ui_events.WINDOW_KEY_RELEASED then self.opening_key_pending=false end
+        return true
+    end
+    if action==ui_events.WINDOW_KEY_PRESSED then
+        if dik==DIK_keys.DIK_F9 or dik==DIK_keys.DIK_F5 then self:Close();return false end
+        if dik==DIK_keys.DIK_ESCAPE then
+            if self.popup_mode then self:hide_popup() else self:Close() end
+            return true
+        end
+        if dik==pf_interiors.key() and self.popup_mode~="save" and self.popup_mode~="rename" then self:Close();return true end
+    end
+    return CUIScriptWnd.OnKeyboard(self,dik,action)
+end
+function pf_interiors_dialog:Close()
+    files.cancel();self:HideDialog()
+    if active==self then active=nil end
+end
+function force_close() if active then active:Close() end end
+function is_active() return active~=nil end
+function open(from_key)
+    if active then return true end
+    if level.main_input_receiver() then return false end
+    local ok,err=files.init()
+    if not ok then
+        db.actor:give_game_news(game.translate_string("st_tip"),tr(err),"pf_news_item_received",0,4000)
+        return false
+    end
+    active=pf_interiors_dialog();active.opening_key_pending=from_key==true
+    pf_interiors.report("UI: ShowDialog");active:ShowDialog(true)
+    pf_interiors.report("UI: shown")
+    return true
+end
+function toggle()
+    pf_interiors.report("UI: toggle")
+    if active then active:Close();return true end
+    return open(true)
+end

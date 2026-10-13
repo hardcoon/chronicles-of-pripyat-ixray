@@ -1,0 +1,92 @@
+-- Data-only Windows-1251 format. Never execute a layout as Lua or as an LTX.
+MAX_BYTES=262144
+MAX_OBJECTS=512
+local MAGIC="PF_INTERIOR\t1"
+
+function finite(n,limit)
+    return type(n)=="number" and n==n and math.abs(n)<=(limit or 100000)
+end
+function point(p)
+    return type(p)=="table" and #p==3 and finite(p[1]) and finite(p[2]) and finite(p[3])
+end
+function distance_sq(a,b)
+    return (a[1]-b[1])^2+(a[2]-b[2])^2+(a[3]-b[3])^2
+end
+function escape(value)
+    return (tostring(value):gsub("[^%w_ .%-]",function(c) return string.format("%%%02X",string.byte(c)) end))
+end
+function unescape(value)
+    local stripped=value:gsub("%%[%x][%x]","")
+    if stripped:find("%",1,true) then return nil end
+    return (value:gsub("%%(%x%x)",function(h) return string.char(tonumber(h,16)) end))
+end
+function name(value)
+    if type(value)~="string" then return nil end
+    value=value:gsub("^%s+",""):gsub("%s+$","")
+    if #value<1 or #value>64 or value:find("[%z\1-\31\127]") then return nil end
+    return value
+end
+local function triplet(value)
+    local a,b,c=value:match("^([^,]+),([^,]+),([^,]+)$")
+    if not a then return nil end
+    local p={tonumber(a),tonumber(b),tonumber(c)}
+    return point(p) and p or nil
+end
+function validate(layout)
+    if type(layout)~="table" or not name(layout.name) or
+        type(layout.level)~="string" or not layout.level:match("^[%w_%-]+$") or #layout.level>64 or
+        not finite(layout.radius,100) or layout.radius<1 or not point(layout.origin) or
+        type(layout.objects)~="table" or #layout.objects<1 or #layout.objects>MAX_OBJECTS then
+        return false,"pf_interiors_bad_file"
+    end
+    for _,entry in ipairs(layout.objects) do
+        if type(entry)~="table" or type(entry.section)~="string" or
+            not entry.section:match("^[%w_]+$") or #entry.section>96 or
+            not point(entry.position) or not point(entry.rotation) or
+            distance_sq(layout.origin,entry.position)>(layout.radius+.25)^2 then
+            return false,"pf_interiors_bad_file"
+        end
+    end
+    return true
+end
+local function csv(p) return string.format("%.9g,%.9g,%.9g",p[1],p[2],p[3]) end
+function encode(layout)
+    local ok,err=validate(layout);if not ok then return nil,err end
+    local lines={MAGIC,"name="..escape(layout.name),"level="..layout.level,
+        "radius="..string.format("%.9g",layout.radius),"origin="..csv(layout.origin),
+        "count="..#layout.objects,"objects"}
+    for _,entry in ipairs(layout.objects) do
+        lines[#lines+1]=entry.section.."|"..csv(entry.position).."|"..csv(entry.rotation)
+    end
+    return table.concat(lines,"\r\n").."\r\n"
+end
+function decode(bytes)
+    if type(bytes)~="string" or #bytes>MAX_BYTES or bytes:find("%z") then return nil,"pf_interiors_bad_file" end
+    local lines={}
+    for line in (bytes.."\n"):gmatch("([^\n]*)\n") do
+        line=line:gsub("\r$","")
+        lines[#lines+1]=line
+    end
+    while lines[#lines]=="" do lines[#lines]=nil end
+    if lines[1]~=MAGIC or lines[7]~="objects" then return nil,"pf_interiors_bad_file" end
+    local labels={"name","level","radius","origin","count"};local meta={}
+    for index,label in ipairs(labels) do
+        if not lines[index+1] then return nil,"pf_interiors_bad_file" end
+        local key,value=lines[index+1]:match("^([^=]+)=(.*)$")
+        if key~=label then return nil,"pf_interiors_bad_file" end
+        meta[key]=value
+    end
+    local count=tonumber(meta.count)
+    if not count or count<1 or count>MAX_OBJECTS or count%1~=0 or #lines~=count+7 then
+        return nil,"pf_interiors_bad_file"
+    end
+    local layout={name=unescape(meta.name),level=meta.level,radius=tonumber(meta.radius),
+        origin=triplet(meta.origin),objects={}}
+    for index=1,count do
+        local section,pos,rot=lines[index+7]:match("^([^|]+)|([^|]+)|([^|]+)$")
+        if not section then return nil,"pf_interiors_bad_file" end
+        layout.objects[index]={section=section,position=triplet(pos),rotation=triplet(rot)}
+    end
+    local ok,err=validate(layout)
+    return ok and layout or nil,err
+end

@@ -6,9 +6,14 @@ struct PreviewInput
     float2 uv : TEXCOORD0;
     float depth : TEXCOORD1;
     float4 color : COLOR0;
+    float twoSided : TEXCOORD2;
 };
-float4 main(PreviewInput input) : SV_TARGET
+float4 main(PreviewInput input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
 {
+    // COP-ENG-114 tags camera-coordinate UI previews with negative depth.
+    if (input.depth < 0 && input.twoSided < 0.5 && !isFrontFace)
+        discard;
+
     // Same scene-depth reconstruction as IX-Ray's native debug_draw shader.
     if (input.depth >= 0) // Camera-coordinate UI previews have no scene occlusion.
     {

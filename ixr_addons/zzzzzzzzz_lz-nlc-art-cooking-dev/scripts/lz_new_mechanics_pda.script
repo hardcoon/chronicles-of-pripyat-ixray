@@ -164,31 +164,35 @@ end
 class "lz_nm_beacon_row" (CUIScriptWnd)
 
 function lz_nm_beacon_row:__init(owner, beacon) super()
-	self.owner = owner
-	self.beacon_id = beacon.id
-	local xml = CScriptXmlInit()
-	xml:ParseFile("pda_beacons.xml")
-	xml:InitWindow("beacon_row", 0, self)
-
-	self.name_button = xml:Init3tButton("beacon_row:name", self)
-	self:Register(self.name_button, "row_name")
-	self.distance = xml:InitTextWnd("beacon_row:distance", self)
-	self.time = xml:InitTextWnd("beacon_row:time", self)
-	self.map_button = xml:Init3tButton("beacon_row:map_button", self)
-	self.map_button:SetTextureColor(GetARGB(255, 188, 138, 53))
-	self:Register(self.map_button, "row_map")
-	self.travel_button = xml:Init3tButton("beacon_row:travel_button", self)
-	self:Register(self.travel_button, "row_travel")
-
-	self.name_button:TextControl():SetText(beacon.name)
-	self.distance:SetText(string.format(game.translate_string("lz_nm_beacon_distance_format"), beacon.distance))
-	self.time:SetText(lz_new_mechanics.format_beacon_travel_time(beacon.hours))
-	self:AddCallback("row_name", ui_events.BUTTON_CLICKED, self.Rename, self)
-	self:AddCallback("row_map", ui_events.BUTTON_CLICKED, self.ShowOnMap, self)
-	self:AddCallback("row_travel", ui_events.BUTTON_CLICKED, self.AskTravel, self)
-	self:SetAutoDelete(false)
-	self:Show(true)
-	self:Enable(true)
+    self.owner = owner
+    self.beacon_id = beacon.id
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_beacons.xml")
+    xml:InitWindow("beacon_row", 0, self)
+    xml:InitStatic("beacon_row:background", self)
+    self.name_text = xml:InitTextWnd("beacon_row:name", self)
+    self.name_text:SetEllipsis(true)
+    self.distance = xml:InitTextWnd("beacon_row:distance", self)
+    self.time = xml:InitTextWnd("beacon_row:time", self)
+    self.travel_button = xml:Init3tButton("beacon_row:travel_button", self)
+    self.map_button = xml:Init3tButton("beacon_row:map_button", self)
+    self.rename_button = xml:Init3tButton("beacon_row:pencil", self)
+    self.delete_button = xml:Init3tButton("beacon_row:delete_button", self)
+    self:Register(self.travel_button, "row_travel")
+    self:Register(self.map_button, "row_map")
+    self:Register(self.rename_button, "row_name")
+    self:Register(self.delete_button, "row_delete")
+    self.name_text:SetText(lz_nm_core.text_for_legacy(beacon.name))
+    self.distance:SetText(string.format(game.translate_string("pf_bc_distance_caption"), beacon.distance))
+    self.time:SetText(string.format(game.translate_string("pf_bc_time_caption"),
+        lz_nm_core.text_for_legacy(lz_new_mechanics.format_beacon_travel_time(beacon.hours))))
+    self:AddCallback("row_travel", ui_events.BUTTON_CLICKED, self.AskTravel, self)
+    self:AddCallback("row_map", ui_events.BUTTON_CLICKED, self.ShowOnMap, self)
+    self:AddCallback("row_name", ui_events.BUTTON_CLICKED, self.Rename, self)
+    self:AddCallback("row_delete", ui_events.BUTTON_CLICKED, self.AskDelete, self)
+    self:SetAutoDelete(false)
+    self:Show(true)
+    self:Enable(true)
 end
 
 function lz_nm_beacon_row:__finalize()
@@ -206,6 +210,25 @@ function lz_nm_beacon_row:AskTravel()
 	self.owner:AskTravel(self.beacon_id)
 end
 
+function lz_nm_beacon_row:AskDelete()
+	show_beacon_destroy_confirmation(self.beacon_id)
+end
+
+class "lz_nm_beacon_pair" (CUIScriptWnd)
+
+function lz_nm_beacon_pair:__init() super()
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pda_beacons.xml")
+    xml:InitWindow("beacon_pair", 0, self)
+    self.column_gap = tonumber(xml:ReadAttribute("beacon_pair", 0, "column_gap")) or 16
+    self:SetAutoDelete(false)
+    self:Show(true)
+    self:Enable(true)
+end
+
+function lz_nm_beacon_pair:__finalize()
+end
+
 class "lz_nm_beacon_tab" (CUIScriptWnd)
 
 function lz_nm_beacon_tab:__init() super()
@@ -216,12 +239,8 @@ function lz_nm_beacon_tab:__init() super()
 	xml:ParseFile("pda_beacons.xml")
 	xml:InitFrame("frame1", self)
 	xml:InitFrame("frame2", self)
-	xml:InitFrame("border", self)
 	xml:InitStatic("frame1:caption", self)
-	xml:InitTextWnd("header:name", self)
-	xml:InitTextWnd("header:distance", self)
-	xml:InitTextWnd("header:time", self)
-	xml:InitTextWnd("header:actions", self)
+	self.counter = xml:InitTextWnd("counter", self)
 	self.empty = xml:InitTextWnd("empty", self)
 	self.list = xml:InitScrollView("list", self)
 	self.confirm = CUIMessageBoxEx()
@@ -234,19 +253,31 @@ function lz_nm_beacon_tab:__finalize()
 end
 
 function lz_nm_beacon_tab:Reset()
-	if not self.list then return end
-	self.list:Clear()
-	self.list:Show(true)
-	self.list:Enable(true)
-	self.rows = {}
-	local beacons = lz_new_mechanics.get_beacons()
-	self.empty:Show(#beacons == 0)
-	for _, beacon in ipairs(beacons) do
-		local row = lz_nm_beacon_row(self, beacon)
-		self.list:AddWindow(row, true)
-		row:SetAutoDelete(false)
-		table.insert(self.rows, row)
-	end
+    if not self.list then return end
+    self.list:Clear()
+    self.list:Show(true)
+    self.list:Enable(true)
+    self.rows = {}
+    self.pairs = {}
+    local beacons = lz_new_mechanics.get_beacons()
+    self.counter:SetText(string.format(game.translate_string("pf_bc_count"), #beacons))
+    self.empty:Show(#beacons == 0)
+    -- One scroll item owns each pair: 1/2, 3/4, 5/6, with shared scrolling.
+    for index = 1, #beacons, 2 do
+        local pair = lz_nm_beacon_pair()
+        for column = 0, 1 do
+            local beacon = beacons[index + column]
+            if beacon then
+                local row = lz_nm_beacon_row(self, beacon)
+                row:SetWndPos(vector2():set(column * (row:GetWidth() + pair.column_gap), 0))
+                pair:AttachChild(row)
+                table.insert(self.rows, row)
+            end
+        end
+        self.list:AddWindow(pair, true)
+        pair:SetAutoDelete(false)
+        table.insert(self.pairs, pair)
+    end
 end
 
 function lz_nm_beacon_tab:AskTravel(id)

@@ -1,0 +1,254 @@
+-- Only world sections from the active furniture catalogue. No item/NPC scans.
+local codec=pf_interiors_codec
+local tolerance=.08
+local angle_tolerance=.02
+local maximum=512
+local busy=false
+function configure(settings)
+    tolerance=settings.coordinate_tolerance
+    angle_tolerance=settings.rotation_tolerance
+    maximum=settings.maximum_objects
+end
+function definition(section)
+    local catalogue=pf_hf_furniture_catalog
+    local entry=catalogue and catalogue.by_object and catalogue.by_object[section]
+    if not entry or entry.object~=section or not entry.item or not catalogue.by_item[entry.item] then return nil end
+    return entry
+end
+local function values(v) return {v.x,v.y,v.z} end
+local function world_object(server)
+    local entry=definition(server:section_name())
+    if not entry or tonumber(server.parent_id)~=65535 then return nil end
+    -- A client exists only on the actor's current level. Placed furniture is
+    -- kept online around the actor; a same-coordinate object on another map
+    -- must never be captured, counted or deleted.
+    local client=level.object_by_id(server.id)
+    if not client then return nil end
+    local pose={id=server.id,section=entry.object,position=values(server.position),rotation=values(server.angle)}
+    if not codec.point(pose.position) or not codec.point(pose.rotation) then error("invalid_world_pose") end
+    return pose
+end
+local function scan()
+    local sim=alife()
+    if not sim or not db.actor or not db.actor:alive() then return nil,"pf_interiors_unavailable" end
+    local result={}
+    local ok=pcall(function()
+        for _,server in sim:objects() do
+            local item=world_object(server)
+            if item then result[#result+1]=item end
+        end
+    end)
+    return ok and result or nil,ok and nil or "pf_interiors_world_error"
+end
+function capture(name,radius)
+    if busy then return nil,"pf_interiors_busy" end
+    if not codec.name(name) or not codec.finite(radius,100) or radius<1 then return nil,"pf_interiors_bad_input" end
+    local objects,err=scan();if not objects then return nil,err end
+    local origin=values(db.actor:position())
+    local layout={name=name,level=level.name(),radius=radius,origin=origin,objects={}}
+    for _,object in ipairs(objects) do
+        if codec.distance_sq(origin,object.position)<=radius^2 then
+            layout.objects[#layout.objects+1]={section=object.section,position=object.position,rotation=object.rotation}
+        end
+    end
+    if #layout.objects==0 then return nil,"pf_interiors_empty_radius" end
+    if #layout.objects>maximum then return nil,"pf_interiors_too_many" end
+    table.sort(layout.objects,function(a,b)
+        if a.section~=b.section then return a.section<b.section end
+        for i=1,3 do if a.position[i]~=b.position[i] then return a.position[i]<b.position[i] end end
+        for i=1,3 do if a.rotation[i]~=b.rotation[i] then return a.rotation[i]<b.rotation[i] end end
+        return false
+    end)
+    return layout
+end
+function validate(layout,require_level)
+    local ok,err=codec.validate(layout);if not ok then return false,err end
+    if #layout.objects>maximum then return false,"pf_interiors_too_many" end
+    local ini=system_ini()
+    for _,object in ipairs(layout.objects) do
+        local entry=definition(object.section)
+        if not entry or not ini:section_exist(entry.object) or not ini:section_exist(entry.item) then
+            return false,"pf_interiors_unknown_furniture"
+        end
+        -- Prevent a fatal native model load before entering create().
+        for _,section in ipairs({entry.object,entry.item}) do
+            if not ini:line_exist(section,"visual") then return false,"pf_interiors_missing_asset" end
+            local visual=ini:r_string(section,"visual")
+            if not visual:lower():match("%.ogf$") then visual=visual..".ogf" end
+            if not getFS():exist("$game_meshes$",visual) then return false,"pf_interiors_missing_asset" end
+        end
+    end
+    if require_level and layout.level~=level.name() then return false,"pf_interiors_wrong_level" end
+    return true
+end
+function overlaps(layout)
+    local ok,err=validate(layout,false);if not ok then return nil,err end
+    if layout.level~=level.name() then return {},"pf_interiors_wrong_level" end
+    local objects,problem=scan();if not objects then return nil,problem end
+    local matches={}
+    for index,target in ipairs(layout.objects) do
+        for _,existing in ipairs(objects) do
+            if codec.distance_sq(target.position,existing.position)<=tolerance^2 then
+                matches[index]=true;break
+            end
+        end
+    end
+    return matches
+end
+function count(matches) local n=0;for _ in pairs(matches or {}) do n=n+1 end;return n end
+local function vec(p) return vector():set(p[1],p[2],p[3]) end
+local function cleanup(server)
+    local entry=definition(server:section_name())
+    if not entry then return end
+    local own=pf_hf_furniture.state(server.id)
+    if entry.kind=="campfire" then pf_hf_campfires.remove(entry,own) end
+    if entry.kind=="stove" then pf_hf_stove.clear_storage(server.id,own) end
+    if pf_hf_displays.has_profile(entry.object) then pf_hf_displays.clear(server.id) end
+end
+local function release_created(id)
+    local sim=alife();local server=sim:object(id,true)
+    if server then cleanup(server);sim:release(server,true) end
+    pf_hf_furniture.forget(id)
+end
+function install(layout,mode)
+    if busy then return false,"pf_interiors_busy" end
+    local valid,problem=validate(layout,true);if not valid then return false,problem end
+    local matches,err=overlaps(layout);if not matches then return false,err end
+    if count(matches)>0 and mode~="skip" and mode~="all" then return false,"pf_interiors_choose_overlap" end
+    local sim,actor=alife(),db.actor
+    if not sim or not actor or not actor:alive() then return false,"pf_interiors_unavailable" end
+    busy=true
+    local created,temporary={},{}
+    local ok,detail=pcall(function()
+        for index,record in ipairs(layout.objects) do
+            if mode~="skip" or not matches[index] then
+                local entry=definition(record.section)
+                local pose={position=vec(record.position),rotation=vec(record.rotation),
+                    level_vertex_id=actor:level_vertex_id(),game_vertex_id=actor:game_vertex_id()}
+                local id,failure
+                if entry.kind=="workbench" then
+                    -- Same physical placement as the native adapter, without
+                    -- changing the receiver's initial developer-bench flags.
+                    local server=assert(sim:create(entry.object,pose.position,pose.level_vertex_id,pose.game_vertex_id))
+                    id=server.id;created[#created+1]=id
+                    server:use_ai_locations(false)
+                    server.position=vec(record.position);server.angle=vec(record.rotation)
+                    server.m_level_vertex_id=pose.level_vertex_id;server.m_game_vertex_id=pose.game_vertex_id
+                else
+                    -- A fresh transient furniture item uses THIS game's stock
+                    -- radio/light/door defaults, never the sender's state.
+                    local item=assert(sim:create(entry.item,actor:position(),pose.level_vertex_id,pose.game_vertex_id,actor:id()))
+                    temporary[#temporary+1]={id=item.id,section=entry.item}
+                    id,failure=pf_hf_furniture.create_placed(pose,item.id,entry.object)
+                    if not id then error(failure or "placement_failed") end
+                    -- The adapter has released the source. Its numeric ID may
+                    -- immediately be reused by the next furniture object.
+                    temporary[#temporary]=nil
+                    created[#created+1]=id
+                end
+            end
+        end
+    end)
+    if not ok then
+        for index=#created,1,-1 do pcall(release_created,created[index]) end
+    end
+    for _,record in ipairs(temporary) do
+        local item=sim:object(record.id,true)
+        if not item then pf_hf_furniture.forget(record.id)
+        elseif item:section_name()==record.section and tonumber(item.parent_id)==actor:id() then
+            pcall(function() sim:release(item,true) end)
+            pf_hf_furniture.forget(record.id)
+        end
+    end
+    busy=false
+    if not ok then
+        if SemiLog then SemiLog("[pf_interiors] install rolled back: "..tostring(detail)) end
+        return false,"pf_interiors_install_failed"
+    end
+    return true,#created,#layout.objects-#created
+end
+local function angle_matches(a,b)
+    for index=1,3 do
+        local difference=math.abs((a[index]-b[index]+math.pi)%(2*math.pi)-math.pi)
+        if difference>angle_tolerance then return false end
+    end
+    return true
+end
+function removal_plan(layout)
+    local ok,err=validate(layout,true);if not ok then return nil,err end
+    local objects,problem=scan();if not objects then return nil,problem end
+    local plan,used={},{}
+    for _,target in ipairs(layout.objects) do
+        for _,existing in ipairs(objects) do
+            if not used[existing.id] and existing.section==target.section and
+                codec.distance_sq(target.position,existing.position)<=tolerance^2 and
+                angle_matches(target.rotation,existing.rotation) then
+                plan[#plan+1]=existing;used[existing.id]=true;break
+            end
+        end
+    end
+    return plan
+end
+local function storage_check(plan)
+    local sim=alife();local children={}
+    for _,server in sim:objects() do
+        local parent=tonumber(server.parent_id)
+        if parent and parent~=65535 then children[parent]=(children[parent] or 0)+1 end
+    end
+    local filled=0
+    for _,object in ipairs(plan) do
+        local server=sim:object(object.id,true)
+        local client=level.object_by_id(object.id)
+        if not server or not client or server:section_name()~=object.section or tonumber(server.parent_id)~=65535 or
+            codec.distance_sq(values(server.position),object.position)>tolerance^2 or
+            not angle_matches(values(server.angle),object.rotation) then return false,"pf_interiors_world_changed" end
+        local entry=definition(object.section)
+        if not entry then return false,"pf_interiors_world_changed" end
+        if (children[object.id] or 0)>0 then filled=filled+1
+        elseif entry.kind=="stash" then
+            local ok,empty=pcall(function() return client:is_inv_box_empty() end)
+            if not ok or type(empty)~="boolean" then return false,"pf_interiors_storage_unknown" end
+            if not empty then filled=filled+1 end
+        elseif entry.kind=="stove" then
+            local own=pf_hf_furniture.state(object.id)
+            local box=own and own.stove_storage and sim:object(own.stove_storage,true)
+            if box and box:section_name()~="pf_hfe_stove_storage" then
+                return false,"pf_interiors_storage_unknown"
+            end
+            local ok,empty=pcall(pf_hf_stove.storage_empty,object.id)
+            if not ok or type(empty)~="boolean" then return false,"pf_interiors_storage_unknown" end
+            if not empty then filled=filled+1 end
+        end
+    end
+    if filled>0 then return false,"pf_interiors_storage_filled",filled end
+    return true
+end
+function removable(layout)
+    local plan,err=removal_plan(layout);if not plan then return nil,err end
+    if #plan==0 then return nil,"pf_interiors_nothing_to_remove" end
+    local ok,problem,count=storage_check(plan)
+    if not ok then return nil,problem,count end
+    return plan
+end
+function remove(layout)
+    if busy then return false,"pf_interiors_busy" end
+    -- Full preflight is repeated after confirmation, before the first release.
+    local plan,err,count=removable(layout);if not plan then return false,err,count end
+    busy=true
+    local removed=0
+    local ok=pcall(function()
+        for _,record in ipairs(plan) do
+            -- Do not release a reused ID or a box filled after preflight.
+            local safe=storage_check({record})
+            if not safe then error("world_changed_before_release") end
+            local server=assert(alife():object(record.id,true))
+            cleanup(server)
+            alife():release(server,true)
+            pf_hf_furniture.forget(record.id)
+            removed=removed+1
+        end
+    end)
+    busy=false
+    if not ok then return false,"pf_interiors_remove_failed",removed end
+    return true,removed
+end

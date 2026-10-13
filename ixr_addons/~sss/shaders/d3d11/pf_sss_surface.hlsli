@@ -73,13 +73,28 @@ float4 pf_sss_trace(float3 origin, float3 direction, float2 uv, int quality, flo
         float difference = rayDepth-depth;
         bool world = raw >= .02 && depth > 1.3;
         if (world && difference > 0) {
+                // Screen-depth jumps at near silhouettes can hide an underside.
+                // Stop before a later step can reuse the visible body edge.
+                if (depth<12.0) {
+                    float previousDepth=hitDepth>0 ? hitDepth : originDepth;
+                    float nearMask=1.0-smoothstep(6.0,12.0,depth);
+                    float edgeMask=saturate((previousDepth-depth-.1)*4.0)*nearMask;
+                    float darken=edgeMask*saturate((difference-.015)*40.0);
+                    if (darken>0) return float4(pos,depth,-darken);
+                }
             if (difference <= q.y) return float4(pos,depth,0);
             if (quality > 2) {
                 float2 halfPos = pos-stepUV*.5;
                 float halfDepth = pf_sss_linear_depth(pf_sss_raw_depth(halfPos));
                 float halfFraction = saturate(length(halfPos-start)/total);
                 float halfRay = origin.z*endpoint.z/max(lerp(endpoint.z,origin.z,halfFraction),.00001);
-                if (halfDepth>1.3 && abs(halfRay-halfDepth)<=1.25) return float4(halfPos,halfDepth,0);
+                if (halfDepth>1.3 && abs(halfRay-halfDepth)<=1.25) {
+                    float previousDepth=hitDepth>0 ? hitDepth : originDepth;
+                    float nearMask=1.0-smoothstep(6.0,12.0,halfDepth);
+                    float edgeMask=saturate((previousDepth-halfDepth-.1)*4.0)*nearMask;
+                    float darken=edgeMask*saturate((abs(halfRay-halfDepth)-.015)*40.0);
+                    return float4(halfPos,halfDepth,-darken);
+                }
             }
         } else {
             if (depth<=0) skyY=pos.y;

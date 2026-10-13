@@ -1,0 +1,22 @@
+-- A compact page inside the game's options dialog, with no separate popup.
+local tr=pf_interiors.translate
+class "panel" (CUIWindow)
+function panel:__init() super() end
+function panel:__finalize() end
+
+function panel:InitControls(xml,owner)
+    self.owner=owner;self:SetAutoDelete(true)
+    xml:InitWindow("panel",0,self)
+    self.description=xml:InitTextWnd("panel:description",self)
+    self.hint=xml:InitTextWnd("panel:hint",self)
+    self.manage=xml:Init3tButton("panel:manage",self)
+    self.forum=xml:Init3tButton("panel:forum",self)
+    self.forum:Enable(true)
+    self:RefreshAvailability()
+end
+
+function panel:RefreshAvailability()
+    local ready=pf_interiors_menu.available()
+    self.manage:Enable(ready)
+    self.hint:SetText(ready and tr("pf_interiors_menu_key",pf_interiors.key_label()) or tr("pf_interiors_menu_load_first"))
+end

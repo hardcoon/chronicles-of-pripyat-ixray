@@ -18,12 +18,14 @@ local function launcher_game_version()
             return version
         end
     end
-    return "2026.10.12-dev.82"
+    return "2026.10.14-dev.83"
 end
 
 class "main_menu" (CUIScriptWnd)
 
 function main_menu:__init() super()
+	local focus = rawget(_G, "pf_focus_zoom")
+	if focus then focus.reset() end
 	pf_video_settings.apply_defaults_once()
 	self.mbox_mode = 0
     self:InitControls()
@@ -160,6 +162,8 @@ function main_menu:ActivateCustomPauseButton()
 end
 
 function main_menu:Show(f)
+	local focus = rawget(_G, "pf_focus_zoom")
+	if f and focus then focus.reset() end
 	self.shniaga:SetVisibleMagnifier(f)
 	if f then pf_copyright_music.menu_opened() end
 end

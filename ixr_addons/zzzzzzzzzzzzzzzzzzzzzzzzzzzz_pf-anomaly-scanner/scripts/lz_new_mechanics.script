@@ -204,17 +204,23 @@ function set_beacon_name(id, name) return lz_nm_beacons.set_beacon_name(id, name
 function beacon_name_for_utf8(name) return lz_nm_beacons.beacon_name_for_utf8(name) end
 function beacon_name_for_edit(id) return lz_nm_beacons.beacon_name_for_edit(id) end
 function beacon_on_key_press(dik)
+	local focus = rawget(_G, "pf_focus_zoom")
+	if focus then focus.on_key_press(dik) end
 	if pf_stash_qa and pf_stash_qa.on_key_press then pf_stash_qa.on_key_press(dik) end
 	if lz_orders and lz_orders.on_key_press then lz_orders.on_key_press(dik) end
 	impl.scanner_confirm(pf_anomaly_scanner.on_key_press(dik))
 	return lz_nm_beacons.beacon_on_key_press(dik)
 end
 function beacon_on_key_hold(dik)
+	local focus = rawget(_G, "pf_focus_zoom")
+	if focus then focus.on_key_hold(dik) end
 	if lz_orders and lz_orders.on_key_hold then lz_orders.on_key_hold(dik) end
 	impl.scanner_confirm(pf_anomaly_scanner.on_key_hold(dik))
 	return lz_nm_beacons.beacon_on_key_hold(dik)
 end
 function beacon_on_key_release(dik)
+	local focus = rawget(_G, "pf_focus_zoom")
+	if focus then focus.on_key_release(dik) end
 	if lz_orders and lz_orders.on_key_release then lz_orders.on_key_release(dik) end
 	pf_anomaly_scanner.on_key_release(dik)
 	return lz_nm_beacons.beacon_on_key_release(dik)

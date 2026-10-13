@@ -1,0 +1,216 @@
+-- Private physical files, bounded reads and a GUI-only Windows dialog helper.
+local codec=pf_interiors_codec
+local root=nil
+local serial=0
+local pending=nil
+local ffi_ok,ffi=pcall(require,"ffi")
+local kernel,shell=nil,nil
+if ffi_ok then
+    pcall(ffi.cdef,[[int __stdcall MultiByteToWideChar(unsigned int,unsigned long,const char*,int,unsigned short*,int);]])
+    pcall(ffi.cdef,[[int __stdcall MoveFileExW(const unsigned short*,const unsigned short*,unsigned long);]])
+    pcall(ffi.cdef,[[unsigned long __stdcall GetCurrentProcessId(void);]])
+    pcall(ffi.cdef,[[
+        typedef struct {
+            unsigned long attributes;
+            unsigned long creation_low,creation_high,access_low,access_high,write_low,write_high;
+            unsigned long size_high,size_low,reserved0,reserved1;
+            unsigned short name[260],alternate_name[14];
+        } PF_INTERIORS_FIND_DATAW;
+        void* __stdcall FindFirstFileW(const unsigned short*,PF_INTERIORS_FIND_DATAW*);
+        int __stdcall FindNextFileW(void*,PF_INTERIORS_FIND_DATAW*);
+        int __stdcall FindClose(void*);
+        unsigned long __stdcall GetLastError(void);
+    ]])
+    pcall(ffi.cdef,[[void* __stdcall ShellExecuteW(void*,const unsigned short*,const unsigned short*,const unsigned short*,const unsigned short*,int);]])
+    local ok,k=pcall(ffi.load,"kernel32");if ok then kernel=k end
+    local sok,s=pcall(ffi.load,"shell32");if sok then shell=s end
+end
+local function wide(value)
+    local size=kernel.MultiByteToWideChar(1251,0,value,#value,nil,0)
+    if size<=0 then error("invalid_path") end
+    local result=ffi.new("unsigned short[?]",size+1)
+    kernel.MultiByteToWideChar(1251,0,value,#value,result,size)
+    return result
+end
+function open_forum()
+    if not kernel or not shell then return false end
+    -- Let Windows resolve the HTTPS association to the user's default browser.
+    local result=shell.ShellExecuteW(nil,wide("open"),
+        wide("https://ap-pro.ru/forums/topic/15559-chronicles-of-pripyat-gotovye-interery/"),nil,nil,1)
+    return tonumber(ffi.cast("intptr_t",result))>32
+end
+function init()
+    if root then return true end
+    if not getFS or not lfs then return false,"pf_interiors_files_error" end
+    local path=getFS():update_path("$app_data_root$","").."pf_interiors"
+    if not lfs.attributes(path,"mode") and not lfs.mkdir(path) then return false,"pf_interiors_files_error" end
+    if lfs.attributes(path,"mode")~="directory" then return false,"pf_interiors_files_error" end
+    local jobs=path.."\\io"
+    if not lfs.attributes(jobs,"mode") and not lfs.mkdir(jobs) then return false,"pf_interiors_files_error" end
+    root=path.."\\"
+    return true
+end
+function directory() local ok=init();return ok and root or nil end
+function display_directory()
+    local path=directory()
+    if not path or path:match("^%a:[/\\]") or path:sub(1,2)=="\\\\" then return path end
+    local ok,current=pcall(function() return lfs.currentdir() end)
+    if ok and type(current)=="string" then return current:gsub("[/\\]+$","").."\\"..path end
+    return path
+end
+local function owned(path)
+    return root and path:sub(1,#root)==root and not path:find("..",1,true)
+end
+function read(path)
+    if not owned(path) then return nil,"pf_interiors_files_error" end
+    local file=io.open(path,"rb")
+    if not file then return nil,"pf_interiors_files_error" end
+    local bytes=file:read(codec.MAX_BYTES+1);file:close()
+    if not bytes or #bytes>codec.MAX_BYTES then return nil,"pf_interiors_bad_file" end
+    return bytes
+end
+function write(path,bytes)
+    if not owned(path) or type(bytes)~="string" or #bytes>codec.MAX_BYTES then return false,"pf_interiors_files_error" end
+    local temporary=path..".tmp"
+    local file=io.open(temporary,"wb")
+    if not file then return false,"pf_interiors_files_error" end
+    local ok=pcall(function() assert(file:write(bytes));assert(file:flush());assert(file:close()) end)
+    if not ok then pcall(function() file:close() end);os.remove(temporary);return false,"pf_interiors_files_error" end
+    local replaced
+    if kernel then replaced=kernel.MoveFileExW(wide(temporary),wide(path),9)~=0
+    else replaced=os.rename(temporary,path)~=nil end
+    if not replaced then os.remove(temporary);return false,"pf_interiors_files_error" end
+    return true
+end
+local function valid_id(id) return type(id)=="string" and id:match("^interior_[%w_]+%.pfint$") end
+local function layout_files()
+    -- This engine's lfs.dir stores _findfirst's intptr_t in a 32-bit long.
+    -- Keep the Win32 search handle pointer-sized and close it on every path.
+    if not kernel then return nil end
+    local data=ffi.new("PF_INTERIORS_FIND_DATAW[1]")
+    local handle=kernel.FindFirstFileW(wide(root.."interior_*.pfint"),data)
+    if handle==ffi.cast("void*",-1) then
+        if kernel.GetLastError()==2 then return {} end
+        return nil
+    end
+    local names={}
+    local ok=pcall(function()
+        repeat
+            if bit.band(tonumber(data[0].attributes),16)==0 then
+                local letters={}
+                for index=0,259 do
+                    local code=tonumber(data[0].name[index])
+                    if code==0 then break end
+                    if code>127 then letters={};break end
+                    letters[#letters+1]=string.char(code)
+                end
+                local id=table.concat(letters)
+                if valid_id(id) then names[#names+1]=id end
+            end
+        until kernel.FindNextFileW(handle,data)==0
+        assert(kernel.GetLastError()==18,"file_enumeration_failed")
+    end)
+    local closed=kernel.FindClose(handle)~=0
+    if not ok or not closed then return nil end
+    return names
+end
+function load(id)
+    if not init() or not valid_id(id) then return nil,"pf_interiors_files_error" end
+    local bytes,err=read(root..id);if not bytes then return nil,err end
+    local layout,problem=codec.decode(bytes)
+    if layout then layout.file_id=id end
+    return layout,problem
+end
+function list()
+    if not init() then return {},1 end
+    local layouts,invalid={},0
+    local ok,names=pcall(layout_files)
+    if not ok or not names then return {},1 end
+    for _,id in ipairs(names) do
+        local layout=load(id)
+        if layout then layouts[#layouts+1]=layout else invalid=invalid+1 end
+    end
+    table.sort(layouts,function(a,b) return a.file_id>b.file_id end)
+    return layouts,invalid
+end
+function store(layout,id)
+    if not init() then return nil,"pf_interiors_files_error" end
+    local bytes,err=codec.encode(layout);if not bytes then return nil,err end
+    if not id then
+        repeat
+            serial=serial+1
+            id=string.format("interior_%010d_%06d.pfint",os.time(),serial)
+        until not lfs.attributes(root..id)
+    end
+    if not valid_id(id) then return nil,"pf_interiors_files_error" end
+    local ok,problem=write(root..id,bytes)
+    if not ok then return nil,problem end
+    layout.file_id=id
+    return id
+end
+function erase(id)
+    if not init() or not valid_id(id) then return false,"pf_interiors_files_error" end
+    if not os.remove(root..id) then return false,"pf_interiors_files_error" end
+    return true
+end
+function radius(default)
+    if not init() then return default end
+    local bytes=read(root.."preferences.ltx")
+    local value=bytes and tonumber(bytes:match("radius=([^\r\n]+)"))
+    return codec.finite(value,100) and value>=1 and value or default
+end
+function save_radius(value)
+    if not init() then return false end
+    return write(root.."preferences.ltx","[capture]\r\nradius="..string.format("%.9g",value).."\r\n")
+end
+function busy() return pending~=nil end
+function cancel()
+    if pending then
+        write(pending.path..".cancel","cancel\r\n")
+        pending=nil
+    end
+end
+function begin(mode,layout,labels)
+    if pending then return false,"pf_interiors_busy" end
+    if mode~="import" and mode~="export" then return false,"pf_interiors_bad_input" end
+    if not init() or not kernel or not shell then return false,"pf_interiors_helper_missing" end
+    local exe=getFS():update_path("$arch_dir_addons$","~pf-interiors\\bin\\pf_interiors_io.exe")
+    local probe=io.open(exe,"rb");if not probe then return false,"pf_interiors_helper_missing" end;probe:close()
+    serial=serial+1
+    local token=string.format("%d_%d_%d",tonumber(kernel.GetCurrentProcessId()),os.time(),serial)
+    local path=root.."io\\"..token..".job"
+    local transfer=path..".pfint"
+    if mode=="export" then
+        local bytes,problem=codec.encode(layout);if not bytes then return false,problem end
+        local ok,err=write(transfer,bytes);if not ok then return false,err end
+    end
+    local fields={"mode="..mode,"parent="..tonumber(kernel.GetCurrentProcessId()),
+        "name="..codec.escape(layout and layout.name or "interior"),
+        "title="..codec.escape(labels.title),"filter="..codec.escape(labels.filter)}
+    local ok,err=write(path,table.concat(fields,"\r\n").."\r\n")
+    if not ok then return false,err end
+    local result=shell.ShellExecuteW(nil,wide("open"),wide(exe),wide('"'..path..'"'),nil,0)
+    if tonumber(ffi.cast("intptr_t",result))<=32 then return false,"pf_interiors_helper_missing" end
+    pending={path=path,transfer=transfer,mode=mode,started=time_global()}
+    return true
+end
+function poll()
+    if not pending then return nil end
+    local job=pending
+    local result_path=job.path..".result"
+    if not lfs.attributes(result_path) then
+        if time_global()-job.started>1800000 then cancel();return {status="error",error="pf_interiors_files_error"} end
+        return nil
+    end
+    local bytes=read(result_path) or "status=error"
+    local status=bytes:match("status=([^\r\n]+)")
+    pending=nil
+    local result={status=status or "error",mode=job.mode,error="pf_interiors_files_error"}
+    if status=="ok" and job.mode=="import" then
+        local contents=read(job.transfer)
+        result.layout=contents and codec.decode(contents) or nil
+        if not result.layout then result.status="error";result.error="pf_interiors_bad_file" end
+    end
+    for _,path in ipairs({job.path,job.transfer,result_path,job.path..".cancel"}) do os.remove(path) end
+    return result
+end

@@ -1,0 +1,83 @@
+-- Settings-only Interior page; leave the startup and pause menu classes intact.
+local pending=nil
+local installed=false
+
+function available()
+    return alife()~=nil and db.actor~=nil and db.actor:alive() and
+        not pf_runtime_editor.is_active()
+end
+
+function request_management(owner)
+    if not available() or not owner or not owner.owner then return false end
+    pending={actor_id=db.actor:id(),level_name=level.name()}
+    -- Leave options through the native Cancel path, then resume the game.
+    -- Opening furniture management must not apply unrelated settings drafts.
+    local menu=owner.owner
+    owner:OnBtnCancel()
+    menu:OnButton_return_game()
+    return true
+end
+
+function update()
+    if not pending then return end
+    if not available() or db.actor:id()~=pending.actor_id or level.name()~=pending.level_name then
+        pending=nil;return
+    end
+    -- The main-menu input receiver must finish closing before the game UI opens.
+    if level.main_input_receiver() then return end
+    pending=nil
+    local ok,result=xpcall(function() return ui_pf_interiors.open(false) end,debug.traceback)
+    if not ok then pf_interiors.report("menu management failed: "..tostring(result)) end
+end
+
+function reset()
+    pending=nil
+end
+
+function install()
+    if installed then return end
+    local options=ui_mm_opt_main.options_dialog
+    if not options or type(options.InitControls)~="function" then return end
+    installed=true
+    local controls=options.InitControls
+    function options:InitControls(...)
+        controls(self,...)
+        local xml=CScriptXmlInit();xml:ParseFile("ui_pf_interiors_options.xml")
+        self.dlg_interiors=ui_pf_interiors_options.panel()
+        self.dlg_interiors:InitControls(xml,self)
+        self.dialog:AttachChild(self.dlg_interiors)
+        local layout=CScriptXmlInit();layout:ParseFile("ui_mm_opt.xml")
+        layout:InitWindow("tab_size",0,self.dlg_interiors)
+        self.dlg_interiors:Show(false)
+        -- The seventh sidebar button is appended directly below SSS.
+        self.tab:SetHeight(math.max(self.tab:GetHeight(),286))
+        self:Register(self.dlg_interiors.manage,"interiors_manage")
+        self:Register(self.dlg_interiors.forum,"interiors_forum")
+    end
+    local callbacks=options.InitCallBacks
+    function options:InitCallBacks(...)
+        callbacks(self,...)
+        self:AddCallback("interiors_manage",ui_events.BUTTON_CLICKED,self.OnInteriorManage,self)
+        self:AddCallback("interiors_forum",ui_events.BUTTON_CLICKED,self.OnInteriorForum,self)
+    end
+    function options:OnInteriorManage()
+        local ok,result=xpcall(function() return request_management(self) end,debug.traceback)
+        if not ok then pf_interiors.report("settings management failed: "..tostring(result)) end
+    end
+    function options:OnInteriorForum()
+        local ok,result=xpcall(pf_interiors_files.open_forum,debug.traceback)
+        if not ok or not result then pf_interiors.report("forum browser unavailable: "..tostring(result)) end
+    end
+    local tab_change=options.OnTabChange
+    function options:OnTabChange(...)
+        tab_change(self,...)
+        local selected=self.tab:GetActiveId()=="interiors"
+        self.dlg_interiors:Show(selected)
+        if selected then self.dlg_interiors:RefreshAvailability() end
+    end
+    local refresh=options.Update
+    function options:Update(...)
+        refresh(self,...)
+        if self.dlg_interiors and self.dlg_interiors:IsShown() then self.dlg_interiors:RefreshAvailability() end
+    end
+end

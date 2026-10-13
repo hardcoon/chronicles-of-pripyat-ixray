@@ -1,0 +1,96 @@
+-- Empty-hands portion of Focus Zoom v0.41 by Minotaur21 (Public Domain).
+-- Original concept: SlowVibe. IX-Ray adaptation: no MCM, ADS or stamina edits.
+local FOV_FACTOR = 0.6
+local TRANSITION_MS = 180
+local HOLD_TIMEOUT_MS = 300
+local state = {registered = false}
+
+local function set_fov(value)
+    get_console():execute(string.format("fov %.6f", value))
+    state.written = value
+end
+
+local function owns_fov()
+    return state.base and math.abs(get_console():get_float("fov") - state.written) < 0.001
+end
+
+function reset()
+    -- A later video-setting/console change belongs to its caller.
+    if owns_fov() then set_fov(state.base) end
+    state.base = nil
+    state.held = false
+end
+
+local function empty_hands()
+    local actor = db.actor
+    return actor and level.present() and actor:alive() and
+        not device():is_paused() and not level.main_input_receiver() and
+        level.get_active_cam() == 0 and not actor:is_talking() and
+        not actor:is_hud_animator_active() and
+        not actor:active_item() and not actor:active_detector()
+end
+
+function on_key_press(key)
+    if key ~= DIK_keys.DIK_MOUSE_2 then
+        local action = dik_to_bind(key)
+        if key == DIK_keys.DIK_PAUSE or action == key_bindings.kQUIT or
+            action == key_bindings.kCONSOLE or action == key_bindings.kINVENTORY or
+            action == key_bindings.kUSE or action == key_bindings.kQUICK_LOAD or
+            action == key_bindings.kQUICK_SAVE then reset() end
+        return
+    end
+    if not empty_hands() then reset(); return end
+    if state.base and not owns_fov() then reset() end
+    local now = time_global()
+    if not state.base then
+        state.base = get_console():get_float("fov")
+        state.zoom = math.max(5, state.base * FOV_FACTOR)
+        state.written = state.base
+        state.tick = now
+    end
+    state.held = true
+    state.last_hold = now
+end
+
+function on_key_hold(key)
+    if key == DIK_keys.DIK_MOUSE_2 and state.base and state.held then
+        -- Release callbacks can be swallowed by a UI window. A hold expires
+        -- without new gameplay input; it never starts zoom by itself.
+        state.last_hold = time_global()
+        if not empty_hands() then reset() end
+    end
+end
+
+function on_key_release(key)
+    if key == DIK_keys.DIK_MOUSE_2 then state.held = false end
+end
+
+local function update()
+    if not state.base then return end
+    if not owns_fov() or not empty_hands() then reset(); return end
+    local now = time_global()
+    if now - state.last_hold > HOLD_TIMEOUT_MS then state.held = false end
+    local target = state.held and state.zoom or state.base
+    local step = math.abs(state.base - state.zoom) * math.max(0, now - state.tick) / TRANSITION_MS
+    state.tick = now
+    local difference = target - state.written
+    if math.abs(difference) < 0.000001 then
+        if not state.held then state.base = nil end
+        return
+    end
+    if math.abs(difference) <= step then
+        set_fov(target)
+        if not state.held then state.base = nil end
+    elseif step > 0 then
+        set_fov(state.written + (difference > 0 and step or -step))
+    end
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", reset)
+    state.registered = true
+end
+
+on_game_start()
