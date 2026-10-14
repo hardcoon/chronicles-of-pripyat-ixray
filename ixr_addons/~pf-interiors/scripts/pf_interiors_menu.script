@@ -53,17 +53,30 @@ function install()
         self.tab:SetHeight(math.max(self.tab:GetHeight(),286))
         self:Register(self.dlg_interiors.manage,"interiors_manage")
         self:Register(self.dlg_interiors.forum,"interiors_forum")
+        self:Register(self.dlg_interiors.lights_on,"interiors_lights_on")
+        self:Register(self.dlg_interiors.lights_off,"interiors_lights_off")
     end
     local callbacks=options.InitCallBacks
     function options:InitCallBacks(...)
         callbacks(self,...)
         self:AddCallback("interiors_manage",ui_events.BUTTON_CLICKED,self.OnInteriorManage,self)
         self:AddCallback("interiors_forum",ui_events.BUTTON_CLICKED,self.OnInteriorForum,self)
+        self:AddCallback("interiors_lights_on",ui_events.BUTTON_CLICKED,self.OnInteriorLightsOn,self)
+        self:AddCallback("interiors_lights_off",ui_events.BUTTON_CLICKED,self.OnInteriorLightsOff,self)
     end
     function options:OnInteriorManage()
         local ok,result=xpcall(function() return request_management(self) end,debug.traceback)
         if not ok then pf_interiors.report("settings management failed: "..tostring(result)) end
     end
+    local function lights(owner,enabled)
+        if not available() then return end
+        local ok,count=xpcall(function() return pf_hf_light_controls.set_lights(enabled) end,debug.traceback)
+        if not ok then pf_interiors.report("bulk lights failed: "..tostring(count));return end
+        owner.dlg_interiors.light_status:SetText(pf_interiors.translate(
+            enabled and "pf_interiors_lights_on_count" or "pf_interiors_lights_off_count",count))
+    end
+    function options:OnInteriorLightsOn() lights(self,true) end
+    function options:OnInteriorLightsOff() lights(self,false) end
     function options:OnInteriorForum()
         local ok,result=xpcall(pf_interiors_files.open_forum,debug.traceback)
         if not ok or not result then pf_interiors.report("forum browser unavailable: "..tostring(result)) end

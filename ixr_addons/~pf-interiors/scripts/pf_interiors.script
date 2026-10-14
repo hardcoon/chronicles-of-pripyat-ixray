@@ -7,13 +7,13 @@ local function setting(ini,section,key,default,minimum,maximum)
     if not codec.finite(value,maximum) or value<minimum then return default end
     return value
 end
-settings={default_radius=12,maximum_radius=100,coordinate_tolerance=.08,rotation_tolerance=.02,maximum_objects=512}
+settings={default_radius=12,maximum_radius=200,coordinate_tolerance=.08,rotation_tolerance=.02,maximum_objects=512}
 local key_name="DIK_HOME"
 local open_key=DIK_keys.DIK_HOME
 local function configure()
     local ok,ini=pcall(ini_file,"pf_interiors.ltx")
     if not ok then ini=nil end
-    settings.maximum_radius=setting(ini,"capture","maximum_radius",100,1,100)
+    settings.maximum_radius=setting(ini,"capture","maximum_radius",200,1,math.huge)
     settings.default_radius=setting(ini,"capture","default_radius",math.min(12,settings.maximum_radius),1,settings.maximum_radius)
     settings.coordinate_tolerance=setting(ini,"capture","coordinate_tolerance",.08,.001,.5)
     settings.rotation_tolerance=setting(ini,"safety","rotation_tolerance",.02,.001,.1)

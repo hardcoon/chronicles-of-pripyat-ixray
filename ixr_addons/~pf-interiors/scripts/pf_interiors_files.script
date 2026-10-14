@@ -157,10 +157,10 @@ function radius(default)
     if not init() then return default end
     local bytes=read(root.."preferences.ltx")
     local value=bytes and tonumber(bytes:match("radius=([^\r\n]+)"))
-    return codec.finite(value,100) and value>=1 and value or default
+    return codec.finite(value,math.huge) and value>=1 and value or default
 end
 function save_radius(value)
-    if not init() then return false end
+    if not codec.finite(value,math.huge) or value<1 or not init() then return false end
     return write(root.."preferences.ltx","[capture]\r\nradius="..string.format("%.9g",value).."\r\n")
 end
 function busy() return pending~=nil end

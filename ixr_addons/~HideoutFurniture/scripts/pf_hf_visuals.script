@@ -11,14 +11,31 @@ local distance=configured_distance()
 local hide_sq=distance*distance
 local return_sq=(distance*.95)^2
 
+function weather_range()
+    local console=get_console()
+    return console:get_bool("r4_interior_weather_range") and console:get_token("renderer")=="renderer_r4"
+end
+function in_standard_range(object,reference)
+    if not db.actor then return false end
+    local a=db.actor:position()
+    local b=(reference or object):position()
+    local dx,dy,dz=a.x-b.x,a.y-b.y,a.z-b.z
+    return dx*dx+dy*dy+dz*dz<=hide_sq
+end
+
 function update(binder,reference)
     local object=binder.object
     -- Only the installed furniture/proxy binders call this helper. Inventory
     -- ownership is checked again by the native setter before any change.
     if type(object.parent)=="function" and object:parent() then return true end
     if type(object.set_render_visible)~="function" or type(object.get_render_visible)~="function" then return true end
-    local hidden=true
-    if db.actor then
+    -- Tag only furniture/proxies calling this helper; the native tag changes no ABI.
+    if not binder.render_tagged and type(object.set_furniture_render_tag)=="function" then
+        binder.render_tagged=object:set_furniture_render_tag()
+    end
+    local unrestricted=weather_range()
+    local hidden=not unrestricted
+    if db.actor and not unrestricted then
         local a=db.actor:position()
         local b=(reference or object):position()
         local dx,dy,dz=a.x-b.x,a.y-b.y,a.z-b.z

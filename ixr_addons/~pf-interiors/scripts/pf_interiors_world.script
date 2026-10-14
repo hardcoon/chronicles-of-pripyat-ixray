@@ -3,11 +3,13 @@ local codec=pf_interiors_codec
 local tolerance=.08
 local angle_tolerance=.02
 local maximum=512
+local maximum_radius=200
 local busy=false
 function configure(settings)
     tolerance=settings.coordinate_tolerance
     angle_tolerance=settings.rotation_tolerance
     maximum=settings.maximum_objects
+    maximum_radius=settings.maximum_radius or 200
 end
 function definition(section)
     local catalogue=pf_hf_furniture_catalog
@@ -42,7 +44,7 @@ local function scan()
 end
 function capture(name,radius)
     if busy then return nil,"pf_interiors_busy" end
-    if not codec.name(name) or not codec.finite(radius,100) or radius<1 then return nil,"pf_interiors_bad_input" end
+    if not codec.name(name) or not codec.finite(radius,maximum_radius) or radius<1 then return nil,"pf_interiors_bad_input" end
     local objects,err=scan();if not objects then return nil,err end
     local origin=values(db.actor:position())
     local layout={name=name,level=level.name(),radius=radius,origin=origin,objects={}}

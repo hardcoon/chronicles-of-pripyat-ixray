@@ -1,0 +1,33 @@
+-- Event-only bulk actions for the online furniture-lamp binders on this level.
+-- Their existing state owns persistence. No ALife scan or per-frame registry scan.
+local lamps={}
+function register(binder) lamps[binder.object:id()]=binder end
+function unregister(binder)
+    local id=binder.object:id()
+    if lamps[id]==binder then lamps[id]=nil end
+end
+function set_lights(enabled)
+    if not db.actor or not db.actor:alive() or not alife() then return 0 end
+    local weather=pf_hf_visuals.weather_range()
+    local scale=get_console():get_float("r4_full_detail_distance_scale")
+    if type(scale)~="number" or scale~=scale then scale=1 end
+    local count=0
+    for id,binder in pairs(lamps) do
+        local object=level.object_by_id(id)
+        -- Lifecycle unregistering protects reused IDs; do not rely on Lua userdata identity.
+        if object and binder.entry and object:section()==binder.entry.object and binder.entry.kind=="light" and
+            type(object.in_furniture_render_range)=="function" and
+            object:in_furniture_render_range(weather,scale) and (weather or binder:light_available()) then
+            local lamp=object:get_hanging_lamp()
+            local own=lamp and pf_hf_furniture.state(id)
+            if own then
+                own.is_on=enabled;own.condition=1;own.last_time=nil
+                if enabled then lamp:turn_on() else lamp:turn_off() end
+                object:set_bone_visible(binder.entry.light.main_bone,enabled,true)
+                if binder.entry.hide_bone then object:set_bone_visible(binder.entry.hide_bone,enabled,true) end
+                count=count+1
+            end
+        end
+    end
+    return count
+end

@@ -4,7 +4,7 @@ MAX_OBJECTS=512
 local MAGIC="PF_INTERIOR\t1"
 
 function finite(n,limit)
-    return type(n)=="number" and n==n and math.abs(n)<=(limit or 100000)
+    return type(n)=="number" and n==n and n>-math.huge and n<math.huge and math.abs(n)<=(limit or 100000)
 end
 function point(p)
     return type(p)=="table" and #p==3 and finite(p[1]) and finite(p[2]) and finite(p[3])
@@ -32,10 +32,11 @@ local function triplet(value)
     local p={tonumber(a),tonumber(b),tonumber(c)}
     return point(p) and p or nil
 end
+-- Source radius is metadata: a lower local capture cap must not hide saved layouts.
 function validate(layout)
     if type(layout)~="table" or not name(layout.name) or
         type(layout.level)~="string" or not layout.level:match("^[%w_%-]+$") or #layout.level>64 or
-        not finite(layout.radius,100) or layout.radius<1 or not point(layout.origin) or
+        not finite(layout.radius,math.huge) or layout.radius<1 or not point(layout.origin) or
         type(layout.objects)~="table" or #layout.objects<1 or #layout.objects>MAX_OBJECTS then
         return false,"pf_interiors_bad_file"
     end
