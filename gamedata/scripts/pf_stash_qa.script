@@ -72,7 +72,8 @@ local DEVELOPER_ESSENTIAL_DEFINITIONS = {
 }
 local DEVELOPER_KEEP_SECTIONS = {
 	device_torch = true,
-	wpn_knife = true
+	wpn_knife = true,
+	pf_nocturne_route_tool = true
 }
 for section in pairs(QA_TOOL_SECTIONS) do
 	DEVELOPER_KEEP_SECTIONS[section] = true
@@ -301,6 +302,10 @@ function prepare_developer_new_game()
 
 	local ready = ensure_stash_qa_tools(true)
 	qa_tools_checked = ready
+	local nocturne_route = rawget(_G, "pf_nocturne_route")
+	if nocturne_route and type(nocturne_route.issue_new_game_tool) == "function" then
+		nocturne_route.issue_new_game_tool()
+	end
 	report(string.format(
 		"Developer inventory prepared: removed %d regular items, QA tools ready=%s",
 		removed, tostring(ready)

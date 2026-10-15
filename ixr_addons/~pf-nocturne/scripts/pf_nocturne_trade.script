@@ -1,0 +1,261 @@
+-- One shelf per observed night. The append-only purchase journal belongs to
+-- the saved world, not to an individual quicksave, and is never rewound by F9.
+local TRADE_CONFIG = "misc\\trade\\trade_pf_nocturne.ltx"
+local ledger, ledger_path, campaign = nil, nil, nil
+local prepared, purchased_ids = {}, {}
+local registered = false
+local error_reported = false
+local months = {0,31,59,90,120,151,181,212,243,273,304,334}
+
+local function warn(reason)
+    if not error_reported then
+        printf("[nocturne] trade unavailable: %s", tostring(reason))
+        error_reported = true
+    end
+end
+
+local function hash(value)
+    local result = 1
+    for i=1,#value do result = (result*131 + value:byte(i)) % 2147483647 end
+    return string.format("%.0f", result)
+end
+
+local function ordinal(year, month, day)
+    local previous = year-1
+    local result = previous*365 + math.floor(previous/4) - math.floor(previous/100)
+        + math.floor(previous/400) + months[month] + day
+    if month>2 and year%4==0 and (year%100~=0 or year%400==0) then result=result+1 end
+    return result
+end
+
+local function night_key()
+    local y,m,d,h = game.get_game_time():get(0,0,0,0,0,0,0)
+    if not y or y<1 or not m or m<1 or m>12 or not d or d<1 then return nil end
+    -- The next appearance begins at 01:00, including for the stationary test NPC.
+    return ordinal(y,m,d) - (h<1 and 1 or 0)
+end
+
+local function world_id()
+    local root = alife_storage_manager.get_state()
+    local world = root and root.pf_dynamic_stashes
+    local seed = world and tonumber(world.loot_seed)
+    if not seed or seed<=0 then return nil end
+    -- An existing immutable world seed also identifies saves made before this
+    -- trader was installed. Generating a new token on load would allow F9 rerolls.
+    local y,m,d,h,minute,s,ms = level.get_start_time():get(0,0,0,0,0,0,0)
+    return string.format("%.0f-%04d%02d%02d%02d%02d%02d%03d", seed,y,m,d,h,minute,s,ms)
+end
+
+local function shelf(preset, first, second)
+    local result = {}
+    for section,count in pairs(pf_nocturne_stock.common) do result[section]=count end
+    for section,count in pairs(pf_nocturne_stock.presets[preset]) do result[section]=count end
+    result[pf_nocturne_stock.artifacts[first]]=1
+    result[pf_nocturne_stock.artifacts[second]]=1
+    return result
+end
+
+local function append(payload)
+    local file, reason = io.open(ledger_path,"ab")
+    if not file then ledger.failed=true;warn(reason);return false end
+    local ok, written = pcall(function()
+        return file:write(payload,"|",hash(payload),"\n")
+    end)
+    local closed, result = pcall(function() return file:close() end)
+    if not ok or not written or not closed or not result then
+        ledger.failed=true;warn("purchase journal write failed");return false
+    end
+    return true
+end
+
+local function read_ledger(id)
+    ledger_path=getFS():update_path("$app_data_root$", "pf_nocturne_"..id..".stock")
+    ledger={records={},last_night=0,last_preset=0,failed=false}
+    local file=io.open(ledger_path,"rb")
+    if not file then
+        -- Never silently recreate a journal that exists but could not be read.
+        if lfs.attributes(ledger_path) then ledger.failed=true;warn("cannot read journal");return false end
+        return append("H|1|"..id)
+    end
+    local source=file:read("*a");file:close()
+    if not source or source:sub(-1)~="\n" then ledger.failed=true;warn("incomplete journal");return false end
+    local header=false
+    for line in source:gmatch("([^\n]+)\n") do
+        local payload, checksum=line:match("^(.*)|(%d+)$")
+        local ok=payload and checksum==hash(payload)
+        if ok and not header then
+            ok=payload=="H|1|"..id;header=ok
+        elseif ok then
+            local key,preset,a,b=payload:match("^N|(%d+)|(%d+)|(%d+)|(%d+)$")
+            if key then
+                key,preset,a,b=tonumber(key),tonumber(preset),tonumber(a),tonumber(b)
+                ok=key>ledger.last_night and preset>=1 and preset<=#pf_nocturne_stock.presets
+                    and a>=1 and a<=#pf_nocturne_stock.artifacts
+                    and b>=1 and b<=#pf_nocturne_stock.artifacts and a~=b
+                if ok then
+                    ledger.records[key]={preset=preset,first=a,second=b,left=shelf(preset,a,b),revision=0}
+                    ledger.last_night=key;ledger.last_preset=preset
+                end
+            elseif payload:match("^L|") then
+                local night,point=payload:match("^L|(%d+)|(%d+)$")
+                night,point=tonumber(night),tonumber(point)
+                local record=night and ledger.records[night]
+                ok=record~=nil and record.point_id==nil and point~=nil
+                    and point>=1 and point<=#pf_nocturne_points.points
+                if ok then record.point_id=point end
+            else
+                local night,section,count=payload:match("^P|(%d+)|([%w_%.%-]+)|(%d+)$")
+                night,count=tonumber(night),tonumber(count)
+                -- The old shelf used the animation prop named hand_radio.
+                -- Carry its purchase count over to the working field scanner.
+                if section=="anomaly_scaner" then section="pf_anomaly_scanner" end
+                local record=night and ledger.records[night]
+                local remaining=record and record.left[section]
+                ok=remaining~=nil and count==remaining-1 and count>=0
+                if ok then record.left[section]=count;record.revision=record.revision+1 end
+            end
+        end
+        if not ok then ledger.failed=true;warn("invalid journal record");return false end
+    end
+    if not header then ledger.failed=true;warn("missing journal header");return false end
+    return true
+end
+
+local function get_ledger()
+    if ledger then return not ledger.failed and ledger or nil end
+    campaign=world_id()
+    if not campaign then return nil end
+    if not read_ledger(campaign) then return nil end
+    return ledger
+end
+
+local function current_record()
+    local saved=get_ledger()
+    local key=night_key()
+    if not saved or not key then return nil end
+    if saved.records[key] then return saved.records[key],key end
+    -- Loading a save from an unvisited earlier night cannot create an extra
+    -- appearance and fresh supplies. Reuse the latest recorded shelf.
+    if key<=saved.last_night then return saved.records[saved.last_night],saved.last_night end
+    local preset=math.random(1,#pf_nocturne_stock.presets)
+    local a=math.random(1,#pf_nocturne_stock.artifacts)
+    local b=math.random(1,#pf_nocturne_stock.artifacts-1)
+    if b>=a then b=b+1 end
+    if not append(string.format("N|%d|%d|%d|%d",key,preset,a,b)) then return nil end
+    local record={preset=preset,first=a,second=b,left=shelf(preset,a,b),revision=0}
+    saved.records[key]=record;saved.last_night=key;saved.last_preset=preset
+    return record,key
+end
+
+function appearance()
+    if #pf_nocturne_points.points==0 then return nil end
+    local record,key=current_record()
+    if not record then return nil end
+    if not record.point_id then
+        local point=math.random(1,#pf_nocturne_points.points)
+        if not append(string.format("L|%d|%d",key,point)) then return nil end
+        record.point_id=point
+    end
+    return {night=key,preset=record.preset,point_id=record.point_id,
+        point=pf_nocturne_points.points[record.point_id]}
+end
+
+function forget(npc_id)
+    prepared[npc_id]=nil
+end
+
+local function reconcile(npc, record)
+    local items={}
+    npc:iterate_inventory(function(_,item)
+        local section=item:section()
+        -- The NPC's own PDA/bolt are technical inventory, outside the shop.
+        if section~="device_pda" and section~="bolt" then
+            items[section]=items[section] or {}
+            table.insert(items[section],item:id())
+        end
+        return false
+    end,npc)
+    for section,ids in pairs(items) do
+        local wanted=record.left[section] or 0
+        for i=wanted+1,#ids do
+            local server=alife():object(ids[i])
+            if server then alife():release(server,true) end
+        end
+    end
+    for section,wanted in pairs(record.left) do
+        local have=items[section] and #items[section] or 0
+        for i=have+1,wanted do
+            local item=alife():create(section,npc:position(),npc:level_vertex_id(),npc:game_vertex_id(),npc:id())
+            if not item then warn("cannot create "..section);return false end
+        end
+    end
+    return true
+end
+
+function update(npc)
+    local storage=db.storage[npc:id()]
+    if not storage or storage.active_section~="remark@pf_nocturne" then npc:disable_trade();return end
+    local cached=prepared[npc:id()]
+    if npc:is_talking() or db.actor:is_talking() then
+        if not cached or (ledger and ledger.failed) then npc:disable_trade() end
+        return
+    end
+    local record,key=current_record()
+    if not record then npc:disable_trade();return end
+    if cached and cached.key==key and cached.revision==record.revision then
+        if time_global()>=cached.ready_at then npc:enable_trade() end
+        return
+    end
+    npc:disable_trade()
+    if not cached or cached.key~=key then
+        trade_manager.trade_init(npc,TRADE_CONFIG)
+        trade_manager.update(npc)
+    end
+    if not reconcile(npc,record) then return end
+    prepared[npc:id()]={key=key,record=record,revision=record.revision,ready_at=time_global()+500}
+    xr_logic.pstor_store(npc,"pf_nocturne_preset",record.preset)
+    xr_logic.pstor_store(npc,"pf_nocturne_night",key)
+end
+
+local function purchase(item, seller)
+    if not item or not seller or seller:section()~="pf_nocturne" then return end
+    local cached=prepared[seller:id()]
+    if not cached or not ledger or ledger.failed then return end
+    local previous=purchased_ids[item:id()]
+    if previous and previous.key==cached.key and time_global()<previous.expires then return end
+    local section=item:section()
+    local count=cached.record.left[section]
+    if not count or count<1 then return end
+    -- Flush before returning from the engine callback, without waiting for F5.
+    if append(string.format("P|%d|%s|%d",cached.key,section,count-1)) then
+        cached.record.left[section]=count-1
+        cached.record.revision=cached.record.revision+1
+        purchased_ids[item:id()]={key=cached.key,expires=time_global()+5000}
+    else seller:disable_trade() end
+end
+
+function on_actor_inventory_trade(item, sold_by_actor)
+    if sold_by_actor~=false or not item then return end
+    -- The native trade callback normally precedes queued ownership transfer.
+    -- on_item_take below covers the alternative order and de-duplicates by ID.
+    purchase(item,item:parent())
+end
+
+function on_actor_item_take(item, previous_owner_id)
+    purchase(item,previous_owner_id and level.object_by_id(previous_owner_id))
+end
+
+function reset()
+    ledger,ledger_path,campaign=nil,nil,nil
+    prepared,purchased_ids={},{}
+    error_reported=false
+end
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("load",reset)
+    RegisterScriptCallback("new_game_created",reset)
+    registered=true
+end
+
+on_game_start()

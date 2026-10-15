@@ -17,7 +17,7 @@ local state = {
     wall_hits = 0, wall_pairs = 0, wide_roof_hits = 0, wide_wall_hits = 0, wall_map = {}, missed_checks = 0,
     next_debug = 0, registered = false, actor_destroy_hook = false, base_amount = nil,
     fade_from = nil, fade_to = nil, fade_started = 0, next_fade = 0,
-    release_base = false, resume_after_save = false
+    release_base = false, runtime_available = nil
 }
 
 local function clamp(value, low, high)
@@ -212,11 +212,19 @@ local function is_indoor(position, cfg)
 end
 
 local function apply_amount(value)
-    get_console():execute("r2_tonemap_amount " .. decimal(clamp(value, 0, 1)))
+    get_console():execute("r2_tonemap_amount_runtime " .. decimal(clamp(value, 0, 1)))
+end
+
+-- Runtime overrides never write the client's r2_tonemap_amount preference.
+local function release_amount()
+    local console = get_console()
+    if console:get_string("r2_tonemap_amount_runtime") then
+        console:execute("r2_tonemap_amount_runtime off")
+    end
 end
 
 local function start_fade(target, now, cfg, release_base)
-    state.fade_from = clamp(get_console():get_float("r2_tonemap_amount"), 0, 1)
+    state.fade_from = clamp(get_console():get_float("r2_tonemap_amount_runtime"), 0, 1)
     state.fade_to = clamp(target, 0, 1)
     state.fade_started = now
     state.next_fade = now
@@ -231,7 +239,10 @@ local function update_fade(now, cfg)
     state.next_fade = now + cfg.effect_interval
     if progress >= 1 then
         state.fade_from, state.fade_to = nil, nil
-        if state.release_base then state.base_amount = nil end
+        if state.release_base then
+            release_amount()
+            state.base_amount = nil
+        end
         state.release_base = false
     end
 end
@@ -245,25 +256,13 @@ local function set_effects(inside, now, cfg, force)
     if inside then
         start_fade(cfg.tonemap_amount, now, cfg, false)
     elseif state.base_amount ~= nil then
+        state.base_amount = clamp(get_console():get_float("r2_tonemap_amount"), 0, 1)
         start_fade(state.base_amount, now, cfg, true)
     end
 end
 
--- F5 вызывает cfg_save. На время сохранения движок должен видеть значение пользователя.
-local function before_game_save()
-    if state.base_amount == nil then return end
-    if not pcall(apply_amount, state.base_amount) then return end
-    state.fade_from, state.fade_to = nil, nil
-    state.release_base = false
-    if state.indoor then
-        state.resume_after_save = true
-    else
-        state.base_amount = nil
-    end
-end
-
 function reset()
-    if state.base_amount ~= nil then pcall(apply_amount, state.base_amount) end
+    pcall(release_amount)
     state.settings, state.settings_source, state.next_reload = nil, nil, 0
     state.ray, state.origin, state.direction = nil, nil, nil
     state.indoor, state.next_check = false, 0
@@ -271,7 +270,6 @@ function reset()
     state.next_debug = 0
     state.base_amount, state.fade_from, state.fade_to = nil, nil, nil
     state.fade_started, state.next_fade, state.release_base = 0, 0, false
-    state.resume_after_save = false
 end
 
 -- В этой сборке динамического callback net_destroy нет. Оборачиваем штатное
@@ -299,12 +297,15 @@ local function install_actor_destroy_hook()
 end
 
 function update()
+    if state.runtime_available == nil then
+        state.runtime_available = get_console():get_string("r2_tonemap_amount_runtime") ~= nil
+        if not state.runtime_available then
+            printf("! pf_indoor_light: runtime tonemap API unavailable; effect disabled to protect user.ltx")
+        end
+    end
+    if not state.runtime_available then return end
     if not state.actor_destroy_hook then install_actor_destroy_hook() end
     local now = time_global()
-    if state.resume_after_save and state.settings then
-        state.resume_after_save = false
-        if state.indoor then start_fade(state.settings.tonemap_amount, now, state.settings, false) end
-    end
     if state.settings then update_fade(now, state.settings) end
     if now < state.next_check then return end
     local cfg, changed = load_settings(now)
@@ -341,7 +342,6 @@ end
 function on_game_start()
     if state.registered then return end
     RegisterScriptCallback("update", update)
-    RegisterScriptCallback("save", before_game_save)
     RegisterScriptCallback("load", reset)
     install_actor_destroy_hook()
     state.registered = true

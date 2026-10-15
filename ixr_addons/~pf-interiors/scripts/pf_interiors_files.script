@@ -36,7 +36,7 @@ function open_forum()
     if not kernel or not shell then return false end
     -- Let Windows resolve the HTTPS association to the user's default browser.
     local result=shell.ShellExecuteW(nil,wide("open"),
-        wide("https://ap-pro.ru/forums/topic/15559-chronicles-of-pripyat-gotovye-interery/"),nil,nil,1)
+        wide(game.translate_string("pf_interiors_forum_url")),nil,nil,1)
     return tonumber(ffi.cast("intptr_t",result))>32
 end
 function init()

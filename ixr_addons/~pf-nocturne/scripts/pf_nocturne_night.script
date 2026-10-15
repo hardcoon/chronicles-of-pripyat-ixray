@@ -1,0 +1,134 @@
+-- Exactly one Nocturne from 01:00 inclusive until 06:00 exclusive.
+-- Night choices and purchases belong to the external trade journal.
+local SECTION="pf_nocturne"
+local SPOT="pf_nocturne_location" -- Legacy serialized QA spot: removal only.
+local active_id=nil
+local initialized=false
+local next_update=0
+
+local function storage()
+    local state=alife_storage_manager.get_state()
+    state.pf_nocturne_night=state.pf_nocturne_night or {}
+    return state.pf_nocturne_night
+end
+
+local function night_hours()
+    local hour=level.get_time_hours()
+    return hour>=1 and hour<6
+end
+
+local function cleanup(keep_id)
+    local sim=alife()
+    local children,roots={},{}
+    for _,server in sim:objects() do
+        local parent=server.parent_id
+        if parent and parent~=65535 then
+            children[parent]=children[parent] or {}
+            table.insert(children[parent],server.id)
+        end
+        if server:section_name()==SECTION and server.id~=keep_id then
+            roots[#roots+1]=server.id
+        end
+    end
+    local released={}
+    local function release_tree(id)
+        if released[id] then return end
+        released[id]=true
+        for _,child in ipairs(children[id] or {})do release_tree(child) end
+        local server=sim:object(id)
+        if server then sim:release(server,true) end
+    end
+    for _,id in ipairs(roots)do
+        local npc=level.object_by_id(id)
+        if npc and npc:is_talking() then
+            db.actor:stop_talk()
+            npc:stop_talk()
+        end
+        pf_nocturne_trade.forget(id)
+        level.map_remove_object_spot(id,SPOT)
+        level.map_remove_object_spot(id,"ui_pda2_trader_location")
+        release_tree(id)
+    end
+    alife_storage_manager.get_state().pf_nocturne_check=nil
+end
+
+local function clear_current()
+    active_id=nil
+    local saved=storage()
+    saved.npc_id=nil;saved.npc_name=nil;saved.night=nil;saved.point_id=nil
+end
+
+local function saved_server(plan)
+    local saved=storage()
+    local server=saved.npc_id and alife():object(saved.npc_id)
+    if server and server:section_name()==SECTION and server:name()==saved.npc_name
+            and saved.night==plan.night and saved.point_id==plan.point_id then
+        return server
+    end
+end
+
+function is_current(object)
+    return object~=nil and object:id()==active_id and night_hours()
+end
+
+function active_npc()
+    if not active_id or not night_hours() then return nil end
+    local server=alife():object(active_id)
+    if not server or server:section_name()~=SECTION then return nil end
+    return server,pf_nocturne_points.points[storage().point_id]
+end
+
+function update()
+    if not db.actor or not alife() or time_global()<next_update then return end
+    next_update=time_global()+500
+    if not night_hours() or level.name()~="pripyat_full" then
+        if not initialized or storage().npc_id then cleanup(nil);clear_current() end
+        initialized=true
+        return
+    end
+    local plan=pf_nocturne_trade.appearance()
+    if not plan then
+        if not initialized or active_id then cleanup(nil);clear_current() end
+        initialized=true
+        return
+    end
+    local server=saved_server(plan)
+    if not initialized or not server then
+        cleanup(server and server.id or nil)
+        if not server then
+            clear_current()
+            local point=plan.point
+            server=pf_nocturne.spawn(vector():set(point.x,point.y,point.z),
+                point.level_vertex_id,point.game_vertex_id,point.yaw)
+            if not server then return end
+            pf_nocturne_trade.forget(server.id)
+            local saved=storage()
+            saved.npc_id=server.id;saved.npc_name=server:name()
+            saved.night=plan.night;saved.point_id=plan.point_id
+        end
+        initialized=true
+    end
+    active_id=server.id
+    local npc=level.object_by_id(active_id)
+    if npc and db.storage[active_id] then
+        xr_logic.pstor_store(npc,"pf_nocturne_x",plan.point.x)
+        xr_logic.pstor_store(npc,"pf_nocturne_y",plan.point.y)
+        xr_logic.pstor_store(npc,"pf_nocturne_z",plan.point.z)
+    end
+    -- Old saves can contain the serialized QA pin or the former logic pin.
+    -- Keep ordinary engine contact/relation markers entirely under PDA control.
+    if level.map_has_object_spot(active_id,SPOT)~=0 then
+        level.map_remove_object_spot(active_id,SPOT)
+    end
+    if level.map_has_object_spot(active_id,"ui_pda2_trader_location")~=0 then
+        level.map_remove_object_spot(active_id,"ui_pda2_trader_location")
+    end
+end
+
+local function reset()
+    active_id=nil;initialized=false;next_update=0
+end
+
+RegisterScriptCallback("update",update)
+RegisterScriptCallback("load",reset)
+RegisterScriptCallback("new_game_created",reset)

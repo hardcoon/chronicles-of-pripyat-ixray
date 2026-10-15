@@ -188,6 +188,13 @@ end
 
 function on_inventory_eat(actor, item)
 	local section = item and item:section() or nil
+	if section == "pf_nocturne_route_tool" then
+		return pf_nocturne_route.on_inventory_eat(actor, item)
+	end
+    -- Ordinary furniture: direct fence action, before QA/food routing.
+    if section == "pf_hfs_wooden_fences_item" then
+        return pf_hf_stock.on_inventory_eat(actor,item)
+    end
 	if section == settings.tool_section then
 		impl.restore_uses(item)
 		record_point()

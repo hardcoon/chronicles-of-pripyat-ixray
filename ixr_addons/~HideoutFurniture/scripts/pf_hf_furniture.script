@@ -11,6 +11,9 @@ for section,entry in pairs(pf_hf_native_doors_catalog.by_item) do catalog.by_ite
 for _,entry in ipairs(pf_hf_campfire_catalog.entries) do
     catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
 end
+for section,entry in pairs(pf_hf_stock_catalog.by_item) do catalog.by_item[section]=entry end
+for section,entry in pairs(pf_hf_stock_catalog.retired_by_item or {}) do catalog.by_item[section]=entry end
+for section,entry in pairs(pf_hf_stock_catalog.by_object) do catalog.by_object[section]=entry end
 local pending={}
 local data={}
 local generation=0
@@ -197,7 +200,7 @@ function place_item(item,variant)
         if generation~=current_generation or not pending[id] then return end
         local ok=pf_runtime_editor.begin({section=entry.object,title=entry.title,
             source_item_id=id,source_section=entry.item,bounds=bounds(entry),visual=entry.visual,
-            base_rotation=entry.base_rotation,initial_distance=2,
+            base_rotation=entry.base_rotation,preview_source=entry.preview_source,initial_distance=2,
             on_confirm=function(pose,source_id) return create_placed(pose,source_id,entry.object) end,
             on_cancel=function() pending[id]=nil end})
         if not ok then pending[id]=nil end

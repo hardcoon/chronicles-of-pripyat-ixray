@@ -1,0 +1,53 @@
+![profiles]
+>files = npc_profile_pf_nocturne
+>specific_characters_files = character_desc_pf_nocturne
+
+![dialogs]
+>files = dialogs_pf_nocturne
+
+![info_portions]
+>files = info_pf_nocturne
+
+; The active CoP matrix does not register the technical trader faction.
+; Append its neutral column without moving any existing community indices.
+![game_relations]
+>communities = trader, 11
+
+![communities_relations]
+>actor = 0
+>bandit = 0
+>dolg = 0
+>ecolog = 0
+>freedom = 0
+>killer = 0
+>army = 0
+>monolith = 0
+>monster = 0
+>stalker = 0
+>zombied = 0
+trader = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+![communities_sympathy]
+trader = 0
+
+[pf_nocturne]:stalker
+$spawn = "respawn\pf_nocturne"
+character_profile = pf_nocturne
+script_binding = pf_nocturne.init
+custom_data = scripts\pf_nocturne.ltx
+species = zoo_monster
+immunities_sect = pf_nocturne_immunities
+can_select_items = off
+; Keep the inherited props, but never attach the NPC's automatic headlamp.
+attachable_items = attachable_item,hand_radio,hand_radio_r,bread,vodka,energy_drink,kolbasa,guitar_a,harmonica_a,wpn_binoc,detector_simple,pri_a15_wpn_svu,pri_a15_wpn_wincheaster1300,wpn_binoc1,pri_a15_wpn_ak74u,pri_a15_wpn_ak74,pri_a15_documents,af_quest_b14_twisted,detector_advanced,detector_elite,device_pda,anomaly_scaner
+
+[pf_nocturne_immunities]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0

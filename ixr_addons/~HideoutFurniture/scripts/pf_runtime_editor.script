@@ -201,10 +201,20 @@ local function allocate_preview(s)
     for i=1,42 do s.contacts[i]=line(s,"contact_"..i) end
     s.pivot=debug_render.add_object(s.prefix.."pivot",DBG_ScriptObject.sphere):cast_dbg_sphere()
     if s.spec.visual then
-        if type(debug_render.add_model)~="function" then error("preview_model_api_missing") end
-        local path=s.spec.visual:gsub("%.ogf$",".hfpm")
-        s.model=debug_render.add_model(s.prefix.."model",path)
-        if not s.model:valid() then error("preview_model_missing: "..path) end
+        local direct=s.spec.preview_source=="ogf"
+        local add=debug_render.add_model
+        if direct then add=debug_render.add_ogf_model end
+        if type(add)~="function" then error("preview_model_api_missing") end
+        local path=direct and s.spec.visual or s.spec.visual:gsub("%.ogf$",".hfpm")
+        s.model=add(s.prefix.."model",path)
+        if not s.model or not s.model:valid() then error("preview_model_missing: "..path) end
+        if direct then
+            -- Native OGF preview is normalized around the mesh centre.
+            -- Restore its original metres/pivot through the instance matrix.
+            local lo,hi=s.spec.bounds.min,s.spec.bounds.max
+            s.model_scale=math.max(hi.x-lo.x,hi.y-lo.y,hi.z-lo.z)
+            s.model_center=geometry.scale(geometry.add(lo,hi),.5)
+        end
     end
 end
 local function draw_line(handle,a,b,tint)
@@ -217,6 +227,12 @@ local function render_preview(s,vertices,quaternion)
         transform.j=quaternion:rotate_vector(vector():set(0,1,0))
         transform.k=quaternion:rotate_vector(vector():set(0,0,1))
         transform.c=geometry.copy(s.pose.position)
+        if s.model_scale then
+            transform.i=geometry.scale(transform.i,s.model_scale)
+            transform.j=geometry.scale(transform.j,s.model_scale)
+            transform.k=geometry.scale(transform.k,s.model_scale)
+            transform.c=geometry.add(transform.c,quaternion:rotate_vector(s.model_center))
+        end
         s.model.matrix=transform
         s.model.color=fcolor():set(1,1,1,s.display_mode==1 and .42 or 1)
         s.model.visible=true

@@ -1,0 +1,11 @@
+-- Context variants reuse the furniture transaction and common pickup item.
+function place_1(item) return pf_hf_furniture.place_item(item,"v1") end
+function place_2(item) return pf_hf_furniture.place_item(item,"v2") end
+function place_3(item) return pf_hf_furniture.place_item(item,"v3") end
+function place_4(item) return pf_hf_furniture.place_item(item,"v4") end
+function place_5(item) return pf_hf_furniture.place_item(item,"v5") end
+function on_inventory_eat(actor,item)
+    if not item or item:section()~="pf_hfs_wooden_fences_item" then return true end
+    -- Same zero-effect, non-consuming default action used by existing tools.
+    return pf_hf_furniture.place_item(item,"v1")
+end

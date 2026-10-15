@@ -321,6 +321,7 @@ function actor_binder:info_callback(npc, info_id)
 end
 ----------------------------------------------------------------------------------------------------------------------
 function actor_binder:on_trade (item, sell_bye, money)
+    pf_nocturne_trade.on_actor_inventory_trade(item, sell_bye)
 	if sell_bye == true then
 		 game_stats.money_trade_update (money)
 	else
@@ -338,6 +339,7 @@ function actor_binder:article_callback(npc, group, name)
 end
 ----------------------------------------------------------------------------------------------------------------------
 function actor_binder:on_item_take (obj, previous_owner_id)
+    pf_nocturne_trade.on_actor_item_take(obj, previous_owner_id)
 	printf("on_item_take [%s]", obj:name())
 	pf_dynamic_stashes.on_actor_item_take(obj, previous_owner_id)
 	pf_story_encounter.on_actor_item_take(obj, previous_owner_id)

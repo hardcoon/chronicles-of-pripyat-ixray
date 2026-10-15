@@ -1,0 +1,34 @@
+-- Issued exclusively by prepare_developer_new_game, never by update/load.
+local TOOL="pf_nocturne_route_tool"
+local ISSUED="pf_nocturne_route_issued"
+
+local function developer_mode()
+    local qa=rawget(_G,"pf_stash_qa")
+    return qa and type(qa.is_developer_mode)=="function" and qa.is_developer_mode()==true
+end
+
+function issue_new_game_tool()
+    local actor,sim=db.actor,alife()
+    if not actor or not sim or not developer_mode() then return false end
+    if xr_logic.pstor_retrieve(actor,ISSUED,false)==true then return true end
+    if not actor:object(TOOL) then
+        local item=sim:create(TOOL,vector(),0,0,actor:id())
+        if not item then return false end
+    end
+    xr_logic.pstor_store(actor,ISSUED,true)
+    return true
+end
+
+function use_route_tool(_item)
+    pf_nocturne_check.teleport_next()
+    -- Context-menu use must not also invoke the native Eat callback.
+    return false
+end
+
+function on_inventory_eat(_actor,item)
+    if not item or item:section()~=TOOL then return false end
+    local max_uses=item:get_max_uses()
+    if max_uses and max_uses>0 then item:set_remaining_uses(max_uses) end
+    pf_nocturne_check.teleport_next()
+    return true
+end

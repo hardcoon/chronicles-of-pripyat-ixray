@@ -1,0 +1,248 @@
+-- Nocturne: stationary trader. Night locations are configured separately.
+local SECTION = "pf_nocturne"
+local online = {}
+local next_update = 0
+local callbacks_registered = false
+local original_is_enemy = nil
+local pending_test_spawn = false
+local DEBUG = false
+
+local function copy(value)
+    return vector():set(value.x, value.y, value.z)
+end
+
+local function report(message)
+    if not DEBUG then return end
+    printf("[nocturne] %s", message)
+end
+
+local function valid_vertex(id)
+    return id ~= nil and id ~= 4294967295 and level.valid_vertex_id(id)
+end
+
+local function nearby_spawn_point()
+    local actor = db.actor
+    if actor == nil then return nil, nil, nil, "actor_not_ready" end
+    local origin = actor:position()
+    local forward = copy(actor:direction()); forward.y = 0
+    if forward.x * forward.x + forward.z * forward.z < 0.0001 then
+        forward:set(0, 0, 1)
+    else forward:normalize() end
+    local right = vector():set(forward.z, 0, -forward.x)
+    local offsets = {{3,0}, {2,0}, {3,1.5}, {3,-1.5}, {1.5,1.5},
+        {1.5,-1.5}, {0,2}, {0,-2}, {-2,0}}
+    for _, offset in ipairs(offsets) do
+        local x = origin.x + forward.x * offset[1] + right.x * offset[2]
+        local z = origin.z + forward.z * offset[1] + right.z * offset[2]
+        local distance = math.sqrt((x-origin.x)^2 + (z-origin.z)^2)
+        local sight = ray_pick()
+        sight:set_flags(3); sight:set_range(distance)
+        sight:set_ignore_object(actor)
+        sight:set_position(vector():set(origin.x, origin.y+1, origin.z))
+        sight:set_direction(vector():set((x-origin.x)/distance,0,(z-origin.z)/distance))
+        local blocked = sight:query() and sight:get_distance() < distance - 0.5
+        if not blocked then
+            local ray = ray_pick()
+            ray:set_flags(3); ray:set_range(3)
+            ray:set_ignore_object(actor)
+            local start = vector():set(x, origin.y+0.75, z)
+            local down = vector():set(0,-1,0)
+            ray:set_position(start); ray:set_direction(down)
+            if ray:query() then
+                local pos = copy(start):mad(start,down,ray:get_distance())
+                local vertex = level.vertex_id(pos)
+                if not valid_vertex(vertex) then vertex = actor:level_vertex_id() end
+                if valid_vertex(vertex) and math.abs(pos.y-origin.y) <= 2.5 then
+                    -- A stationary remark can stand off the AI mesh, using
+                    -- the actor's valid graph anchor, as the NPC editor does.
+                    return pos, vertex, actor:game_vertex_id()
+                end
+            end
+        end
+    end
+    return nil, nil, nil, "no_clear_floor_near_actor"
+end
+
+local function restore_test_npc()
+    local id = xr_logic.pstor_retrieve(db.actor, "pf_nocturne_test_id", nil)
+    local server = id and alife():object(id)
+    if server and server:section_name() == SECTION then return server end
+    return nil
+end
+
+function spawn_test()
+    pending_test_spawn = true
+    report("test spawn queued")
+end
+
+function is_nocturne(object)
+    return object ~= nil and object:section() == SECTION
+end
+
+local function ignore_nocturne(object, enemy, storage, not_check_sim)
+    if is_nocturne(object) or is_nocturne(enemy) then return false end
+    return original_is_enemy(object, enemy, storage, not_check_sim)
+end
+
+local function install_ignore()
+    if original_is_enemy == nil then
+        original_is_enemy = xr_combat_ignore.is_enemy
+        xr_combat_ignore.is_enemy = ignore_nocturne
+    end
+end
+
+local function disable_torch(object)
+    local torch = object:object("device_torch")
+    if torch ~= nil and torch:torch_enabled() then torch:enable_torch(false) end
+end
+
+function init(object)
+    install_ignore()
+    object:invulnerable(true)
+    object:set_visual_memory_enabled(false)
+    object:set_sound_threshold(1000000)
+    bind_stalker.init(object)
+    disable_torch(object)
+    online[object:id()] = true
+    report("bind id=" .. object:id())
+end
+
+local function neutral_pair(left, right)
+    local sim = alife()
+    if left == nil or right == nil or sim == nil then return end
+    local left_server = sim:object(left:id())
+    local right_server = sim:object(right:id())
+    -- release() removes the ALife object before the client binder disappears.
+    -- ForceSetGoodwill needs both server-side character objects to exist.
+    if left_server == nil or right_server == nil or
+            left_server:section_name() ~= left:section() or
+            right_server:section_name() ~= right:section() then return end
+    left:set_relation(game_object.neutral, right)
+    right:set_relation(game_object.neutral, left)
+    left:force_set_goodwill(0, right)
+    right:force_set_goodwill(0, left)
+end
+
+function update()
+    if db.actor == nil or time_global() < next_update then return end
+    next_update = time_global() + 500
+    if pending_test_spawn then
+        pending_test_spawn = false
+        local server = restore_test_npc() or spawn()
+        if server then
+            xr_logic.pstor_store(db.actor, "pf_nocturne_test_id", server.id)
+            report("test NPC ready id=" .. server.id)
+            db.actor:give_game_news("Ноктюрн", "Тестовый Ноктюрн создан.", "pf_news_stash", 0, 5000)
+        end
+    end
+    -- Binding precedes online registration. Recover loaded objects from the
+    -- binder's storage, and retain pending IDs until their server object ends.
+    for id, storage in pairs(db.storage) do
+        if is_nocturne(storage.object) then online[id] = true end
+    end
+    for id in pairs(online) do
+        local server = alife():object(id)
+        local object = level.object_by_id(id)
+        if object == nil or server == nil or server:section_name() ~= SECTION then
+            if server == nil or server:section_name() ~= SECTION then online[id] = nil end
+        elseif not is_nocturne(object) then
+            online[id] = nil
+        else
+            object:invulnerable(true)
+            object:set_visual_memory_enabled(false)
+            object:set_sound_threshold(1000000)
+            disable_torch(object)
+            if pf_nocturne_night.is_current(object) then
+                pf_nocturne_trade.update(object)
+            else
+                object:disable_trade()
+            end
+            neutral_pair(object, db.actor)
+            for other_id, storage in pairs(db.storage) do
+                local other = storage.object
+                if other_id ~= id and other ~= nil and IsStalker(other) then
+                    neutral_pair(object, other)
+                end
+            end
+            local storage = db.storage[id]
+            local planner = object:motivation_action_manager()
+            if server ~= nil and storage ~= nil and
+                    storage.active_section == "remark@pf_nocturne" and
+                    planner:initialized() and
+                    planner:current_action_id() == xr_actions_id.zmey_remark_base + 1 then
+                local anchor_x = xr_logic.pstor_retrieve(object, "pf_nocturne_x", nil)
+                if anchor_x == nil then
+                    anchor_x = server.position.x
+                    xr_logic.pstor_store(object, "pf_nocturne_x", anchor_x)
+                    xr_logic.pstor_store(object, "pf_nocturne_y", server.position.y)
+                    xr_logic.pstor_store(object, "pf_nocturne_z", server.position.z)
+                end
+                local pos = vector():set(anchor_x,
+                    xr_logic.pstor_retrieve(object, "pf_nocturne_y", server.position.y),
+                    xr_logic.pstor_retrieve(object, "pf_nocturne_z", server.position.z))
+                if object:position():distance_to_sqr(pos) > 0.01 then
+                    object:set_npc_position(pos)
+                end
+                local actor_pos = db.actor:position()
+                local dx, dz = actor_pos.x-pos.x, actor_pos.z-pos.z
+                if dx*dx + dz*dz > 0.01 then
+                    object:set_desired_direction(vector():set(dx,0,dz):normalize())
+                    -- Keep the full-body stationary pose and a live actor target.
+                    -- Reapplying the same state updates its look target without
+                    -- restarting the guard animation's entrance/loop.
+                    if object:weapon_strapped() or object:weapon_unstrapped() then
+                        storage.state_mgr:set_state("ward_noweap",nil,nil,{look_object=db.actor})
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Manual/QA entry point until the user's night locations are supplied.
+-- Test spawning is requested explicitly; the night schedule is not enabled.
+function spawn(position, level_vertex_id, game_vertex_id, yaw)
+    report("spawn requested; actor=" .. tostring(db.actor ~= nil))
+    if db.actor == nil or alife() == nil then
+        report("spawn rejected: actor or ALife not ready")
+        return nil
+    end
+    if position == nil then
+        local reason
+        position, level_vertex_id, game_vertex_id, reason = nearby_spawn_point()
+        if position == nil then
+            report("spawn rejected: " .. tostring(reason))
+            return nil
+        end
+    end
+    report(string.format("spawn point %.3f,%.3f,%.3f lvid=%s gvid=%s",
+        position.x,position.y,position.z,tostring(level_vertex_id),tostring(game_vertex_id)))
+    local object = alife():create(SECTION, position, level_vertex_id, game_vertex_id)
+    if object ~= nil then
+        object.m_smart_terrain_id = 65535
+        if yaw ~= nil then object.angle = vector():set(0,yaw,0) end
+        object:visible_for_map(true)
+        alife():set_switch_online(object.id, true)
+        alife():set_switch_offline(object.id, false)
+        report("created id=" .. object.id)
+    else
+        report("spawn rejected: ALife returned nil")
+    end
+    return object
+end
+
+function on_game_start()
+    install_ignore()
+    if not callbacks_registered then
+        RegisterScriptCallback("update", update)
+        -- Online IDs are rechecked, rather than clearing bind registrations
+        -- after a save load whose NPC binders may already have run.
+        RegisterScriptCallback("load", function()
+            next_update = 0
+            pending_test_spawn = false
+        end)
+        callbacks_registered = true
+    end
+end
+
+on_game_start()

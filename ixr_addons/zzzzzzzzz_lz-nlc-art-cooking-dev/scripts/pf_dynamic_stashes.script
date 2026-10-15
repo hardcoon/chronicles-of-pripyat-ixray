@@ -1018,6 +1018,26 @@ function impl.rebuild_slot_grid()
 	for _, slot in ipairs(slots) do impl.add_slot_to_grid(slot) end
 end
 
+-- A reservation has no object yet (notably an undiscovered legendary
+-- stash). Once bound, use its live position, or its server position offline;
+-- a missing/reused physical ID must not emit a pulse from the old reservation.
+function impl.detector_slot_position(slot)
+	if not slot or not slot.point or not slot.state or slot.state.depleted then return nil end
+	if slot.id then
+		local box = alife():object(slot.id, true)
+		local section = box and box:section_name() or nil
+		if not stash_sections[section] then return nil end
+		local client_box = level.object_by_id(slot.id)
+		if client_box then
+			if client_box:section() ~= section then return nil end
+			return client_box:position()
+		end
+		return box.position
+	end
+	local point = slot.point.position
+	return vector():set(point[1], point[2], point[3])
+end
+
 function impl.nearest_detector_slot(actor_position, detector_data)
 	local span = math.ceil(detector_data.max_range / SLOT_GRID_CELL_SIZE)
 	local actor_cell_x = math.floor(actor_position.x / SLOT_GRID_CELL_SIZE)
@@ -1025,9 +1045,43 @@ function impl.nearest_detector_slot(actor_position, detector_data)
 	local nearest_slot = nil
 	local nearest_distance_sqr = detector_data.max_range * detector_data.max_range + 1
 	local nearest_range = nil
+	local nearest_position = nil
 	local nearest_ratio_sqr = math.huge
 	local reveal_slot = nil
 	local reveal_distance_sqr = math.huge
+	local function consider_slot(slot)
+		local tier = slot and tier_data[slot.tier] or nil
+		local slot_range = slot and detector_data.ranges[slot.tier] or nil
+		local can_reveal = slot_range and detector_data.reveal_tiers and
+			detector_data.reveal_tiers[slot.tier]
+		local available = tier and
+			(not tier.hint_required or slot.state.hinted or can_reveal)
+		if not slot or not slot.point or slot.state.depleted or not slot_range or
+			not available or impl.is_background_green_suppressed(slot) then return end
+		local position = impl.detector_slot_position(slot)
+		if not position then return end
+		local distance_sqr = actor_position:distance_to_sqr(position)
+		local range_sqr = slot_range * slot_range
+		local ratio_sqr = distance_sqr / range_sqr
+		if distance_sqr <= range_sqr and
+			(ratio_sqr < nearest_ratio_sqr or
+			(ratio_sqr == nearest_ratio_sqr and nearest_slot and
+				slot.index < nearest_slot.index)) then
+			nearest_slot = slot
+			nearest_distance_sqr = distance_sqr
+			nearest_range = slot_range
+			nearest_position = position
+			nearest_ratio_sqr = ratio_sqr
+		end
+		if can_reveal and not slot.state.discovered and distance_sqr <= range_sqr and
+			(distance_sqr < reveal_distance_sqr or
+			(distance_sqr == reveal_distance_sqr and reveal_slot and
+				slot.index < reveal_slot.index)) then
+			reveal_slot = slot
+			reveal_distance_sqr = distance_sqr
+		end
+	end
+	-- Only unmaterialized reservations use the fixed catalogue grid.
 	for cell_x = actor_cell_x - span, actor_cell_x + span do
 		local column = state.slot_grid[cell_x]
 		if column then
@@ -1036,42 +1090,19 @@ function impl.nearest_detector_slot(actor_position, detector_data)
 				if bucket then
 					for _, slot_index in ipairs(bucket) do
 						local slot = slots[slot_index]
-						local tier = slot and tier_data[slot.tier] or nil
-						local slot_range = slot and detector_data.ranges[slot.tier] or nil
-						local can_reveal = slot_range and detector_data.reveal_tiers and
-							detector_data.reveal_tiers[slot.tier]
-						local available = tier and
-							(not tier.hint_required or slot.state.hinted or can_reveal)
-						local eligible = slot and slot.point and not slot.state.depleted and
-							slot_range and available and
-							not impl.is_background_green_suppressed(slot)
-						if eligible then
-							local distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
-							local range_sqr = slot_range * slot_range
-							local ratio_sqr = distance_sqr / range_sqr
-							if distance_sqr <= range_sqr and
-								(ratio_sqr < nearest_ratio_sqr or
-								(ratio_sqr == nearest_ratio_sqr and nearest_slot and
-									slot.index < nearest_slot.index)) then
-								nearest_slot = slot
-								nearest_distance_sqr = distance_sqr
-								nearest_range = slot_range
-								nearest_ratio_sqr = ratio_sqr
-							end
-							if can_reveal and not slot.state.discovered and distance_sqr <= range_sqr and
-								(distance_sqr < reveal_distance_sqr or
-								(distance_sqr == reveal_distance_sqr and reveal_slot and
-									slot.index < reveal_slot.index)) then
-								reveal_slot = slot
-								reveal_distance_sqr = distance_sqr
-							end
-						end
+						if slot and not slot.id then consider_slot(slot) end
 					end
 				end
 			end
 		end
 	end
-	return nearest_slot, nearest_distance_sqr, nearest_range, reveal_slot
+	-- Physics can move a box outside its original grid cell. Resolve only bound
+	-- slot IDs (at most MAX_PHYSICAL_STASHES), without an ALife/world scan or a
+	-- second position registry. Eligibility is checked before any object lookup.
+	for _, slot in ipairs(slots) do
+		if slot.id then consider_slot(slot) end
+	end
+	return nearest_slot, nearest_distance_sqr, nearest_range, reveal_slot, nearest_position
 end
 
 -- The reusable hand-radio action is a separate mechanic. Keep its lookup
@@ -1113,9 +1144,13 @@ function impl.update_active_metal_detector(now)
 	if now < next_detector_pulse or #slots == 0 then return end
 
 	local actor_position = db.actor:position()
-	local nearest_slot, nearest_distance_sqr, nearest_range, reveal_slot =
+	local nearest_slot, nearest_distance_sqr, nearest_range, reveal_slot, nearest_position =
 		impl.nearest_detector_slot(actor_position, detector_data)
-	if reveal_slot then impl.reveal_detector_slot(reveal_slot) end
+	if reveal_slot and impl.reveal_detector_slot(reveal_slot) then
+		-- Creation can already change the position. Recheck before this pulse.
+		nearest_slot, nearest_distance_sqr, nearest_range, reveal_slot, nearest_position =
+			impl.nearest_detector_slot(actor_position, detector_data)
+	end
 
 	if not nearest_range then
 		next_detector_pulse = now + 250
@@ -1129,11 +1164,9 @@ function impl.update_active_metal_detector(now)
 	end
 	detector_pulse_sound:play_no_feedback(
 		db.actor, sound_object.s2d, 0, vector():set(0, 0, 0), 1.0)
-	if nearest_slot and nearest_slot.point and pf_accessibility_captions and
+	if nearest_position and pf_accessibility_captions and
 		pf_accessibility_captions.on_detector_pulse then
-		local point = nearest_slot.point.position
-		pf_accessibility_captions.on_detector_pulse(
-			"metal", vector():set(point[1], point[2], point[3]))
+		pf_accessibility_captions.on_detector_pulse("metal", nearest_position)
 	end
 	next_detector_pulse = now + interval
 end

@@ -11,6 +11,7 @@ local state = {
 	detector_battery_empty_notified = {},
 	detector_lifetimes = {},
 	recovered_upgrade_tooltips = {},
+	field_upgrade_bases = {},
 	repair_tooltip_charges = {},
 	disassembly_tooltip_charges = {},
 	detector_tooltip_minutes = {},
@@ -743,8 +744,34 @@ function impl.field_upgrade_key(section)
 end
 
 function impl.field_upgrade_id(target, upgrade_type, stage)
+	local section = target:section()
+	local bases = state.field_upgrade_bases[section]
+	if not bases then
+		bases = {}
+		state.field_upgrade_bases[section] = bases
+	end
+	local base = bases[upgrade_type]
+	if base == nil then
+		local direct = "lz_nm_up_" .. impl.field_upgrade_key(section) .. "_" .. upgrade_type
+		local ini = core.get_sysini()
+		-- Variants inherit base-weapon groups; scope variants can also own a
+		-- dedicated reload group. Resolve from the actual graph, preferring own IDs.
+		if ini:line_exist(section, "upgrades") then
+			for group in string.gmatch(ini:r_string(section, "upgrades"), "[^,%s]+") do
+				if string.match(group, "^lz_nm_gr_.+_" .. upgrade_type .. "$") then
+					local candidate = string.gsub(group, "^lz_nm_gr_", "lz_nm_up_")
+					if ini:section_exist(candidate) then
+						base = base or candidate
+						if candidate == direct then base = direct; break end
+					end
+				end
+			end
+		end
+		bases[upgrade_type] = base or false
+	end
+	if not base then return nil end
 	local suffix = stage and stage > 1 and "_" .. tostring(stage) or ""
-	return string.format("lz_nm_up_%s_%s%s", impl.field_upgrade_key(target:section()), upgrade_type, suffix)
+	return base .. suffix
 end
 
 function impl.field_upgrade_state(target)
@@ -754,7 +781,7 @@ function impl.field_upgrade_state(target)
 		local installed = 0
 		for stage = 1, FIELD_UPGRADE_LIMIT do
 			local id = impl.field_upgrade_id(target, upgrade_type, stage)
-			if core.get_sysini():section_exist(id) and target:has_upgrade(id) then
+			if id and core.get_sysini():section_exist(id) and target:has_upgrade(id) then
 				installed = installed + 1
 			end
 		end
@@ -1014,7 +1041,7 @@ function impl.install_field_upgrade(tool, target)
 	local upgrade = nil
 	for stage = 1, FIELD_UPGRADE_LIMIT do
 		local candidate = impl.field_upgrade_id(target, upgrade_type, stage)
-		if core.get_sysini():section_exist(candidate) and not target:has_upgrade(candidate) then
+		if candidate and core.get_sysini():section_exist(candidate) and not target:has_upgrade(candidate) then
 			if impl.field_upgrade_definition_valid(candidate, upgrade_type) then upgrade = candidate end
 			break
 		end

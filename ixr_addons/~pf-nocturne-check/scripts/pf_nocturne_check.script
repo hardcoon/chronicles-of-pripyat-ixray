@@ -1,0 +1,41 @@
+-- Manual Developer teleport to the one active night trader. Never spawns NPCs.
+local function notify(key)
+    if db.actor then
+        db.actor:give_game_news(game.translate_string("pf_nocturne_name"),
+            game.translate_string(key),"pf_news_stash",0,5000)
+    end
+end
+
+local function actor_spot(point)
+    for _,radius in ipairs({2.5,1.5,0.9})do
+        for step=0,15 do
+            local yaw=point.yaw+math.pi+step*math.pi/8
+            local x,z=point.x+math.sin(yaw)*radius,point.z+math.cos(yaw)*radius
+            local ray=ray_pick()
+            ray:set_flags(3);ray:set_range(2)
+            ray:set_position(vector():set(x,point.y+0.6,z))
+            ray:set_direction(vector():set(0,-1,0));ray:set_ignore_object(db.actor)
+            if ray:query() then
+                local y=point.y+0.6-ray:get_distance()
+                if math.abs(y-point.y)<0.6 then return vector():set(x,y+0.05,z) end
+            end
+        end
+    end
+    return vector():set(point.x,point.y+0.05,point.z-0.9)
+end
+
+function teleport_next()
+    local qa=rawget(_G,"pf_stash_qa")
+    if not qa or not qa.is_developer_mode or qa.is_developer_mode()~=true then
+        notify("pf_nocturne_route_developer_only");return false
+    end
+    if not db.actor or not alife() then return false end
+    local server,point=pf_nocturne_night.active_npc()
+    if not server or not point then notify("pf_nocturne_route_unavailable");return false end
+    if level.name()~=point.level then notify("pf_nocturne_route_wrong_level");return false end
+    local position=actor_spot(point)
+    db.actor:set_actor_position(position)
+    local look=vector():set(point.x-position.x,0,point.z-position.z)
+    db.actor:set_actor_direction(-look:getH())
+    return true
+end
