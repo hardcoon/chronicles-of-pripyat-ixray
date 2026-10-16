@@ -137,8 +137,11 @@ function update()
     end
     -- Binding precedes online registration. Recover loaded objects from the
     -- binder's storage, and retain pending IDs until their server object ends.
-    for id, storage in pairs(db.storage) do
-        if is_nocturne(storage.object) then online[id] = true end
+    -- Failed NPC binders can leave storage behind after native object removal.
+    -- Resolve each ID from the current level registry before reading the client.
+    for id in pairs(db.storage) do
+        local live = level.object_by_id(id)
+        if is_nocturne(live) then online[id] = true end
     end
     for id in pairs(online) do
         local server = alife():object(id)
@@ -158,15 +161,15 @@ function update()
                 object:disable_trade()
             end
             neutral_pair(object, db.actor)
-            for other_id, storage in pairs(db.storage) do
-                local other = storage.object
+            for other_id in pairs(db.storage) do
+                local other = level.object_by_id(other_id)
                 if other_id ~= id and other ~= nil and IsStalker(other) then
                     neutral_pair(object, other)
                 end
             end
             local storage = db.storage[id]
             local planner = object:motivation_action_manager()
-            if server ~= nil and storage ~= nil and
+            if server ~= nil and storage ~= nil and storage.state_mgr ~= nil and planner ~= nil and
                     storage.active_section == "remark@pf_nocturne" and
                     planner:initialized() and
                     planner:current_action_id() == xr_actions_id.zmey_remark_base + 1 then

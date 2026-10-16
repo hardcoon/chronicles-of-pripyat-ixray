@@ -209,6 +209,78 @@ function place_item(item,variant)
     return false
 end
 
+local function edit_empty(object,entry)
+    if entry.kind=="stash" then
+        if not object:is_inv_box_empty() then return false end
+        -- Also reject a server child waiting to come online, before UI inventory
+        -- enumeration can see it. This scan runs only on entry/confirmation.
+        for _,child in alife():objects() do
+            if tonumber(child.parent_id)==object:id() then return false end
+        end
+    elseif entry.kind=="stove" and not pf_hf_stove.storage_empty(object:id()) then return false end
+    return true
+end
+
+local function apply_edit(pose,id,section)
+    local old=simulator_object(id)
+    local client=level.object_by_id(id)
+    local entry=old and old:section_name()==section and definition(section)
+    if not entry or not client or tonumber(old.parent_id)~=65535 then return nil,"source_lost" end
+    if not edit_empty(client,entry) then notify("pf_hf_edit_not_empty");return nil,"not_empty" end
+    if not pose or not pf_runtime_editor_geometry.finite(pose.position) or
+        not pf_runtime_editor_geometry.finite(pose.rotation) then return nil,"invalid_pose" end
+    if type(client.set_editor_transform)~="function" or
+        not client:set_editor_transform(pose.position,pose.rotation) then return nil,"transform_failed" end
+    -- Only empty auxiliary storage/effects may be rebuilt. Furniture identity,
+    -- device settings, door logic, physics bodies and save state stay in place.
+    local own=state(id)
+    if entry.kind=="campfire" then pf_hf_campfires.remove(entry,own) end
+    if entry.kind=="stove" then pf_hf_stove.clear_storage(id,own) end
+    if entry.kind=="door" and db.level_doors then db.level_doors[id]=vector():set(pose.position) end
+    pending[id]=nil
+    return id
+end
+
+function edit_placed(id,opening_key)
+    if not db.actor or not db.actor:alive() or pf_runtime_editor.is_active() or pending[id] then return false end
+    local object=level.object_by_id(id)
+    local entry=object and definition(object:section())
+    if not entry or not entry.item or not in_interaction_range(object) then return false end
+    if not edit_empty(object,entry) then notify("pf_hf_edit_not_empty");return false end
+    if type(object.set_editor_transform)~="function" or type(object.get_editor_rotation)~="function" then
+        notify("pf_hf_edit_failed");return false
+    end
+    local actor_id,level_name,expected_generation=db.actor:id(),level.name(),generation
+    local section=object:section()
+    pending[id]=true
+    local queued=pf_runtime_editor.defer_start(function()
+        local client=level.object_by_id(id)
+        local server=simulator_object(id)
+        if generation~=expected_generation or not pending[id] then return end
+        pending[id]=nil
+        if not client or not server or server:section_name()~=section or
+            not db.actor or db.actor:id()~=actor_id or not db.actor:alive() or level.name()~=level_name or
+            not in_interaction_range(client) then return end
+        if not edit_empty(client,entry) then notify("pf_hf_edit_not_empty");return end
+        local model_bounds,visual
+        if entry.kind=="workbench" then
+            model_bounds=pf_hf_workbench.model_bounds()
+            visual="dynamics\\placeable\\pf_hf_portable_workbench.ogf"
+        elseif section=="pf_hf_test_crate" then
+            model_bounds=pf_hf_test_crate.model_bounds();visual="dynamics\\box\\box_wood_01.ogf"
+        else model_bounds=bounds(entry);visual=entry.visual end
+        local ok=pf_runtime_editor.begin({section=section,title=entry.title,
+            source_object_id=id,bounds=model_bounds,visual=visual,base_rotation=entry.base_rotation,
+            preview_source=entry.preview_source,opening_key=opening_key,
+            orientation_mode=entry.kind=="workbench" and "local_minus_z_front" or nil,
+            initial_pose={position=vector():set(client:position()),rotation=client:get_editor_rotation()},
+            on_confirm=function(pose) return apply_edit(pose,id,section) end})
+        if not ok then notify("pf_hf_edit_failed") end
+    end,function() pending[id]=nil end)
+    if not queued then pending[id]=nil end
+    return queued
+end
+
 function pickup(id)
     local sim=alife()
     local server=simulator_object(id)

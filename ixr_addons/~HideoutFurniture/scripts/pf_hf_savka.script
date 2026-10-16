@@ -1,6 +1,6 @@
 -- Furniture trader promoted from the latest NPC Editor authoring point.
 -- pf_yanov_station owns discovery, spawning, binding and stationary placement.
--- Only session caches are used: F9 deliberately replenishes the complete shelf.
+-- Stock is initialized after load and reset at the start of each conversation.
 local trade_config = "misc\\trade\\trade_pf_yanov_savka.ltx"
 local state_name = "pf_yanov_savka_sit_fixed"
 local pose_name = "pf_yanov_savka_sit_fixed_pose"
@@ -88,6 +88,17 @@ local function restricted_trade_ini()
     return restricted_ini
 end
 
+function restock(npc)
+    if db.actor == nil or npc == nil or npc:section() ~= resident_data.section then return false end
+    if trade_ini == nil then trade_ini = ini_file(trade_config) end
+    -- Native CPurchaseList replaces the old sale shelf instead of adding to it.
+    -- Dialog entry calls this before any category opens the trade window.
+    npc:buy_supplies(trade_ini, "savka_supplies")
+    stocked_ids[npc:id()] = true
+    printf("~ [pf_hf_savka] restocked id=%s profile=savka_supplies", tostring(npc:id()))
+    return true
+end
+
 function update(npc)
     local actor = db.actor
     local storage = db.storage[npc:id()]
@@ -108,16 +119,14 @@ function update(npc)
         npc:buy_condition(policy, "savka_buy")
         npc:sell_condition(policy, "savka_sell")
         -- db.storage is a Lua table, recreated after offline/online binding.
-        -- Reapply the policy then, preserving this session's depleted shelf.
+        -- Reapply the policy without replenishing as a side effect of rebinding.
         configured_storage[npc:id()] = storage
     end
     if stocked_ids[npc:id()] then return end
-    -- Native CPurchaseList destroys the old inventory before spawning supplies.
-    -- Keep this outside binding hooks and run exactly once per ID after load.
-    npc:buy_supplies(trade_ini, "savka_supplies")
+    -- Initialize once after load, outside binding hooks. Later replenishment
+    -- belongs only to the first phrase of each new conversation.
+    if not restock(npc) then return end
     npc:give_money(20000 - npc:money())
-    stocked_ids[npc:id()] = true
-    printf("~ [pf_hf_savka] stocked id=%s types=159 units=331", tostring(npc:id()))
 end
 
 function reset()

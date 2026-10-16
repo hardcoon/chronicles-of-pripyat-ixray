@@ -1,0 +1,120 @@
+-- Daily game-time events, applied by each online lamp only inside render range.
+-- Settings belong to the user profile; lamp state keeps its existing save format.
+local state={loaded=false,revision=0}
+local filename="pf_hf_light_schedule.setting"
+local function parse(value)
+    if type(value)~="string" then return nil end
+    value=value:match("^%s*(.-)%s*$")
+    if value=="" then return "",nil end
+    local h,m=value:match("^(%d%d):(%d%d)$")
+    h,m=tonumber(h),tonumber(m)
+    if not h or h>23 or m>59 then return nil end
+    return string.format("%02d:%02d",h,m),h*60+m
+end
+function validate(on,off)
+    local a,am=parse(on)
+    local b,bm=parse(off)
+    if not a or not b then return nil,"pf_interiors_schedule_invalid" end
+    if am and am==bm then return nil,"pf_interiors_schedule_equal" end
+    return {on=a,off=b,on_minute=am,off_minute=bm}
+end
+local function load()
+    if state.loaded then return end
+    local file=io.open(getFS():update_path("$app_data_root$",filename),"r")
+    local settings
+    if file then
+        settings=validate(file:read("*l") or "",file:read("*l") or "")
+        state.active=tonumber(file:read("*l"))
+        state.slots={}
+        for i=1,3 do
+            local on,off=file:read("*l"),file:read("*l")
+            state.slots[i]=on and off and validate(on,off) or nil
+        end
+        file:close()
+    end
+    state.settings=settings or validate("","")
+    local valid=state.active and state.active==math.floor(state.active) and state.active>=1 and state.active<=3
+    for i=1,3 do valid=valid and state.slots[i]~=nil end
+    if not valid then
+        state.active=1
+        state.slots={state.settings,validate("20:00","07:00"),validate("18:00","00:00")}
+    end
+    -- The first two lines remain authoritative for older installs/tools.
+    state.slots[state.active]=state.settings
+    state.loaded=true
+end
+function times()
+    load()
+    return state.settings.on,state.settings.off
+end
+function profiles()
+    load()
+    local result={active=state.active,slots={}}
+    for i=1,3 do result.slots[i]={on=state.slots[i].on,off=state.slots[i].off} end
+    return result
+end
+function set_profiles(value)
+    if type(value)~="table" or type(value.active)~="number" or value.active~=math.floor(value.active) or
+        value.active<1 or value.active>3 or type(value.slots)~="table" then
+        return false,"pf_interiors_schedule_invalid"
+    end
+    local slots={}
+    for i=1,3 do
+        local slot=value.slots[i]
+        if type(slot)~="table" then return false,"pf_interiors_schedule_invalid" end
+        local problem
+        slots[i],problem=validate(slot.on,slot.off)
+        if not slots[i] then return false,problem end
+    end
+    load()
+    local same=value.active==state.active
+    for i=1,3 do same=same and slots[i].on==state.slots[i].on and slots[i].off==state.slots[i].off end
+    if same then return true end
+    local settings=slots[value.active]
+    local lines={settings.on,settings.off,tostring(value.active)}
+    for i=1,3 do lines[#lines+1]=slots[i].on;lines[#lines+1]=slots[i].off end
+    local file=io.open(getFS():update_path("$app_data_root$",filename),"w")
+    if not file then return false,"pf_interiors_schedule_save_error" end
+    local written=file:write(table.concat(lines,"\n").."\n")
+    local closed=file:close()
+    if not written or not closed then return false,"pf_interiors_schedule_save_error" end
+    state.settings=settings;state.slots=slots;state.active=value.active
+    state.revision=state.revision+1;state.due=nil
+    return true
+end
+function set_times(on,off)
+    local settings,problem=validate(on,off)
+    if not settings then return false,problem end
+    local value=profiles();value.slots[value.active]=settings
+    return set_profiles(value)
+end
+function reset()
+    state.revision=state.revision+1;state.due=nil
+end
+local function current_event()
+    local tick=time_global()
+    if state.due and tick>=state.tick and tick<state.due then return state.enabled,state.event end
+    state.tick=tick;state.due=tick+250
+    local y,mo,d,h,mi=game.get_game_time():get()
+    -- Gregorian day number: exact integer minutes across month/year changes.
+    local a=math.floor((14-mo)/12)
+    y=y+4800-a;mo=mo+12*a-3
+    local day=d+math.floor((153*mo+2)/5)+365*y+math.floor(y/4)-math.floor(y/100)+math.floor(y/400)
+    local now=day*1440+h*60+mi
+    local on,off=state.settings.on_minute,state.settings.off_minute
+    local on_event=on and math.floor((now-on)/1440)*1440+on
+    local off_event=off and math.floor((now-off)/1440)*1440+off
+    state.enabled=on_event~=nil and (off_event==nil or on_event>off_event)
+    state.event=state.enabled and on_event or off_event
+    return state.enabled,state.event
+end
+function update(binder,own,visible)
+    load()
+    if not visible then binder.schedule_event=nil;return end
+    if not state.settings.on_minute and not state.settings.off_minute then return end
+    local enabled,event=current_event()
+    if binder.schedule_event~=event or binder.schedule_revision~=state.revision then
+        own.is_on=enabled
+        binder.schedule_event=event;binder.schedule_revision=state.revision
+    end
+end

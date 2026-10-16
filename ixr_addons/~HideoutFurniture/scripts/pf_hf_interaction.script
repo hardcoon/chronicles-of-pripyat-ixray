@@ -1,4 +1,4 @@
--- A short USE gesture invokes the object; a 1.4-second gesture picks it up.
+-- Short USE invokes, held USE picks up; short reload toggles, held reload edits.
 local token=nil
 local held=nil
 local mode_keys={}
@@ -31,7 +31,8 @@ local function show_countdown()
         restore_hold_tip();held.tip_id=aimed:id()
     end
     local remaining=math.ceil(math.max(0,HOLD_MS-(time_global()-held.started))/100)/10
-    set_hold_tip(held.title.."\\n"..string.format(game.translate_string("pf_hf_pickup_countdown"),remaining))
+    local hint=held.action==key_bindings.kWPN_RELOAD and "pf_hf_edit_countdown" or "pf_hf_pickup_countdown"
+    set_hold_tip(held.title.."\\n"..string.format(game.translate_string(hint),remaining))
     held.hint_shown=true
 end
 
@@ -69,30 +70,25 @@ local function finish_hold()
     if held and not held.done and time_global()-held.started>=HOLD_MS then
         held.done=true
         restore_hold_tip()
-        if valid_gesture() then pf_hf_furniture.pickup(held.id) end
+        if valid_gesture() then
+            if held.action==key_bindings.kWPN_RELOAD then pf_hf_furniture.edit_placed(held.id,held.key)
+            else pf_hf_furniture.pickup(held.id) end
+        end
     end
 end
 
 function handle_input(event,key,action)
-    -- Consume the whole reload gesture, including repeats and release. A new
-    -- physical press toggles once; ordinary reload remains available elsewhere.
+    -- A second interaction key cannot turn one physical gesture into two actions.
     if mode_keys[key] and (event==0 or event==1 or event==2) then
         if event==2 then mode_keys[key]=nil end
         return true
     end
-    if action==key_bindings.kWPN_RELOAD and event==0 then
-        local object=target()
-        local entry=object and pf_hf_furniture.definition(object:section())
-        if not entry or (entry.kind~="light" and entry.kind~="campfire") then return false end
-        mode_keys[key]=true
-        if entry.kind=="campfire" then pf_hf_furniture.toggle_campfire(object:id())
-        else pf_hf_furniture.toggle_light_mode(object:id()) end
-        if not held or not held.hint_shown then pf_hf_furniture.apply_tip(object) end
-        return true
-    end
-    if action~=key_bindings.kUSE then return false end
+    if action~=key_bindings.kUSE and action~=key_bindings.kWPN_RELOAD then return false end
     if event==0 then
-        if held then return true end
+        if held then
+            if key~=held.key then mode_keys[key]=true end
+            return true
+        end
         local object=target()
         if not object then return false end
         local aimed=level.get_target_obj()
@@ -101,17 +97,25 @@ function handle_input(event,key,action)
         if not title and entry.item then title=system_ini():r_string(entry.item,"inv_name") end
         held={id=object:id(),tip_id=aimed and aimed:id() or object:id(),section=object:section(),
             title=game.translate_string(title or object:section()),
-            actor_id=db.actor:id(),level=level.name(),key=key,started=time_global()}
+            actor_id=db.actor:id(),level=level.name(),key=key,action=action,started=time_global()}
         show_countdown()
         return true
     elseif held and (event==1 or event==2) then
         if key~=held.key then return true end
         finish_hold()
         if event==2 then
-            local id=held.id
+            local id,held_action=held.id,held.action
             local use=not held.done and valid_gesture()
             suspend()
-            if use then pf_hf_furniture.interact(id) end
+            if use then
+                if held_action==key_bindings.kWPN_RELOAD then
+                    local object=level.object_by_id(id)
+                    local entry=object and pf_hf_furniture.definition(object:section())
+                    if entry and entry.kind=="campfire" then pf_hf_furniture.toggle_campfire(id)
+                    elseif entry and entry.kind=="light" then pf_hf_furniture.toggle_light_mode(id) end
+                    if object then pf_hf_furniture.apply_tip(object) end
+                else pf_hf_furniture.interact(id) end
+            end
         end
         return true
     end

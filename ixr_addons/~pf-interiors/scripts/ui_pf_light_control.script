@@ -1,0 +1,180 @@
+-- Modal owned by the options dialog. Drafts never change game/profile state.
+local active=nil
+local tr=pf_interiors.translate
+local function clock(minutes)
+    return string.format("%02d:%02d",math.floor(minutes/60),minutes%60)
+end
+local function minutes(text,default)
+    local h,m=text:match("^(%d%d):(%d%d)$")
+    return h and tonumber(h)*60+tonumber(m) or default
+end
+class "dialog" (CUIScriptWnd)
+function dialog:__init(owner) super()
+    self.owner=owner
+    self.rows={};self.graph_buttons={};self.graph_marks={}
+    local xml=CScriptXmlInit();xml:ParseFile("ui_pf_light_control.xml")
+    xml:InitWindow("main",0,self)
+    xml:InitStatic("main:shade",self):Enable(false)
+    xml:InitFrame("main:background",self):Enable(false)
+    xml:InitTextWnd("main:title",self)
+    for _,name in ipairs({"header_rule","footer_rule"}) do xml:InitStatic("main:"..name,self):Enable(false) end
+    for i=1,3 do
+        local index=i
+        local key="graph_"..i
+        self.graph_buttons[i]=xml:Init3tButton("main:"..key,self)
+        self.graph_marks[i]=xml:InitStatic("main:mark_"..i,self)
+        self.graph_marks[i]:Enable(false)
+        self.graph_marks[i]:SetTextureColor(GetARGB(255,204,155,66))
+        self:Register(self.graph_buttons[i],key)
+        self:AddCallback(key,ui_events.BUTTON_CLICKED,function() self:SelectGraph(index) end,self)
+    end
+    for _,key in ipairs({"on","off"}) do
+        local row={check=xml:InitCheck("main:"..key.."_enabled",self),
+            caption=xml:InitTextWnd("main:"..key.."_caption",self),
+            track=xml:InitTrackBar("main:"..key.."_track",self),
+            value=xml:InitTextWnd("main:"..key.."_value",self)}
+        self.rows[key]=row
+        row.track:SetOptIBounds(0,1439)
+        self:Register(row.check,key.."_enabled")
+        self:Register(row.track,key.."_track")
+        self:AddCallback(key.."_enabled",ui_events.CHECK_BUTTON_SET,self.OnTimeChanged,self)
+        self:AddCallback(key.."_enabled",ui_events.CHECK_BUTTON_RESET,self.OnTimeChanged,self)
+        self:AddCallback(key.."_track",ui_events.BUTTON_CLICKED,self.OnTimeChanged,self)
+    end
+    self.summary=xml:InitTextWnd("main:summary",self)
+    self.status=xml:InitTextWnd("main:status",self)
+    self.timeline=xml:InitStatic("main:timeline",self);self.timeline:Enable(false)
+    self.timeline:SetTextureColor(GetARGB(255,61,60,51))
+    self.segments={xml:InitStatic("main:segment_1",self),xml:InitStatic("main:segment_2",self)}
+    for _,part in ipairs(self.segments) do part:Enable(false);part:SetTextureColor(GetARGB(255,204,155,66)) end
+    for i=0,4 do xml:InitTextWnd("main:tick_"..i,self) end
+    self.lights_on=xml:Init3tButton("main:lights_on",self)
+    self.lights_off=xml:Init3tButton("main:lights_off",self)
+    local callbacks={lights_on=function() self:SetLights(true) end,
+        lights_off=function() self:SetLights(false) end,
+        apply=function() self:Apply() end,cancel=function() self:Close() end,close=function() self:Close() end}
+    for key,fn in pairs(callbacks) do
+        local button=self[key] or xml:Init3tButton("main:"..key,self)
+        self[key]=button;self:Register(button,key)
+        self:AddCallback(key,ui_events.BUTTON_CLICKED,fn,self)
+    end
+    self:Show(false)
+end
+function dialog:__finalize() end
+function dialog:Open()
+    if self:IsShown() then return end
+    if active and active~=self then active:Close() end
+    self.draft=pf_hf_light_schedule.profiles()
+    self.status:SetText("")
+    self:RenderGraph();self:RefreshAvailability()
+    active=self
+    self:Enable(true);self:ShowDialog(false)
+end
+function dialog:ReadDraft()
+    local slot=self.draft.slots[self.draft.active]
+    for _,key in ipairs({"on","off"}) do
+        local row=self.rows[key]
+        slot[key]=row.check:GetCheck() and clock(row.track:GetIValue()) or ""
+    end
+end
+function dialog:SelectGraph(index)
+    self:ReadDraft()
+    self.draft.active=index
+    self.status:SetText("")
+    self:RenderGraph()
+end
+function dialog:RenderGraph()
+    self.syncing=true
+    for i=1,3 do
+        local selected=self.draft.active==i
+        self.graph_marks[i]:Show(selected)
+        self.graph_buttons[i]:TextControl():SetTextColor(selected and GetARGB(255,204,155,66) or GetARGB(255,190,184,169))
+    end
+    local slot=self.draft.slots[self.draft.active]
+    for _,key in ipairs({"on","off"}) do
+        local row=self.rows[key]
+        row.check:SetCheck(slot[key]~="")
+        row.track:SetIValue(minutes(slot[key],key=="on" and 1200 or 420))
+    end
+    self.syncing=false
+    self:RefreshSummary()
+end
+function dialog:OnTimeChanged()
+    if self.syncing then return end
+    self:ReadDraft();self.status:SetText("");self:RefreshSummary()
+end
+function dialog:RefreshSummary()
+    local slot=self.draft.slots[self.draft.active]
+    for _,key in ipairs({"on","off"}) do
+        local row=self.rows[key]
+        local enabled=row.check:GetCheck()
+        row.track:Enable(enabled)
+        row.value:SetText(enabled and clock(row.track:GetIValue()) or "-")
+    end
+    local text
+    if slot.on=="" and slot.off=="" then text=tr("pf_interiors_schedule_disabled")
+    elseif slot.on~="" and slot.off~="" then
+        if slot.on==slot.off then text=tr("pf_interiors_schedule_equal")
+        else
+            text=string.format(tr("pf_interiors_graph_range"),slot.on,slot.off)
+            if slot.off<slot.on then text=text.." "..tr("pf_interiors_next_day") end
+        end
+    else
+        text=(slot.on~="" and tr("pf_interiors_auto_on").." "..slot.on or tr("pf_interiors_auto_off").." "..slot.off)
+    end
+    self.summary:SetText(text)
+    for _,part in ipairs(self.segments) do part:Show(false) end
+    if slot.on=="" or slot.off=="" or slot.on==slot.off then return end
+    local on,off=minutes(slot.on),minutes(slot.off)
+    local ranges=on<off and {{on,off}} or {{0,off},{on,1440}}
+    local position=self.timeline:GetWndPos()
+    local width=self.timeline:GetWidth()
+    for i,range in ipairs(ranges) do
+        local part=self.segments[i]
+        part:SetWndPos(vector2():set(position.x+width*range[1]/1440,position.y))
+        part:SetWidth(width*(range[2]-range[1])/1440)
+        part:Show(range[2]>range[1])
+    end
+end
+function dialog:RefreshAvailability()
+    local ready=pf_interiors_menu.available()
+    self.lights_on:Enable(ready);self.lights_off:Enable(ready)
+end
+function dialog:SetLights(enabled)
+    if not pf_interiors_menu.available() then return end
+    local ok,count=xpcall(function() return pf_hf_light_controls.set_lights(enabled) end,debug.traceback)
+    if not ok then pf_interiors.report("bulk lights failed: "..tostring(count));return end
+    self.status:SetText(tr(enabled and "pf_interiors_lights_on_count" or "pf_interiors_lights_off_count",count))
+end
+function dialog:Apply()
+    self:ReadDraft()
+    for i=1,3 do
+        local slot=self.draft.slots[i]
+        local valid,problem=pf_hf_light_schedule.validate(slot.on,slot.off)
+        if not valid then
+            self.draft.active=i;self:RenderGraph();self.status:SetText(tr(problem));return false
+        end
+    end
+    local ok,problem=pf_hf_light_schedule.set_profiles(self.draft)
+    if not ok then self.status:SetText(tr(problem));return false end
+    self.owner.dlg_interiors:RefreshLightSummary()
+    self:Close()
+    return true
+end
+function dialog:Close()
+    if self:IsShown() then self:HideDialog() end
+    if active==self then active=nil end
+    self.draft=nil
+end
+function dialog:OnKeyboard(dik,action)
+    if action==ui_events.WINDOW_KEY_PRESSED and
+        (dik==DIK_keys.DIK_ESCAPE or dik==DIK_keys.DIK_F5 or dik==DIK_keys.DIK_F9) then
+        self:Close();return true
+    end
+    return CUIScriptWnd.OnKeyboard(self,dik,action)
+end
+function dialog:Update()
+    CUIScriptWnd.Update(self)
+    if self:IsShown() then self:RefreshAvailability() end
+end
+function force_close() if active then active:Close() end end

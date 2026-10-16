@@ -17,19 +17,25 @@ function pf_runtime_editor_hud:__init() super()
         accent:Show(false)
         self.control_rows[index]={key=key,action=action,accent=accent}
     end
+    self.hold_rows={}
+    for index=1,2 do
+        local key=xml:InitTextWnd("main:control_key",self)
+        local action=xml:InitTextWnd("main:control_action",self)
+        key:Show(false);action:Show(false)
+        self.hold_rows[index]={key=key,action=action}
+    end
 end
 function pf_runtime_editor_hud:refresh(session)
     self.title:SetText(game.translate_string(session.spec.title or "pf_rt_title"))
     self.title:AdjustWidthToText()
-    local state=game.translate_string("pf_rt_state_"..session.state)
-    local align=game.translate_string(session.align_surface and "pf_rt_surface" or "pf_rt_actor")
-    local collision=game.translate_string(session.check_collision and "pf_rt_collision_on" or "pf_rt_collision_off")
-    local status=session.error and game.translate_string(session.error) or game.translate_string("pf_rt_ready")
-    -- CUILines recognizes the two characters backslash+n, not a literal LF.
-    self.status:SetText(state.."\\n"..align.." | "..collision.."\\n"..status)
+    local ready=session.valid and not session.error
+    self.status:SetText(game.translate_string(session.error or (ready and "pf_rt_ready" or "pf_rt_no_surface")))
+    self.status:SetTextColor(ready and GetARGB(255,110,220,110) or GetARGB(255,240,100,100))
     local mode=session.state=="ADV_CTRL" and "advanced" or string.lower(session.state)
     local message=game.translate_string("pf_rt_controls_"..mode)
     local labels=pf_runtime_editor.control_labels()
+    labels.collision_state=game.translate_string(session.check_collision and "pf_rt_value_on" or "pf_rt_value_off")
+    labels.alignment_mode=game.translate_string(session.align_surface and "pf_rt_align_surface" or "pf_rt_align_direction")
     message=message:gsub("%$([%w_]+)",function(key) return labels[key] or key end)
     -- Every row remains single-line. The coloured axis suffix uses its own
     -- sibling widget, so inline colouring cannot enable automatic wrapping.
@@ -62,6 +68,17 @@ function pf_runtime_editor_hud:refresh(session)
         local row=self.control_rows[hidden]
         row.key:Show(false);row.action:Show(false);row.accent:Show(false)
     end
+    -- Use the same physical-key labels as the controls above. ACTION macros
+    -- return layout-dependent ANSI names and would mix encodings with UTF-8.
+    local bindings={labels.key_pickup,labels.key_edit}
+    local actions={"pf_rt_hold_pickup","pf_rt_hold_edit"}
+    for number,row in ipairs(self.hold_rows) do
+        row.key:SetText(string.format(game.translate_string("pf_rt_hold_key"),bindings[number]))
+        row.action:SetText(game.translate_string(actions[number]))
+        row.key:AdjustWidthToText();row.action:AdjustWidthToText()
+        key_width=math.max(key_width,row.key:GetWidth())
+        row.key:Show(true);row.action:Show(true)
+    end
     -- Measure with the active engine font and UI scale, including rebound keys.
     local action_x=20+key_width+10
     local right=20+self.title:GetWidth()
@@ -73,6 +90,7 @@ function pf_runtime_editor_hud:refresh(session)
         end
         right=math.max(right,action_x+row.width)
     end
+    for _,row in ipairs(self.hold_rows) do right=math.max(right,action_x+row.action:GetWidth()) end
     local width=right+12-8
     local height=50+index*24
     self.controls_background:SetWidth(width)
@@ -82,8 +100,14 @@ function pf_runtime_editor_hud:refresh(session)
     self.status:SetWndPos(vector2():set(20,status_y+8))
     self.status:SetWidth(width-24)
     self.status:AdjustHeightToText()
+    local hold_y=status_y+8+self.status:GetHeight()+4
+    for number,row in ipairs(self.hold_rows) do
+        local y=hold_y+(number-1)*24
+        row.key:SetWndPos(vector2():set(20,y))
+        row.action:SetWndPos(vector2():set(action_x,y))
+    end
     self.status_background:SetWidth(width)
-    self.status_background:SetHeight(self.status:GetHeight()+16)
+    self.status_background:SetHeight(self.status:GetHeight()+4+#self.hold_rows*24+16)
 end
 function create_hud() return pf_runtime_editor_hud() end
 

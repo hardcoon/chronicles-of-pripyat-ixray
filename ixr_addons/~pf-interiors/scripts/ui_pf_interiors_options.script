@@ -1,4 +1,4 @@
--- A compact page inside the game's options dialog, with no separate popup.
+-- Compact Interior page. Lighting controls live in their own modal dialog.
 local tr=pf_interiors.translate
 class "panel" (CUIWindow)
 function panel:__init() super() end
@@ -11,20 +11,26 @@ function panel:InitControls(xml,owner)
     self.hint=xml:InitTextWnd("panel:hint",self)
     self.manage=xml:Init3tButton("panel:manage",self)
     self.forum=xml:Init3tButton("panel:forum",self)
-    self.range_caption=xml:InitTextWnd("panel:range_caption",self)
+    xml:InitStatic("panel:forum_rule",self):Enable(false)
+    self.range_caption=xml:InitStatic("panel:range_caption",self)
     self.weather_range=xml:InitCheck("panel:weather_range",self)
-    self.range_help=xml:InitTextWnd("panel:range_help",self)
-    self.lights_on=xml:Init3tButton("panel:lights_on",self)
-    self.lights_off=xml:Init3tButton("panel:lights_off",self)
+    self.global_lights=xml:Init3tButton("panel:global_lights",self)
     self.light_status=xml:InitTextWnd("panel:light_status",self)
     self.forum:Enable(true)
     self:RefreshAvailability()
+    self:RefreshLightSummary()
+end
+
+function panel:RefreshLightSummary()
+    local profiles=pf_hf_light_schedule.profiles()
+    local slot=profiles.slots[profiles.active]
+    local value=string.format(tr("pf_interiors_schedule_short"),
+        slot.on~="" and slot.on or "--:--",slot.off~="" and slot.off or "--:--")
+    self.light_status:SetText(value)
 end
 
 function panel:RefreshAvailability()
     local ready=pf_interiors_menu.available()
     self.manage:Enable(ready)
-    self.lights_on:Enable(ready)
-    self.lights_off:Enable(ready)
     self.hint:SetText(ready and tr("pf_interiors_menu_key",pf_interiors.key_label()) or tr("pf_interiors_menu_load_first"))
 end

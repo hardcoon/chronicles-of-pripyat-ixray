@@ -71,9 +71,15 @@ function pf_hf_static_furniture:update(delta)
         own.condition=1;own.last_time=nil -- All lights have unlimited power.
         local distance_culling=not pf_hf_visuals.weather_range()
         local in_range=light_in_range(self,distance_culling)
+        local visible=in_range and (rendered or not distance_culling)
+        if visible and type(self.object.in_furniture_render_range)=="function" then
+            local scale=get_console():get_float("r4_full_detail_distance_scale")
+            if type(scale)~="number" or scale~=scale then scale=1 end
+            visible=self.object:in_furniture_render_range(not distance_culling,scale)
+        end
+        pf_hf_light_schedule.update(self,own,visible)
         -- Hiding the model must not extinguish a distant light when preservation is enabled.
-        local emitting=own.is_on and in_range and
-            (rendered or not distance_culling)
+        local emitting=own.is_on and visible
         local changed=emitting~=lamp:is_on()
         if changed then if emitting then lamp:turn_on() else lamp:turn_off() end end
         -- TurnOff unregisters the native light/ambient/glow but also hides its

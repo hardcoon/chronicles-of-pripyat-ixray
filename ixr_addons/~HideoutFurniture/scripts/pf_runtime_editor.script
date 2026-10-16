@@ -38,12 +38,12 @@ local function target_distance(s)
     local distance=level.get_target_dist()
     return distance and distance>0 and distance or s.spec.initial_distance
 end
-local function use_key()
+local function bound_key(action,fallback)
     -- bind_to_dik belongs to Anomaly; IX-Ray exports the reverse lookup.
     for key=1,DIK_keys.MOUSE_5 or 517 do
-        if dik_to_bind(key)==key_bindings.kUSE then return key end
+        if dik_to_bind(key)==action then return key end
     end
-    return DIK_keys.DIK_F
+    return fallback
 end
 local function key_label(key)
     local names={HOME="Home",CAPITAL="CapsLock",TAB="Tab",ESCAPE="Esc",
@@ -57,7 +57,7 @@ local function key_label(key)
     return tostring(key)
 end
 local function configured_keys(overrides)
-    local result={place=use_key(),move=DIK_keys.MOUSE_1,rotate=DIK_keys.MOUSE_2,
+    local result={place=bound_key(key_bindings.kUSE,DIK_keys.DIK_F),move=DIK_keys.MOUSE_1,rotate=DIK_keys.MOUSE_2,
         height=DIK_keys.DIK_LSHIFT,fine=DIK_keys.DIK_LCONTROL,snap=DIK_keys.DIK_LMENU,
         collision=KEY_COLLISION,align=KEY_ALIGN,simple=KEY_SIMPLE,advanced=KEY_ADVANCED,preview=KEY_PREVIEW,display=KEY_DISPLAY,rotation_axis=KEY_AXIS,cancel=DIK_keys.DIK_ESCAPE}
     local defaults={};for name,key in pairs(result) do defaults[name]=key end
@@ -66,7 +66,7 @@ local function configured_keys(overrides)
     for name in pairs(result) do
         if ini and ini:section_exist("pf_runtime_editor_controls") and ini:line_exist("pf_runtime_editor_controls",name) then
             local value=ini:r_string("pf_runtime_editor_controls",name):upper():gsub("^DIK_","")
-            local key=name=="place" and value=="USE" and use_key() or DIK_keys[value] or DIK_keys["DIK_"..value]
+            local key=name=="place" and value=="USE" and bound_key(key_bindings.kUSE,DIK_keys.DIK_F) or DIK_keys[value] or DIK_keys["DIK_"..value]
             if key then
                 result[name]=key
                 if name=="place" then uses_binding=value=="USE" end
@@ -89,7 +89,10 @@ local function configured_keys(overrides)
 end
 function control_labels()
     local keys=session and session.keys or configured_keys()
+    local interaction=session and session.interaction_keys or {
+        pickup=bound_key(key_bindings.kUSE,DIK_keys.DIK_F),edit=bound_key(key_bindings.kWPN_RELOAD,DIK_keys.DIK_R)}
     return {key_interact=key_label(keys.place),key_collision=key_label(keys.collision),
+        key_pickup=key_label(interaction.pickup),key_edit=key_label(interaction.edit),
         key_align=key_label(keys.align),key_simple=key_label(keys.simple),key_mode=key_label(keys.advanced),
         key_preview=key_label(keys.preview),key_escape=key_label(keys.cancel),
         key_display=key_label(keys.display),key_axis=key_label(keys.rotation_axis),
@@ -116,6 +119,12 @@ end
 
 local function source_exists(s)
     if not db.actor or not db.actor:alive() or db.actor:id()~=s.actor_id then return false end
+    if s.spec.source_object_id then
+        local sim=alife()
+        local object=sim and sim:object(s.spec.source_object_id,true)
+        return object and tonumber(object.parent_id)==65535 and
+            object:section_name()==s.spec.section and level.object_by_id(s.spec.source_object_id)~=nil
+    end
     if not s.spec.source_item_id then return true end
     local simulator=alife()
     local item=simulator and simulator:object(s.spec.source_item_id,true)
@@ -131,6 +140,12 @@ local function cleanup(reason,confirmed)
     if old.controls then pcall(function() old.controls:HideDialog() end) end
     if old.hud then pcall(level.remove_dialog_to_render,old.hud) end
     if old.prefix then pcall(debug_render.clear_owner,old.prefix) end
+    if old.source_visible~=nil then
+        local object=level.object_by_id(old.spec.source_object_id)
+        if object and object:section()==old.spec.section then
+            pcall(function() object:set_render_visible(old.source_visible) end)
+        end
+    end
     if db.actor and db.actor:id()==old.actor_id and old.saved_slot then
         pcall(function() db.actor:activate_slot(old.saved_slot) end)
     end
@@ -253,7 +268,8 @@ local function render_preview(s,vertices,quaternion)
     end
     for _,handle in ipairs(s.contacts) do handle.visible=false end
     if not s.colliding then
-        local contacts=geometry.contacts(s.collision_ray,s.collision_vertices,nil)
+        local contacts=geometry.contacts(s.collision_ray,s.collision_vertices,
+            s.spec.source_object_id and level.object_by_id(s.spec.source_object_id) or nil)
         for i,c in ipairs(contacts) do
             if s.contacts[i] then draw_line(s.contacts[i],c.a,c.b,c.point>5 and color(0.5,0.5,0.5) or color(1,1,0)) end
         end
@@ -332,7 +348,8 @@ local function update_pose(s,confirming)
     local vertex=db.actor:level_vertex_id()
     local vertices=geometry.corners(s.spec.bounds,position,quaternion,false)
     s.collision_vertices=geometry.corners(s.spec.bounds,position,quaternion,true)
-    local colliding=s.check_collision and geometry.collides(s.collision_ray,s.collision_vertices,nil) or false
+    local colliding=s.check_collision and geometry.collides(s.collision_ray,s.collision_vertices,
+        s.spec.source_object_id and level.object_by_id(s.spec.source_object_id) or nil) or false
     if colliding then valid=false;s.error="pf_rt_collision" end
     s.valid,s.colliding,s.anchor,s.quaternion=valid,colliding,anchor,quaternion
     s.pose={position=position,rotation=rotation,level_vertex_id=vertex,game_vertex_id=db.actor:game_vertex_id()}
@@ -544,7 +561,21 @@ end
 function handle_input(event,key,action,dx,dy)
     local s=session
     if not s then return false end
+    if s.opening_key and key==s.opening_key and (event==0 or event==1 or event==2) then
+        if event==2 then s.opening_key=nil end
+        return true -- The R which opened editing must not cycle the rotation axis.
+    end
     local place=key==s.keys.place or (s.place_uses_binding and action==key_bindings.kUSE)
+    if s.spec.source_object_id then
+        if key==s.keys.cancel or action==key_bindings.kQUIT then
+            if event==0 then cancel("cancel") end
+            return true
+        end
+        if place then
+            if event==0 then confirm() end
+            return true -- Keep advanced controls open after a rejected edit.
+        end
+    end
     if event==3 then
         if s.direct_key then
             if not s.direct_cancelled then
@@ -634,6 +665,25 @@ function handle_input(event,key,action,dx,dy)
     return false
 end
 
+local function seed_existing_pose(s,pose)
+    -- Invert the donor's camera-yaw placement frame. ZXY Euler offsets reproduce
+    -- the installed pose, including tilt, roll, model pivot and base rotation.
+    local q=pf_runtime_editor_math.RuntimeEditorQuaternion(pose.rotation)
+    local anchor=geometry.add(pose.position,q:rotate_vector(s.spec.bounds.pivot))
+    s.camera_position=geometry.copy(device().cam_pos)
+    s.camera_direction=geometry.copy(device().cam_dir)
+    s.camera_distance=anchor:distance_to(s.camera_position)
+    local delta=geometry.sub(anchor,geometry.add(s.camera_position,geometry.scale(s.camera_direction,s.camera_distance)))
+    local yaw=s.camera_direction:getH()
+    local c,sn=math.cos(yaw),math.sin(yaw)
+    s.offset=vector():set(delta.x*c+delta.z*sn,delta.y,-delta.x*sn+delta.z*c)
+    s.rotation_offset=(pose.rotation.y-yaw)*180/math.pi-s.spec.base_rotation
+    s.tilt_offset=pose.rotation.x*180/math.pi
+    s.roll_offset=pose.rotation.z*180/math.pi
+    s.align_surface=false
+    s.state="ADV_CTRL"
+end
+
 function begin(spec)
     if is_active() then return false,"busy" end
     if not available() then
@@ -656,6 +706,8 @@ function begin(spec)
     local b=spec.bounds
     if not b or not geometry.finite(b.min) or not geometry.finite(b.max) or
         b.max.x<=b.min.x or b.max.y<=b.min.y or b.max.z<=b.min.z then return false,"bad_bounds" end
+    if spec.initial_pose and (not geometry.finite(spec.initial_pose.position) or
+        not geometry.finite(spec.initial_pose.rotation)) then return false,"bad_pose" end
     local own={}
     for k,v in pairs(spec) do own[k]=v end
     own.bounds={min=geometry.copy(b.min),max=geometry.copy(b.max),pivot=geometry.copy(b.pivot or vector():set(0,0,0))}
@@ -674,7 +726,9 @@ function begin(spec)
         offset=vector():set(0,0,0),rotation_offset=0,tilt_offset=0,roll_offset=0,rotation_axis=1,display_mode=default_display,
         check_collision=spec.check_collision==true or (spec.check_collision==nil and default_collision),
         align_surface=(spec.align_surface==true or (spec.align_surface==nil and default_surface)) and spec.orientation_mode~="local_minus_z_front",
-        keys=keys,place_uses_binding=place_uses_binding,
+        keys=keys,place_uses_binding=place_uses_binding,opening_key=spec.opening_key,
+        interaction_keys={pickup=bound_key(key_bindings.kUSE,DIK_keys.DIK_F),
+            edit=bound_key(key_bindings.kWPN_RELOAD,DIK_keys.DIK_R)},
         prefix="pf_runtime_editor_"..serial.."_",target_ray=ray_pick(),collision_ray=ray_pick()}
     if not source_exists(s) then return false,"source_lost" end
     local hud=get_hud()
@@ -698,7 +752,17 @@ function begin(spec)
         stage="hud_registration"
         level.add_dialog_to_render(s.hud)
         stage="first_pose"
+        if own.initial_pose then seed_existing_pose(s,own.initial_pose) end
         update_pose(s,false)
+        if own.initial_pose then
+            s.fixed_frame=s.pose_frame
+            local object=own.source_object_id and level.object_by_id(own.source_object_id)
+            if object and type(object.get_render_visible)=="function" and type(object.set_render_visible)=="function" then
+                s.source_visible=object:get_render_visible()
+                object:set_render_visible(false)
+            end
+            open_controls(s)
+        end
     end,debug.traceback)
     if not ok then
         cleanup("initialization_failed",false)
@@ -713,6 +777,7 @@ end
 function update()
     local s=session
     if not s then return end
+    if s.opening_key and not key_down(s.opening_key) then s.opening_key=nil end
     if not source_exists(s) or level.name()~=s.level_name then cancel("owner_lost");return end
     if level.editor_input_owner()~=s.input_token then cancel("capture_lost");return end
     local receiver=level.main_input_receiver()

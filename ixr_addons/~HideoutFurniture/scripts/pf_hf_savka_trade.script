@@ -1,0 +1,98 @@
+-- Native trade-list filter. Stock, prices and the actor's inventory stay intact.
+local selected_category = "general"
+local categories = nil
+local registered = false
+local interactive_kinds = {workbench=true, radio=true, piano=true, bed=true, fan=true, clock=true}
+-- Explicit item IDs keep kitchen boards, maps and posters out of construction.
+-- Placement variants share the same inventory item and therefore one category.
+local material_items = {
+    pf_hfm_wall_divider_item=true,
+    pf_hfm_wooden_board_item=true,
+    pf_hfm_wooden_plank_item=true,
+    pf_hfm_metal_plate_item=true,
+    pf_hfm_wall_item=true,
+    pf_hfm_wall_metal_item=true,
+    pf_hfm_wall02_item=true,
+    pf_hfm_wall02_metal_item=true,
+    pf_hfm_wall_doorway_item=true,
+    pf_hfm_wall_doorway_metal_item=true,
+    pf_hfs_post_item=true,
+    pf_hfs_planks_item=true,
+    pf_hfs_wooden_fences_item=true,
+    pf_hfs_debris_item=true,
+    pf_hfs_metal_barrier_item=true,
+    pf_hfs_wood_barrier_1_item=true,
+    pf_hfs_wood_barrier_2_item=true,
+}
+
+local function category_map()
+    if categories ~= nil then return categories end
+    categories = {}
+    local catalogs = {pf_hf_furniture_catalog, pf_hf_expansion_catalog,
+        pf_hf_even_more_catalog, pf_hf_native_doors_catalog,
+        pf_hf_campfire_catalog, pf_hf_stock_catalog}
+    for _, catalog in ipairs(catalogs) do
+        for _, entry in pairs(catalog.by_item or catalog.entries) do
+            local section = entry.item
+            local kind = entry.kind
+            local display = entry.display_profile or pf_hf_display_data.profiles[entry.object]
+            if material_items[section] then
+                categories[section] = "materials"
+            elseif kind == "door" then
+                categories[section] = "doors"
+            elseif kind == "stash" and (not display or entry.specialized_storage == "ammo" or
+                    display.kind == "ammo") then
+                categories[section] = "storage"
+            elseif interactive_kinds[kind] or display ~= nil or section == "pf_hfm_tv_box_item" then
+                categories[section] = "interactive"
+            elseif kind == "light" or kind == "campfire" then
+                categories[section] = "lighting"
+            end
+        end
+    end
+    return categories
+end
+
+function reset_category()
+    selected_category = "general"
+end
+
+function category_for_section(section)
+    return category_map()[section] or "general"
+end
+
+function item_available(owner, item)
+    -- This global callback also runs for the actor and other traders.
+    if owner == nil or owner:section() ~= "pf_yanov_savka" then return true end
+    return item ~= nil and category_for_section(item:section()) == selected_category
+end
+
+function open_category(first_speaker, second_speaker, category)
+    local actor = db.actor
+    local npc = first_speaker
+    if npc == nil or npc:section() ~= "pf_yanov_savka" then npc = second_speaker end
+    if actor == nil or npc == nil or npc:section() ~= "pf_yanov_savka" or
+            not actor:is_trade_enabled() or not npc:is_trade_enabled() then return false end
+    if category ~= "storage" and category ~= "lighting" and category ~= "doors" and
+            category ~= "interactive" and category ~= "materials" and category ~= "general" then return false end
+    selected_category = category
+    actor:switch_to_trade()
+    return true
+end
+
+local function update()
+    if selected_category == "general" then return end
+    -- Closing native trade can return to the same conversation without a new
+    -- greeting. Drop its selection before the ordinary Trade button is reused.
+    local menu = ActorMenu.get_actor_menu()
+    if menu == nil or not menu:IsShown() then reset_category() end
+end
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", reset_category)
+    RegisterScriptCallback("net_destroy", reset_category)
+    registered = true
+end
+on_game_start()

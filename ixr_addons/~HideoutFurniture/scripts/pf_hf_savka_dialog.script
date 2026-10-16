@@ -53,6 +53,36 @@ function greeting_text(first_speaker, second_speaker)
     return game.translate_string("pf_yanov_savka_greeting_repeat")
 end
 
+function begin_dialog(first_speaker, second_speaker)
+    pf_hf_savka_trade.reset_category()
+    local npc = savka_from_speakers(first_speaker, second_speaker)
+    return npc ~= nil and pf_hf_savka.restock(npc)
+end
+
+function open_storage_trade(first_speaker, second_speaker)
+    return pf_hf_savka_trade.open_category(first_speaker, second_speaker, "storage")
+end
+
+function open_interactive_trade(first_speaker, second_speaker)
+    return pf_hf_savka_trade.open_category(first_speaker, second_speaker, "interactive")
+end
+
+function open_materials_trade(first_speaker, second_speaker)
+    return pf_hf_savka_trade.open_category(first_speaker, second_speaker, "materials")
+end
+
+function open_lighting_trade(first_speaker, second_speaker)
+    return pf_hf_savka_trade.open_category(first_speaker, second_speaker, "lighting")
+end
+
+function open_doors_trade(first_speaker, second_speaker)
+    return pf_hf_savka_trade.open_category(first_speaker, second_speaker, "doors")
+end
+
+function open_decor_trade(first_speaker, second_speaker)
+    return pf_hf_savka_trade.open_category(first_speaker, second_speaker, "general")
+end
+
 function can_exchange_workbench(first_speaker, second_speaker)
     return intro_done(first_speaker, second_speaker) and not exchanged() and
         savka_from_speakers(first_speaker, second_speaker) ~= nil and
