@@ -382,6 +382,14 @@ function opt_video_adv:InitControls(x, y, xml, handler)
 
 	lineFrame(mode_2, "st_postprocess_options")
 
+    -- COP-ENG-168: one native, immediately applied and persisted DX11 checkbox.
+    if xml:NodeExist("video_adv:check_bodycam", 0) then
+        _st = xml:InitStatic("video_adv:templ_item", nil)
+        xml:InitStatic("video_adv:cap_bodycam", _st)
+        xml:InitCheck("video_adv:check_bodycam", _st)
+        table.insert(handler.m_preconditions, {func=mode_4, control=_st})
+    end
+
 	_st = xml:InitStatic("video_adv:templ_item", nil)
 	xml:InitStatic("video_adv:cap_vignette", _st)
 	ctl = xml:InitCheck("video_adv:check_vignette", _st)

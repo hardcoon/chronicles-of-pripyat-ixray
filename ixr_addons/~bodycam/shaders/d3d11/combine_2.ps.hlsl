@@ -1,0 +1,36 @@
+#include "common.hlsli"
+#include "mblur.hlsli"
+#include "dof.hlsli"
+
+Texture3D s_lut;
+// COP_ENGINE_PATCH: COP-ENG-168
+// Bodycam profile 1.0.1: stabilized shake; refresh the top-level shader CRC.
+#include "pf_bodycam.hlsli"
+float4 pf_bodycam_control;
+
+float3 main(v2p_aa_AA I) : SV_Target
+{
+    float3 Color = max(0.0f, dof(I.Tex0));
+    [branch] if (pf_bodycam_control.x > 0.5f) Color = bodycam(Color, I.Tex0);
+    float4 Bloom = s_bloom.Sample(smp_rtlinear, I.Tex0);
+
+#ifdef USE_CGIM_BLOOM_TWEAK
+	Bloom = BrokeBloom(Bloom);
+#endif
+	
+    float Scale = s_tonemap.Sample(smp_nofilter, float2(0.5f, 0.5f)).x;
+    Color = tonemap(Color, Scale);
+
+    Color = combine_bloom(Color, Bloom).xyz;
+
+#ifdef USE_CGIM_COLOR_TWEAK
+	Color = Uncharted2Tonemap(Color);
+#endif
+	
+#ifdef USE_LUT_TEXTURE
+ 	Color = s_lut.Sample(smp_rtlinear, saturate(Color)).xyz;
+#endif
+
+	return Color;
+}
+

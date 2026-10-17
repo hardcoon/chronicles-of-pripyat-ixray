@@ -4,6 +4,7 @@ local st = {revision = 0}
 local schema = {
     {key="enabled", kind="check", default=false, side="global"},
     {key="debug_map", kind="check", default=false, side="global"},
+    {key="switch_distance", kind="track", default=150, min=50, max=1500, side="global"},
     {key="respawn_hours", kind="float", default=72, side="global"},
     {key="humans", default=40, min=0, max=999, side="human"},
     {key="human_size_1", default=8, min=0, max=999, side="human", heading="sizes"},
@@ -61,6 +62,9 @@ function impl.init()
     for _, item in ipairs(schema) do
         if item.key ~= "respawn_hours" then
             st.values[item.key] = item.default
+            if item.key == "switch_distance" and ini:line_exist("alife", item.key) then
+                st.values[item.key] = math.max(item.min, math.min(item.max, math.floor(ini:r_float("alife", item.key) + 0.5)))
+            end
             if ini:line_exist("pf_pa_menu_defaults",item.key) then
                 if item.kind == "check" then st.values[item.key] = ini:r_bool("pf_pa_menu_defaults",item.key)
                 else st.values[item.key] = ini:r_float("pf_pa_menu_defaults",item.key) end
@@ -84,6 +88,10 @@ function impl.init()
             if value and item.key ~= "respawn_hours" then
                 candidate[item.key] = item.kind == "check" and value == "true" or tonumber(value)
                 if item.kind == "check" and value == "false" then candidate[item.key] = false end
+                -- Preserve the rest of an older profile when the range cap shrinks.
+                if item.key == "switch_distance" and candidate[item.key] and candidate[item.key] > item.max then
+                    candidate[item.key] = item.max
+                end
             end
         end
         candidate.respawn_seconds = tonumber(saved.respawn_seconds) or candidate.respawn_seconds

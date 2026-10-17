@@ -1,0 +1,88 @@
+-- name5go bodycam effect: original formulas and published MCM defaults.
+-- IX-Ray lifecycle/API adaptation; the only preference is r4_bodycam.
+local state = {registered=false, actor_id=nil, enabled=false, old_x=nil,
+    delay=0, elapsed=0, foot=0, sprint=0, hit=0, fire=0, packet=nil}
+local STEP = 0.0166
+local MOVEMENT_REAL, MOVE_SPRINT = 2, 4096
+local function limit(v, low, high) return math.max(low, math.min(high, v)) end
+
+local function publish(packet)
+    if packet == state.packet then return end
+    local console = get_console()
+    if console:get_string("r4_bodycam") == nil then return end
+    console:execute("r4_bodycam_state " .. packet)
+    state.packet = packet
+end
+
+local function clear()
+    state.enabled=false; state.old_x=nil; state.delay=0; state.elapsed=0
+    state.foot=0; state.sprint=0; state.hit=0; state.fire=0
+    -- Always refresh the transient renderer packet after load/net_destroy.
+    state.packet=nil
+    publish("0,0,0,0")
+end
+
+function on_foot_step(actor)
+    if not state.enabled then return end
+    state.foot=1
+    if actor:get_movement_state(MOVEMENT_REAL, MOVE_SPRINT) then state.sprint=1 end
+end
+function on_weapon_fired()
+    if state.enabled then state.fire=1 end
+end
+function on_hit()
+    if state.enabled then state.hit=1 end
+end
+
+local function reset()
+    state.actor_id=nil
+    clear()
+end
+
+local function update()
+    local actor=db.actor
+    local console=get_console()
+    if not actor or not actor:alive() or not console:get_bool("r4_bodycam") then
+        if state.enabled then clear() end
+        return
+    end
+    if state.actor_id ~= actor:id() then
+        -- These three callbacks have no other owner in the installed project.
+        actor:set_callback(callback.on_foot_step, on_foot_step)
+        actor:set_callback(callback.weapon_fired, on_weapon_fired)
+        actor:set_callback(callback.hit, on_hit)
+        state.actor_id=actor:id()
+    end
+    local camera_x=device().cam_dir.x
+    if not state.enabled then
+        state.old_x=camera_x; state.enabled=true; state.packet=nil
+    end
+    -- Preserve the author's fixed step, including original hit/sprint coupling.
+    if state.elapsed>100 then state.elapsed=state.elapsed-100 end
+    state.foot=limit(state.foot-STEP*2,0,1)
+    state.sprint=limit(state.sprint-STEP*2,0,1)
+    state.hit=limit(state.sprint-STEP*3,0,1)
+    state.fire=limit(state.fire-STEP*3,0,1)
+    state.elapsed=state.elapsed+(state.foot*.5+state.sprint*.05+state.hit+state.fire*2)*STEP
+    if state.foot+state.sprint*2+state.hit*4+state.fire*7==0 then state.elapsed=0 end
+    state.delay=state.delay+(state.old_x-camera_x)
+    if math.abs(state.delay)>.01 then
+        state.delay=state.delay+(state.delay>0 and -1 or 1)*STEP*.0001
+    end
+    state.delay=limit(state.delay,-1,1)
+    local w=10+(math.sin(state.elapsed)+1+state.delay)*.1
+    -- Defaults: zoom .7, distortion .05/.05, circle .825/1, ratio16:10, CA10.
+    -- Publish every enabled update: renderer expires packets during stale lifecycle.
+    state.packet=nil
+    publish("7.0161,0.5005,82.5001,"..tostring(w))
+    state.old_x=camera_x
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("update",update)
+    RegisterScriptCallback("load",reset)
+    RegisterScriptCallback("net_destroy",reset)
+    state.registered=true
+end
+on_game_start()

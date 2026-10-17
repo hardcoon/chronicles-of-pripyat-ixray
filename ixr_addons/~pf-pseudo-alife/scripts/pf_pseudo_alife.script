@@ -17,9 +17,14 @@ function on_game_start()
 end
 
 function update()
+    local simulator = alife()
+    if not simulator then return end
     local revision = pf_pa_options.revision()
     if revision ~= applied_options then
         local values = pf_pa_options.get()
+        -- Global native A-Life range also applies while the extra population is off.
+        -- Apply committed options only; UI drafts never reach the simulator.
+        simulator:set_switch_distance(values.switch_distance)
         pf_pa_world.configure(values, pf_pa_plan.build(values))
         pf_pa_debug.set_enabled(values.debug_map)
         applied_options = revision

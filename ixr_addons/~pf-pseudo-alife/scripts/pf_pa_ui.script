@@ -18,6 +18,9 @@ function panel:InitControls(xml, rows)
             local caption = xml:InitStatic("caption_" .. item.key, self)
             if item.key == "debug_map" then self.debug_caption = caption end
             if item.kind == "check" then self.controls[item.key] = xml:InitCheck("check_" .. item.key, self)
+            elseif item.kind == "track" then
+                self.controls[item.key] = xml:InitTrackBar("track_" .. item.key, self)
+                self.controls[item.key]:SetOptIBounds(item.min, item.max)
             else self.controls[item.key] = xml:InitEditBox("edit_" .. item.key, self) end
         else
             local column = columns[item.side]
@@ -68,6 +71,7 @@ function panel:SetValues(values)
     for _, item in ipairs(self.rows) do
         local control,value = self.controls[item.key],values[item.key]
         if item.kind == "check" then control:SetCheck(value)
+        elseif item.kind == "track" then control:SetIValue(value)
         elseif item.kind == "float" then
             control:SetText((string.format("%.6f",value):gsub("0+$",""):gsub("%.$","")))
         else control:SetText(tostring(value)) end
@@ -158,6 +162,7 @@ function panel:GetValues()
     for _, item in ipairs(self.rows) do
         local control = self.controls[item.key]
         if item.kind == "check" then values[item.key] = control:GetCheck() == true
+        elseif item.kind == "track" then values[item.key] = control:GetIValue()
         else
             local text = control:GetText():match("^%s*(.-)%s*$")
             if item.kind == "float" then
