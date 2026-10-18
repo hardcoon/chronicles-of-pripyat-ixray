@@ -1,0 +1,115 @@
+-- Temporary, furniture-independent PDA locator. Keep IDs, never native wrappers.
+local codec=pf_interiors_codec
+local SECTION="pf_interior_map_anchor"
+local SPOT="pf_interior_map_focus"
+local DURATION=10000
+local state={pending=nil,id=nil,expires=0,cleanup=true}
+
+local function notify(id)
+    if db.actor then
+        db.actor:give_game_news(game.translate_string("st_tip"),game.translate_string(id),
+            "pf_news_item_received",0,4000)
+    end
+end
+local function release(id)
+    local sim=alife()
+    if not sim then return end
+    local object=sim:object(id,true)
+    -- A loaded game may reuse IDs. Never release somebody else's object.
+    if not object or object:section_name()~=SECTION then return end
+    level.map_remove_object_spot(id,SPOT)
+    sim:release(object,true)
+end
+local function clear()
+    if state.id then release(state.id) end
+    state.id=nil;state.expires=0
+end
+local function sweep()
+    -- Once after loading: an anchor can be saved during its ten-second life.
+    -- Collect first because release mutates the ALife object registry.
+    local ids={}
+    for _,object in alife():objects() do
+        if object:section_name()==SECTION then ids[#ids+1]=object.id end
+    end
+    for _,id in ipairs(ids) do release(id) end
+    state.cleanup=false
+end
+local function vertices(layout)
+    local actor=db.actor
+    if layout.level==level.name() then return actor:level_vertex_id(),actor:game_vertex_id() end
+    local graph,sim=game_graph(),alife()
+    local best,distance=nil,math.huge
+    -- Request-time work only. Use real graph level IDs, never an unchecked
+    -- imported name in a native header().level(name) lookup.
+    for id=0,65534 do
+        if not graph:valid_vertex_id(id) then break end
+        local vertex=graph:vertex(id)
+        if sim:level_name(vertex:level_id())==layout.level then
+            local p=vertex:level_point()
+            local d=codec.distance_sq(layout.origin,{p.x,p.y,p.z})
+            if d<distance then best=id;distance=d end
+        end
+    end
+    if best then return graph:vertex(best):level_vertex_id(),best end
+end
+function request(layout)
+    local valid=codec.validate(layout)
+    if not valid then return false,"pf_interiors_bad_file" end
+    if not alife() or not db.actor or not db.actor:alive() then return false,"pf_interiors_unavailable" end
+    local pda=ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu()
+    if not pda or not pda.FocusMapSpot then return false,"pf_interiors_map_unavailable" end
+    local lvid,gvid=vertices(layout)
+    if not lvid or not gvid then return false,"pf_interiors_map_unknown_level" end
+    state.pending={name=layout.name,level=layout.level,
+        origin={layout.origin[1],layout.origin[2],layout.origin[3]},
+        lvid=lvid,gvid=gvid,actor_id=db.actor:id(),actor_level=level.name(),
+        requested=time_global()}
+    return true
+end
+local function show(target)
+    clear()
+    local pda=ActorMenu.get_pda_menu()
+    if not pda or not pda.FocusMapSpot then return false end
+    local sim=alife()
+    local position=vector():set(target.origin[1],target.origin[2],target.origin[3])
+    local anchor=sim:create(SECTION,position,target.lvid,target.gvid)
+    if not anchor then return false end
+    state.id=anchor.id
+    -- The marker reads the stationary server position; no client/physics or
+    -- dependency on the furniture being installed or currently online.
+    sim:set_switch_online(anchor.id,false)
+    sim:set_switch_offline(anchor.id,true)
+    anchor.position=position
+    level.map_add_object_spot(anchor.id,SPOT,target.name)
+    -- Show first: PDA Show/Activated may recenter on the player.
+    if not pda:IsShown() then pda:ShowDialog(true) end
+    if not pda:FocusMapSpot(anchor.id,SPOT) then clear();return false end
+    state.expires=time_global()+DURATION
+    return true
+end
+function update()
+    if not alife() or not db.actor then return end
+    if state.cleanup then sweep() end
+    local now=time_global()
+    if state.id and (now>=state.expires or not db.actor:alive()) then clear() end
+    local target=state.pending
+    if not target then return end
+    if not db.actor:alive() or db.actor:id()~=target.actor_id or level.name()~=target.actor_level then
+        state.pending=nil;return
+    end
+    -- Run after the interior dialog has left the native input-receiver stack.
+    if level.main_input_receiver() then
+        if now-target.requested>=3000 then state.pending=nil;notify("pf_interiors_map_unavailable") end
+        return
+    end
+    state.pending=nil
+    local ok,result=pcall(show,target)
+    if not ok or not result then
+        clear();notify("pf_interiors_map_unavailable")
+        if not ok and SemiLog then SemiLog("[pf_interiors] map focus failed: "..tostring(result)) end
+    end
+end
+function reset()
+    -- Load has already replaced the registry: do not touch a saved native ID.
+    state.pending=nil;state.id=nil;state.expires=0;state.cleanup=true
+end

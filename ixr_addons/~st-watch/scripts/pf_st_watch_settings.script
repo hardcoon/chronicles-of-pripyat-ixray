@@ -1,0 +1,64 @@
+-- Installation settings; no changes to save-game packets or global controls.
+local state={value=nil}
+local defaults={enabled=1,red=.65,green=.45,blue=.25,brightness=5,backlight=11,mode=1,inspect_key=226,mode_key=339}
+local order={"enabled","red","green","blue","brightness","backlight","mode","inspect_key","mode_key"}
+local function path() return getFS():update_path("$app_data_root$","pf_st_watch.setting") end
+local function normalized(value)
+    local result={}
+    for _,key in ipairs(order) do result[key]=tonumber(value[key]) or defaults[key] end
+    for _,key in ipairs({"red","green","blue"}) do
+        result[key]=math.max(0,math.min(1,result[key]))
+    end
+    result.enabled=result.enabled==1 and 1 or 0
+    result.mode=math.max(1,math.min(3,math.floor(result.mode)))
+    result.brightness=math.max(.25,math.min(6,result.brightness))
+    result.backlight=math.max(0,math.min(30,result.backlight))
+    for _,key in ipairs({"inspect_key","mode_key"}) do
+        result[key]=math.max(1,math.min(511,math.floor(result[key])))
+    end
+    return result
+end
+function editor_key()
+    if not state.editor_key then
+        local ini=system_ini()
+        state.editor_key=ini:line_exist("pf_st_watch","editor_key") and ini:r_u32("pf_st_watch","editor_key") or 63
+        state.editor_key=math.max(1,math.min(511,math.floor(state.editor_key)))
+    end
+    return state.editor_key
+end
+function get_defaults() return normalized(defaults) end
+function get()
+    if not state.value then
+        local value={}
+        local file=io.open(path(),"r")
+        if file then
+            for line in file:lines() do
+                local key,v=line:match("^([%w_]+)%s*=%s*([%d%.]+)%s*$")
+                if key then value[key]=tonumber(v) end
+            end
+            file:close()
+        end
+        state.value=normalized(value)
+    end
+    return normalized(state.value)
+end
+function save(value)
+    value=normalized(value)
+    local file=io.open(path(),"w")
+    if not file then printf("! [st_watch] Cannot save settings");return false end
+    local lines={}
+    for _,key in ipairs(order) do lines[#lines+1]=key.."="..tostring(value[key]).."\n" end
+    local written=file:write(table.concat(lines))
+    local closed=file:close()
+    if not written or not closed then return false end
+    state.value=value
+    return true
+end
+function next_mode()
+    local value=get()
+    value.mode=value.mode%3+1
+    return save(value)
+end
+function key_name(dik)
+    return dik_to_keyname(dik) or ""
+end

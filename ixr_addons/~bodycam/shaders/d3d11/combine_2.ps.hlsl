@@ -3,6 +3,7 @@
 #include "dof.hlsli"
 
 Texture3D s_lut;
+// COP_ENGINE_PATCH: COP-ENG-177 - refresh top-level CRC after the zero-luminance CGIM guard.
 // COP_ENGINE_PATCH: COP-ENG-168
 // Bodycam profile 1.0.1: stabilized shake; refresh the top-level shader CRC.
 #include "pf_bodycam.hlsli"

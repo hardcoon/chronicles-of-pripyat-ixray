@@ -68,7 +68,9 @@ local function connect_input()
     end
     pf_door_qa.on_key_press=input_wrapper
 end
+function show_on_map(layout) return pf_interiors_map.request(layout) end
 local function on_load()
+    pf_interiors_map.reset()
     ui_pf_interiors.force_close()
     pf_interiors_files.cancel()
     pf_interiors_menu.reset()
@@ -76,6 +78,7 @@ end
 local function on_update()
     connect_input()
     pf_interiors_menu.update()
+    pf_interiors_map.update()
 end
 function on_game_start()
     if registered then return end

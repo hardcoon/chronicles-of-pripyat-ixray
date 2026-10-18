@@ -49,7 +49,8 @@ function pf_interiors_dialog:__init() super()
         self.buttons[name]=button;self:Register(button,name)
         self:AddCallback(name,ui_events.BUTTON_CLICKED,function() self:guard(fn) end,self)
     end
-    local actions={install=function() self:ask_install() end,remove_world=function() self:ask_remove() end,
+    local actions={show_map=function() self:show_on_map() end,
+        install=function() self:ask_install() end,remove_world=function() self:ask_remove() end,
         rename=function() self:open_popup("rename") end,delete=function() self:open_popup("delete") end}
     for name,fn in pairs(actions) do
         self:AddCallback("row_"..name,ui_events.BUTTON_CLICKED,function() self:guard(fn) end,self)
@@ -163,13 +164,13 @@ function pf_interiors_dialog:reload(prefer)
         item:AttachChild(title)
         title:SetAutoDelete(true)
         local controls={};local right=item:GetWidth()-8*self.kx
-        for _,spec in ipairs({{"delete",28,6},{"rename",28,8},{"remove_world",100,8},{"install",112,0}}) do
+        for _,spec in ipairs({{"delete",28,6},{"rename",28,6},{"show_map",28,8},{"remove_world",100,8},{"install",112,0}}) do
             local name,width,gap=spec[1],spec[2],spec[3]
             local button=self.xml:Init3tButton("row:"..name,item)
             right=right-width*self.kx;button:SetWndPos(vector2():set(right,20))
             button:SetWidth(width*self.kx);button:SetHeight(26)
             self:Register(button,"row_"..name);controls[name]=button
-            if name=="rename" or name=="delete" then
+            if name=="rename" or name=="delete" or name=="show_map" then
                 local icon=self.xml:InitStatic("row:"..name.."_icon",button);icon:Enable(false)
                 icon:SetWndPos(vector2():set(6*self.kx,5));icon:SetWidth(16*self.kx);icon:SetHeight(16)
             end
@@ -275,6 +276,11 @@ function pf_interiors_dialog:ask_remove()
     local plan,err,count=world.removable(self.selected)
     if not plan then self:set_status(err,count);return end
     self:open_popup("remove",tr("pf_interiors_remove_confirm",#plan))
+end
+function pf_interiors_dialog:show_on_map()
+    if not self.selected then return end
+    local ok,err=pf_interiors.show_on_map(self.selected)
+    if ok then self:Close() else self:set_status(err) end
 end
 function pf_interiors_dialog:ask_install()
     if not self.selected then return end

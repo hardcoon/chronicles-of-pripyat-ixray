@@ -1,0 +1,11 @@
+; COP-ENG-171. Reloaded when a level loads; restart the game after editing.
+[vehicle_grass]
+; Seconds to reach 95% of the contacted bend target (0.01 .. 10).
+bend_time = 0.20
+; Seconds per full scale unit (0 -> 1), donor recovery rate is 1.0.
+; Actual recovery from scale_factor 0.31 takes (1 - 0.31) * 21.74 = 15.0006 s.
+; Fully compressed profiles 0.50 / 0.34 / 0.31 / 0.25 recover in 10.87 / 14.35 / 15.00 / 16.31 s.
+recovery_time = 21.74
+; false: all car trails recover. true: honor each donor sphere's scale_save.
+; Donor scale_save=true keeps a trail until its detail cache is discarded.
+honor_scale_save = false

@@ -1,0 +1,214 @@
+-- A shared binding distinguishes a tap (mode) from a hold (inspection).
+local state={registered=false,held=false,released=false,started=0,ready=0,last_data=0,opening=0,hold_key=0,pending_key=0,pending_at=0,bound=nil,satiety_threshold=.65}
+local hold_ms=167
+local boosters={
+    eBoostRadiationProtection=EBoostParams.eBoostRadiationProtection,
+    eBoostRadiationRestore=EBoostParams.eBoostRadiationRestore,
+    eBoostTelepaticProtection=EBoostParams.eBoostTelepaticProtection,
+    eBoostBleedingRestore=EBoostParams.eBoostBleedingRestore,
+}
+local function own(actor)
+    return actor and actor:is_hud_animator_active() and actor:get_hud_animator_section()=="pf_st_watch_inspect"
+end
+function on_started()
+    if db.actor then db.actor:set_hud_animator_force_hide_items(false) end
+    state.started=time_global()
+    -- Let the donor's opening motion finish before reversing a quick tap.
+    state.ready=state.started+state.opening
+end
+local function available(actor,for_editor)
+    if not actor or not actor:alive() or pf_st_watch_settings.get().enabled~=1 then return false end
+    local inspecting=own(actor)
+    if actor:is_hud_animator_active() and not inspecting then return false end
+    if not for_editor and not inspecting and (actor:is_inventory_disabled() or actor:is_pda_disabled()) then return false end
+    if actor:get_attached_vehicle() then return false end
+    if actor:is_talking() then return false end
+    if ActorMenu and not for_editor then
+        local inventory=ActorMenu.get_actor_menu()
+        local pda=ActorMenu.get_pda_menu()
+        if (inventory and inventory:IsShown()) or (pda and pda:IsShown()) then return false end
+    end
+    return true
+end
+function inspect(for_editor)
+    local actor=db.actor
+    if own(actor) and for_editor then state.held=true;state.released=false;return true end
+    if not available(actor,for_editor) or actor:is_hud_animator_active() then return false end
+    state.started=time_global();state.ready=state.started+state.opening
+    state.hold_key=pf_st_watch_settings.get().inspect_key
+    state.held=true;state.released=false
+    actor:set_hud_animator_force_hide_items(true)
+    actor:start_hud_animator("pf_st_watch_inspect")
+    return true
+end
+function release()
+    state.held=false
+end
+local function reset()
+    pf_st_watch_editor.reset()
+    state.held=false;state.released=false;state.started=0;state.ready=0;state.last_data=0;state.bound=nil
+    state.pending_key=0;state.pending_at=0;state.visible=nil
+end
+local function boosted(actor,name)
+    local enum=boosters[name]
+    return type(enum)=="number" and actor:is_booster_influence(enum)
+end
+local function publish(actor,now)
+    if type(set_watch_shader_param)~="function" or now-state.last_data<100 then return end
+    state.last_data=now
+    local settings=pf_st_watch_settings.get()
+    local visible=settings.enabled==1
+    if state.visible~=visible and player_hud and type(player_hud.set_watch_visible)=="function" then
+        if player_hud.set_watch_visible(visible) then state.visible=visible end
+    end
+    if not visible then return end
+    local _,_,_,h,m,s=game.get_game_time():get()
+    -- The watch-only vector's unused W carries the independent background level.
+    -- Its XYZ remain hours/minutes/seconds; no global lighting commands are changed.
+    set_watch_shader_param("game_time",h,m,s,settings.backlight)
+    local radiation=math.max(0,actor.radiation)*500
+    local protection=math.max(0,math.min(1,(500-radiation)/400))
+    if boosted(actor,"eBoostRadiationProtection") or boosted(actor,"eBoostRadiationRestore") then protection=-1 end
+    set_watch_shader_param("watch_actor_params_1",actor.health,protection,radiation,settings.mode)
+    -- Reuse the dynamic weight module's equipment-aware thresholds and cache.
+    -- rawget avoids importing a module from the actor update path.
+    local weight_system=rawget(_G,"pf_progressive_overweight")
+    local severity=weight_system and type(weight_system.get_indicator_state)=="function" and weight_system.get_indicator_state() or 0
+    local overweight=severity==2 and 0 or (severity==1 and .5 or 1)
+    -- Match UIMainIngameWnd: the hunger warning is hidden while the normalized
+    -- satiety coefficient is > .5, rather than warning immediately below 99%.
+    local needs=actor.satiety>state.satiety_threshold and 1 or actor.satiety
+    if boosted(actor,"eBoostSatietyRestore") then needs=-1 end
+    -- One shared needs icon. COP-ENG-077 hides the hydration warning above 65%.
+    -- A thirst warning also takes priority over the donor's blue food booster.
+    local thirst=actor.thirst
+    if thirst<=.65 then needs=needs<0 and thirst or math.min(needs,thirst) end
+    local psy=(boosted(actor,"eBoostTelepaticProtection") or boosted(actor,"eBoostPsyHealthRestore")) and -1 or actor.psy_health
+    local bleeding=boosted(actor,"eBoostBleedingRestore") and -1 or 1-math.max(0,math.min(1,actor.bleeding))
+    set_watch_shader_param("watch_actor_params_2",needs,psy,overweight,bleeding)
+    set_watch_shader_param("watch_color_params",settings.red,settings.green,settings.blue,settings.brightness)
+end
+local function cycle_mode()
+    if not available(db.actor) then return false end
+    if pf_st_watch_settings.next_mode() then
+        if not state.sound then state.sound=sound_object("st_watch\\mode") end
+        state.sound:play(db.actor,0,sound_object.s2d)
+    end
+    return true
+end
+local function key_press(dik)
+    local settings=pf_st_watch_settings.get()
+    if settings.enabled~=1 then return end
+    if dik==pf_st_watch_settings.editor_key() then return pf_st_watch_editor.request() end
+    if dik==settings.inspect_key then
+        if state.pending_key~=0 or state.held then return true end
+        if settings.inspect_key==settings.mode_key then
+            if not available(db.actor) then return false end
+            state.pending_key=dik;state.pending_at=time_global()
+            return true
+        end
+        return inspect()
+    end
+    if dik==settings.mode_key then return cycle_mode() end
+end
+local function key_release(dik)
+    if dik==state.pending_key then
+        local tap=time_global()-state.pending_at<hold_ms
+        state.pending_key=0;state.pending_at=0
+        if tap then cycle_mode() end
+        return
+    end
+    if dik==state.hold_key or dik==pf_st_watch_settings.get().inspect_key then release() end
+end
+local function attach_input(actor)
+    if state.bound==actor then return end
+    local binder=actor:binded_object()
+    if not binder then return end
+    -- reinit has already captured the original functions when common scripts load.
+    -- Replace the native functors as well, preserving the binder's own handlers.
+    local pressed=bind_stalker.actor_binder.lz_nm_key_press
+    local released=bind_stalker.actor_binder.lz_nm_key_release
+    actor:set_callback(callback.key_press,function(self,dik)
+        if pressed then pressed(self,dik) end
+        return key_press(dik)
+    end,binder)
+    actor:set_callback(callback.key_release,function(self,dik)
+        if released then released(self,dik) end
+        key_release(dik)
+    end,binder)
+    state.bound=actor
+end
+local function hook_input_owner()
+    if state.input_owner then return true end
+    -- The installed NPC editor owns the native keyboard callbacks after its
+    -- delayed startup. Its proxy calls these public functions dynamically.
+    local owner=rawget(_G,"pf_npc_editor")
+    if not owner or type(owner.on_key_press)~="function" or type(owner.on_key_release)~="function" then return false end
+    local pressed=owner.on_key_press
+    local released=owner.on_key_release
+    owner.on_key_press=function(dik)
+        if pressed(dik) then return true end
+        return key_press(dik)
+    end
+    owner.on_key_release=function(dik)
+        local handled=released(dik)
+        key_release(dik)
+        return handled
+    end
+    state.input_owner=true
+    return true
+end
+local function inspect_for_editor() return inspect(true) end
+local function update()
+    local actor=db.actor
+    if not actor or not actor:alive() then reset();return end
+    -- The binder owns input initially; the editor's proxy takes over after
+    -- its startup delay. Cover both stages without replacing that proxy.
+    attach_input(actor)
+    hook_input_owner()
+    local now=time_global()
+    publish(actor,now)
+    local editing=pf_st_watch_editor.update(actor,inspect_for_editor,release,available(actor))
+    if pf_st_watch_settings.get().enabled~=1 then
+        state.pending_key=0;state.held=false
+        if own(actor) then actor:close_hud_animator() end
+        return
+    end
+    if editing~=nil then state.pending_key=0;if editing then state.held=true end end
+    if state.pending_key~=0 then
+        local settings=pf_st_watch_settings.get()
+        if settings.inspect_key~=state.pending_key or settings.mode_key~=state.pending_key or not available(actor) then
+            state.pending_key=0
+        elseif now-state.pending_at>=hold_ms then
+            state.pending_key=0;inspect()
+        end
+    end
+    if not own(actor) then state.started=0;state.released=false;return end
+    if not state.held and not state.released and now>=state.ready then
+        state.released=true;actor:close_hud_animator()
+    end
+end
+function on_game_start()
+    if state.registered then return end
+    local ini=system_ini()
+    state.opening=ini:r_u32("pf_st_watch","opening_ms")
+    local section=ini:r_string("actor","condition_sect")
+    state.satiety_threshold=(1+ini:r_float(section,"satiety_critical"))*.5
+    pf_st_watch_options.install()
+    -- Remove editor raw UI pointers before the actor/level Lua objects can die.
+    -- The existing binder still owns teardown and runs with the same arguments.
+    local owner=bind_stalker.actor_binder
+    if not owner.pf_st_watch_destroy_wrapped then
+        local destroy=owner.net_destroy
+        owner.net_destroy=function(self,...)
+            local editor=rawget(_G,"pf_st_watch_editor")
+            if editor and type(editor.shutdown)=="function" then editor.shutdown() end
+            if destroy then return destroy(self,...) end
+        end
+        owner.pf_st_watch_destroy_wrapped=true
+    end
+    RegisterScriptCallback("load",reset)
+    RegisterScriptCallback("update",update)
+    state.registered=true
+end
+on_game_start()

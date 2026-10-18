@@ -1,0 +1,284 @@
+-- COP-ENG-176. Editor and per-HUD preferences; no save-game packet changes.
+local state={profiles=nil,current=nil,request=false,session=nil,window=nil}
+local impl={}
+local fields={"x","y","z","rx","ry","rz"}
+local zero={0,0,0,0,0,0}
+function impl.copy(v)
+    local r={};for i=1,6 do r[i]=v[i] end;return r
+end
+function impl.path() return getFS():update_path("$app_data_root$","pf_st_watch_pose.ltx") end
+function impl.valid(v)
+    if type(v)~="table" then return false end
+    for i=1,6 do
+        if type(v[i])~="number" or v[i]~=v[i] or math.abs(v[i])>(i<4 and 200 or 180) then return false end
+    end
+    return true
+end
+function impl.parse(text)
+    local v={};for item in text:gmatch("[^,]+") do v[#v+1]=tonumber(item) or false end
+    if #v==6 and impl.valid(v) then return v end
+end
+function impl.default(hud)
+    if not state.defaults then state.defaults={};state.default_ini=ini_file("st_watch_pose.ltx") end
+    if not state.defaults[hud] then
+        local ini=state.default_ini
+        state.defaults[hud]=(ini:line_exist("poses",hud) and impl.parse(ini:r_string("poses",hud))) or zero
+    end
+    return state.defaults[hud]
+end
+function allowed(force)
+    if pf_st_watch_settings.get().enabled~=1 then return false end
+    if pf_stash_qa.is_developer_mode()==true then return true end
+    -- The menu's Developer switch also enables editing an existing save.
+    -- Cache that installation flag briefly: reading a file each render is wasteful.
+    local now=time_global()
+    if force or not state.developer_poll or now>=state.developer_poll then
+        state.developer_poll=now+500
+        state.developer_access=pf_stash_qa.is_developer_access_enabled()==true
+    end
+    return state.developer_access==true
+end
+function impl.load()
+    if state.profiles then return end
+    state.profiles={}
+    local f=io.open(impl.path(),"r")
+    if not f then return end
+    local text=f:read(65537);f:close()
+    if not text or #text>65536 then return end
+    for line in text:gmatch("[^\r\n]+") do
+        local key,values=line:match("^([%w_]+)%s*=%s*(.-)%s*$")
+        if key and key:match("^actor_hud") then
+            local v=impl.parse(values)
+            if v then state.profiles[key]=v end
+        end
+    end
+end
+function impl.native()
+    if not player_hud or type(player_hud.get_watch_pose)~="function" then return end
+    return player_hud.get_watch_pose()
+end
+function impl.apply(hud,v)
+    if not impl.valid(v) then return false end
+    return player_hud.set_watch_pose(hud,vector():set(v[1],v[2],v[3]),vector():set(v[4],v[5],v[6]))
+end
+function impl.values(p)
+    return {p.offset.x,p.offset.y,p.offset.z,p.angles.x,p.angles.y,p.angles.z}
+end
+function impl.write(key,value)
+    impl.load()
+    if not impl.valid(value) then return false end
+    local profiles={};for k,v in pairs(state.profiles) do profiles[k]=v end
+    profiles[key]=impl.copy(value)
+    local keys={};for k in pairs(profiles) do keys[#keys+1]=k end;table.sort(keys)
+    local lines={"; watch mount adjustments: x,y,z in mm; rx,ry,rz in degrees\n"}
+    for _,k in ipairs(keys) do
+        local v=profiles[k]
+        lines[#lines+1]=k.."="..string.format("%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",unpack(v))
+    end
+    local text=table.concat(lines)
+    local f=io.open(impl.path(),"w")
+    if not f then return false end
+    local written=f:write(text);local closed=f:close()
+    if not written or not closed then return false end
+    local check=io.open(impl.path(),"r")
+    if not check then return false end
+    local actual=check:read("*a");check:close()
+    if actual~=text then return false end
+    state.profiles=profiles;return true
+end
+function impl.refresh()
+    if state.window then state.window:Refresh() end
+end
+function request()
+    local enabled=allowed(true)
+    -- Called from the keyboard/input phase, never from an actor update/load.
+    -- Do not register raw UI pointers merely because a saved actor appeared.
+    if not state.actor or not state.actor:alive() then return false end
+    if not app_ready() or device().precache_frame~=0 then return false end
+    if not enabled or not state.can_open then
+        local reason=enabled and "pf_st_watch_editor_busy" or "pf_st_watch_editor_developer_required"
+        state.actor:give_game_news(game.translate_string("pf_st_watch_title"),game.translate_string(reason),"pf_news_stash",0,3000)
+        printf("[st_watch_editor] F6/request rejected: %s",reason)
+        return false
+    end
+    if not state.session then state.close_requested=false end
+    state.request=true
+    if not state.attached then
+        state.dispatcher=state.dispatcher or watch_editor_dispatcher()
+        state.dispatcher:Enable(true);state.dispatcher:Show(true)
+        level.add_dialog_to_render(state.dispatcher);state.attached=true
+    end
+    return true
+end
+function is_open() return state.session~=nil end
+function impl.detach()
+    if state.dispatcher and state.attached then
+        state.dispatcher:Show(false)
+        level.remove_dialog_to_render(state.dispatcher)
+        state.attached=false
+    end
+end
+function close(cancel)
+    local s=state.session
+    state.session=nil;state.request=false
+    if s then
+        if cancel then impl.apply(s.hud,s.original) end
+        if state.window and state.window:IsShown() then state.window:HideDialog() end
+        if s.finish then s.finish() end
+    end
+    impl.detach()
+end
+function shutdown()
+    -- The actor binder calls this before its original net_destroy tears down
+    -- level/script state. Keep userdata alive until all raw pointers are removed.
+    close(false)
+    state.actor=nil;state.begin=nil;state.finish=nil;state.can_open=false
+    state.current=nil;state.profile_poll=0;state.close_requested=false
+end
+function save()
+    local s=state.session
+    if not s or not impl.apply(s.hud,s.values) then return false end
+    if not impl.write(s.hud,s.values) then
+        s.message="pf_st_watch_editor_save_failed";impl.refresh();return false
+    end
+    s.original=impl.copy(s.values);s.dirty=false;s.message="pf_st_watch_editor_saved"
+    printf("[st_watch_editor] saved HUD=%s offsets_mm=%.6f,%.6f,%.6f angles_deg=%.6f,%.6f,%.6f",s.hud,unpack(s.values))
+    impl.refresh();return true
+end
+function change(index,direction)
+    local s=state.session
+    if not s then return end
+    local v=impl.copy(s.values);local step=index<4 and s.position_step or s.rotation_step
+    v[index]=math.max(index<4 and -200 or -180,math.min(index<4 and 200 or 180,v[index]+direction*step))
+    if not impl.apply(s.hud,v) then close(true);return end
+    s.values=v;s.selected=index;s.dirty=true;s.message="pf_st_watch_editor_unsaved";impl.refresh()
+end
+function reset_pose()
+    local s=state.session
+    if not s then return end
+    local v=impl.default(s.hud)
+    if impl.apply(s.hud,v) then s.values=impl.copy(v);s.dirty=true;s.message="pf_st_watch_editor_unsaved";impl.refresh() end
+end
+function step()
+    local s=state.session
+    if not s then return end
+    s.step_index=s.step_index%4+1
+    s.position_step=({.1,.5,1,5})[s.step_index]
+    s.rotation_step=({.25,1,2,5})[s.step_index]
+    impl.refresh()
+end
+function toggle_view()
+    local s=state.session
+    if not s then return end
+    if s.inspect then s.inspect=false;s.finish()
+    elseif s.begin() then s.inspect=true end
+    impl.refresh()
+end
+function reset()
+    state.close_requested=true;state.current=nil;state.profile_poll=0;state.request=false
+end
+function impl.pump(actor,begin_inspect,end_inspect,can_open)
+    if state.close_requested or not allowed() then close(false);state.close_requested=false;return end
+    if not state.request and not state.session then impl.detach();return end
+    local p=impl.native()
+    if not actor or not actor:alive() or not p then close(false);state.current=nil;return end
+    if state.request and not state.session then
+        state.request=false
+        if not can_open or not begin_inspect() then close(false);return end
+        local v=impl.values(p)
+        state.session={hud=p.hud,values=v,original=impl.copy(v),inspect=true,begin=begin_inspect,finish=end_inspect,
+            selected=3,position_step=.5,rotation_step=1,step_index=2,dirty=false,message="pf_st_watch_editor_ready"}
+        if not state.window then state.window=watch_editor_window() end
+        state.window:Refresh();state.window:Enable(true);state.window:ShowDialog(false)
+    end
+    if state.session then
+        if p.hud~=state.session.hud or actor:get_attached_vehicle() or actor:is_talking() then close(false);return end
+        return state.session.inspect
+    end
+end
+
+-- Actor callbacks may overlap UI rendering. Only the native UI dispatcher
+-- creates/closes panels or edits the mount; the actor phase supplies context.
+function update(actor,begin_inspect,end_inspect,can_open)
+    state.actor=actor;state.begin=begin_inspect;state.finish=end_inspect;state.can_open=can_open
+    -- Saved profiles do not require any registered UI window. Apply once per
+    -- changed HUD after loading has finished; this phase never allocates a dialog.
+    if actor and actor:alive() and not state.session and app_ready() and device().precache_frame==0 then
+        local now=time_global()
+        if now>=(state.profile_poll or 0) then
+            state.profile_poll=now+100
+            local p=impl.native()
+            if p and p.hud~=state.current then
+                impl.load();impl.apply(p.hud,state.profiles[p.hud] or impl.default(p.hud));state.current=p.hud
+            end
+        end
+    end
+    if state.session then return state.session.inspect end
+end
+
+class "watch_editor_dispatcher" (CUIScriptWnd)
+function watch_editor_dispatcher:__init() super()
+    self:SetAutoDelete(false)
+    self:SetWndRect(Frect():set(0,0,0,0))
+    self:SetWindowName("watch_editor_dispatcher")
+end
+function watch_editor_dispatcher:Update()
+    if state.begin then impl.pump(state.actor,state.begin,state.finish,state.can_open) end
+end
+
+class "watch_editor_window" (CUIScriptWnd)
+function watch_editor_window:__init() super()
+    self:SetAutoDelete(false)
+    local xml=CScriptXmlInit();xml:ParseFile("pf_st_watch_editor.xml");xml:InitWindow("main",0,self)
+    xml:InitStatic("main:background",self)
+    xml:InitTextWnd("main:title",self)
+    self.hud=xml:InitTextWnd("main:hud",self)
+    self.rows={}
+    for i=1,6 do
+        local label=xml:InitTextWnd("main:row_label",self);label:SetWndPos(vector2():set(718,110+(i-1)*36))
+        label:SetTextST("pf_st_watch_editor_"..fields[i])
+        local value=xml:InitTextWnd("main:row_value",self);value:SetWndPos(vector2():set(835,110+(i-1)*36))
+        self.rows[i]=value
+        for _,direction in ipairs({-1,1}) do
+            local button=xml:Init3tButton("main:row_button",self)
+            button:SetWndPos(vector2():set(direction<0 and 912 or 948,108+(i-1)*36))
+            button:TextControl():SetText(direction<0 and "-" or "+")
+            local name="watch_adjust_"..i.."_"..direction;self:Register(button,name)
+            local index,sign=i,direction
+            self:AddCallback(name,ui_events.BUTTON_CLICKED,function() change(index,sign) end,self)
+        end
+    end
+    self.status=xml:InitTextWnd("main:status",self)
+    self.steps=xml:Init3tButton("main:step",self)
+    self.view=xml:Init3tButton("main:view",self)
+    local actions={step={button=self.steps,fn=step},view={button=self.view,fn=toggle_view}}
+    for _,key in ipairs({"save","reset","close"}) do
+        local fn=key=="save" and save or key=="reset" and reset_pose or function() close(true) end
+        actions[key]={button=xml:Init3tButton("main:"..key,self),fn=fn}
+    end
+    for name,item in pairs(actions) do
+        self:Register(item.button,"watch_editor_"..name)
+        self:AddCallback("watch_editor_"..name,ui_events.BUTTON_CLICKED,item.fn,self)
+    end
+    xml:InitTextWnd("main:hint",self)
+end
+function watch_editor_window:Refresh()
+    local s=state.session;if not s then return end
+    self.hud:SetText(s.hud)
+    for i=1,6 do
+        self.rows[i]:SetText(string.format("%+.2f",s.values[i]))
+        self.rows[i]:SetTextColor(i==s.selected and GetARGB(255,245,188,80) or GetARGB(255,205,201,188))
+    end
+    self.steps:TextControl():SetText(string.format(game.translate_string("pf_st_watch_editor_step"),s.position_step,s.rotation_step))
+    self.view:TextControl():SetTextST(s.inspect and "pf_st_watch_editor_weapon" or "pf_st_watch_editor_inspect")
+    self.status:SetTextST(s.message)
+end
+function watch_editor_window:OnKeyboard(dik,action)
+    if action~=ui_events.WINDOW_KEY_PRESSED then return true end
+    if dik==DIK_keys.DIK_ESCAPE then close(true)
+    elseif dik==DIK_keys.DIK_RETURN then save()
+    elseif dik>=30 and dik<=35 and state.session then state.session.selected=dik-29;self:Refresh()
+    elseif dik==45 or dik==80 then if state.session then change(state.session.selected,-1) end
+    elseif dik==46 or dik==79 then if state.session then change(state.session.selected,1) end end
+    return true
+end

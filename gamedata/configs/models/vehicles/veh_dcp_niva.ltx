@@ -7,6 +7,7 @@ linear_factor = 0.3
 angular_factor = 0.3
 
 [car_definition]
+grass_coll_spheres = grass_coll_sphere_1, grass_coll_sphere_2
 vehicle_feature_profile = dcp_white_niva
 fuel_profile = dcp_vehicle_fuel_v1
 collision_sound_profile = dcp_vehicle_collision_v1
@@ -478,3 +479,16 @@ random_hit_imp = 1.0
 imp_transition_factor = 1.0
 lv_transition_factor = 0.5
 av_transition_factor = 0.5
+
+; COP-ENG-170: original donor grass spheres restored.
+[grass_coll_sphere_1]
+position 				= 0, 0.8, 0.94
+radius 					= 1.44
+scale_factor 			= 0.31
+;scale_save 				= true
+
+[grass_coll_sphere_2]
+position 				= 0, 0.8, -0.94
+radius 					= 1.44
+scale_factor 			= 0.31
+;scale_save 				= true

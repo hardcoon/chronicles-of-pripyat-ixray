@@ -11,6 +11,7 @@ angular_factor   	= 0.5
 ;-------------------------------------------------------------------------------
 
 [car_definition]
+grass_coll_spheres = grass_coll_sphere_1, grass_coll_sphere_2, grass_coll_sphere_3
 character_scraper
 time_to_explosion			= 0 ;-- time to explode when damaged (ms)
 vehicle_feature_profile      = dcp_vehicle_v1
@@ -434,3 +435,22 @@ av_transition_factor     = 0.5
 
 ;-------------------------------------------------------------------------------
 ;------ End params -------------------------------------------------------------
+
+; COP-ENG-170: fitted to this model bounds; donor has no grass spheres.
+[grass_coll_sphere_1]
+position = -0.00000, 0.52050, -1.81409
+radius = 1.18199
+scale_factor = 0.31
+scale_save = true
+
+[grass_coll_sphere_2]
+position = -0.00000, 0.52050, -0.40853
+radius = 1.18199
+scale_factor = 0.31
+scale_save = true
+
+[grass_coll_sphere_3]
+position = -0.00000, 0.52050, 0.99703
+radius = 1.18199
+scale_factor = 0.31
+scale_save = true
