@@ -29,16 +29,20 @@ function watch_page:__init(handler) super()
     self.inspect_button=xml:Init3tButton("inspect:button",self)
     xml:InitStatic("switch:label",self)
     self.switch_button=xml:Init3tButton("switch:button",self)
+    xml:InitStatic("editor:label",self)
+    self.editor_button=xml:Init3tButton("editor:button",self)
     xml:InitStatic("hint",self)
     handler:Register(self.inspect_button,"pf_st_watch_inspect_key")
     handler:Register(self.switch_button,"pf_st_watch_mode_key")
+    handler:Register(self.editor_button,"pf_st_watch_editor_key")
     handler:AddCallback("pf_st_watch_inspect_key",ui_events.BUTTON_CLICKED,function() self:Capture("inspect_key") end,self)
     handler:AddCallback("pf_st_watch_mode_key",ui_events.BUTTON_CLICKED,function() self:Capture("mode_key") end,self)
+    handler:AddCallback("pf_st_watch_editor_key",ui_events.BUTTON_CLICKED,function() self:Capture("editor_key") end,self)
     self:SetValues(pf_st_watch_settings.get())
 end
 function watch_page:SetValues(value)
     self.waiting=nil
-    self.keys={inspect_key=value.inspect_key,mode_key=value.mode_key}
+    self.keys={inspect_key=value.inspect_key,mode_key=value.mode_key,editor_key=value.editor_key}
     self.enabled:SetCheck(value.enabled==1)
     for channel,control in pairs(self.color) do control:SetFValue(value[channel]) end
     self.brightness:SetFValue(value.brightness)
@@ -50,22 +54,24 @@ end
 function watch_page:RefreshKeys()
     self.inspect_button:TextControl():SetText(pf_st_watch_settings.key_name(self.keys.inspect_key))
     self.switch_button:TextControl():SetText(pf_st_watch_settings.key_name(self.keys.mode_key))
+    self.editor_button:TextControl():SetText(pf_st_watch_settings.key_name(self.keys.editor_key))
 end
 function watch_page:Capture(key)
     self.waiting=key
-    local button=key=="inspect_key" and self.inspect_button or self.switch_button
-    button:TextControl():SetTextST("pf_st_watch_press_key")
+    local button=key=="inspect_key" and self.inspect_button or key=="mode_key" and self.switch_button or self.editor_button
+    button:TextControl():SetTextST(key=="editor_key" and "pf_st_watch_editor_press_key" or "pf_st_watch_press_key")
 end
 function watch_page:Key(dik,action)
     if not self.waiting then return false end
     if action~=ui_events.WINDOW_KEY_PRESSED then return true end
     if dik~=DIK_keys.DIK_ESCAPE then
-        self.keys[self.waiting]=dik
+        local clear=self.waiting=="editor_key" and (dik==DIK_keys.DIK_DELETE or dik==DIK_keys.DIK_BACK)
+        self.keys[self.waiting]=clear and 0 or dik
     end
     self.waiting=nil;self:RefreshKeys();return true
 end
 function watch_page:Save()
-    local value={enabled=self.enabled:GetCheck() and 1 or 0,inspect_key=self.keys.inspect_key,mode_key=self.keys.mode_key,mode=self.mode:GetCurrentIdx()+1}
+    local value={enabled=self.enabled:GetCheck() and 1 or 0,inspect_key=self.keys.inspect_key,mode_key=self.keys.mode_key,editor_key=self.keys.editor_key,mode=self.mode:GetCurrentIdx()+1}
     for channel,control in pairs(self.color) do value[channel]=control:GetFValue() end
     value.brightness=self.brightness:GetFValue()
     value.backlight=self.backlight:GetFValue()

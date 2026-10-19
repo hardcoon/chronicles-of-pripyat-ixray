@@ -99,7 +99,7 @@ end
 local function key_press(dik)
     local settings=pf_st_watch_settings.get()
     if settings.enabled~=1 then return end
-    if dik==pf_st_watch_settings.editor_key() then return pf_st_watch_editor.request() end
+    if settings.editor_key>0 and dik==settings.editor_key then return pf_st_watch_editor.request() end
     if dik==settings.inspect_key then
         if state.pending_key~=0 or state.held then return true end
         if settings.inspect_key==settings.mode_key then

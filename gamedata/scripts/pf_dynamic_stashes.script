@@ -54,6 +54,10 @@ local SLOT_GRID_CELL_SIZE = 32
 local MAPPING_CLEANUP_GRID_CELL_SIZE = 4
 local impl = {}
 local state = {
+	-- AI-map v13, 0.7 m cells; header SHA256 is recorded in the task report.
+	vertex_search_limits = { queries = 64, quantum = 8, time_us = 250, cell = 0.7,
+		min_x = -1635.9000244140625, max_x = 2041.9000244140625,
+		min_z = -1787.0999755859375, max_z = 1899.0999755859375 },
 	slot_grid = {},
 	slot_grid_point_ids = {},
 	loot_rng = nil,
@@ -3798,68 +3802,172 @@ function impl.discover_slot(slot, box)
 	return true
 end
 
--- Curated containers may sit on furniture or in an x/z cell which has no AI
--- node. Passing the invalid result from level.vertex_id to alife():create makes
--- CGameObject::net_Spawn scan the complete level graph on the main thread.
--- Probe only nearby graph cells, cache the result on the catalogue point and
--- never let an invalid node reach the native spawn path.
+-- Only cheap requests run in spawn/hint callbacks. The existing actor update
+-- advances one shared queue; exhausting a frame budget never rejects a point.
+function impl.push_vertex_search(search, job, priority)
+	job.priority = priority
+	job.previous = search.tail[priority]
+	job.next = nil
+	if job.previous then job.previous.next = job else search.head[priority] = job end
+	search.tail[priority] = job
+end
+
+function impl.remove_vertex_search(search, job)
+	local priority = job.priority
+	if job.previous then job.previous.next = job.next else search.head[priority] = job.next end
+	if job.next then job.next.previous = job.previous else search.tail[priority] = job.previous end
+	job.previous, job.next = nil, nil
+end
+
 function impl.resolve_stash_level_vertex(slot, point, position)
 	local configured = tonumber(point.level_vertex_id)
 	if configured and level.valid_vertex_id(configured) then return configured end
-	if point.pf_level_vertex_unavailable then return nil end
-
-	local direct = level.vertex_id(position)
-	if direct and level.valid_vertex_id(direct) then
-		point.level_vertex_id = direct
-		return direct
+	local search = state.vertex_search
+	if not search then
+		search = { jobs = {}, head = {}, tail = {}, turn = 0 }
+		state.vertex_search = search
 	end
-
-	local step = 0.7
-	local max_ring = 12
-	local sample = vector()
-	local best_id = nil
-	local best_score = math.huge
-	local best_distance_sqr = nil
-	local function consider(offset_x, offset_z)
-		sample:set(position.x + offset_x * step, position.y, position.z + offset_z * step)
-		local candidate_id = level.vertex_id(sample)
-		if not candidate_id or not level.valid_vertex_id(candidate_id) then return end
-		local candidate = level.vertex_position(candidate_id)
-		local dx = candidate.x - position.x
-		local dy = candidate.y - position.y
-		local dz = candidate.z - position.z
-		local distance_sqr = dx * dx + dz * dz
-		local score = distance_sqr + dy * dy
-		if score < best_score then
-			best_id = candidate_id
-			best_score = score
-			best_distance_sqr = distance_sqr
+	local priority = 2
+	local actor_position = db.actor and db.actor:position() or nil
+	if actor_position and impl.position_distance_sqr(actor_position, point) <= MATERIALIZE_DISTANCE_SQR then
+		priority = 1
+	end
+	local job = search.jobs[point]
+	if job then
+		-- The same catalogue coordinate can be reused by a later rotation.
+		job.slot = slot
+		if not job.done and job.priority ~= priority then
+			impl.remove_vertex_search(search, job)
+			impl.push_vertex_search(search, job, priority)
 		end
+		return nil
 	end
-
-	for ring = 1, max_ring do
-		for offset = -ring, ring do
-			consider(offset, -ring)
-			consider(offset, ring)
-		end
-		for offset = -ring + 1, ring - 1 do
-			consider(-ring, offset)
-			consider(ring, offset)
-		end
-	end
-
-	if best_id then
-		point.level_vertex_id = best_id
-		printf("[PF STASH] cached nearby AI vertex %d for slot %s (%.2f m)",
-			best_id, tostring(slot and slot.index or "?"), math.sqrt(best_distance_sqr))
-		return best_id
-	end
-
-	point.pf_level_vertex_unavailable = true
-	printf("! [PF STASH] skipped slot %s: no AI vertex within %.1f m at %.3f, %.3f, %.3f",
-		tostring(slot and slot.index or "?"), step * max_ring,
-		position.x, position.y, position.z)
+	job = { point = point, slot = slot, ring = 0, edge = 1, offset = 0,
+		best_score = math.huge }
+	search.jobs[point] = job
+	impl.push_vertex_search(search, job, priority)
 	return nil
+end
+
+function impl.step_vertex_search(job, sample)
+	local limits = state.vertex_search_limits
+	local point = job.point
+	local radius, edge, offset = job.ring, job.edge, job.offset
+	local ox, oz = 0, 0
+	if radius > 0 then
+		if edge == 1 then ox, oz = offset, -radius
+		elseif edge == 2 then ox, oz = offset, radius
+		elseif edge == 3 then ox, oz = -radius, offset
+		else ox, oz = radius, offset end
+	end
+	local x = point.position[1] + ox * limits.cell
+	local z = point.position[3] + oz * limits.cell
+	-- Bounds/cell are metadata of the shipped pripyat_full level.ai, not new
+	-- stash coordinates. Never pass an out-of-map position to native vertex_id.
+	if x >= limits.min_x and x <= limits.max_x and z >= limits.min_z and z <= limits.max_z then
+		sample:set(x, point.position[2], z)
+		local candidate_id = level.vertex_id(sample)
+		if candidate_id and level.valid_vertex_id(candidate_id) then
+			local candidate = level.vertex_position(candidate_id)
+			local score = impl.position_distance_sqr(candidate, point)
+			if score < job.best_score or
+				(score == job.best_score and candidate_id < job.best_id) then
+				job.best_id, job.best_score = candidate_id, score
+			end
+			-- Preserve the former immediate lookup when the point has its own cell.
+			if radius == 0 then job.done = true end
+		end
+	end
+	local ring_complete = radius == 0
+	if radius > 0 then
+		job.offset = offset + 1
+		local last = edge <= 2 and radius or radius - 1
+		if job.offset > last then
+			job.edge = edge + 1
+			job.offset = job.edge <= 2 and -radius or -radius + 1
+			if job.edge > 4 then ring_complete = true end
+		end
+	end
+	if ring_complete and not job.done then
+		-- A first hit on a square ring is not necessarily the nearest hit.
+		-- Finish enough complete rings that even the conservative horizontal
+		-- lower bound for every unvisited cell exceeds the best 3D distance.
+		local remaining = math.max(0, (radius - 1) * limits.cell)
+		if job.best_id and job.best_score <= remaining * remaining then
+			job.done = true
+		else
+			job.ring, job.edge, job.offset = radius + 1, 1, -radius - 1
+			local covered = radius * limits.cell
+			if covered >= math.max(math.abs(point.position[1] - limits.min_x),
+				math.abs(point.position[1] - limits.max_x),
+				math.abs(point.position[3] - limits.min_z),
+				math.abs(point.position[3] - limits.max_z)) + limits.cell then
+				job.done = true
+			end
+		end
+	end
+	if job.done and job.best_id then
+		point.level_vertex_id = job.best_id
+		printf("[PF STASH] resolved AI vertex %d for slot %s (%.2f m, ring %d)",
+			job.best_id, tostring(job.slot and job.slot.index or "?"), math.sqrt(job.best_score), radius)
+	elseif job.done then
+		printf("! [PF STASH] no AI vertex in complete map bounds for slot %s",
+			tostring(job.slot and job.slot.index or "?"))
+	end
+end
+
+function impl.update_vertex_search()
+	local search = state.vertex_search
+	if not search or (not search.head[1] and not search.head[2]) then return end
+	local current_device = device and device() or nil
+	local frame = current_device and current_device.frame or time_global()
+	if search.frame == frame then return end
+	search.frame = frame
+	local limits = state.vertex_search_limits
+	local timer = search.timer
+	if profile_timer and (not timer or timer:time() > 1000000) then
+		timer = profile_timer()
+		search.timer = timer
+	end
+	local started = timer and timer:time() or 0
+	local elapsed, checked = 0, 0
+	search.sample = search.sample or vector()
+	if timer then timer:start() end
+	while checked < limits.queries and elapsed < limits.time_us do
+		-- Nearby requests get three quanta out of four. Distant promised hints
+		-- still advance, and round robin prevents one large hole starving peers.
+		local priority = search.turn % 4 == 3 and 2 or 1
+		if not search.head[priority] then priority = 3 - priority end
+		local job = search.head[priority]
+		if not job then break end
+		search.turn = search.turn + 1
+		impl.remove_vertex_search(search, job)
+		local slot = job.slot
+		if not slot or slot.point ~= job.point or slot.id or slot.state.depleted or
+			impl.is_background_green_suppressed(slot) then
+			search.jobs[job.point] = nil
+			checked = checked + 1 -- bound stale-request cleanup as well as probes
+		else
+			local quantum = 0
+			while quantum < limits.quantum and checked < limits.queries and
+				elapsed < limits.time_us and not job.done do
+				impl.step_vertex_search(job, search.sample)
+				checked, quantum = checked + 1, quantum + 1
+				if timer then
+					timer:stop()
+					elapsed = timer:time() - started
+					timer:start()
+				end
+			end
+			if job.done then
+				if job.best_id then search.jobs[job.point] = nil end
+			else
+				impl.push_vertex_search(search, job, priority)
+			end
+		end
+	end
+	if timer then timer:stop() elapsed = timer:time() - started end
+	search.last_queries, search.last_time_us = checked, elapsed
 end
 
 function impl.spawn_slot(slot)
@@ -4346,7 +4454,7 @@ function can_grant_hint(tier)
 	impl.build_candidate_indexes()
 	if #slots == 0 then impl.initialize_slots() end
 	for _, slot in ipairs(slots) do
-		if slot.tier == tier and not slot.state.hinted and not slot.state.discovered and
+		if slot.tier == tier and not slot.state.medkit_help_owner and not slot.state.hinted and not slot.state.discovered and
 			not slot.state.depleted then return true end
 	end
 	return impl.has_free_hint_point(tier)
@@ -4355,7 +4463,7 @@ end
 function impl.collect_eligible_hint_slots(tier, reserved)
 	local eligible = {}
 	for _, slot in ipairs(slots) do
-		if slot.tier == tier and not slot.state.hinted and not slot.state.discovered and
+		if slot.tier == tier and not slot.state.medkit_help_owner and not slot.state.hinted and not slot.state.discovered and
 			not slot.state.depleted and (not reserved or not reserved[slot]) then
 			table.insert(eligible, slot)
 		end
@@ -4639,6 +4747,86 @@ function grant_hint(tier, message, silent)
 	if #eligible == 0 then return false end
 	local slot = eligible[math.random(1, #eligible)]
 	return impl.reveal_hint_slot(slot, message, silent)
+end
+
+-- A wounded NPC promises a concrete existing coordinate before receiving a kit.
+-- These reservations live in the normal save timeline, never in an external file.
+function medkit_help_reward_info(reward_id)
+	local saved = impl.get_persistent_state()
+	local rewards = saved.medkit_help_rewards
+	local entry = type(rewards) == "table" and rewards[reward_id] or nil
+	if type(entry) ~= "table" then return nil end
+	return {tier=entry.tier, slot_index=entry.slot_index, point_id=entry.point_id,
+		owner_id=entry.owner_id, owner_name=entry.owner_name,
+		claimed=entry.claimed == true, cancelled=entry.cancelled == true}
+end
+
+function prepare_medkit_help_reward(reward_id, owner_id, owner_name)
+	reward_id = valid_puzzle_reward_id(reward_id)
+	if not reward_id or not SYSTEM_ENABLED or not db.actor or level.name() ~= LEVEL_NAME then return nil end
+	local owner = alife():object(owner_id, true)
+	if not owner or not owner:alive() or owner:name() ~= owner_name then return nil end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local saved = impl.get_persistent_state()
+	saved.medkit_help_rewards = type(saved.medkit_help_rewards) == "table" and saved.medkit_help_rewards or {}
+	saved.medkit_help_order = type(saved.medkit_help_order) == "table" and saved.medkit_help_order or {}
+	local entry = saved.medkit_help_rewards[reward_id]
+	if entry then
+		if entry.owner_id ~= owner_id or entry.owner_name ~= owner_name or entry.cancelled then return nil end
+		return medkit_help_reward_info(reward_id)
+	end
+	if #saved.medkit_help_order >= 4096 then return nil end
+	local roll = impl.deterministic_pda_roll(saved.loot_seed, reward_id, "pf_pa_medkit_tier_v1") % 100 + 1
+	local tier = roll <= 85 and "green" or (roll <= 97 and "cyan" or "purple")
+	local point_roll = impl.deterministic_pda_roll(saved.loot_seed, reward_id, "pf_pa_medkit_point_v1")
+	local eligible = impl.collect_or_allocate_hint_slots(tier, nil, point_roll)
+	local slot = impl.deterministic_slot(eligible, point_roll)
+	if not slot or not slot.point then return nil end
+	entry = {tier=tier, slot_index=slot.index, point_id=slot.point.id,
+		owner_id=owner_id, owner_name=owner_name, claimed=false}
+	saved.medkit_help_rewards[reward_id] = entry
+	table.insert(saved.medkit_help_order, reward_id)
+	slot.state.medkit_help_owner = reward_id
+	return medkit_help_reward_info(reward_id)
+end
+
+function grant_medkit_help_reward(reward_id, message)
+	if not SYSTEM_ENABLED or not db.actor or level.name() ~= LEVEL_NAME then return false end
+	impl.build_candidate_indexes()
+	if #slots == 0 then impl.initialize_slots() end
+	local saved = impl.get_persistent_state()
+	local entry = type(saved.medkit_help_rewards) == "table" and saved.medkit_help_rewards[reward_id]
+	if not entry or entry.cancelled then return false, "no_reservation" end
+	if entry.claimed then return true, "already_granted" end
+	local slot = slots[entry.slot_index]
+	if not slot or not slot.point or slot.point.id ~= entry.point_id or slot.tier ~= entry.tier
+		or slot.state.medkit_help_owner ~= reward_id then return false, "reservation_changed" end
+	local known = slot.state.discovered or slot.state.hinted or slot.state.depleted
+	if not known then
+		local ok, revealed = pcall(impl.reveal_hint_slot, slot,
+			message or ("pf_puzzle_stash_reward_" .. entry.tier), false)
+		-- A notification failure must not grant a second coordinate on retry.
+		if (not ok or revealed ~= true) and not (slot.state.hinted and slot.state.discovered) then
+			return false, "reveal_failed"
+		end
+	end
+	entry.claimed = true
+	slot.state.medkit_help_owner = nil
+	return true, known and "already_known" or "granted"
+end
+
+function impl.keep_medkit_help_reservation(slot)
+	local token = slot.state.medkit_help_owner
+	if not token then return false end
+	local saved = impl.get_persistent_state()
+	local entry = type(saved.medkit_help_rewards) == "table" and saved.medkit_help_rewards[token]
+	local owner = entry and alife():object(entry.owner_id, true)
+	if entry and not entry.claimed and not entry.cancelled and owner and owner:alive()
+		and owner:name() == entry.owner_name then return true end
+	if entry and not entry.claimed then entry.cancelled = true end
+	slot.state.medkit_help_owner = nil
+	return false
 end
 
 -- Idempotent public reward hook for native PDA puzzles. The caller fixes the
@@ -5417,6 +5605,7 @@ function impl.remember_history(slot, old_point_id)
 end
 
 function impl.rotate_slot(slot)
+	if impl.keep_medkit_help_reservation(slot) then return false end
 	local hacking = rawget(_G, "lz_pda_hacking")
 	if slot.state.usb_reserved_level and hacking and
 		hacking.release_usb_reservation then
@@ -5483,6 +5672,7 @@ end
 
 function impl.update_slot(slot, actor_position, allow_materialize)
 	if not slot.point then return false, false end
+	if slot.state.medkit_help_owner then impl.keep_medkit_help_reservation(slot) end
 	local point_distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
 	local materialized = false
 
@@ -5540,6 +5730,7 @@ function update()
 	impl.update_pending_strange_zombied_loot(now)
 	impl.update_strange_ambush_targets(now)
 	impl.update_active_metal_detector(now)
+	impl.update_vertex_search()
 	if now < next_check then return end
 	next_check = now + CHECK_INTERVAL_MS
 	local hacking = rawget(_G, "lz_pda_hacking")
@@ -5682,6 +5873,7 @@ function get_searched_stash_count(tier)
 end
 
 function reset()
+	state.vertex_search = nil
 	persistent_state = nil
 	slots = {}
 	pending_empty_slots = {}

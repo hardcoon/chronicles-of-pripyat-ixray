@@ -26,17 +26,8 @@ function impl.default(hud)
     end
     return state.defaults[hud]
 end
-function allowed(force)
-    if pf_st_watch_settings.get().enabled~=1 then return false end
-    if pf_stash_qa.is_developer_mode()==true then return true end
-    -- The menu's Developer switch also enables editing an existing save.
-    -- Cache that installation flag briefly: reading a file each render is wasteful.
-    local now=time_global()
-    if force or not state.developer_poll or now>=state.developer_poll then
-        state.developer_poll=now+500
-        state.developer_access=pf_stash_qa.is_developer_access_enabled()==true
-    end
-    return state.developer_access==true
+function allowed()
+    return pf_st_watch_settings.get().enabled==1
 end
 function impl.load()
     if state.profiles then return end
@@ -90,15 +81,15 @@ function impl.refresh()
     if state.window then state.window:Refresh() end
 end
 function request()
-    local enabled=allowed(true)
+    if not allowed() then return false end
     -- Called from the keyboard/input phase, never from an actor update/load.
     -- Do not register raw UI pointers merely because a saved actor appeared.
     if not state.actor or not state.actor:alive() then return false end
     if not app_ready() or device().precache_frame~=0 then return false end
-    if not enabled or not state.can_open then
-        local reason=enabled and "pf_st_watch_editor_busy" or "pf_st_watch_editor_developer_required"
+    if not state.can_open then
+        local reason="pf_st_watch_editor_busy"
         state.actor:give_game_news(game.translate_string("pf_st_watch_title"),game.translate_string(reason),"pf_news_stash",0,3000)
-        printf("[st_watch_editor] F6/request rejected: %s",reason)
+        printf("[st_watch_editor] request rejected: %s",reason)
         return false
     end
     if not state.session then state.close_requested=false end

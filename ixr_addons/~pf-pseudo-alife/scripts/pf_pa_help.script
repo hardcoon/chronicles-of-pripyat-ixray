@@ -1,0 +1,108 @@
+-- Player assistance only. Called by dialogue, never by a background scan.
+local impl = {}
+local last = {}
+
+function impl.npc(first, second)
+    for _, object in pairs({first, second}) do
+        local kind = type(object)
+        if (kind == "userdata" or kind == "table")
+            and object:section():match("^pf_pa_s_[a-z]*_?%d+$") then return object end
+    end
+end
+
+function impl.friendly(npc)
+    return npc and npc:alive() and db.actor and db.actor:alive()
+        and db.storage[npc:id()] and npc:relation(db.actor) ~= game_object.enemy
+end
+
+function impl.wounded(npc)
+    if not impl.friendly(npc) then return false end
+    local st = db.storage[npc:id()].wounded
+    return st and st.wound_manager and st.use_medkit == true
+        and st.wound_manager.can_use_medkit ~= true and xr_wounded.is_wounded(npc)
+end
+
+function impl.kit()
+    if not db.actor then return end
+    for _, section in ipairs({"medkit", "medkit_army", "medkit_scientic"}) do
+        local item = db.actor:object(section)
+        if item then return item end
+    end
+end
+
+function impl.token(npc)
+    local token = xr_logic.pstor_retrieve(npc, "pf_pa_medkit_token", "")
+    if token == "" then
+        local seed = pf_pa_rumor_source.seed(npc:name() .. ":" .. npc:section()
+            .. ":" .. npc:id() .. ":" .. npc:character_name())
+        token = "pf_pa_medkit_" .. npc:id() .. "_" .. seed
+        xr_logic.pstor_store(npc, "pf_pa_medkit_token", token)
+    end
+    return token
+end
+
+function prepare(npc)
+    if not impl.friendly(npc) then return end
+    return pf_dynamic_stashes.prepare_medkit_help_reward(impl.token(npc), npc:id(), npc:name())
+end
+
+function impl.reply(npc, key)
+    last = {id=npc:id(), name=npc:name(), key=key}
+end
+
+function allowed(first, second)
+    return impl.friendly(impl.npc(first, second)) == true
+end
+
+function can_help(first, second)
+    local npc = impl.npc(first, second)
+    return impl.wounded(npc) == true and impl.kit() ~= nil
+        and xr_logic.pstor_retrieve(npc, "pf_pa_medkit_treated", false) ~= true
+end
+
+function owed(first, second)
+    local npc = impl.npc(first, second)
+    return impl.friendly(npc) == true
+        and xr_logic.pstor_retrieve(npc, "pf_pa_medkit_treated", false) == true
+        and xr_logic.pstor_retrieve(npc, "pf_pa_medkit_rewarded", false) ~= true
+end
+
+function claim_reward(first, second)
+    local npc = impl.npc(first, second)
+    if not owed(first, second) then return false end
+    local ok, detail = pf_dynamic_stashes.grant_medkit_help_reward(impl.token(npc))
+    if not ok then impl.reply(npc,"pf_pa_help_owed");return false end
+    xr_logic.pstor_store(npc, "pf_pa_medkit_rewarded", true)
+    impl.reply(npc, detail == "already_known" and "pf_pa_help_known" or "pf_pa_help_thanks")
+    return true
+end
+
+function give_medkit(first, second)
+    local npc = impl.npc(first, second)
+    if not can_help(first, second) then return false end
+    -- Fix both the tier and the concrete coordinate BEFORE taking the item.
+    local reward = prepare(npc)
+    if not reward then impl.reply(npc,"pf_pa_help_unavailable");return false end
+    dialogs.transfer_medkit(db.actor, npc)
+    xr_logic.pstor_store(npc, "pf_pa_medkit_treated", true)
+    return claim_reward(first, second)
+end
+
+function hello_text(speaker)
+    local npc = impl.npc(speaker)
+    if not impl.friendly(npc) then return game.translate_string("pf_pa_help_bye") end
+    if xr_logic.pstor_retrieve(npc,"pf_pa_medkit_treated",false) == true then
+        return game.translate_string(owed(npc) and "pf_pa_help_owed" or "pf_pa_help_recovering")
+    end
+    if impl.wounded(npc) then
+        prepare(npc)
+        return game.translate_string("pf_pa_help_request")
+    end
+    return game.translate_string("pf_pa_help_recovering")
+end
+
+function answer_text(speaker)
+    local npc = impl.npc(speaker)
+    local key = npc and last.id == npc:id() and last.name == npc:name() and last.key
+    return game.translate_string(key or "pf_pa_help_recovering")
+end

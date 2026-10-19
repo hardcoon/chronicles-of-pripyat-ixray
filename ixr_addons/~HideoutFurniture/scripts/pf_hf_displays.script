@@ -89,30 +89,42 @@ function sync(case)
     local math=pf_runtime_editor_math
     local case_q=math.RuntimeEditorQuaternion(server.angle)
     for _,id in ipairs(ids) do
-        if not records[id] then
-            local slot
-            for i=1,profile.count do if not slots[i] then slot=i;break end end
-            if not slot then break end
-            local item=items[id]
-            local section=ini_value(item:section(),"parent_section") or item:section()
-            local angle=vec(profile.angles[slot]):add(vec(profiles.angle_offsets[section])):mul(0.017453292519943295)
-            local offset_q=math.RuntimeEditorQuaternion(angle)
-            local offset=text_vector(ini_value(item:section(),"position"))
-            if profile.kind~="artifact" then offset.x=0 end
-            offset:add(vec(profiles.position_offsets[section]))
-            offset=offset_q:rotate_vector(offset):add(vec(profile.positions[slot]))
-            local position=case_q:rotate_vector(offset):add(server.position)
-            local proxy
-            local ok=pcall(function()
-                proxy=alife():create(SECTION,position,server.m_level_vertex_id,server.m_game_vertex_id)
-                assert(proxy and proxy:set_visual(display_visual(item,profile)),"display_visual_failed")
-                proxy:use_ai_locations(false)
-                proxy.angle=offset_q:multiply(case_q):to_euler_angles()
-            end)
-            if ok then
-                records[id]={id=proxy.id,slot=slot,visual=item:get_visual_name()}
-                slots[slot]=true
-            elseif proxy then release({id=proxy.id}) end
+        local item=items[id]
+        local record=records[id]
+        local visual=display_visual(item,profile)
+        local center_y=profile.kind=="artifact" and pf_hf_artifact_display_data.center_y[visual] or nil
+        if not record or record.center_y~=center_y then
+            -- Saved displays keep their occupied slots. Replace only the inert
+            -- model, after its replacement is ready; never touch the stored item.
+            local slot=record and record.slot
+            if not slot then
+                for i=1,profile.count do if not slots[i] then slot=i;break end end
+            end
+            if slot then
+                local section=ini_value(item:section(),"parent_section") or item:section()
+                local angle=vec(profile.angles[slot]):add(vec(profiles.angle_offsets[section])):mul(0.017453292519943295)
+                local offset_q=math.RuntimeEditorQuaternion(angle)
+                local offset=text_vector(ini_value(item:section(),"position"))
+                if profile.kind~="artifact" then offset.x=0 end
+                offset:add(vec(profiles.position_offsets[section]))
+                -- Artifact mesh origins are below their visible centers. Apply the
+                -- correction in model space so tilted shelves retain their pose.
+                offset.y=offset.y-(center_y or 0)
+                offset=offset_q:rotate_vector(offset):add(vec(profile.positions[slot]))
+                local position=case_q:rotate_vector(offset):add(server.position)
+                local proxy
+                local ok=pcall(function()
+                    proxy=alife():create(SECTION,position,server.m_level_vertex_id,server.m_game_vertex_id)
+                    assert(proxy and proxy:set_visual(visual),"display_visual_failed")
+                    proxy:use_ai_locations(false)
+                    proxy.angle=offset_q:multiply(case_q):to_euler_angles()
+                    if record then release(record) end
+                end)
+                if ok then
+                    records[id]={id=proxy.id,slot=slot,visual=item:get_visual_name(),center_y=center_y}
+                    slots[slot]=true
+                elseif proxy then release({id=proxy.id}) end
+            end
         end
     end
 end

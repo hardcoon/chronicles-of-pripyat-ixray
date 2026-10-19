@@ -126,17 +126,21 @@ function impl.remember(npc, stamp, progress, reply)
 end
 
 function allowed(first_speaker, second_speaker)
+    -- Keep the owned start dialog available even while wounded. Rejecting it
+    -- lets the engine fall back to hello_dialog, whose community phrases may be empty.
     return impl.npc(first_speaker, second_speaker) ~= nil
 end
 
 function has_news(first_speaker, second_speaker)
     local npc = impl.npc(first_speaker, second_speaker)
-    return npc ~= nil and db.storage[npc:id()] ~= nil and impl.count(npc) < 3
+    return npc ~= nil and db.storage[npc:id()] ~= nil
+        and not xr_wounded.is_wounded(npc) and impl.count(npc) < 3
 end
 
 -- script_text supplies (npc, dialog_id, phrase_id), not two game objects.
 function hello_text(speaker)
     local npc = impl.npc(speaker)
+    if npc and xr_wounded.is_wounded(npc) then return pf_pa_help.hello_text(speaker) end
     if npc and impl.count(npc) >= 3 then return game.translate_string("pf_pa_rumor_exhausted") end
     return game.translate_string("pf_pa_city_news_hello")
 end
@@ -196,6 +200,14 @@ function configure(npc)
     if not impl.owned(npc) then return end
     local storage = db.storage[npc:id()]
     local meet = storage and storage.meet
+    -- Existing saves can retain the old serialized custom_data section.
+    -- Generic schemes are reset before this owned scheme is configured.
+    local wounded = storage and storage.wounded
+    if wounded then
+        wounded.enable_talk = true
+        wounded.help_dialog = "pf_pa_city_news"
+        wounded.help_start_dialog = "pf_pa_city_news"
+    end
     -- Stock init_meet parses a condlist, but Cmeet_manager:update expects a bool.
     -- Normalize only our NPCs after reset_meet, retaining the original meet action.
     if meet and type(meet.meet_on_talking) == "table" then

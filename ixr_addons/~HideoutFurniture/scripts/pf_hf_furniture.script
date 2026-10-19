@@ -14,6 +14,9 @@ end
 for section,entry in pairs(pf_hf_stock_catalog.by_item) do catalog.by_item[section]=entry end
 for section,entry in pairs(pf_hf_stock_catalog.retired_by_item or {}) do catalog.by_item[section]=entry end
 for section,entry in pairs(pf_hf_stock_catalog.by_object) do catalog.by_object[section]=entry end
+for _,entry in ipairs(pf_hf_appliances_catalog.entries) do
+    catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
+end
 local pending={}
 local data={}
 local generation=0

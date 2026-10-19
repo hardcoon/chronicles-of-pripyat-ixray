@@ -30,7 +30,7 @@ local function category_map()
     categories = {}
     local catalogs = {pf_hf_furniture_catalog, pf_hf_expansion_catalog,
         pf_hf_even_more_catalog, pf_hf_native_doors_catalog,
-        pf_hf_campfire_catalog, pf_hf_stock_catalog}
+        pf_hf_campfire_catalog, pf_hf_stock_catalog, pf_hf_appliances_catalog}
     for _, catalog in ipairs(catalogs) do
         for _, entry in pairs(catalog.by_item or catalog.entries) do
             local section = entry.item
