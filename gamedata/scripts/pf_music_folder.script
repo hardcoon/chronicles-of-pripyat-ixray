@@ -1,0 +1,14 @@
+-- MyMusic is user-owned runtime, not a launcher-managed product directory.
+local state = { attempted = false }
+
+function ensure_directory()
+    if state.attempted then return end
+    state.attempted = true
+    -- The engine opens LuaFileSystem before constructing the main menu.
+    -- Existing directories/files and all user MP3s are left untouched.
+    pcall(function()
+        if type(lfs) ~= "table" or type(lfs.mkdir) ~= "function" then return end
+        local path = getFS():update_path("$fs_root$", "MyMusic")
+        if not lfs.attributes(path) then lfs.mkdir(path) end
+    end)
+end

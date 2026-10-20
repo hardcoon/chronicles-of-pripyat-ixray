@@ -9,6 +9,7 @@
 class "main_menu" (CUIScriptWnd)
 
 function main_menu:__init() super()
+	pf_music_folder.ensure_directory()
 	pf_video_settings.apply_defaults_once()
 	self.mbox_mode = 0
     self:InitControls()

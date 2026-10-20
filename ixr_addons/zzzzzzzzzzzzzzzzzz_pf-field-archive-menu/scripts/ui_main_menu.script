@@ -18,12 +18,13 @@ local function launcher_game_version()
             return version
         end
     end
-    return "2026.10.20-dev.92"
+    return "2026.10.20-dev.93"
 end
 
 class "main_menu" (CUIScriptWnd)
 
 function main_menu:__init() super()
+	pf_music_folder.ensure_directory()
 	local focus = rawget(_G, "pf_focus_zoom")
 	if focus then focus.reset() end
 	pf_video_settings.apply_defaults_once()
