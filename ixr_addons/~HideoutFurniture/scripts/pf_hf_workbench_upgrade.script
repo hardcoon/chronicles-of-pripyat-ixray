@@ -125,21 +125,8 @@ function recipe(effect_section)
 	return found_property and next(result) and result or nil
 end
 
-local function inventory_materials()
-	local counts, objects = {}, {}
-	for _, section in ipairs(MATERIAL_ORDER) do
-		counts[section], objects[section] = 0, {}
-	end
-	if db.actor then
-		db.actor:iterate_inventory(function(_, item)
-			local section = item:section()
-			if objects[section] and core.is_actor_owned_item(item) then
-				counts[section] = counts[section] + 1
-				objects[section][#objects[section] + 1] = item
-			end
-		end, db.actor)
-	end
-	return counts, objects
+local function inventory_materials(bench_id)
+	return pf_hf_workbench_materials.collect(MATERIAL_ORDER, bench_id)
 end
 
 local function enough(recipe, counts)
@@ -184,8 +171,8 @@ function material_label(section)
 	return material_name(section)
 end
 
-function material_counts()
-	return inventory_materials()
+function material_counts(bench_id)
+	return inventory_materials(bench_id)
 end
 
 local KG_PROPERTIES = {
@@ -329,7 +316,7 @@ function tree(item)
 	return graph
 end
 
-function state(item, node, graph, counts)
+function state(item, node, graph, counts, bench_id)
 	if not item or not node or not graph or not core.is_actor_owned_item(item) then
 		return "unavailable"
 	end
@@ -350,44 +337,33 @@ function state(item, node, graph, counts)
 	end
 	local needed = recipe(node.effect)
 	if not needed then return "unavailable" end
-	counts = counts or inventory_materials()
+	counts = counts or inventory_materials(bench_id)
 	return enough(needed, counts) and "available" or "materials"
 end
 
-function install(item, node_id)
+function install(item, node_id, bench_id)
 	if not item or not core.is_actor_owned_item(item) then
 		return false, "pf_hf_no_selection"
 	end
 	local graph = tree(item)
 	local node = graph and graph.nodes[node_id]
 	if not node then return false, "pf_hf_upgrade_unavailable" end
-	local counts, objects = inventory_materials()
-	local current = state(item, node, graph, counts)
+	pf_hf_workbench_materials.refresh(bench_id)
+	local counts = inventory_materials(bench_id)
+	local current = state(item, node, graph, counts, bench_id)
 	if current ~= "available" then
 		return false, "pf_hf_upgrade_state_" .. current
 	end
 	local needed = recipe(node.effect)
-	for section, amount in pairs(needed) do
-		for index = 1, amount do
-			if not core.server_object(objects[section][index]) then
-				return false, "pf_hf_need_materials"
-			end
-		end
-	end
+	local plan = pf_hf_workbench_materials.prepare(needed, MATERIAL_ORDER, bench_id)
+	if not plan then return false, "pf_hf_need_materials" end
 	-- The native manager installs the exact node and effect with loading=true.
 	-- Money is untouched. Its group checks are fatal on invalid input, so the
 	-- graph validation above must run before this call.
 	if not item:install_upgrade(node_id) then
 		return false, "pf_hf_upgrade_unavailable"
 	end
-	local consumed_ids = {}
-	for section, amount in pairs(needed) do
-		for index = 1, amount do
-			local material = objects[section][index]
-			consumed_ids[#consumed_ids + 1] = material:id()
-			core.release_item(material)
-		end
-	end
+	local consumed_ids = pf_hf_workbench_materials.consume(plan)
 	return true, "pf_hf_upgrade_installed", consumed_ids
 end
 

@@ -1,0 +1,140 @@
+-- The furniture player, with independent per-car save data and 3D dashboard audio.
+local data={}
+local players={}
+local token=nil
+local registered=false
+local restored=false
+
+local function is_car(object)
+    if not object then return false end
+    local class=object:clsid()
+    return class==clsid.car or (clsid.car_s and class==clsid.car_s)
+end
+function available(id)
+    local actor=db.actor
+    local object=actor and actor:alive() and actor:IsInCar() and actor:get_attached_vehicle()
+    return is_car(object) and object:id()==id and object:get_car():GetfHealth()>0
+end
+local function mounted_car()
+    local actor=db.actor
+    local object=actor and actor:alive() and actor:IsInCar() and actor:get_attached_vehicle()
+    if is_car(object) and object:get_car():GetfHealth()>0 then return object end
+end
+function state(id)
+    local object=level.object_by_id(id)
+    if not is_car(object) then return nil end
+    local own=data[id]
+    if not own or own.section~=object:section() or own.instance~=object:name() then
+        own={section=object:section(),instance=object:name(),collection="yanov",track=1,
+            volume=.5,is_on=false}
+        data[id]=own
+    end
+    return own
+end
+function sound_position(object,player)
+    if not player.anchor_checked then
+        for _,name in ipairs({"stearing_wheel","steering_wheel","seat_left"}) do
+            if object:get_bone_id(name)~=65535 then player.anchor=name;break end
+        end
+        player.anchor_checked=true
+    end
+    local rotation=object:get_editor_rotation()
+    local basis=matrix():setXYZ(rotation.x,rotation.y,rotation.z)
+    local origin=object:position()
+    local point=player.anchor and object:bone_position(player.anchor) or
+        vector():set(origin.x+basis.j.x*1.1+basis.k.x*.6,
+            origin.y+basis.j.y*1.1+basis.k.y*.6,origin.z+basis.j.z*1.1+basis.k.z*.6)
+    -- Project the steering-wheel anchor onto the car's centre plane. All axes
+    -- come from the car body, so turning the camera cannot move the radio.
+    local lateral=(point.x-origin.x)*basis.i.x+(point.y-origin.y)*basis.i.y+
+        (point.z-origin.z)*basis.i.z
+    local up=player.anchor=="seat_left" and .7 or 0
+    local forward=player.anchor=="seat_left" and .65 or .15
+    return vector():set(point.x-basis.i.x*lateral+basis.j.x*up+basis.k.x*forward,
+        point.y-basis.i.y*lateral+basis.j.y*up+basis.k.y*forward,
+        point.z-basis.i.z*lateral+basis.j.z*up+basis.k.z*forward)
+end
+local function stop_player(id)
+    local player=players[id]
+    if player and player.radio_sound then player.radio_sound:stop() end
+    players[id]=nil
+end
+local function release_input()
+    if token then level.release_editor_input(token);token=nil end
+end
+local function stop_all()
+    release_input()
+    for id in pairs(players) do stop_player(id) end
+end
+local function release_driving_controls()
+    -- A modal dialog consumes key releases. Clear latched throttle/steering
+    -- before showing it, including secondary and rebound driving keys.
+    for key=1,1023 do
+        local action=dik_to_bind(key)
+        if action==key_bindings.kFWD or action==key_bindings.kBACK or
+            action==key_bindings.kL_STRAFE or action==key_bindings.kR_STRAFE or
+            action==key_bindings.kJUMP then level.release_action(key) end
+    end
+end
+function handle_input(event,key,action)
+    if action~=key_bindings.kWPN_RELOAD or level.main_input_receiver() or
+        not db.actor or not db.actor:alive() or not db.actor:IsInCar() then return false end
+    if event~=0 then return event==1 or event==2 end
+    local object=mounted_car()
+    if not object then return false end
+    release_driving_controls()
+    return ui_pf_hf_media.show(object:id(),"radio",{state=state(object:id()),
+        available=available,close_key=key})
+end
+function update()
+    local actor=db.actor
+    local sim=actor and actor:alive() and alife() or nil
+    if not sim then stop_all();return end
+    if token and level.editor_input_owner()~=token then token=nil end
+    if actor:IsInCar() and not level.main_input_receiver() and not pf_runtime_editor.is_active() then
+        if not token and level.editor_input_owner()==0 then
+            local owner=level.capture_editor_input(handle_input)
+            if owner and owner~=0 then token=owner end
+        end
+    else
+        release_input()
+    end
+    -- Only cars whose radio has been used are visited. No ALife/world scan
+    -- in the frame loop, no client pointers or sound objects in save data.
+    for id,own in pairs(data) do
+        local server=sim:object(id,true)
+        local object=level.object_by_id(id)
+        if not server or server:section_name()~=own.section or
+            (object and (not is_car(object) or object:name()~=own.instance)) then
+            stop_player(id);data[id]=nil
+        elseif not object then
+            stop_player(id)
+        elseif object:get_car():GetfHealth()<=0 then
+            stop_player(id);own.is_on=false
+        elseif own.is_on then
+            local player=players[id] or {};players[id]=player
+            pf_hf_media.update_radio(object,player,own,sound_position(object,player))
+        else
+            stop_player(id)
+        end
+    end
+end
+local function on_load()
+    stop_all()
+    if not restored then data={} end
+    restored=false
+    ui_pf_hf_media.force_close()
+end
+function save_state(storage) storage.pf_vehicle_radio=data end
+function load_state(storage)
+    stop_all();data=storage.pf_vehicle_radio or {};restored=true
+end
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("update",update)
+    RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("load",on_load)
+    registered=true
+end
+on_game_start()

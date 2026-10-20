@@ -14,6 +14,15 @@ function opt_gameplay:InitControls(x, y, xml, handler)
     self:SetAutoDelete(true)
     self.scroll_v = xml:InitScrollView("main_dialog:scroll_v", self)
 
+    if getFS():exist("$game_scripts$", "pf_sleep_timelapse.script") then
+        local sleep_row = xml:InitStatic("video_adv:templ_item", nil)
+        local sleep_label = xml:InitStatic("tab_gameplay:cap_developer_access", sleep_row)
+        sleep_label:TextControl():SetTextST("pf_sleep_timelapse_option")
+        self.check_sleep_timelapse = xml:InitCheck("tab_gameplay:check_developer_access", sleep_row)
+        self.scroll_v:AddWindow(sleep_row, true)
+        sleep_row:SetAutoDelete(false)
+    end
+
     local _st
     local addControl = function(crl)	
         self.scroll_v:AddWindow(crl, true)
@@ -165,5 +174,20 @@ function opt_gameplay:SaveDisableMinimapValue()
     if disabled == self.disable_minimap_backup then return true end
     if not pf_minimap_settings.set_disabled(disabled) then return false end
     self.disable_minimap_backup = disabled
+    return true
+end
+
+function opt_gameplay:SetSleepTimelapseValue()
+    if not self.check_sleep_timelapse then return end
+    self.sleep_timelapse_backup = pf_sleep_timelapse.is_enabled()
+    self.check_sleep_timelapse:SetCheck(self.sleep_timelapse_backup)
+end
+
+function opt_gameplay:SaveSleepTimelapseValue()
+    if not self.check_sleep_timelapse then return true end
+    local enabled = self.check_sleep_timelapse:GetCheck() == true
+    if enabled == self.sleep_timelapse_backup then return true end
+    if not pf_sleep_timelapse.set_enabled(enabled) then return false end
+    self.sleep_timelapse_backup = enabled
     return true
 end

@@ -14,7 +14,8 @@ local SQUAD_INDEX_CACHE_MS = 5000
 local MIGRATION = {
 	scan_limit = 10000,
 	max_scan_limit = 999999,
-	squad_sentinel = 65535
+	squad_sentinel = 65535,
+	max_legacy_active = 32
 }
 
 -- Only the twelve verified mutant smarts belong to the hunting pool. A name
@@ -98,6 +99,7 @@ local squad_index_board = nil
 local squad_index_expires = 0
 local squads_by_smart = {}
 local migration = {}
+local persistence = {registered = false, reconciled = false, legacy = true}
 
 local function tr(id)
 	return game.translate_string(id)
@@ -187,10 +189,26 @@ local function encode_state()
 	}, "|")
 end
 
-local function save_state()
-	if db.actor ~= nil and state ~= nil then
-		xr_logic.pstor_store(db.actor, PSTOR_KEY, encode_state())
+function persistence.storage()
+	return alife_storage_manager and alife_storage_manager.get_state
+		and alife_storage_manager.get_state() or nil
+end
+
+function persistence.package()
+	local frozen = {}
+	for _, order in ipairs(state.active) do
+		if order.targets then frozen[order.task_id] = order.targets end
 	end
+	return {version = 1, encoded = encode_state(), targets = frozen}
+end
+
+local function save_state()
+	if state == nil then return end
+	local encoded = encode_state()
+	local data = persistence.storage()
+	if data then data[PSTOR_KEY] = persistence.package() end
+	-- Keep the established six-field actor block readable by old saves/tools.
+	if db.actor ~= nil then xr_logic.pstor_store(db.actor, PSTOR_KEY, encoded) end
 end
 
 local function decode_order(encoded)
@@ -215,8 +233,15 @@ end
 
 local function load_state()
 	state = new_state()
-	local encoded = xr_logic.pstor_retrieve(db.actor, PSTOR_KEY, "")
+	local data = persistence.storage()
+	local backup = data and data[PSTOR_KEY]
+	local encoded = type(backup) == "table" and backup.version == 1 and backup.encoded or ""
 	local fields = split_plain(encoded, "|")
+	persistence.legacy = #fields ~= 6 or fields[1] ~= STATE_VERSION
+	if persistence.legacy then
+		encoded = xr_logic.pstor_retrieve(db.actor, PSTOR_KEY, "")
+		fields = split_plain(encoded, "|")
+	end
 	if #fields ~= 6 or fields[1] ~= STATE_VERSION then return end
 	state.day = fields[2]
 	state.accepted_today = math.max(0, math.min(
@@ -227,7 +252,11 @@ local function load_state()
 	end
 	for _, encoded_order in ipairs(split_plain(fields[6], ";")) do
 		local order = decode_order(encoded_order)
-		if order ~= nil and #state.active < MAX_ACTIVE then
+		if order ~= nil and #state.active < MIGRATION.max_legacy_active then
+			if not persistence.legacy and type(backup.targets) == "table"
+				and type(backup.targets[order.task_id]) == "table" then
+				order.targets = backup.targets[order.task_id]
+			end
 			table.insert(state.active, order)
 			local serial = tonumber(string.match(order.task_id, "(%d+)$")) or 0
 			state.serial = math.max(state.serial, serial)
@@ -411,6 +440,7 @@ end
 local function initialize_state()
 	if db.actor == nil then return false end
 	if state == nil then load_state() end
+	if not persistence.reconciled and not migration.restore() then return false end
 	refresh_offers()
 	return true
 end
@@ -439,6 +469,17 @@ local function live_members(order)
 			table.insert(result, id)
 		end
 	end
+	if order.targets then
+		for _, target in ipairs(order.targets) do
+			local object = sim:object(target.id)
+			if object and (not target.name or object:name() == target.name)
+				and (not target.section or object:section_name() == target.section) then
+				append_member(target.id)
+			end
+		end
+		table.sort(result)
+		return result
+	end
 	for _, squad_id in ipairs(order.squad_ids) do
 		local squad = sim:object(squad_id)
 		if squad ~= nil then
@@ -455,6 +496,19 @@ local function live_members(order)
 	end
 	table.sort(result)
 	return result
+end
+
+function persistence.capture(order)
+	if order.targets then return end
+	local targets = {}
+	local sim = alife()
+	for _, id in ipairs(live_members(order)) do
+		local object = sim:object(id)
+		table.insert(targets, {id = id,
+			name = object.name and object:name() or nil,
+			section = object.section_name and object:section_name() or nil})
+	end
+	order.targets = targets
 end
 
 local function trapper_object_id()
@@ -496,6 +550,8 @@ local function ensure_native_task(order, members)
 	local stage = task_stage(order, members)
 	local game_task = db.actor:get_task(order.task_id, true)
 	if game_task == nil then
+		-- A paid/failed native task must never be recreated from a stale block.
+		if db.actor:get_task(order.task_id, false) ~= nil then return end
 		game_task = CGameTask()
 		game_task:set_id(order.task_id)
 		game_task:set_type(task.additional)
@@ -635,10 +691,14 @@ local function accept_pending()
 	local smart_name = pending_offer_smart
 	local index, squad_ids = validate_pending_offer()
 	if index == nil then return false end
-	state.serial = state.serial + 1
+	local task_id
+	repeat
+		state.serial = state.serial + 1
+		task_id = string.format("%s%06d", TASK_PREFIX, state.serial)
+	until db.actor:get_task(task_id, false) == nil
 	local target = targets[smart_name]
 	local order = {
-		task_id = string.format("%s%06d", TASK_PREFIX, state.serial),
+		task_id = task_id,
 		smart_name = smart_name,
 		squad_ids = squad_ids,
 		reward = target.reward,
@@ -648,6 +708,10 @@ local function accept_pending()
 	table.insert(state.active, order)
 	table.remove(state.offers, index)
 	state.accepted_today = state.accepted_today + 1
+	-- Commit the owned target list before invoking native/UI side effects.
+	-- A later update can recreate a missing native task after a failed call.
+	persistence.capture(order)
+	save_state()
 	ensure_native_task(order, live_members(order))
 	refresh_offers()
 	save_state()
@@ -726,6 +790,105 @@ local function turn_in_ready(index, first_speaker, second_speaker)
 	return true
 end
 
+-- Old saves can contain more native orders than the historical three-slot
+-- script block. Restore those obligations without raising the normal limit.
+-- A lost target is reconstructed from its authored area and advertised species;
+-- living targets remain hunting. Repeated/ambiguous titles require a unique
+-- existing task spot, so recovery cannot silently choose another hunting area.
+function migration.smart_for_legacy(title)
+	local matches, marked = {}, {}
+	for _, name in ipairs(target_order) do
+		if title == string.format(tr("pf_trapper_hunt_task_title"), kind_name(name)) then
+			table.insert(matches, name)
+			local _, smart = smart_data(name)
+			local has_spot = smart and level.map_has_object_spot
+				and level.map_has_object_spot(smart.id, TASK_SPOT) ~= 0
+			if not has_spot and level.map_has_object_spot then
+				local sim = alife()
+				for _, id in ipairs(live_squad_ids(name)) do
+					local squad = sim and sim:object(id)
+					if squad and squad.squad_members then
+						for member in squad:squad_members() do
+							if member and member.id and level.map_has_object_spot(member.id, TASK_SPOT) ~= 0 then
+								has_spot = true
+							end
+						end
+					end
+				end
+			end
+			if has_spot then
+				table.insert(marked, name)
+			end
+		end
+	end
+	if #matches == 1 then return matches[1] end
+	if #marked == 1 then return marked[1] end
+	-- Equal-title areas have the same kind/reward. If EVERY possible area is
+	-- registered and already empty, the lost order is ready whichever it was;
+	-- choosing a representative cannot redirect the player to a living target.
+	if #matches > 1 and #marked == 0 then
+		for _, name in ipairs(matches) do
+			local _, _, entry = smart_data(name)
+			if not entry or #live_squad_ids(name) > 0 then return nil end
+		end
+		return matches[1]
+	end
+	return nil
+end
+
+function migration.restore()
+	local board = sim_board.get_sim_board()
+	if not board or not board.smarts_by_names or not board.smarts then return false end
+	local active_ids, kept = {}, {}
+	for _, order in ipairs(state.active) do
+		local native = db.actor:get_task(order.task_id, true)
+		if native ~= nil or db.actor:get_task(order.task_id, false) == nil then
+			if not active_ids[order.task_id] then
+				persistence.capture(order)
+				table.insert(kept, order)
+				active_ids[order.task_id] = true
+			end
+		end
+	end
+	state.active = kept
+	local recovered, unresolved = 0, 0
+	do
+		local bound = math.min(MIGRATION.max_scan_limit, math.max(MIGRATION.scan_limit, state.serial))
+		for serial = 1, bound do
+			local id = string.format("%s%06d", TASK_PREFIX, serial)
+			if db.actor:get_task(id, false) ~= nil then state.serial = math.max(state.serial, serial) end
+			local native = db.actor:get_task(id, true)
+			if native and not active_ids[id] then
+				local name = migration.smart_for_legacy(native:get_title())
+				local _, smart, entry = smart_data(name)
+				if name and entry and #state.active < MIGRATION.max_legacy_active then
+					local squads = live_squad_ids(name)
+					local order = {task_id = id, smart_name = name,
+						squad_ids = #squads > 0 and squads or {MIGRATION.squad_sentinel},
+						reward = targets[name].reward,
+						status = #squads > 0 and "hunting" or "ready",
+						accepted_day = current_day_key()}
+					persistence.capture(order)
+					table.insert(state.active, order)
+					active_ids[id] = true
+					recovered = recovered + 1
+				else unresolved = unresolved + 1 end
+			end
+		end
+	end
+	persistence.reconciled = true
+	if recovered > 0 then
+		state.accepted_today = math.min(MAX_ACCEPTED_PER_DAY,
+			math.max(state.accepted_today, #state.active))
+	end
+	save_state()
+	if recovered > 0 or unresolved > 0 then
+		printf("~ [pf_trapper_hunts] restored [%d], unresolved [%d], serial [%d]",
+			recovered, unresolved, state.serial)
+	end
+	return true
+end
+
 function migration.scan_bound(args)
 	local raw = args and args[1] or nil
 	if raw == nil or tostring(raw) == "" then return MIGRATION.scan_limit end
@@ -763,6 +926,7 @@ function migration.run(args)
 	local no_capacity = 0
 	for serial = 1, scan_bound do
 		local task_id = string.format("%s%06d", TASK_PREFIX, serial)
+		if db.actor:get_task(task_id, false) ~= nil then state.serial = math.max(state.serial, serial) end
 		local game_task = db.actor:get_task(task_id, true)
 		if game_task ~= nil and not active_ids[task_id] then
 			local smart_name = migration.smart_from_title(game_task:get_title())
@@ -816,6 +980,7 @@ function update()
 end
 
 function reset()
+	persistence.reconciled = false
 	state = nil
 	next_update = 0
 	task_runtime = {}
@@ -919,3 +1084,22 @@ end
 function dialog_result_text(first_speaker, second_speaker)
 	return last_dialog_text or tr("pf_trapper_hunt_accept_unavailable")
 end
+
+
+-- Register before ALife loads the actor binder. Same-process loads must drop
+-- transient order caches before any dialogue/update can write the new save.
+function on_game_start()
+	if persistence.registered or type(RegisterScriptCallback) ~= "function" then return end
+	RegisterScriptCallback("load_state", function(_) reset() end)
+	RegisterScriptCallback("save_state", function(data)
+		if state ~= nil then data[PSTOR_KEY] = persistence.package() end
+	end)
+	RegisterScriptCallback("new_game_created", function()
+		local data = persistence.storage()
+		if data then data[PSTOR_KEY] = nil end
+		reset()
+	end)
+	persistence.registered = true
+end
+
+on_game_start()

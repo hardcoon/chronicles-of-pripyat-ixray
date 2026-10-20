@@ -123,6 +123,10 @@ function sleep_dialog:OnButtonSleep()
 		end
 	end
 	self:HideDialog()
+
+	if getFS():exist("$game_scripts$", "pf_sleep_timelapse.script") and
+		pf_sleep_timelapse.begin(self.time_track:GetIValue()) then return end
+
 	xr_effects.disable_ui(db.actor, nil)
 	level.add_cam_effector("camera_effects\\sleep.anm", 10, false, "ui_sleep_dialog.dream_callback")
 	level.add_pp_effector("sleep_fade.ppe", 11, false)

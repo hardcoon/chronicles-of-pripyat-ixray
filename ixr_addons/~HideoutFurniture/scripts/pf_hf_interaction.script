@@ -38,6 +38,7 @@ end
 
 local function target()
     if not db.actor or pf_runtime_editor.is_active() or level.main_input_receiver() then return nil end
+    if db.actor:IsInCar() then return nil end
     if not db.actor:alive() then return nil end
     local object=level.get_target_obj()
     if not object then return nil end

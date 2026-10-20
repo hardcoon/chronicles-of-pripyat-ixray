@@ -1,0 +1,231 @@
+-- IX-Ray port of TheMrDemonized's Sleep Timelapse 0.31.
+-- Absolute camera and transient input/time ownership are provided by COP-ENG-185.
+local state = {active = false}
+local impl = {}
+
+local function copy(v) return vector():set(v.x, v.y, v.z) end
+local function blend(a, b, t)
+    return vector():set(a.x + (b.x-a.x)*t, a.y + (b.y-a.y)*t, a.z + (b.z-a.z)*t)
+end
+local function ease(t)
+    t = math.max(0, math.min(t, 1))
+    if t < .5 then return 8*t*t*t*t end
+    return 1-8*(1-t)*(1-t)*(1-t)*(1-t)
+end
+local function clock(ct)
+    local y, mo, d, h, m = ct:get()
+    return string.format("%02d:%02d", h, m)
+end
+
+class "sleep_overlay" (CUIScriptWnd)
+function sleep_overlay:__init() super()
+    self:SetWndRect(Frect():set(0,0,1024,768))
+    local xml = CScriptXmlInit()
+    xml:ParseFile("pf_sleep_timelapse.xml")
+    self.time = xml:InitTextWnd("time", self)
+    self.shade = xml:InitStatic("shade", self)
+    self.shade:SetTextureColor(GetARGB(0,255,255,255))
+    level.add_dialog_to_render(self)
+end
+function sleep_overlay:alpha(value)
+    self.shade:SetTextureColor(GetARGB(math.floor(math.max(0,math.min(255,value))),255,255,255))
+end
+function sleep_overlay:destroy()
+    level.remove_dialog_to_render(self)
+end
+
+function impl.ray(position, direction, distance)
+    state.ray:set_position(position)
+    state.ray:set_direction(direction)
+    state.ray:set_range(distance)
+    if state.ray:query() then return state.ray:get_distance() end
+    return nil
+end
+
+function impl.roof(x, z)
+    local hit = impl.ray(vector():set(x,state.sky,z), vector():set(0,-1,0), state.depth)
+    if not hit then return nil end
+    return state.sky-hit
+end
+
+function impl.find_camera()
+    local bounds = level.get_bounding_volume()
+    state.sky = bounds.max.y+8
+    state.depth = bounds.max.y-bounds.min.y+32
+    if state.depth <= 0 or state.depth > 100000 then return false end
+    state.ray = ray_pick()
+    state.ray:set_flags(3)
+    state.ray:set_ignore_object(db.actor)
+    local origin = state.from
+    local roof = nil
+    -- Trace from the top of the actual level bounds, not N metres above the bed.
+    -- Sample the bed footprint as well, so a nearby courtyard never lowers the camera
+    -- below the building in which the actor is sleeping.
+    for _,offset in ipairs({{0,0},{-3,0},{3,0},{0,-3},{0,3}}) do
+        local y = impl.roof(origin.x+offset[1],origin.z+offset[2])
+        if y then roof = math.max(roof or y,y) end
+    end
+    if not roof then return false end
+    local heading = state.direction:getH()
+    for i = 1,40 do
+        local angle = (i-1)*2.3999632297287
+        local radius = i == 1 and 0 or 5+math.sqrt(i)*3
+        local x,z = origin.x+math.sin(angle)*radius,origin.z+math.cos(angle)*radius
+        local local_roof = impl.roof(x,z)
+        if local_roof then
+            local height = math.max(roof,local_roof)
+            -- Check the camera footprint; the entire held view stays at this safe point.
+            for _,offset in ipairs({{-1,-1},{1,-1},{-1,1},{1,1}}) do
+                height = math.max(height,impl.roof(x+offset[1],z+offset[2]) or height)
+            end
+            local position = vector():set(x,height+3.5,z)
+            if not impl.ray(position,vector():set(0,1,0),math.max(4,state.sky-position.y+1)) then
+                for j = 1,8 do
+                    local direction = vector():setHP(heading+(j-1)*math.pi/4,math.rad(j<=4 and 3 or -3))
+                    if not impl.ray(position,direction,75) then
+                        state.to,state.look = position,direction
+                        local travel = vector():set(position):sub(origin)
+                        local length = travel:magnitude()
+                        state.masked = length > .01 and impl.ray(origin,travel:normalize(),length) ~= nil
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+function is_active() return state.active end
+
+function finish(success)
+    if not state.active then return end
+    state.active = false
+    -- Independent cleanup steps: a dead HUD/ALife session must not leave accelerated time/input.
+    pcall(level.pf_sleep_camera_clear)
+    pcall(level.set_global_time_factor,state.original_factor)
+    if state.radius then pcall(function() alife():set_switch_distance(state.radius) end) end
+    local console = get_console()
+    pcall(function() console:execute("snd_volume_music "..state.music) end)
+    pcall(function() console:execute("snd_volume_eff "..state.effects) end)
+    if state.overlay then pcall(function() state.overlay:destroy() end);state.overlay=nil end
+    if db.actor then
+        pcall(function()
+            if success then db.actor.power=1 end
+            db.actor:give_info_portion("tutorial_sleep")
+            disable_info("actor_is_sleeping")
+            disable_info("sleep_active")
+            xr_effects.enable_ui(db.actor,nil)
+        end)
+    end
+    pcall(level.enable_input)
+    state.ray = nil
+    state.phase = nil
+    if success and db.actor and db.actor:alive() then
+        local ok, sound = pcall(sound_object,"timelapse_alarm")
+        if ok and sound then sound:play_no_feedback(db.actor,0,0,db.actor:position(),1,1) end
+    end
+end
+
+function begin(hours)
+    if state.active or not db.actor or not db.actor:alive() or not level.pf_sleep_camera_set then return false end
+    if level_weathers.bLevelUnderground then return false end
+    hours=tonumber(hours)
+    if not hours or hours<1 or hours>24 then return false end
+    state.from=copy(device().cam_pos)
+    state.direction=copy(device().cam_dir)
+    local ok,found=pcall(impl.find_camera)
+    if not ok or not found then
+        printf("[Sleep Timelapse] No safe camera point; ordinary sleep: %s",tostring(found))
+        state.ray=nil
+        return false
+    end
+    state.original_factor=level.get_global_time_factor()
+    state.music=get_console():get_float("snd_volume_music")
+    state.effects=get_console():get_float("snd_volume_eff")
+    state.started=game.get_game_time()
+    state.seconds=hours*3600
+    state.target=game.get_game_time()
+    local delta=game.CTime();delta:set(1,1,1+math.floor(hours/24),hours%24,0,0,0);state.target:add(delta)
+    state.elapsed=0
+    state.phase="depart"
+    state.factor=state.original_factor
+    state.acceleration=.01
+    state.target_factor=math.max(state.original_factor,math.min(700,hours*50)*.7)
+    state.health=db.actor.health
+    state.active=true
+    local started,why=pcall(function()
+        state.overlay=sleep_overlay()
+        if not level.pf_sleep_camera_set(state.from,state.direction) then error("camera rejected") end
+        xr_effects.disable_ui(db.actor,nil)
+        db.actor:give_info_portion("actor_is_sleeping")
+        state.radius=alife():switch_distance()
+        alife():set_switch_distance(math.min(state.radius,75))
+        surge_manager.resurrect_skip_message()
+    end)
+    if not started then
+        printf("[Sleep Timelapse] Cannot start: %s",tostring(why))
+        finish(false)
+        return false
+    end
+    return true
+end
+
+function impl.update()
+    if not state.active then return end
+    if not db.actor or not db.actor:alive() or not level.pf_sleep_camera_active() then finish(false);return end
+    if db.actor.health<state.health-.0005 or db.actor.bleeding>0 or db.actor.radiation>0 then finish(false);return end
+    state.health=db.actor.health
+    local dt=math.min(250,device().time_delta/math.max(.001,level.get_global_time_factor()))
+    state.elapsed=state.elapsed+dt
+    state.overlay.time:SetText(clock(game.get_game_time()).." / "..clock(state.target))
+    if state.phase=="depart" then
+        local t=ease(state.elapsed/2500)
+        local position,direction
+        if state.masked then
+            -- Cover an intersecting flight path instead of showing the inside of a wall/roof.
+            local a=state.elapsed<350 and ease(state.elapsed/350) or 1-ease((state.elapsed-500)/1100)
+            state.overlay:alpha(255*a)
+            position=state.elapsed<350 and state.from or state.to
+            direction=state.elapsed<350 and state.direction or state.look
+        else
+            position=blend(state.from,state.to,t)
+            direction=blend(state.direction,state.look,t):normalize()
+        end
+        if not level.pf_sleep_camera_set(position,direction) then finish(false);return end
+        if state.elapsed>=2500 then
+            state.overlay:alpha(0)
+            state.phase="sleep";state.elapsed=0
+            get_console():execute("snd_volume_music 0")
+            get_console():execute("snd_volume_eff 0")
+        end
+    elseif state.phase=="sleep" then
+        if not level.pf_sleep_camera_set(state.to,state.look) then finish(false);return end
+        local remaining=state.seconds-game.get_game_time():diffSec(state.started)
+        if remaining<=0 then
+            level.set_global_time_factor(state.original_factor)
+            state.phase="return";state.elapsed=0
+            return
+        end
+        state.acceleration=math.min(.1,state.acceleration+.0001*dt)
+        state.factor=math.min(state.target_factor,state.factor+state.acceleration*.7*dt)
+        local near_end=math.max(state.original_factor,remaining/(math.max(1,level.get_time_factor())*.08))
+        level.set_global_time_factor(math.min(state.factor,near_end))
+    elseif state.phase=="return" then
+        local a=state.elapsed<350 and ease(state.elapsed/350) or 1-ease((state.elapsed-450)/550)
+        state.overlay:alpha(255*a)
+        local position=state.elapsed<350 and state.to or state.from
+        local direction=state.elapsed<350 and state.look or state.direction
+        if not level.pf_sleep_camera_set(position,direction) then finish(false);return end
+        if state.elapsed>=1000 then finish(true) end
+    end
+end
+
+function update()
+    if not state.active then return end
+    local ok,why=pcall(impl.update)
+    if not ok then
+        printf("[Sleep Timelapse] Interrupted: %s",tostring(why))
+        finish(false)
+    end
+end

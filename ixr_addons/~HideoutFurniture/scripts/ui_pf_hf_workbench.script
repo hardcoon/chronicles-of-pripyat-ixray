@@ -297,6 +297,8 @@ function pf_hf_workbench_dialog:InitControls()
 	self.left = xml:InitStatic("main:left", self)
 	self.right = xml:InitStatic("main:right", self)
 	self.footer = xml:InitStatic("main:footer", self)
+	self.nearby_storage = xml:InitTextWnd("main:footer:nearby_storage", self.footer)
+	self.nearby_storage:Enable(false)
 	self.title = xml:InitTextWnd("main:footer:title", self.footer)
 	self.source_equipped_selected = xml:InitStatic("main:left:source_equipped_selected", self.left)
 	self.source_inventory_selected = xml:InitStatic("main:left:source_inventory_selected", self.left)
@@ -543,6 +545,7 @@ function pf_hf_workbench_dialog:Open(bench_id)
 end
 
 function pf_hf_workbench_dialog:OnClose()
+	pf_hf_workbench_materials.forget_sources()
 	self.disassemble_plan = nil
 	pf_hf_workbench_preview.close(self.preview)
 	self.preview = nil
@@ -656,6 +659,9 @@ function pf_hf_workbench_dialog:LayoutAction()
 end
 
 function pf_hf_workbench_dialog:Refresh()
+	pf_hf_workbench_materials.refresh(self.bench_id)
+	self.nearby_storage:SetText(string.format(tr("pf_hf_nearby_storage_count"),
+		pf_hf_workbench_materials.storage_count(self.bench_id)))
 	self:LayoutAction()
 	local disassemble = self:IsDisassemble()
 	local creating = self.tab == "craft" and not disassemble
@@ -932,7 +938,7 @@ function pf_hf_workbench_dialog:RefreshSelected()
 		math.floor(item:condition() * 100 + 0.5),
 		math.floor(math.min(1, item:condition() + 0.10) * 100 + 0.5)))
 	self.condition_bar:SetProgressPos(math.floor(item:condition() * 100 + 0.5))
-	local counts = pf_hf_workbench_repair.owned_materials()
+	local counts = pf_hf_workbench_repair.owned_materials(self.bench_id)
 	local available = item:condition() < 0.9999 and self.inventory_refresh == nil
 	local line_index = 1
 	for _, material in ipairs(pf_hf_workbench_repair.material_order()) do
@@ -997,8 +1003,8 @@ end
 
 function pf_hf_workbench_dialog:RefreshCraft(recipe)
 	local output = recipe and recipe.output or nil
-	local counts = pf_hf_workbench_craft.material_counts()
-	local available = output and pf_hf_workbench_craft.can_craft(output) or false
+	local counts = pf_hf_workbench_craft.material_counts(self.bench_id)
+	local available = output and pf_hf_workbench_craft.can_craft(output, self.bench_id, counts) or false
 	self.upgrade_name:SetText(output and
 		pf_hf_workbench_craft.item_label(output) or tr("pf_hf_no_selection"))
 	self.upgrade_description:SetText(output and craft_description(output) or "")
@@ -1043,7 +1049,7 @@ end
 
 function pf_hf_workbench_dialog:RefreshUpgrade(item)
 	local graph = item and pf_hf_workbench_upgrade.tree(item)
-	local counts = pf_hf_workbench_upgrade.material_counts()
+	local counts = pf_hf_workbench_upgrade.material_counts(self.bench_id)
 	local scheme = nil
 	if item then
 		local ini, section = system_ini(), item:section()
@@ -1198,7 +1204,7 @@ function pf_hf_workbench_dialog:OnInstallUpgrade()
 	if self.tab ~= "upgrade" or not self.selected_upgrade_id then return end
 	local item = self.selected_id and
 		pf_hf_workbench_repair.find_owned_target(self.selected_id)
-	local ok, message_id, consumed = pf_hf_workbench_upgrade.install(item, self.selected_upgrade_id)
+	local ok, message_id, consumed = pf_hf_workbench_upgrade.install(item, self.selected_upgrade_id, self.bench_id)
 	self:QueueInventoryRefresh(ok, message_id, consumed)
 	self:RefreshUpgrade(item)
 	self:SetTransactionStatus(ok, message_id)
@@ -1352,7 +1358,7 @@ end
 function pf_hf_workbench_dialog:OnRepair()
 	if self.inventory_refresh then return end
 	if not self.selected_id or self.tab ~= "repair" then return end
-	local ok, message_id, consumed = pf_hf_workbench_repair.repair(self.selected_id)
+	local ok, message_id, consumed = pf_hf_workbench_repair.repair(self.selected_id, self.bench_id)
 	self:QueueInventoryRefresh(ok, message_id, consumed)
 	self:Refresh()
 	self:SetTransactionStatus(ok, message_id)
@@ -1362,7 +1368,7 @@ function pf_hf_workbench_dialog:OnCraft()
 	if self.inventory_refresh then return end
 	if self:IsDisassemble() then self:OnDisassemble() return end
 	if self.tab ~= "craft" or not self.selected_recipe then return end
-	local ok, message_id, consumed = pf_hf_workbench_craft.craft(self.selected_recipe)
+	local ok, message_id, consumed = pf_hf_workbench_craft.craft(self.selected_recipe, self.bench_id)
 	self:QueueInventoryRefresh(ok, message_id, consumed)
 	self:Refresh()
 	self:SetTransactionStatus(ok, message_id)
@@ -1417,4 +1423,5 @@ function force_close()
 	-- This entry point is used by load/teardown; IDs belong to the old world.
 	if active_dialog then active_dialog.inventory_refresh = nil end
 	pf_hf_workbench_disassemble.reset()
+	pf_hf_workbench_materials.reset()
 end

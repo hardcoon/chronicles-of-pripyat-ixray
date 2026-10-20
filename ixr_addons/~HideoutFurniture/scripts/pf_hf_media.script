@@ -28,7 +28,8 @@ end
 -- Collection IDs are saved, so appending a new collection does not reorder old saves.
 local collections={
     {id="yanov",title="pf_hf_playlist_yanov",tracks=pf_hf_radio_playlists.yanov},
-    {id="zonefm",title="pf_hf_playlist_zonefm",tracks={}}}
+    {id="zonefm",title="pf_hf_playlist_zonefm",tracks={}},
+    {id="personal",title="pf_hf_playlist_personal",tracks={}}}
 local by_collection={}
 for _,collection in ipairs(collections) do by_collection[collection.id]=collection end
 local channel_offsets={}
@@ -38,6 +39,23 @@ for index,channel in ipairs(media.channels) do
         by_collection.zonefm.tracks[#by_collection.zonefm.tracks+1]={sound=path,
             name=string.format("ZoneFM %.1f FM / %02d",channel.frequency,number)}
     end
+end
+-- Native catalog is immutable until the next full game start. No filesystem work in update.
+local personal={ready=false,stamp="",by_name={}}
+local function load_personal()
+    if personal.ready then return end
+    personal.ready=true
+    local hash=0
+    if type(user_music)~="table" or type(user_music.count)~="function" then return end
+    local tracks=by_collection.personal.tracks
+    for index=0,user_music.count()-1 do
+        local name=user_music.name(index)
+        tracks[#tracks+1]={sound=user_music.token(index),name=name}
+        personal.by_name[name]=#tracks
+        for byte=1,#name do hash=(hash*33+name:byte(byte))%2147483647 end
+        hash=(hash*33+10)%2147483647
+    end
+    personal.stamp=tostring(#tracks)..":"..tostring(hash)
 end
 local function reset_sequence(own)
     own.shuffle_tracks=nil
@@ -52,7 +70,20 @@ function radio_selection(own)
     end
     local collection=by_collection[own.collection] or collections[1]
     own.collection=collection.id
+    if collection.id=="personal" then
+        load_personal()
+        if own.personal_stamp~=personal.stamp then
+            own.track=personal.by_name[own.personal_track_name] or 1
+            own.personal_stamp=personal.stamp
+            reset_sequence(own)
+        end
+    end
     own.track=math.max(1,math.min(#collection.tracks,own.track or 1))
+    if #collection.tracks==0 then own.track=0;own.is_on=false end
+    if collection.id=="personal" then
+        local selected=collection.tracks[own.track]
+        own.personal_track_name=selected and selected.name or nil
+    end
     if own.play_order~="shuffle" then own.play_order="ordered" end
     own.repeat_track=own.repeat_track==true
     -- A changed Yanov list invalidates saved positional history/shuffle entries.
@@ -68,6 +99,8 @@ function radio_copy_settings(source,target)
     target.play_order=source and source.play_order or "ordered"
     target.repeat_track=source and source.repeat_track==true or false
     target.radio_history_pos=source and source.radio_history_pos or 1
+    target.personal_stamp=source and source.personal_stamp or nil
+    target.personal_track_name=source and source.personal_track_name or nil
     target.yanov_track_count=source and source.yanov_track_count or nil
     for _,key in ipairs({"shuffle_tracks","radio_history"}) do
         target[key]=nil
@@ -77,22 +110,22 @@ function radio_copy_settings(source,target)
         end
     end
 end
-function radio_set_order(id,order)
-    local own=pf_hf_furniture.state(id)
+function radio_set_order(id,order,own)
+    own=own or pf_hf_furniture.state(id)
     if not own or (order~="ordered" and order~="shuffle") then return false end
     radio_selection(own)
     if own.play_order~=order then own.play_order=order;reset_sequence(own) end
     return true
 end
-function radio_toggle_repeat(id)
-    local own=pf_hf_furniture.state(id)
+function radio_toggle_repeat(id,own)
+    own=own or pf_hf_furniture.state(id)
     if not own then return false end
     radio_selection(own)
     own.repeat_track=not own.repeat_track
     return true
 end
-function radio_set_collection(id,collection_id)
-    local own=pf_hf_furniture.state(id)
+function radio_set_collection(id,collection_id,own)
+    own=own or pf_hf_furniture.state(id)
     if not own or not by_collection[collection_id] then return false end
     radio_selection(own)
     if own.collection~=collection_id then
@@ -103,6 +136,7 @@ function radio_set_collection(id,collection_id)
 end
 local function advance_track(own,step)
     local collection=radio_selection(own)
+    if #collection.tracks==0 then return false end
     if own.play_order=="ordered" then
         own.track=(own.track-1+step)%#collection.tracks+1
         reset_sequence(own)
@@ -140,23 +174,32 @@ local function advance_track(own,step)
             end
         end
     end
+    if own.collection=="personal" then own.personal_track_name=collection.tracks[own.track].name end
     own.track_revision=(own.track_revision or 0)+1
 end
-function radio_change_track(id,step)
-    local own=pf_hf_furniture.state(id)
+function radio_change_track(id,step,own)
+    own=own or pf_hf_furniture.state(id)
     if not own or type(step)~="number" or step~=math.floor(step) or math.abs(step)>128 then return false end
     advance_track(own,step)
     return true
 end
-function update_radio(object,binder)
-    local own=pf_hf_furniture.state(object:id())
+-- Vehicles supply their own saved state and a moving dashboard sound anchor.
+-- Furniture callers keep the original object-centred playback and state.
+function update_radio(object,binder,own,position)
+    own=own or pf_hf_furniture.state(object:id())
     if not own then return end
+    position=position or object:position()
     local collection,track=radio_selection(own)
     local selection=own.collection..":"..own.track..":"..(own.track_revision or 0)
     if binder.radio_sound and (not own.is_on or binder.radio_selection~=selection) then
         binder.radio_sound:stop();binder.radio_sound=nil
     end
-    if not own.is_on then return end
+    if not own.is_on or not track then return end
+    if own.collection=="personal" and binder.radio_sound and not user_music.valid(track.sound) then
+        binder.radio_sound:stop();binder.radio_sound=nil
+        advance_track(own,1)
+        return
+    end
     if binder.radio_sound and not binder.radio_sound:playing() then
         if not own.repeat_track then advance_track(own,1) end
         track=collection.tracks[own.track]
@@ -165,11 +208,20 @@ function update_radio(object,binder)
     end
     if not binder.radio_sound then
         binder.radio_sound=sound_object(track.sound:gsub("/","\\"))
-        binder.radio_sound:play_at_pos(object,object:position(),0,sound_object.s3d)
+        if own.collection=="personal" and not user_music.valid(track.sound) then
+            binder.radio_sound:stop();binder.radio_sound=nil
+            binder.radio_failed_count=(binder.radio_failed_count or 0)+1
+            if binder.radio_failed_count>=#collection.tracks then
+                own.is_on=false;own.personal_error=true;binder.radio_failed_count=0
+            else advance_track(own,1) end
+            return
+        end
+        binder.radio_failed_count=0;own.personal_error=nil
+        binder.radio_sound:play_at_pos(object,position,0,sound_object.s3d)
         binder.radio_selection=selection
     end
     binder.radio_sound.volume=own.volume
-    binder.radio_sound:set_position(object:position())
+    binder.radio_sound:set_position(position)
 end
 function channel_count() return #media.channels end
 function channel_frequency(index) return media.channels[index].frequency end

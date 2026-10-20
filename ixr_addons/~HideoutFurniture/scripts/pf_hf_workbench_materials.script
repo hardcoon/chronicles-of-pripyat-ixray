@@ -1,0 +1,169 @@
+-- Shared workbench supplies. Only deployed backpacks and actual furniture
+-- storage entries participate; world loot and hidden service boxes never do.
+local core = lz_nm_core
+local cache = nil
+local pending = {}
+local MAX_DISTANCE_SQ = 3.25 * 3.25
+
+function radius()
+	local ini = core.get_sysini()
+	local section, key = "pf_hf_workbench", "nearby_storage_radius"
+	local value = ini:section_exist(section) and ini:line_exist(section, key) and
+		tonumber(ini:r_string(section, key)) or nil
+	if not value or value ~= value or value < 0 or value * value >= math.huge then return 30 end
+	return value
+end
+
+local function workbench(id)
+	local object = id and level.object_by_id(id)
+	if not db.actor or not object or object:section() ~= "pf_hf_workbench_dev" or
+		object:position():distance_to_sqr(db.actor:position()) > MAX_DISTANCE_SQ then return nil end
+	return object
+end
+
+local function storage_section(section)
+	if section == "lz_nm_backpack_box" then return true end
+	local entry = pf_hf_furniture.definition(section)
+	-- Service inventories returned by definition() have no catalog object.
+	return entry and entry.kind == "stash" and entry.object == section or false
+end
+
+local function storage(id, name, position, range_sq)
+	local server = alife():object(id, true)
+	if not server or (name and server:name() ~= name) or
+		not storage_section(server:section_name()) or tonumber(server.parent_id) ~= 65535 then return nil end
+	local object = level.object_by_id(id)
+	if not object or object:section() ~= server:section_name() or
+		object:position():distance_to_sqr(position) > range_sq or
+		object:inv_box_closed_status() or not object:inv_box_can_take_status() then return nil end
+	return object, server
+end
+
+function refresh(bench_id)
+	cache = nil
+	local bench = workbench(bench_id)
+	if not bench then return end
+	local position, range = bench:position(), radius()
+	cache = { id = bench_id, name = bench:name(), radius = range,
+		x = position.x, y = position.y, z = position.z, sources = {} }
+	if range == 0 then return end
+	-- One discovery pass on opening/refreshing the dialog and before an action.
+	-- ALife enumeration includes furniture with no collision/spatial presence.
+	for id, server in alife():objects() do
+		if storage_section(server:section_name()) then
+			local object = storage(id, nil, position, range * range)
+			if object then
+				cache.sources[#cache.sources + 1] = { id = id, name = server:name(),
+					distance = object:position():distance_to_sqr(position) }
+			end
+		end
+	end
+	table.sort(cache.sources, function(left, right)
+		if left.distance ~= right.distance then return left.distance < right.distance end
+		return left.id < right.id
+	end)
+end
+
+local function sources(bench_id)
+	local bench = workbench(bench_id)
+	if not bench then return {}, nil end
+	local position, range = bench:position(), radius()
+	if not cache or cache.id ~= bench_id or cache.name ~= bench:name() or cache.radius ~= range or
+		cache.x ~= position.x or cache.y ~= position.y or cache.z ~= position.z then refresh(bench_id) end
+	return cache.sources, position, range * range
+end
+
+function storage_count(bench_id)
+	local containers, position, range_sq = sources(bench_id)
+	local count = 0
+	for _, source in ipairs(containers) do
+		if storage(source.id, source.name, position, range_sq) then count = count + 1 end
+	end
+	return count
+end
+
+local function clean_pending()
+	for id, name in pairs(pending) do
+		local server = alife():object(id, true)
+		if not server or server:name() ~= name then pending[id] = nil end
+	end
+end
+
+function collect(order, bench_id)
+	local counts, objects, owners, seen = {}, {}, {}, {}
+	for _, section in ipairs(order) do counts[section], objects[section] = 0, {} end
+	if not db.actor then return counts, objects, owners end
+	clean_pending()
+	local function append(owner, is_box, owner_name)
+		local entries = {}
+		local function visit(_, item)
+			local id, section = item:id(), item:section()
+			if not objects[section] or seen[id] or pending[id] then return end
+			local server = core.server_object(item)
+			if not server or tonumber(server.parent_id) ~= owner:id() then return end
+			seen[id] = true
+			entries[#entries + 1] = item
+			owners[id] = { id = owner:id(), name = owner_name }
+		end
+		if is_box then owner:iterate_inventory_box(visit, owner)
+		else owner:iterate_inventory(visit, owner) end
+		table.sort(entries, function(left, right) return left:id() < right:id() end)
+		for _, item in ipairs(entries) do
+			local section = item:section()
+			counts[section] = counts[section] + 1
+			objects[section][#objects[section] + 1] = item
+		end
+	end
+	-- Keep carried supplies first, then containers from nearest to furthest.
+	append(db.actor, false)
+	local containers, position, range_sq = sources(bench_id)
+	for _, source in ipairs(containers) do
+		local box = storage(source.id, source.name, position, range_sq)
+		if box then append(box, true, source.name) end
+	end
+	return counts, objects, owners
+end
+
+function prepare(needed, order, bench_id)
+	if not db.actor or (bench_id and not workbench(bench_id)) then return nil end
+	-- Never commit from an old UI count or a cached list of nearby containers.
+	refresh(bench_id)
+	local counts, objects, owners = collect(order, bench_id)
+	for section, amount in pairs(needed) do
+		if (counts[section] or 0) < amount then return nil end
+	end
+	local plan = {}
+	local bench = workbench(bench_id)
+	for _, section in ipairs(order) do
+		for index = 1, needed[section] or 0 do
+			local item = objects[section][index]
+			local server, owner = core.server_object(item), owners[item:id()]
+			if not server or pending[item:id()] or server:section_name() ~= section or
+				tonumber(server.parent_id) ~= owner.id then return nil end
+			if owner.id ~= db.actor:id() and (not bench or
+				not storage(owner.id, owner.name, bench:position(), radius() ^ 2)) then return nil end
+			plan[#plan + 1] = server
+		end
+	end
+	return plan
+end
+
+function consume(plan)
+	-- prepare() validates the complete plan before any repair/upgrade/create.
+	-- Reserve all IDs before GE_DESTROY is queued: another click, tab or reopened
+	-- dialog must not reuse items still present in a client inventory this frame.
+	local ids = {}
+	for _, server in ipairs(plan) do
+		pending[server.id] = server:name()
+		ids[#ids + 1] = server.id
+	end
+	for _, server in ipairs(plan) do alife():release(server, true) end
+	return ids
+end
+
+function forget_sources() cache = nil end
+
+function reset()
+	cache = nil
+	pending = {}
+end

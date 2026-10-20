@@ -1,0 +1,72 @@
+-- Sleep Timelapse port settings. Native camera/input ownership: COP-ENG-185.
+-- Missing preference means enabled; never overwrite an existing user choice.
+local state = {enabled = nil}
+
+local function path()
+    return getFS():update_path("$app_data_root$", "pf_sleep_timelapse.setting")
+end
+
+function is_enabled()
+    if state.enabled ~= nil then return state.enabled end
+    local file = io.open(path(), "r")
+    local value = ""
+    if file then
+        value = string.lower(file:read("*l") or "")
+        file:close()
+    end
+    value = string.match(value, "^%s*(.-)%s*$")
+    state.enabled = value ~= "0" and value ~= "false" and value ~= "off"
+    return state.enabled
+end
+
+function set_enabled(enabled)
+    enabled = enabled == true
+    local file = io.open(path(), "w")
+    if not file then
+        printf("[Sleep Timelapse] Cannot save preference")
+        return false
+    end
+    local written = file:write(enabled and "1\n" or "0\n")
+    local closed = file:close()
+    if not written or not closed then
+        printf("[Sleep Timelapse] Cannot write preference")
+        return false
+    end
+    state.enabled = enabled
+    local runtime = rawget(_G,"pf_sleep_runtime")
+    if not enabled and runtime then runtime.finish(false) end
+    return true
+end
+
+function begin(hours)
+    if not is_enabled() then return false end
+    return pf_sleep_runtime.begin(hours)
+end
+
+local function reset()
+    local runtime=rawget(_G,"pf_sleep_runtime")
+    if runtime then runtime.finish(false) end
+end
+local function update()
+    local runtime=rawget(_G,"pf_sleep_runtime")
+    if runtime then runtime.update() end
+end
+local registered=false
+function on_game_start()
+    if registered then return end
+    -- The existing actor binder stays the lifecycle owner. Run cleanup before it
+    -- releases the actor/HUD/ALife objects; the engine also guards lost Lua updates.
+    local owner=bind_stalker.actor_binder
+    if not owner.pf_sleep_destroy_wrapped then
+        local previous=owner.net_destroy
+        owner.net_destroy=function(self,...)
+            reset()
+            if previous then return previous(self,...) end
+        end
+        owner.pf_sleep_destroy_wrapped=true
+    end
+    RegisterScriptCallback("update",update)
+    RegisterScriptCallback("load",reset)
+    registered=true
+end
+on_game_start()
