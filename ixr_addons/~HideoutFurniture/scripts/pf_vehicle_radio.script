@@ -1,4 +1,4 @@
--- The furniture player, with independent per-car save data and 3D dashboard audio.
+-- The furniture player, with independent per-car save data and 3D steering-wheel audio.
 local data={}
 local players={}
 local token=nil
@@ -44,15 +44,13 @@ function sound_position(object,player)
     local point=player.anchor and object:bone_position(player.anchor) or
         vector():set(origin.x+basis.j.x*1.1+basis.k.x*.6,
             origin.y+basis.j.y*1.1+basis.k.y*.6,origin.z+basis.j.z*1.1+basis.k.z*.6)
-    -- Project the steering-wheel anchor onto the car's centre plane. All axes
-    -- come from the car body, so turning the camera cannot move the radio.
-    local lateral=(point.x-origin.x)*basis.i.x+(point.y-origin.y)*basis.i.y+
-        (point.z-origin.z)*basis.i.z
+    -- Keep the anchor's driver-side position, directly ahead of the driver.
+    -- Offsets use the car body, so turning the camera cannot move the radio.
     local up=player.anchor=="seat_left" and .7 or 0
     local forward=player.anchor=="seat_left" and .65 or .15
-    return vector():set(point.x-basis.i.x*lateral+basis.j.x*up+basis.k.x*forward,
-        point.y-basis.i.y*lateral+basis.j.y*up+basis.k.y*forward,
-        point.z-basis.i.z*lateral+basis.j.z*up+basis.k.z*forward)
+    return vector():set(point.x+basis.j.x*up+basis.k.x*forward,
+        point.y+basis.j.y*up+basis.k.y*forward,
+        point.z+basis.j.z*up+basis.k.z*forward)
 end
 local function stop_player(id)
     local player=players[id]
