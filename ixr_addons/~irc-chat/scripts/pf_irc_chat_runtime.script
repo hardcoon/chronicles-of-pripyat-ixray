@@ -840,6 +840,12 @@ end
 local function flush_presence()
     if not runtime.presence_dirty or not runtime.authorized or not runtime.ready or
         not pf_irc_chat_transport.is_started() then return true end
+    runtime.stats_packet = runtime.stats_packet or pf_pda_player_stats.packet()
+    if runtime.stats_packet and runtime.stats_sent ~= runtime.stats_packet then
+        local published, publish_error = pf_irc_chat_transport.send({ "SET_STATS", runtime.stats_packet })
+        if not published then return false, publish_error end
+        runtime.stats_sent = runtime.stats_packet
+    end
     local sent, error_code = pf_irc_chat_transport.send({ "SET_PRESENCE", runtime.presence })
     if sent then runtime.presence_dirty = false end
     return sent, error_code
@@ -860,7 +866,7 @@ local function make_user(nick, identity, prefix, presence)
     }
 end
 
-local function upsert_user(nick, identity, prefix, presence, target, silent)
+local function upsert_user(nick, identity, prefix, presence, target, silent, away_message)
     nick = trim(nick)
     if nick == "" then return end
     target = target or runtime.users
@@ -873,6 +879,7 @@ local function upsert_user(nick, identity, prefix, presence, target, silent)
         current.presence = trim(presence) == "away" and "away" or "online"
     end
     current.muted = pf_irc_chat_config.is_muted(current.identity)
+    if away_message ~= nil then current.away_message = tostring(away_message) end
     target[key] = current
     if not silent then touch() end
 end
@@ -890,6 +897,10 @@ local function remove_user(nick, channel)
 end
 
 local function clear_session_state()
+    pf_pda_player_stats.bind_self(nil)
+    runtime.stats_sent = nil
+    runtime.stats_packet = nil
+    runtime.stats_developer_marked = nil
     for _, channel in pairs(runtime.channels) do
         channel.users = {}
         channel.user_snapshot = nil
@@ -901,6 +912,8 @@ local function clear_session_state()
     end
     bind_channel_aliases(active_channel())
     runtime.ready = false
+    pf_pda_player_stats.sync(pf_irc_chat_config.get_active_profile(), runtime.channels)
+    pf_pda_player_stats.flush()
 end
 
 local function stop_transport(send_quit)
@@ -955,8 +968,15 @@ end
 local function handle_event(fields)
     if type(fields) ~= "table" or type(fields[1]) ~= "string" then return true end
     local command = fields[1]
+    if command == "USER" or command == "USERS_SNAPSHOT_END" or command == "NICK" or
+        command == "STATE" or command == "SESSION" or command == "CHANNEL_STATE" or
+        command == "CHANNEL_ERROR" then runtime.stats_users_dirty = true end
     if command == "STATE" then
         local state = trim(fields[2])
+        if state == "disconnected" or state == "reconnecting" or state == "stopped" or state == "error" then
+            runtime.ready = false
+            for _, channel in pairs(runtime.channels) do channel.ready = false end
+        end
         if state == "ready" then mark_ready(fields[3]) else set_status(state, fields[3]) end
     elseif command == "CHANNEL_STATE" then
         local channel = ensure_channel(fields[2])
@@ -1093,7 +1113,7 @@ local function handle_event(fields)
         elseif channel then
             local target = channel.user_snapshot or channel.users
             upsert_user(fields[3 + offset], fields[4 + offset], fields[5 + offset],
-                fields[6 + offset], target, channel.user_snapshot ~= nil)
+                fields[6 + offset], target, channel.user_snapshot ~= nil, fields[7 + offset])
             if runtime.active_conversation == channel.key then bind_channel_aliases(channel) end
         end
     elseif command == "PRESENCE" then
@@ -1114,14 +1134,15 @@ local function handle_event(fields)
             local existing = channel.users[user_key(old_nick)]
             if existing then
                 channel.users[user_key(old_nick)] = nil
-                upsert_user(new_nick, identity, existing.prefix, fields[5], channel.users, true)
+                upsert_user(new_nick, identity, existing.prefix, fields[5], channel.users, true,
+                    existing.away_message)
             end
             if channel.user_snapshot then
                 existing = channel.user_snapshot[user_key(old_nick)]
                 if existing then
                     channel.user_snapshot[user_key(old_nick)] = nil
                     upsert_user(new_nick, identity, existing.prefix, fields[5],
-                        channel.user_snapshot, true)
+                        channel.user_snapshot, true, existing.away_message)
                 end
             end
         end
@@ -1142,6 +1163,8 @@ local function handle_event(fields)
         end
     elseif command == "SELF_NICK" then
         runtime.effective_nick = trim(fields[2])
+        pf_pda_player_stats.bind_self(runtime.effective_nick)
+        runtime.stats_users_dirty = true
         touch()
     elseif command == "NICK_FALLBACK" then
         runtime.effective_nick = trim(fields[3])
@@ -1314,11 +1337,25 @@ local function update_impl()
     for _, fields in ipairs(pf_irc_chat_transport.poll(64)) do
         if not handle_event(fields) then break end
     end
+    local marked = pf_pda_player_stats.developer_marked()
+    if runtime.stats_developer_marked ~= marked then
+        runtime.stats_developer_marked = marked
+        runtime.stats_packet = nil
+        runtime.presence_dirty = true
+    end
+    flush_presence()
+    if runtime.stats_users_dirty then
+        runtime.stats_users_dirty = false
+        pf_pda_player_stats.sync(pf_irc_chat_config.get_active_profile(), runtime.channels)
+        pf_pda_player_stats.flush()
+    end
 end
 
 local function pulse_ui()
     local pda_ui = rawget(_G, "pf_irc_chat_pda")
     if pda_ui and pda_ui.pulse then pcall(pda_ui.pulse) end
+    local stats_ui = rawget(_G, "pf_player_stats_ui")
+    if stats_ui and stats_ui.pulse then stats_ui.pulse() end
 end
 
 function update()
@@ -1336,6 +1373,9 @@ function update()
 end
 
 function on_game_load()
+    local stats_ui = rawget(_G, "pf_player_stats_ui")
+    if stats_ui then stats_ui.on_game_load() end
+    runtime.stats_packet, runtime.stats_sent = nil, nil
     local pda_ui = rawget(_G, "pf_irc_chat_pda")
     if pda_ui and pda_ui.on_game_load then pcall(pda_ui.on_game_load) end
     -- A save/load invalidates both C++ UI wrappers and the level Lua context.
@@ -1354,6 +1394,11 @@ function on_game_load()
 end
 
 local function prepare_ui_for_game_reload()
+    local stats_ui = rawget(_G, "pf_player_stats_ui")
+    if stats_ui and stats_ui.before_game_reload then
+        local ok, cleared = pcall(stats_ui.before_game_reload)
+        if not ok or cleared == false then return false end
+    end
     local pda_ui = rawget(_G, "pf_irc_chat_pda")
     if not pda_ui or not pda_ui.before_game_reload then return true end
     local ok, detached = pcall(pda_ui.before_game_reload)

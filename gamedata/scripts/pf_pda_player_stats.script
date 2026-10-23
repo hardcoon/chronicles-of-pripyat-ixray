@@ -1,0 +1,128 @@
+-- Local counters and persistent IRC observations for the PDA player cards.
+local tiers = { "green", "cyan", "purple", "orange", "red" }
+local tier_weights = { 1, 2, 3, 5, 10 }
+
+local function trim(value)
+    return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
+local function count(value)
+    return math.max(0, math.floor(tonumber(value) or 0))
+end
+
+local function player_name()
+    local irc = rawget(_G, "pf_irc_chat")
+    local nick = ""
+    if irc and irc.get_state then
+        local state = irc.get_state()
+        if state and state.authorized then nick = trim(state.effective_nick) end
+    end
+    if nick == "" and irc and irc.get_active_profile then
+        local profile = irc.get_active_profile()
+        nick = trim(profile and profile.nick)
+    end
+    if nick ~= "" then
+        local codec = rawget(_G, "pf_irc_text_codec")
+        return codec and codec.to_ui and codec.to_ui(nick) or nick
+    end
+    return db.actor:character_name()
+end
+
+function developer_marked()
+    local actor = db and db.actor
+    return actor ~= nil and db.storage ~= nil and db.storage[actor:id()] ~= nil and
+        (xr_logic.pstor_retrieve(actor, "pf_developer_achievement_gained", false) == true or
+         xr_logic.pstor_retrieve(actor, "pf_spawner_used", false) == true)
+end
+
+function local_values()
+    if not db or not db.actor then return nil end
+    if developer_marked() then return { no_data = true } end
+    local stats = xr_statistic.actor_statistic or {}
+    local manager, total, stash_score = rawget(_G, "pf_dynamic_stashes"), 0, 0
+    if manager and manager.get_searched_stash_count then
+        for index, tier in ipairs(tiers) do
+            local found = count(manager.get_searched_stash_count(tier))
+            total = total + found
+            stash_score = stash_score + found * tier_weights[index]
+        end
+    end
+    local values = { count(stats.killed_monsters), count(stats.killed_stalkers),
+        count(game.get_game_time():diffSec(level.get_start_time()) / 86400),
+        total, count(stats.artefacts_founded) }
+    values[6] = values[1] + values[2] + values[3] + values[5] + stash_score
+    return values
+end
+
+function packet()
+    local values = local_values()
+    if values and values.no_data then return "" end
+    return values and pf_player_stats_wire.encode(values) or nil
+end
+
+function rank(values) return values and pf_player_stats_wire.rank(values) or nil end
+
+function lines(values)
+    if not values or values.no_data then return game.translate_string("pf_pda_player_stats_unknown"), "" end
+    return string.format(game.translate_string("pf_pda_player_stats_kills"),
+        values[1], values[2], values[3]),
+        string.format(game.translate_string("pf_pda_player_stats_stashes"), values[4], values[5])
+end
+
+function card_lines(values)
+    if not values or values.no_data then return game.translate_string("pf_pda_player_stats_unknown"), "" end
+    return string.format(game.translate_string("pf_pda_player_stats_card_kills"), values[1], values[2], values[3]),
+        string.format(game.translate_string("pf_pda_player_stats_card_found"), values[5], values[4])
+end
+
+function get_rows()
+    local irc = rawget(_G, "pf_irc_chat")
+    local status = irc and irc.get_state() or {}
+    local profile = irc and irc.get_active_profile() or {}
+    local identity = pf_irc_chat_config.get_identity(false)
+    local own_id = identity and ("install:" .. identity.install_id:lower()) or ""
+    local own_nick = status.effective_nick or profile.nick or ""
+    local connected = status.any_channel_ready
+    if connected == nil then connected = status.ready end
+    local result = {}
+    for _, record in ipairs(pf_player_stats_cache.records(profile)) do
+        local own_record = own_id ~= "" and record.identity == own_id
+        local own_pending_nick = not pf_player_stats_cache.is_confirmed(record.identity) and
+            pf_player_stats_cache.canonical_nick(record.nick) ==
+                pf_player_stats_cache.canonical_nick(own_nick)
+        if not own_record and not own_pending_nick then
+            result[#result + 1] = { nick = pf_irc_text_codec.to_ui(record.nick), irc_nick = record.nick,
+                sort_nick = record.nick:lower(), identity = record.identity,
+                values = record.values, presence = record.presence, rank = rank(record.values) }
+        end
+    end
+    local values = local_values()
+    if values then
+        result[#result + 1] = { nick = player_name(), sort_nick = player_name():lower(), own = true,
+            identity = own_id, values = values, rank = rank(values),
+            presence = connected and (status.presence or "away") or "offline" }
+    end
+    table.sort(result, function(a, b)
+        local a_off, b_off = a.presence == "offline", b.presence == "offline"
+        if a_off ~= b_off then return not a_off end
+        if (a.rank or -1) ~= (b.rank or -1) then return (a.rank or -1) > (b.rank or -1) end
+        if a.sort_nick ~= b.sort_nick then return a.sort_nick < b.sort_nick end
+        return a.identity < b.identity
+    end)
+    return result
+end
+
+function bind_self(nick)
+    local identity = pf_irc_chat_config.get_identity(false)
+    return pf_player_stats_cache.bind_self(pf_irc_chat.get_active_profile(), nick,
+        identity and ("install:" .. identity.install_id:lower()) or nil)
+end
+
+function sync(profile, channels) return pf_player_stats_cache.sync(profile, channels) end
+function flush() return pf_player_stats_cache.flush() end
+function revision() return pf_player_stats_cache.revision() * 2 + (developer_marked() and 1 or 0) end
+
+function get_stat(index)
+    -- Cards now live in a scroll view attached to the existing native ranking page.
+    return nil
+end

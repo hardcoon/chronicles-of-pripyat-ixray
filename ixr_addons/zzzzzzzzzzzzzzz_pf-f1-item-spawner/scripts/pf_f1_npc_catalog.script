@@ -1,0 +1,157 @@
+-- Read-only F1 catalog and placement. The facade delegates creation to Pseudo A-Life.
+local communities = { "stalker", "bandit", "dolg", "freedom", "army",
+    "killer", "ecolog", "monolith", "zombied" }
+local cache = {}
+local spawn_offsets = { 0, -1.5, 1.5, -3, 3 }
+local impl = {}
+
+function impl.mesh_exists(visual)
+    if type(visual) ~= "string" or visual == "" then return false end
+    local path = string.gsub(visual, "/", "\\")
+    if string.find(path, "..", 1, true) or string.find(path, ":", 1, true) then return false end
+    if string.sub(string.lower(path), -4) ~= ".ogf" then path = path .. ".ogf" end
+    -- IX-Ray returns a file userdata for an existing VFS entry, nil otherwise.
+    return getFS():exist("$game_meshes$", path) ~= nil
+end
+
+function impl.visual_key(visual)
+    return string.gsub(string.lower(string.gsub(visual or "", "/", "\\")), "%.ogf$", "")
+end
+
+function impl.add_visual(result, seen, visual)
+    local key = impl.visual_key(visual)
+    if seen[key] or string.sub(key, 1, 7) ~= "actors\\" or not impl.mesh_exists(key) then return end
+    seen[key] = true
+    result[#result + 1] = { visual = key, name = string.match(key, "([^\\]+)$") or key }
+end
+
+function factions()
+    local result = {}
+    local ini = system_ini()
+    for _, community in ipairs(communities) do
+        local section = "pf_f1_npc_" .. community
+        if ini:section_exist(section) then
+            result[#result + 1] = { community = community, section = section,
+                name = game.translate_string("pf_f1_npc_faction_" .. community) }
+        end
+    end
+    return result
+end
+
+function impl.human_catalog()
+    local result, seen = {}, {}
+    local ini = system_ini()
+    local section = "pf_npc_editor_catalog"
+    if ini:section_exist(section) and ini:line_exist(section, "count") then
+        for index = 1, ini:r_u32(section, "count") do
+            local key = string.format("entry_%04d", index)
+            if ini:line_exist(section, key) then
+                local values = {}
+                for value in string.gmatch(ini:r_string(section, key) .. "|", "(.-)|") do
+                    values[#values + 1] = value
+                end
+                impl.add_visual(result, seen, values[6])
+            end
+        end
+    end
+    -- Retain a usable catalog when the separate NPC Editor addon is disabled.
+    for _, community in ipairs(communities) do
+        local section_name = "pf_f1_npc_" .. community
+        if ini:section_exist(section_name) and ini:line_exist(section_name, "visual") then
+            impl.add_visual(result, seen, ini:r_string(section_name, "visual"))
+        end
+    end
+    table.sort(result, function(a, b) return a.visual < b.visual end)
+    return result
+end
+
+function impl.monster_catalog()
+    local result = {}
+    local ini = system_ini()
+    ini:section_for_each(function(section)
+        if not string.match(section, "^pf_") and ini:line_exist(section, "class")
+                and ini:line_exist(section, "visual") then
+            local class_id = ini:r_string(section, "class") or ""
+            local scripted = ini:line_exist(section, "custom_data") and ini:r_string(section, "custom_data") or ""
+            local spawn = ini:line_exist(section, "$spawn") and ini:r_string(section, "$spawn") or ""
+            local visual = ini:r_string(section, "visual")
+            scripted = string.lower(string.gsub(scripted, '^"(.*)"$', "%1"))
+            spawn = string.gsub(spawn, '^"(.*)"$', "%1")
+            -- Ordinary monsters inherit default_custom_data.ltx. Reject their
+            -- quest/custom-logic variants and hidden editor templates.
+            if string.match(class_id, "^SM_") and
+                    (scripted == "" or scripted == "default_custom_data.ltx") and spawn ~= ""
+                    and ini:section_exist("pf_f1_m_" .. section) and impl.mesh_exists(visual) then
+                local name_id = ini:line_exist(section, "species") and ini:r_string(section, "species") or section
+                local name = game.translate_string(name_id)
+                result[#result + 1] = { section = section, visual = visual,
+                    name = name ~= section and (name .. " / " .. section) or section }
+            end
+        end
+        return false
+    end)
+    table.sort(result, function(a, b) return a.section < b.section end)
+    return result
+end
+
+function catalog(kind)
+    if kind ~= "stalker" and kind ~= "mutant" then return {} end
+    if not cache[kind] then
+        cache[kind] = kind == "stalker" and impl.human_catalog() or impl.monster_catalog()
+    end
+    return cache[kind]
+end
+
+function impl.spawn_point(actor, slot, occupied)
+    local direction = vector():set(device().cam_dir)
+    direction.y = 0
+    local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+    if length < 0.0001 then
+        direction = vector():set(actor:direction()); direction.y = 0
+        length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+    end
+    if length < 0.0001 then return nil end
+    direction:mul(1 / length)
+    local vertex = level.vertex_in_direction(actor:level_vertex_id(), direction, 5)
+    if not vertex or not level.valid_vertex_id(vertex) then return nil end
+    local offset = spawn_offsets[slot or 1]
+    if offset ~= 0 then
+        local side = vector():set(-direction.z, 0, direction.x)
+        if offset < 0 then side:mul(-1) end
+        vertex = level.vertex_in_direction(vertex, side, math.abs(offset))
+        if not vertex or not level.valid_vertex_id(vertex) then return nil end
+    end
+    local position = vector():set(level.vertex_position(vertex))
+    local origin = actor:position()
+    local dx, dz = position.x - origin.x, position.z - origin.z
+    if dx * dx + dz * dz < 2.5 * 2.5 or math.abs(position.y - origin.y) > 2.5 then return nil end
+    for _, used in ipairs(occupied or {}) do
+        local x, z = position.x - used.x, position.z - used.z
+        if x * x + z * z < 1.2 * 1.2 then return nil end
+    end
+    position.y = position.y + 0.15
+    return position, vertex
+end
+
+function prepare(kind, selected, community, slot, occupied)
+    local actor = db.actor
+    if not actor or not actor:alive() then return nil, "pf_f1_status_actor_missing" end
+    local allowed = false
+    for _, item in ipairs(catalog(kind)) do
+        if item == selected then allowed = true; break end
+    end
+    if not allowed then return nil, "pf_f1_npc_status_no_selection" end
+    local section = kind == "mutant" and ("pf_f1_m_" .. selected.section) or nil
+    if kind == "stalker" then
+        section = nil
+        for _, faction in ipairs(factions()) do
+            if faction.community == community then section = faction.section; break end
+        end
+        if not section then return nil, "pf_f1_status_not_allowed" end
+        if not impl.mesh_exists(selected.visual) then return nil, "pf_f1_npc_status_model_missing" end
+    end
+    local position, vertex = impl.spawn_point(actor, slot, occupied)
+    if not position then return nil, "pf_f1_npc_status_no_space" end
+    return {kind = kind == "stalker" and "s" or "m", section = section,
+        community = community, visual = selected.visual, position = position, lv = vertex}
+end

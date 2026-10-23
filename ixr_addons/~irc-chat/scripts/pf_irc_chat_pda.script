@@ -2517,6 +2517,7 @@ function get_ui()
 end
 
 function set_active_subdialog(section)
+    if section == "eptRanking" then pf_player_stats_ui.attach() end
     refresh_visibility()
     local bridged = bridge_first_show(section)
     if bridged then return bridged end

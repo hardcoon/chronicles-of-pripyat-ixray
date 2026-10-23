@@ -179,6 +179,8 @@ local function get_stash_stat_count(tier)
 end
 
 function get_stat(index) -- index= int        return string
+	local player_line = pf_pda_player_stats.get_stat(index)
+	if player_line ~= nil then return player_line end
 	if(index==0) then
 		return tostring(get_time_elapsed())
 	elseif(index==1) then

@@ -15,7 +15,10 @@ function reset()
 end
 
 function impl.owned(npc)
-    return npc:section():match("^pf_pa_s_[a-z]*_?%d+$") ~= nil
+    local section = npc:section()
+    return section:match("^pf_pa_s_[a-z]*_?%d+$") ~= nil
+        or (section:match("^pf_f1_npc_") ~= nil and system_ini():line_exist(section, "pf_pa_manual_kind")
+            and system_ini():r_string(section, "pf_pa_manual_kind") == "s")
 end
 
 function impl.peaceful(npc, st)

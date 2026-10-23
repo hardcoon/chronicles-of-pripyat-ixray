@@ -80,7 +80,7 @@ function impl.settings()
 end
 
 function impl.corpse_loot(record, server)
-    if record.kind == "s" and not record.loot_done and server.death_droped then
+    if not record.manual and record.kind == "s" and not record.loot_done and server.death_droped then
         rt.corpses = rt.corpses or {}
         rt.corpses[#rt.corpses + 1] = {record = record}
     end
@@ -312,6 +312,114 @@ function configure(values, desired)
     if not rt.initialized then return end
     rt.cfg.enabled,rt.cfg.stalkers,rt.cfg.mutants,rt.cfg.respawn=values.enabled,values.humans,values.mutants,values.respawn_seconds
     impl.sync_plan()
+end
+
+-- Explicit F1 members use the same route/order functions, outside automatic quotas.
+function impl.manual_kind(section)
+    if not section:match("^pf_f1_npc_") and not section:match("^pf_f1_m_") then return end
+    local ini = system_ini()
+    if not ini:line_exist(section, "pf_pa_manual_kind") then return end
+    local kind = ini:r_string(section, "pf_pa_manual_kind")
+    if kind == "s" or kind == "m" then return kind end
+end
+function impl.manual_key(server)
+    return "f1:" .. tostring(server.id) .. ":" .. server:name()
+end
+function impl.register_manual(server, kind, previous, community)
+    local key = impl.manual_key(server)
+    local record = previous and impl.identity(previous, server) and previous or impl.make_record(server, kind)
+    record.manual, record.last_tick, record.online = true, rt.root.clock, server.online
+    record.command, record.activity, record.progress, record.progress_at = nil, nil, nil, nil
+    record.route_requested_at, record.quest_controlled = nil, nil
+    record.rest_until = math.min(record.rest_until or rt.root.clock, rt.root.clock)
+    if kind == "s" then
+        community = community or server:community()
+        record.faction = ({stalker="",dolg="d",freedom="f",monolith="o",bandit="b",ecolog="e",army="a",killer="c",zombied="z"})[community]
+    else
+        local ini = system_ini()
+        local species = ini:line_exist(record.section, "species") and ini:r_string(record.section, "species")
+        record.species = ({dog=1,boar=2,flesh=3,pseudodog=4,snork=5,bloodsucker=6,burer=7,controller=8,chimera=9,gigant=10,tushkano=11})[species]
+    end
+    server.m_smart_terrain_id = 65535
+    server:brain():can_choose_alife_tasks(false)
+    rt.root.manual[key] = record
+    rt.manual_revision, rt.manual_dirty = (rt.manual_revision or 0) + 1, true
+    return record
+end
+function impl.refresh_manual()
+    if not rt.manual_dirty and rt.manual_keys then return end
+    rt.manual_keys = {}
+    for key in pairs(rt.root.manual) do rt.manual_keys[#rt.manual_keys + 1] = key end
+    table.sort(rt.manual_keys)
+    rt.manual_cursor, rt.manual_dirty = 1, false
+end
+function impl.manual_logic(record, npc)
+    local storage = db.storage[record.id]
+    if not storage or not storage.active_section then return false end
+    local scheme = record.kind == "s" and "pf_pa_roam" or "mob_pf_pa_roam"
+    if storage.active_scheme == scheme then return true end
+    -- Old F1 saves embedded remark@idle in their spawn packet. Migrate only
+    -- an identified, marked F1 object after its stock binder is ready.
+    local path = "scripts\\pf_f1_npc_" .. (record.kind == "s" and "stalker" or "monster") .. ".ltx"
+    rt.manual_ini = rt.manual_ini or {}
+    rt.manual_ini[record.kind] = rt.manual_ini[record.kind] or ini_file(path)
+    local ini = rt.manual_ini[record.kind]
+    xr_logic.configure_schemes(npc, ini, path,
+        record.kind == "s" and modules.stype_stalker or modules.stype_mobile, "logic", "")
+    xr_logic.activate_by_section(npc, ini, scheme, "", false)
+    return true
+end
+function impl.manual_activity_context()
+    local groups = rt.root.population.groups
+    if not next(rt.root.manual) then return rt.root.slots, groups end
+    if rt.activity_base ~= groups or rt.activity_revision ~= rt.manual_revision then
+        local all = {}
+        for _, group in ipairs(groups) do all[#all + 1] = group end
+        for key, record in pairs(rt.root.manual) do
+            all[#all + 1] = {id = key, kind = record.kind, faction = record.faction, members = {key}}
+        end
+        rt.activity_groups, rt.activity_base, rt.activity_revision = all, groups, rt.manual_revision
+        rt.activity_slots = setmetatable({}, {__index = function(_, key)
+            return rt.root.slots[key] or rt.root.manual[key]
+        end})
+    end
+    return rt.activity_slots, rt.activity_groups
+end
+function spawn_manual(request)
+    local denied = "pf_f1_npc_status_planner_unavailable"
+    if rt.failed or not db.actor or not alife() then return nil, denied end
+    if not db.actor:alive() then return nil, "pf_f1_status_actor_missing" end
+    if not rt.initialized then
+        local ok, ready = pcall(impl.init, time_global())
+        if not ok then rt.failed = tostring(ready); impl.log("STOPPED: " .. rt.failed) end
+        if not ok or not ready then return nil, denied end
+    end
+    if rt.root.draining then return nil, denied end
+    if not request or impl.manual_kind(request.section or "") ~= request.kind then
+        return nil, "pf_f1_status_not_allowed"
+    end
+    if not level.valid_vertex_id(request.lv) then return nil, "pf_f1_npc_status_no_space" end
+    local cell = impl.cross_cell(request.lv)
+    if not cell or not rt.graph.vertices[cell.gv] or not game_graph():accessible(cell.gv) then
+        return nil, "pf_f1_npc_status_no_space"
+    end
+    local server = alife():create(request.section, request.position, request.lv, cell.gv)
+    if not server then return nil, "pf_f1_status_create_failed" end
+    local ok, failure = pcall(function()
+        assert(server.group_id == 65535, "manual NPC joined a native squad")
+        if request.kind == "s" then
+            assert(server:community() == request.community, "manual NPC faction mismatch")
+            assert(server:set_visual(request.visual) == true, "manual NPC model rejected")
+        end
+        impl.register_manual(server, request.kind, nil, request.community)
+    end)
+    if not ok then
+        rt.root.manual[impl.manual_key(server)] = nil
+        alife():release(server, true)
+        impl.log("manual spawn rolled back: " .. tostring(failure))
+        return nil, "pf_f1_status_create_failed"
+    end
+    return server
 end
 
 function impl.group(record)
@@ -553,9 +661,15 @@ function impl.wait_respawn(record)
 end
 
 function impl.reconcile()
-    local found = {}
+    local found, manual_found = {}, {}
     -- One pass per load; never done in the hot update path.
     for _, server in alife():objects() do
+        local manual_kind = impl.manual_kind(server:section_name())
+        if manual_kind and server:alive() then
+            local manual_key = impl.manual_key(server)
+            manual_found[manual_key] = true
+            impl.register_manual(server, manual_kind, rt.root.manual[manual_key])
+        end
         local key, kind = impl.slot_key(server:section_name())
         if key then
             local previous = rt.root.slots[key]
@@ -589,6 +703,10 @@ function impl.reconcile()
             record.progress_at = nil
         end
     end
+    for key, record in pairs(rt.root.manual) do
+        if not manual_found[key] then rt.root.manual[key] = nil end
+    end
+    rt.manual_dirty = true
     rt.metrics.reconciliations = rt.metrics.reconciliations + 1
 end
 
@@ -597,6 +715,8 @@ function impl.init(now)
     if level.name() ~= rt.cfg.level_name then return false end
     rt.root = rt.pending or {version = VERSION, seed = 426100100, clock = 0, slots = {}}
     rt.pending = nil
+    rt.root.manual = rt.root.manual or {}
+    rt.manual_revision, rt.manual_dirty = 0, true
     assert(rt.root.version == VERSION and type(rt.root.slots) == "table", "unsupported population save version")
     rt.root.clock = rt.root.clock or 0
     rt.root.seed = rt.root.seed or 426100100
@@ -608,7 +728,9 @@ function impl.init(now)
     impl.open_navigation()
     if rt.root.graph_guid and rt.root.graph_guid ~= rt.graph.guid then
         -- Saved graph routes are invalid after navigation replacement; entity identities remain.
-        for _, record in pairs(rt.root.slots) do record.route = nil; record.next_gv = nil; record.remaining = nil end
+        for _, records in ipairs({rt.root.slots, rt.root.manual}) do
+            for _, record in pairs(records) do record.route = nil; record.next_gv = nil; record.remaining = nil end
+        end
     end
     rt.root.graph_guid = rt.graph.guid
     for i = #rt.graph.order, 2, -1 do
@@ -1219,7 +1341,8 @@ end
 
 function activity_context()
     if not rt.initialized or rt.failed or rt.root.draining then return nil end
-    return {clock = rt.root.clock, slots = rt.root.slots, groups = rt.root.population.groups,
+    local slots, groups = impl.manual_activity_context()
+    return {clock = rt.root.clock, slots = slots, groups = groups,
         graph = rt.graph, safe_distance = rt.cfg.safe_distance, retry = rt.cfg.retry}
 end
 
@@ -1236,7 +1359,7 @@ end
 function apply_activities(orders)
     if not rt.initialized then return end
     for _, order in ipairs(orders or {}) do
-        local r = rt.root.slots[order.key]
+        local r = rt.root.slots[order.key] or rt.root.manual[order.key]
         local server = r and alife():object(r.id)
         if r and r.kind == "s" and r.name == order.name and impl.identity(r, server) and server:alive() then
             if order.op == "decision" and r.route_requested_at then
@@ -1274,11 +1397,18 @@ function impl.release_owned(record, server, actor_position)
     return true
 end
 
-function impl.process(key, actor_position)
-    local record = rt.root.slots[key]
+function impl.process(key, actor_position, records)
+    local record = (records or rt.root.slots)[key]
     if not record then return end
     local server = alife():object(record.id)
     local g = impl.group(record)
+    if record.manual and (not impl.identity(record, server) or not server:alive()) then
+        if impl.identity(record, server) and db.storage[record.id] then db.storage[record.id].pf_pa_command = nil end
+        rt.root.manual[key] = nil
+        rt.manual_dirty = true
+        rt.manual_revision = (rt.manual_revision or 0) + 1
+        return -- Manual deaths/removals never refill a population slot or delete a corpse.
+    end
     if not impl.identity(record, server) then
         if rt.gather then rt.gather[record.id] = nil end
         if impl.target_enabled(key) and g then
@@ -1309,6 +1439,7 @@ function impl.process(key, actor_position)
     record.dead_at = nil
     local npc = server.online and level.object_by_id(record.id)
     if server.online and not npc then return end
+    if record.manual and npc and not impl.manual_logic(record, npc) then return end
     if record.online ~= server.online then
         impl.clear_gather(record)
         if rt.gather then rt.gather[record.id] = nil end
@@ -1366,10 +1497,17 @@ function impl.tick(now)
     end
     local actor_position = db.actor:position()
     rt.orders_left = rt.cfg.orders
+    impl.refresh_manual()
     for i = 1, rt.cfg.work do
-        local key = rt.keys[rt.cursor]
-        rt.cursor = rt.cursor % #rt.keys + 1
-        impl.process(key, actor_position)
+        if #rt.manual_keys > 0 and i % 4 == 0 then
+            local key = rt.manual_keys[rt.manual_cursor]
+            rt.manual_cursor = rt.manual_cursor % #rt.manual_keys + 1
+            impl.process(key, actor_position, rt.root.manual)
+        else
+            local key = rt.keys[rt.cursor]
+            rt.cursor = rt.cursor % #rt.keys + 1
+            impl.process(key, actor_position)
+        end
     end
     if #rt.retired > 0 then
         local duplicate = rt.retired[#rt.retired]
@@ -1426,6 +1564,15 @@ function status(print_to_log)
         end
         result.draining = rt.root.draining or false
     end
+    result.manual = {stalkers = 0, mutants = 0, online = 0}
+    for _, record in pairs(rt.root and rt.root.manual or {}) do
+        local server = alife() and alife():object(record.id)
+        if impl.identity(record, server) and server:alive() then
+            local kind = record.kind == "s" and "stalkers" or "mutants"
+            result.manual[kind] = result.manual[kind] + 1
+            if server.online then result.manual.online = result.manual.online + 1 end
+        end
+    end
     result.metrics = rt.metrics
     if print_to_log then
         local m = rt.metrics or {}
@@ -1456,6 +1603,13 @@ function debug_objects()
                 if group then counts[group] = (counts[group] or 0) + 1 end
                 seen[record.id] = true
             end
+        end
+    end
+    for key, record in pairs(rt.root.manual or {}) do
+        local server = alife():object(record.id)
+        if impl.identity(record, server) and server:alive() then
+            result[#result + 1] = {id = record.id, kind = record.kind, section = record.section,
+                group = key, faction = record.faction, species = record.species, count = 1, online = server.online == true}
         end
     end
     for _, object in ipairs(result) do object.count = counts[object.group] or 1 end

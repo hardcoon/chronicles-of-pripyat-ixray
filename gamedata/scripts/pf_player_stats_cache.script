@@ -1,0 +1,235 @@
+-- Persistent observations, independent of game saves. Presence is never saved.
+local state = { records = {}, seen = {}, loaded = false, revision = 0 }
+local impl = {}
+
+function impl.fold(text)
+    return tostring(text or ""):lower():gsub("[%[\\%]%^]", {
+        ["["] = "{", ["]"] = "}", ["\\"] = "|", ["^"] = "~" })
+end
+
+function canonical_nick(nick)
+    -- Fold the full IRC nickname. A legitimate name can end in any apparent
+    -- suffix (including _dead); only an actual identity links different names.
+    return impl.fold(nick)
+end
+
+function impl.escape(text)
+    return tostring(text):gsub("[^%w .:_@#{}%-%[%]]", function(c)
+        return string.format("%%%02X", c:byte())
+    end)
+end
+
+function impl.unescape(text)
+    return text:gsub("%%(%x%x)", function(hex) return string.char(tonumber(hex, 16)) end)
+end
+
+function impl.valid(text, limit)
+    return type(text) == "string" and #text > 0 and #text <= limit and not text:find("[%z\1-\32\127]")
+end
+
+function impl.network(profile)
+    return tostring(profile and profile.address or ""):lower() .. ":" .. tostring(profile and profile.port or 0)
+end
+
+function impl.key(network, identity)
+    return network .. "\t" .. identity:lower()
+end
+
+function impl.strength(identity)
+    if identity:sub(1, 8) == "install:" then return 4 end
+    if identity:sub(1, 8) == "account:" then return 3 end
+    if identity:sub(1, 5) == "host:" then return 2 end
+    return 1
+end
+
+function impl.put(network, identity, nick, payload)
+    if not impl.valid(network, 260) or not impl.valid(identity, 260) or not impl.valid(nick, 128) then return end
+    local values = payload ~= "-" and pf_player_stats_wire.decode(payload) or nil
+    if payload ~= "-" and not values then return end
+    identity = identity:lower()
+    -- Hosts can be shared by several players. Until WHOIS supplies an install
+    -- or account ID, retain separate full nicknames instead of merging a NAT.
+    if impl.strength(identity) < 3 then identity = "nick:" .. canonical_nick(nick) end
+    local key = impl.key(network, identity)
+    local record = state.records[key]
+    local changed = not record
+    local weak_key = impl.key(network, "nick:" .. canonical_nick(nick))
+    local weak = key ~= weak_key and state.records[weak_key] or nil
+    if weak then
+        -- This is an exact current nickname, never a guessed suffix match.
+        -- Different confirmed identities are never absorbed by this path.
+        record = record or weak
+        if weak.current_values then
+            record.values, record.payload = weak.current_values, weak.current_payload
+        end
+        state.records[weak_key] = nil
+        changed = true
+    end
+    record = record or {}
+    changed = changed or record.nick ~= nick or record.identity ~= identity or
+        (values ~= nil and record.payload ~= payload)
+    record.network, record.identity, record.nick = network, identity:lower(), nick
+    if values or not record.payload then record.payload, record.values = payload, values end
+    record.presence = record.presence or "offline"
+    state.records[key] = record
+    return record, key, changed
+end
+
+function impl.load()
+    if state.loaded then return end
+    state.loaded = true
+    state.path = getFS():update_path("$app_data_root$", "pf_player_stats.log")
+    local file = io.open(state.path, "rb")
+    if not file then return end
+    local content = file:read(8 * 1024 * 1024 + 1)
+    file:close()
+    if not content or #content > 8 * 1024 * 1024 or content:sub(1, 12) ~= "PF_STATS_1\r\n" then
+        -- Do not replace an unknown/corrupt format with an empty cache.
+        state.read_only = true
+        return
+    end
+    for line in content:gmatch("[^\r\n]+") do
+        if #line <= 2048 then
+            local network, identity, nick, payload = line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)$")
+            if network then impl.put(impl.unescape(network), impl.unescape(identity),
+                impl.unescape(nick), payload) end
+        end
+    end
+end
+
+function impl.changed()
+    state.dirty = true
+end
+
+function bind_self(profile, nick, identity)
+    impl.load()
+    state.self = nil
+    if not impl.valid(nick, 128) or not impl.valid(identity, 260) or
+        identity:sub(1, 8) ~= "install:" then return end
+    local network = impl.network(profile)
+    state.self = {network = network, nick = canonical_nick(nick), identity = identity:lower()}
+    local _, _, changed = impl.put(network, identity, nick, "-")
+    if changed then impl.changed(); state.revision = state.revision + 1 end
+end
+
+function sync(profile, channels)
+    impl.load()
+    local network = impl.network(profile)
+    local signature, seen = {}, {}
+    local confirmed = {}
+    for _, channel in pairs(channels or {}) do
+        if channel.ready then
+            for _, user in pairs(channel.users or {}) do
+                local identity = tostring(user.identity or ""):lower()
+                if impl.strength(identity) >= 3 then confirmed[canonical_nick(user.nick)] = identity end
+            end
+        end
+    end
+    if state.self and state.self.network == network then
+        confirmed[state.self.nick] = state.self.identity
+    end
+    for _, record in pairs(state.records) do record.next_presence = "offline" end
+    for channel_key, channel in pairs(channels or {}) do
+        if channel.ready then
+            for _, user in pairs(channel.users or {}) do
+                local nick, identity = user.nick, tostring(user.identity or ""):lower()
+                if identity == "" then identity = "nick:" .. impl.fold(nick) end
+                if impl.valid(nick, 128) and impl.valid(identity, 260) then
+                    local source_identity = identity
+                    if state.self and state.self.network == network and
+                        canonical_nick(nick) == state.self.nick then
+                        identity = state.self.identity
+                    elseif impl.strength(identity) < 3 then
+                        identity = confirmed[canonical_nick(nick)] or identity
+                    end
+                    local record, _, changed = impl.put(network, identity, nick, "-")
+                    if changed then impl.changed() end
+                    if record then
+                        if record.next_presence ~= "online" then
+                            record.next_presence = user.presence == "away" and "away" or "online"
+                        end
+                        local payload = user.away_message
+                        local source = channel_key .. "\t" .. source_identity .. "\t" .. impl.fold(nick)
+                        seen[source] = payload
+                        if payload ~= state.seen[source] then
+                            local values = pf_player_stats_wire.decode(payload)
+                            if values then
+                                if payload ~= record.payload then impl.changed() end
+                                record.payload, record.values = payload, values
+                                record.current_payload, record.current_values = payload, values
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    state.seen = seen
+    for key, record in pairs(state.records) do
+        record.presence = record.next_presence or "offline"
+        signature[#signature + 1] = key .. record.nick .. record.payload .. record.presence
+    end
+    table.sort(signature)
+    local current = table.concat(signature, "\n")
+    if current ~= state.signature then state.signature = current; state.revision = state.revision + 1 end
+end
+
+function records(profile)
+    impl.load()
+    local network, result = impl.network(profile), {}
+    local confirmed = {}
+    for _, record in pairs(state.records) do
+        if record.network == network and impl.strength(record.identity) >= 3 then
+            confirmed[canonical_nick(record.nick)] = true
+        end
+    end
+    for _, record in pairs(state.records) do
+        if record.network == network and (impl.strength(record.identity) >= 3 or
+            not confirmed[canonical_nick(record.nick)]) then result[#result + 1] = record end
+    end
+    return result
+end
+
+function is_confirmed(identity) return impl.strength(tostring(identity or "")) >= 3 end
+
+function revision() return state.revision end
+
+function flush()
+    if not state.dirty or state.read_only then return true end
+    local now = time_global and time_global() or 0
+    if now < (state.retry_after or 0) then return false end
+    local lines = { "PF_STATS_1" }
+    for _, record in pairs(state.records) do
+        lines[#lines + 1] = table.concat({ impl.escape(record.network), impl.escape(record.identity),
+            impl.escape(record.nick), record.payload }, "\t")
+    end
+    table.sort(lines, function(a, b)
+        if a == "PF_STATS_1" then return true end
+        if b == "PF_STATS_1" then return false end
+        return a < b
+    end)
+    local content = table.concat(lines, "\r\n") .. "\r\n"
+    if #content > 8 * 1024 * 1024 then state.read_only = true; return false end
+    local temporary = state.path .. ".tmp"
+    local file = io.open(temporary, "wb")
+    local ok = false
+    if file then
+        ok = file:write(content) ~= nil
+        ok = file:close() and ok
+    end
+    if ok then
+        if not state.kernel then
+            local loaded, ffi = pcall(require, "ffi")
+            if loaded then
+                pcall(ffi.cdef, "int __stdcall MoveFileExA(const char*, const char*, unsigned long);")
+                state.kernel = ffi.load("kernel32")
+            end
+        end
+        -- Atomic replacement: failure leaves the previous file intact.
+        ok = state.kernel and state.kernel.MoveFileExA(temporary, state.path, 9) ~= 0
+    end
+    if ok then state.dirty = false; return true end
+    state.retry_after = now + 5000
+    if printf then printf("[PDA stats] Could not replace local cache; previous file retained") end
+    return false
+end

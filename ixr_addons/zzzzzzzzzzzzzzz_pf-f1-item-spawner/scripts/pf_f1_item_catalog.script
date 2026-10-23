@@ -432,6 +432,8 @@ function spawn(item, mode)
 			actor:game_vertex_id(), actor:id())
 	end
 	if not object then return nil, "pf_f1_status_create_failed" end
+	-- Persistent save history; independent of developer mode and achievements.
+	xr_logic.pstor_store(actor, "pf_spawner_used", true)
 	printf("pf_f1_item_spawner: created [%s] id=[%s] target=[%s]",
 		section, tostring(object.id), tostring(mode))
 	return object, nil
@@ -463,6 +465,7 @@ function spawn_vehicle(item)
 	local object = alife():create(
 		item.section, position, level_vertex_id, actor:game_vertex_id())
 	if not object then return nil, "pf_f1_status_create_failed" end
+	xr_logic.pstor_store(actor, "pf_spawner_used", true)
 	printf("pf_f1_item_spawner: vehicle created [%s] id=[%s]",
 		item.section, tostring(object.id))
 	return object, nil

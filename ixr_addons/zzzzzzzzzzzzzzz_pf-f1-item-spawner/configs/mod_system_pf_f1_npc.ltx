@@ -1,0 +1,47 @@
+; Independent developer NPCs: ordinary health, no smart/squad owner.
+![profiles]
+>files = npc_profile_pf_f1_npc
+>specific_characters_files = character_desc_pf_f1_npc
+
+[pf_f1_npc_base]:stalker
+pf_pa_manual_kind = s
+$spawn = ""
+script_binding = bind_stalker.init
+custom_data = scripts\pf_f1_npc_stalker.ltx
+visual = actors\stalker_neutral\stalker_neutral_2_face_2
+
+[pf_f1_npc_stalker]:pf_f1_npc_base
+community = stalker
+character_profile = pf_f1_profile_stalker
+
+[pf_f1_npc_bandit]:pf_f1_npc_base
+community = bandit
+character_profile = pf_f1_profile_bandit
+
+[pf_f1_npc_dolg]:pf_f1_npc_base
+community = dolg
+character_profile = pf_f1_profile_dolg
+
+[pf_f1_npc_freedom]:pf_f1_npc_base
+community = freedom
+character_profile = pf_f1_profile_freedom
+
+[pf_f1_npc_army]:pf_f1_npc_base
+community = army
+character_profile = pf_f1_profile_army
+
+[pf_f1_npc_killer]:pf_f1_npc_base
+community = killer
+character_profile = pf_f1_profile_killer
+
+[pf_f1_npc_ecolog]:pf_f1_npc_base
+community = ecolog
+character_profile = pf_f1_profile_ecolog
+
+[pf_f1_npc_monolith]:pf_f1_npc_base
+community = monolith
+character_profile = pf_f1_profile_monolith
+
+[pf_f1_npc_zombied]:pf_f1_npc_base
+community = zombied
+character_profile = pf_f1_profile_zombied

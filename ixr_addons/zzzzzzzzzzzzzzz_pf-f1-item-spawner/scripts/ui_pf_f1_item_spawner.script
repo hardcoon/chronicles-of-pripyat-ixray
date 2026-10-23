@@ -71,6 +71,19 @@ function pf_f1_vehicle_list_item:__init(index, vehicle, width) super(42)
 	text:SetText(string.format("%02d. %s", index, vehicle.name))
 end
 
+class "pf_f1_npc_list_item" (CUIListBoxItem)
+
+function pf_f1_npc_list_item:__init(index, npc, width) super(30)
+	self.data = index
+	self:SetWndSize(vector2():set(width, 30))
+	local text = self:GetTextItem()
+	text:SetFont(GetFontLetterica16Russian())
+	text:SetEllipsis(true)
+	text:SetWndPos(vector2():set(7, 0))
+	text:SetWndSize(vector2():set(width - 14, 30))
+	text:SetText(string.format("%02d. %s", index, npc.name))
+end
+
 class "item_spawner_dialog" (CUIScriptWnd)
 
 function item_spawner_dialog:__init(owner) super()
@@ -87,6 +100,9 @@ function item_spawner_dialog:__init(owner) super()
 	self.selected_item = nil
 	self.vehicle_catalog = pf_f1_item_catalog.build_vehicle_catalog()
 	self.selected_vehicle = self.vehicle_catalog[1]
+	self.npc_kind_value = "stalker"
+	self.npc_faction_index = 1
+	self.npc_filtered = {}
 	self.pending_item = nil
 	self.pending_mode = nil
 	self.context_item = nil
@@ -196,6 +212,21 @@ function item_spawner_dialog:InitControls()
 	self.weather_apply = xml:Init3tButton(
 		"main:form:tools_panel:weather_apply", self.tools_panel)
 
+	self.npcs_panel = xml:InitStatic("main:form:npcs_panel", self.form)
+	xml:InitTextWnd("main:form:npcs_panel:kind_label", self.npcs_panel)
+	xml:InitTextWnd("main:form:npcs_panel:faction_label", self.npcs_panel)
+	self.npc_kind = xml:InitComboBox("main:form:npcs_panel:kind", self.npcs_panel)
+	self.npc_faction = xml:InitComboBox("main:form:npcs_panel:faction", self.npcs_panel)
+	self.npc_search_edit = xml:InitEditBox("main:form:npcs_panel:search", self.npcs_panel)
+	self.npc_search = xml:Init3tButton("main:form:npcs_panel:search_button", self.npcs_panel)
+	self.npc_list = xml:InitListBox("main:form:npcs_panel:list", self.npcs_panel)
+	self.npc_list:ShowSelectedItem(true)
+	self.npc_name = xml:InitTextWnd("main:form:npcs_panel:name", self.npcs_panel)
+	self.npc_model = xml:InitTextWnd("main:form:npcs_panel:model", self.npcs_panel)
+	self.npc_count = xml:InitTextWnd("main:form:npcs_panel:count", self.npcs_panel)
+	self.npc_spawn = xml:Init3tButton("main:form:npcs_panel:spawn", self.npcs_panel)
+	self.npc_spawn_five = xml:Init3tButton("main:form:npcs_panel:spawn_five", self.npcs_panel)
+
 	-- These controls belong to the whole dialog. Create them last so they stay
 	-- above each full-size tab panel and always receive mouse input.
 	self.status = xml:InitTextWnd("main:form:status", self.form)
@@ -203,6 +234,7 @@ function item_spawner_dialog:InitControls()
 	self.items_tab = xml:Init3tButton("main:form:items_tab", self.form)
 	self.vehicles_tab = xml:Init3tButton("main:form:vehicles_tab", self.form)
 	self.world_tools_tab = xml:Init3tButton("main:form:world_tools_tab", self.form)
+	self.npcs_tab = xml:Init3tButton("main:form:npcs_tab", self.form)
 	self.context_menu = xml:InitFrame("main:form:context_menu", self.form)
 	self.context_inventory = xml:Init3tButton(
 		"main:form:context_menu:spawn_inventory", self.context_menu)
@@ -226,6 +258,14 @@ function item_spawner_dialog:InitControls()
 		{ self.items_tab, "pf_f1_items_tab" },
 		{ self.vehicles_tab, "pf_f1_vehicles_tab" },
 		{ self.world_tools_tab, "pf_f1_tools_tab" },
+		{ self.npcs_tab, "pf_f1_npcs_tab" },
+		{ self.npc_kind, "pf_f1_npc_kind" },
+		{ self.npc_faction, "pf_f1_npc_faction" },
+		{ self.npc_search_edit, "pf_f1_npc_search_edit" },
+		{ self.npc_search, "pf_f1_npc_search" },
+		{ self.npc_list, "pf_f1_npc_list" },
+		{ self.npc_spawn, "pf_f1_npc_spawn" },
+		{ self.npc_spawn_five, "pf_f1_npc_spawn_five" },
 		{ self.vehicle_list, "pf_f1_vehicle_list" },
 		{ self.vehicle_spawn, "pf_f1_vehicle_spawn" },
 		{ self.time_factor, "pf_f1_time_factor" },
@@ -244,6 +284,7 @@ function item_spawner_dialog:InitControls()
 	}) do self:Register(entry[1], entry[2]) end
 	self:PopulateVehicles()
 	self:PopulateWorldTools()
+	self:PopulateNPCs()
 	self:SetActiveTab(self.active_tab)
 end
 
@@ -265,6 +306,14 @@ function item_spawner_dialog:InitCallbacks()
 	self:AddCallback("pf_f1_items_tab", ui_events.BUTTON_CLICKED, self.OnItemsTab, self)
 	self:AddCallback("pf_f1_vehicles_tab", ui_events.BUTTON_CLICKED, self.OnVehiclesTab, self)
 	self:AddCallback("pf_f1_tools_tab", ui_events.BUTTON_CLICKED, self.OnToolsTab, self)
+	self:AddCallback("pf_f1_npcs_tab", ui_events.BUTTON_CLICKED, self.OnNPCsTab, self)
+	self:AddCallback("pf_f1_npc_kind", ui_events.LIST_ITEM_SELECT, self.OnNPCKind, self)
+	self:AddCallback("pf_f1_npc_faction", ui_events.LIST_ITEM_SELECT, self.OnNPCFaction, self)
+	self:AddCallback("pf_f1_npc_search_edit", ui_events.EDIT_TEXT_COMMIT, self.FilterNPCs, self)
+	self:AddCallback("pf_f1_npc_search", ui_events.BUTTON_CLICKED, self.FilterNPCs, self)
+	self:AddCallback("pf_f1_npc_list", ui_events.LIST_ITEM_CLICKED, self.OnNPCSelected, self)
+	self:AddCallback("pf_f1_npc_spawn", ui_events.BUTTON_CLICKED, self.OnNPCSpawn, self)
+	self:AddCallback("pf_f1_npc_spawn_five", ui_events.BUTTON_CLICKED, self.OnNPCSpawnFive, self)
 	self:AddCallback("pf_f1_vehicle_list", ui_events.LIST_ITEM_CLICKED,
 		self.OnVehicleSelected, self)
 	self:AddCallback("pf_f1_vehicle_spawn", ui_events.BUTTON_CLICKED,
@@ -299,17 +348,20 @@ function item_spawner_dialog:SetStatus(text)
 end
 
 function item_spawner_dialog:SetActiveTab(tab)
-	if tab ~= "items" and tab ~= "vehicles" and tab ~= "tools" then tab = "items" end
+	if tab ~= "items" and tab ~= "vehicles" and tab ~= "tools" and tab ~= "npcs" then tab = "items" end
 	self:HideContextMenu()
 	self.active_tab = tab
 	remembered_tab = tab
 	self.items_panel:Show(tab == "items")
 	self.vehicles_panel:Show(tab == "vehicles")
 	self.tools_panel:Show(tab == "tools")
+	self.npcs_panel:Show(tab == "npcs")
 	self.items_tab:SetTextureColor(tab == "items" and TAB_ACTIVE_COLOR or TAB_COLOR)
 	self.vehicles_tab:SetTextureColor(tab == "vehicles" and TAB_ACTIVE_COLOR or TAB_COLOR)
 	self.world_tools_tab:SetTextureColor(tab == "tools" and TAB_ACTIVE_COLOR or TAB_COLOR)
+	self.npcs_tab:SetTextureColor(tab == "npcs" and TAB_ACTIVE_COLOR or TAB_COLOR)
 	if tab == "tools" then self:RefreshWorldTools() end
+	if tab == "npcs" then self:OnNPCSelected() end
 end
 
 function item_spawner_dialog:OnItemsTab()
@@ -322,6 +374,95 @@ end
 
 function item_spawner_dialog:OnToolsTab()
 	self:SetActiveTab("tools")
+end
+
+function item_spawner_dialog:OnNPCsTab()
+	self:SetActiveTab("npcs")
+end
+
+function item_spawner_dialog:PopulateNPCs()
+	self.npc_kind:ClearList()
+	for index, kind in ipairs({ "stalker", "mutant" }) do
+		self.npc_kind:AddItem(index .. ". " .. tr("pf_f1_npc_" .. kind), index)
+	end
+	self.npc_kind:SetCurrentIdx(0)
+	self.npc_kind:SetText("1. " .. tr("pf_f1_npc_stalker"))
+	self.npc_factions = pf_f1_npc_spawner.factions()
+	self.npc_faction:ClearList()
+	for index, faction in ipairs(self.npc_factions) do
+		self.npc_faction:AddItem(index .. ". " .. faction.name, index)
+	end
+	self.npc_faction:SetCurrentIdx(0)
+	if self.npc_factions[1] then self.npc_faction:SetText("1. " .. self.npc_factions[1].name) end
+	self:FilterNPCs()
+end
+
+function item_spawner_dialog:OnNPCKind()
+	local index = tonumber(string.match(self.npc_kind:GetText() or "", "^(%d+)%."))
+	self.npc_kind_value = index == 2 and "mutant" or "stalker"
+	self.npc_search_edit:SetText("")
+	self:FilterNPCs()
+end
+
+function item_spawner_dialog:OnNPCFaction()
+	self.npc_faction_index = tonumber(string.match(self.npc_faction:GetText() or "", "^(%d+)%.")) or 1
+	self:OnNPCSelected()
+end
+
+function item_spawner_dialog:FilterNPCs()
+	self.npc_filtered = {}
+	local query = pf_f1_item_catalog.fold_text(self.npc_search_edit:GetText() or "")
+	for _, npc in ipairs(pf_f1_npc_spawner.catalog(self.npc_kind_value)) do
+		local haystack = pf_f1_item_catalog.fold_text(npc.name .. " " .. npc.visual .. " " .. (npc.section or ""))
+		if query == "" or string.find(haystack, query, 1, true) then
+			self.npc_filtered[#self.npc_filtered + 1] = npc
+		end
+	end
+	self.npc_list:RemoveAll()
+	local width = self.npc_list:GetWidth() - 8
+	for index, npc in ipairs(self.npc_filtered) do
+		self.npc_list:AddExistingItem(pf_f1_npc_list_item(index, npc, width))
+	end
+	self.selected_npc = self.npc_filtered[1]
+	self.npc_count:SetText(format_text("pf_f1_npc_found", #self.npc_filtered))
+	self:OnNPCSelected()
+end
+
+function item_spawner_dialog:OnNPCSelected()
+	local row = self.npc_list:GetSelectedItem()
+	local index = row and tonumber(row.data) or nil
+	if index then self.selected_npc = self.npc_filtered[index] end
+	local npc = self.selected_npc
+	local human = self.npc_kind_value == "stalker"
+	self.npc_faction:Enable(human)
+	self.npc_name:SetText(npc and npc.name or tr("pf_f1_npc_status_no_selection"))
+	self.npc_model:SetText(npc and format_text("pf_f1_npc_model", npc.visual) or "")
+	local enabled = npc ~= nil and (not human or self.npc_factions[self.npc_faction_index] ~= nil)
+	self.npc_spawn:Enable(enabled)
+	self.npc_spawn_five:Enable(enabled)
+end
+
+function item_spawner_dialog:OnNPCSpawn()
+	self:SpawnNPCs(1)
+end
+
+function item_spawner_dialog:OnNPCSpawnFive()
+	self:SpawnNPCs(5)
+end
+
+function item_spawner_dialog:SpawnNPCs(count)
+	local faction = self.npc_factions[self.npc_faction_index]
+	local objects, error_id = pf_f1_npc_spawner.spawn_many(self.npc_kind_value,
+		self.selected_npc, faction and faction.community, count)
+	if #objects > 0 then
+		if count == 1 then
+			self:SetStatus(format_text("pf_f1_npc_status_created", self.selected_npc.name))
+		else
+			self:SetStatus(format_text("pf_f1_npc_status_batch_created", #objects, count))
+		end
+	else
+		self:SetStatus(tr(error_id or "pf_f1_status_create_failed"))
+	end
 end
 
 function item_spawner_dialog:PopulateVehicles()

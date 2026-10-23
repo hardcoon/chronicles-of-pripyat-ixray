@@ -1,0 +1,196 @@
+; Sequential evidence for the Pripyat Full main story "A Borrowed Name".
+; The items are physical keepsakes; their full transcription is unlocked in
+; the custom encyclopedia when the actor takes them from a stash.
+
+; Personal-story achievement #4. DLTX adds it to the stock PDA list without
+; replacing the packed achievements configuration.
+![achievements]
+pf_story_path_continues
+
+[pf_story_path_continues]
+icon = ui_inGame2_Drug_stalkerov
+hint = pf_pda_achievement_path_hint
+name = pf_story_path_continues_achievement_name
+desc = pf_pda_achievement_path_short
+functor = pf_story_encounter.path_continues_achievement_functor
+
+[pf_story_document_base]:da_lore_note_base
+$spawn = "devices\pf_story_document"
+visual = dynamics\equipments\quest\notes_paper_1.ogf
+inv_grid_x = 7
+inv_grid_y = 6
+inv_grid_width = 2
+inv_grid_height = 1
+cost = 0
+inv_weight = 0.01
+can_trade = false
+quest_item = false
+
+[pf_story_document_01]:pf_story_document_base
+inv_name = pf_story_document_01_name
+inv_name_short = pf_story_document_01_name
+description = pf_story_document_01_descr
+
+[pf_story_document_02]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_paper_2.ogf
+inv_name = pf_story_document_02_name
+inv_name_short = pf_story_document_02_name
+description = pf_story_document_02_descr
+
+[pf_story_document_03]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_document_case_2.ogf
+inv_name = pf_story_document_03_name
+inv_name_short = pf_story_document_03_name
+description = pf_story_document_03_descr
+
+[pf_story_document_04]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_letter_1.ogf
+inv_name = pf_story_document_04_name
+inv_name_short = pf_story_document_04_name
+description = pf_story_document_04_descr
+
+[pf_story_document_05]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_paper_2.ogf
+inv_name = pf_story_document_05_name
+inv_name_short = pf_story_document_05_name
+description = pf_story_document_05_descr
+
+[pf_story_document_06]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_paper_1.ogf
+inv_name = pf_story_document_06_name
+inv_name_short = pf_story_document_06_name
+description = pf_story_document_06_descr
+
+[pf_story_document_07]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_letter_2.ogf
+inv_name = pf_story_document_07_name
+inv_name_short = pf_story_document_07_name
+description = pf_story_document_07_descr
+
+[pf_story_document_08]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_letter_3.ogf
+inv_name = pf_story_document_08_name
+inv_name_short = pf_story_document_08_name
+description = pf_story_document_08_descr
+
+[pf_story_document_09]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_writing_book_1.ogf
+inv_name = pf_story_document_09_name
+inv_name_short = pf_story_document_09_name
+description = pf_story_document_09_descr
+
+[pf_story_document_10]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_document_case_2.ogf
+inv_name = pf_story_document_10_name
+inv_name_short = pf_story_document_10_name
+description = pf_story_document_10_descr
+
+[pf_story_document_11]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_letter_2.ogf
+inv_name = pf_story_document_11_name
+inv_name_short = pf_story_document_11_name
+description = pf_story_document_11_descr
+
+[pf_story_document_12]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_writing_book_2.ogf
+inv_name = pf_story_document_12_name
+inv_name_short = pf_story_document_12_name
+description = pf_story_document_12_descr
+
+; Fixed post-#10 encounter objects. They are spawned lazily by
+; pf_story_encounter.script, so the branch works in existing saves.
+[pf_story_legendary_stash]:inventory_box
+$spawn = "devices\pf_story_legendary_stash"
+visual = dynamics\equipments\quest\safe_container.ogf
+radius = 1
+
+[pf_story_brother_pendant]:pf_story_document_base
+$spawn = "devices\pf_story_brother_pendant"
+visual = dynamics\equipments\quest\notes_paper_1.ogf
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\pf_story_pendant_icon
+inv_name = pf_story_brother_pendant_name
+inv_name_short = pf_story_brother_pendant_name
+description = pf_story_brother_pendant_descr
+quest_item = false
+
+[pf_story_preacher]:stalker
+$spawn = "respawn\pf_story_preacher"
+character_profile = pf_story_preacher
+custom_data = scripts\pripyat_full\pf_story_preacher.ltx
+
+; Late-story quest character at the central Monolith base. He is created by
+; pf_monolith_guardian.script only after the surviving-Sergey conversation.
+[pf_monolith_guardian]:stalker
+$spawn = "respawn\pf_monolith_guardian"
+character_profile = pf_monolith_guardian
+custom_data = scripts\pripyat_full\pf_monolith_guardian.ltx
+
+; Keeper's unique milestone rewards. Their parents are the active artefact and
+; STCoP outfit sections; the ordinary Compass and Monolith SEVA stay unchanged.
+[pf_guardian_compass]:af_compass
+$spawn = "artefacts\pf_guardian_compass"
+inv_name = pf_guardian_compass_name
+inv_name_short = pf_guardian_compass_name
+description = pf_guardian_compass_descr
+cost = 0
+can_trade = false
+quest_item = false
+use_condition = false
+degrade_rate = 0
+health_restore_speed = 0
+radiation_restore_speed = 0
+satiety_restore_speed = 0
+power_restore_speed = 0.003
+bleeding_restore_speed = 0
+additional_inventory_weight = 0
+additional_inventory_weight2 = 0
+hit_absorbation_sect = pf_guardian_compass_absorbation
+
+[pf_guardian_compass_absorbation]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0
+
+[pf_guardian_seva_outfit]:monolith_scientific_outfit
+$spawn = "outfit\pf_guardian_seva_outfit"
+inv_name = pf_guardian_seva_outfit_name
+inv_name_short = pf_guardian_seva_outfit_name
+description = pf_guardian_seva_outfit_descr
+cost = 0
+can_trade = false
+radiation_restore_speed = -0.004
+; Keep the unique suit on the regular SEVA upgrade tree explicitly. This is
+; intentionally declared here instead of relying only on parent inheritance,
+; so mechanics and the upgrade UI treat this quest section as a full suit.
+upgrades = up_gr_firstab_scientific_outfit, up_gr_seconab_scientific_outfit, up_gr_thirdab_scientific_outfit, up_gr_fourtab_scientific_outfit, up_gr_fifthab_scientific_outfit
+installed_upgrades =
+upgrade_scheme = upgrade_scheme_scientific_outfit
+
+; Reusable QA tool. Spawn into the current save with:
+; g_spawn_to_inventory pf_story_debug_archive
+[pf_story_debug_archive]:hand_radio
+$spawn = "devices\pf_story_debug_archive"
+visual = dynamics\devices\dev_pda\dev_pda.ogf
+inv_name = pf_story_debug_archive_name
+inv_name_short = pf_story_debug_archive_name
+description = pf_story_debug_archive_descr
+inv_weight = 0.01
+cost = 0
+can_trade = false
+quest_item = false
+use1_text = pf_story_debug_archive_use
+use1_functor = pf_story_documents.debug_give_next
+inv_grid_width = 1
+inv_grid_height = 1
+inv_grid_x = 6
+inv_grid_y = 13

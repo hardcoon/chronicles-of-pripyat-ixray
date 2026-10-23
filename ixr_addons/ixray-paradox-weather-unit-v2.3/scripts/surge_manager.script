@@ -335,6 +335,9 @@ function CSurgeManager:initialize()
 end
 
 function CSurgeManager:init_surge_covers()
+	-- Rebuild after load; repeated queries must not append duplicate zones.
+	self.count = 0
+	self.covers = {}
 	local ini = self.ini
 	for i = 0, ini:line_count("list")-1 do
 		temp1, id, temp2 = ini:r_line("list", i, "", "")
@@ -351,52 +354,32 @@ function CSurgeManager:init_surge_covers()
 end
 
 function CSurgeManager:get_nearest_cover()
-	if(self.loaded) then
+	if self.loaded then
 		self:init_surge_covers()
 	end
-	local hides = {}
-	utils.copy_table(hides, self.covers)
-	if(self.count>0) then
-		for k,v in pairs(hides) do
-			if (v.condlist) then
-				local sect = xr_logic.pick_section_from_condlist(db.actor, nil, v.condlist)
-				if(sect~="true" and sect~=nil) then
-					table.remove(hides, k)
+	if not db.actor then return nil end
+	local actor_position = db.actor:position()
+	local nearest_cover_id, nearest_cover_dist
+	for _, cover in ipairs(self.covers) do
+		local cover_id = cover:id()
+		local storage = db.storage[cover_id]
+		local object = storage and storage.object
+		if object then
+			local allowed = true
+			if cover.condlist then
+				local sect = xr_logic.pick_section_from_condlist(db.actor, nil, cover.condlist)
+				allowed = sect == "true" or sect == nil
+			end
+			if allowed then
+				if object:inside(actor_position) then return cover_id end
+				local dist = object:position():distance_to(actor_position)
+				if nearest_cover_dist == nil or dist < nearest_cover_dist then
+					nearest_cover_id, nearest_cover_dist = cover_id, dist
 				end
 			end
 		end
-		local nearest_cover_id = hides[1]:id()
-		local nearest_cover_dist = hides[1]:position():distance_to(db.actor:position())
-		for k,v in pairs(hides) do
-			if db.storage[v:id()].object:inside(db.actor:position()) then
-				return v:id()
-			end
-			local dist = v:position():distance_to(db.actor:position())
-			if(dist<nearest_cover_dist) then
-				if(v.condlist) then
-					local sect = xr_logic.pick_section_from_condlist(db.actor, nil, v.condlist)
-					if(sect=="true") then
-						nearest_cover_id = v:id()
-						nearest_cover_dist = dist
-					end
-				else
-					nearest_cover_id = v:id()
-					nearest_cover_dist = dist
-				end
-			end
-		end
-		if(nearest_cover_id==hides[1]:id()) then
-			if(hides[1].condlist) then
-				local sect = xr_logic.pick_section_from_condlist(db.actor, nil, hides[1].condlist)
-				if(sect~="true" and sect~=nil) then
-					return nil
-				end
-			end
-		end
-		return nearest_cover_id
-	else
-		return nil
 	end
+	return nearest_cover_id
 end
 
 function CSurgeManager:update()

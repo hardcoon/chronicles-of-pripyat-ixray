@@ -1,0 +1,144 @@
+-- Native ranking page remains in charge of achievements and the top metrics.
+local state = {}
+
+local function utf8_prefix(text, limit)
+    local next_byte = text:byte(limit + 1)
+    while limit > 0 and next_byte and next_byte >= 128 and next_byte < 192 do
+        limit = limit - 1
+        next_byte = text:byte(limit + 1)
+    end
+    return text:sub(1, limit)
+end
+
+local function fit_stat_line(line, text)
+    local width, height = line:GetWidth(), line:GetHeight()
+    local function fits(value)
+        line:SetText(value)
+        line:AdjustWidthToText()
+        return line:GetWidth() <= width - 1
+    end
+    if not fits(text) then
+        local first, last = 0, #text
+        while first < last do
+            local middle = math.floor((first + last + 1) / 2)
+            if fits(utf8_prefix(text, middle) .. "...") then first = middle
+            else last = middle - 1 end
+        end
+        text = utf8_prefix(text, first) .. "..."
+    end
+    line:SetWndSize(vector2():set(width, height))
+    return text
+end
+
+local function set_stat_line(line, text, has_values)
+    line:SetEllipsis(true)
+    if has_values then
+        -- Complex colored text ignores native ellipsis; fit the plain line first.
+        text = fit_stat_line(line, text)
+        local caption_color = "%c[255,150,150,150]"
+        text = caption_color .. text:gsub("%d+", function(number)
+            return "%c[default]" .. number .. caption_color
+        end)
+        line:SetTextComplexMode(true)
+    end
+    line:SetText(text)
+end
+
+local function clear_rows()
+    if state.view then state.view:Clear() end
+    for _, pair in ipairs(state.rows or {}) do
+        for _, card in ipairs(pair.cards) do pair.window:DetachChild(card) end
+    end
+    state.rows = {}
+end
+
+class "pf_player_stats_row" (CUIScriptWnd)
+
+function pf_player_stats_row:__init(xml, record) super()
+    xml:InitWindow("player", 0, self)
+    xml:InitFrame("player:frame", self)
+    xml:InitStatic("player:avatar", self)
+    local dot = xml:InitStatic("player:presence", self)
+    local colors = { online = GetARGB(255, 74, 186, 94),
+        away = GetARGB(255, 215, 155, 65), offline = GetARGB(255, 205, 65, 55) }
+    dot:SetTextureColor(colors[record.presence] or colors.offline)
+    local nick = xml:InitTextWnd("player:nick", self)
+    nick:SetEllipsis(true)
+    nick:SetText(record.nick)
+    local rank = xml:InitTextWnd("player:rank", self)
+    rank:SetText(record.rank and string.format(game.translate_string("pf_pda_player_stats_rank"),
+        record.rank) or game.translate_string("pf_pda_player_stats_rank_unknown"))
+    local kills, found = pf_pda_player_stats.card_lines(record.values)
+    for name, text in pairs({kills = kills, found = found}) do
+        local line = xml:InitTextWnd("player:" .. name, self)
+        set_stat_line(line, text, record.values and not record.values.no_data)
+    end
+    -- CUIDialogWnd starts hidden; attaching it to a scroll view does not show it.
+    self:Show(true)
+    self:Enable(true)
+end
+
+function refresh()
+    if not state.view then return end
+    local position = state.view:GetCurrentScrollPos()
+    clear_rows()
+    local records = pf_pda_player_stats.get_rows()
+    for index = 1, #records, 2 do
+        local pair = {window = CUIScriptWnd(), cards = {}}
+        state.xml:InitWindow("player_pair", 0, pair.window)
+        pair.window:SetAutoDelete(false)
+        pair.window:Show(true)
+        pair.window:Enable(true)
+        for column = 0, 1 do
+            local record = records[index + column]
+            if record then
+                local card = pf_player_stats_row(state.xml, record)
+                card:SetAutoDelete(false)
+                card:SetWndPos(vector2():set(column == 0 and 0 or
+                    pair.window:GetWidth() - card:GetWidth(), 0))
+                pair.window:AttachChild(card)
+                pair.cards[#pair.cards + 1] = card
+            end
+        end
+        -- Lua retains both the pair and its cards. Clear only detaches pairs;
+        -- detach cards before releasing references to avoid mixed ownership.
+        state.view:AddWindow(pair.window, false)
+        state.rows[#state.rows + 1] = pair
+    end
+    state.view:SetScrollPos(position)
+    state.revision = pf_pda_player_stats.revision()
+end
+
+function attach()
+    local pda = ActorMenu.get_pda_menu()
+    local parent = pda and pda:GetActiveDialog()
+    if not parent then return end
+    -- CUIWindow has no Luabind __eq operator. There is one native ranking
+    -- page per PDA lifetime; load/reload callbacks invalidate this view.
+    if not state.view then
+        state = { xml = CScriptXmlInit() }
+        state.xml:ParseFile("pf_player_stats.xml")
+        state.view = state.xml:InitScrollView("players", parent)
+    end
+    refresh()
+end
+
+function pulse()
+    if not state.view or state.revision == pf_pda_player_stats.revision() then return end
+    local pda = ActorMenu.get_pda_menu()
+    if pda and pda:IsShown() and pda:GetActiveSection() == "eptRanking" then refresh() end
+end
+
+function on_game_load()
+    -- Parent-owned C++ controls are destroyed with the ranking window. Never
+    -- dereference previous-level userdata during load/net_destroy.
+    state = {}
+end
+
+function before_game_reload()
+    -- Dispose Lua-derived rows while their VM is still alive. The native
+    -- scroll view itself remains owned by the native ranking window.
+    clear_rows()
+    state = {}
+    return true
+end

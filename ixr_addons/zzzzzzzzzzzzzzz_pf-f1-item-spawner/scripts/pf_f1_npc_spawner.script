@@ -1,0 +1,33 @@
+-- Stable F1 facade: catalog/placement and the existing world planner are leaves.
+local impl = {}
+function factions() return pf_f1_npc_catalog.factions() end
+function catalog(kind) return pf_f1_npc_catalog.catalog(kind) end
+function impl.spawn(kind, selected, community, slot, occupied)
+    local request, error_id = pf_f1_npc_catalog.prepare(kind, selected, community, slot, occupied)
+    if not request then return nil, error_id end
+    if not getFS():exist("$game_scripts$", "pf_pa_world.script") then
+        return nil, "pf_f1_npc_status_planner_unavailable"
+    end
+    if type(pf_pa_world.spawn_manual) ~= "function" then return nil, "pf_f1_npc_status_planner_unavailable" end
+    local object, failure = pf_pa_world.spawn_manual(request)
+    if object then xr_logic.pstor_store(db.actor, "pf_spawner_used", true) end
+    return object, failure, object and request.position
+end
+function spawn(kind, selected, community)
+    return impl.spawn(kind, selected, community, 1)
+end
+function spawn_many(kind, selected, community, count)
+    local objects, occupied = {}, {}
+    if count ~= 1 and count ~= 5 then return objects, "pf_f1_status_not_allowed" end
+    local last_error
+    for slot = 1, count do
+        local object, error_id, position = impl.spawn(kind, selected, community, slot, occupied)
+        if object then
+            objects[#objects + 1], occupied[#occupied + 1] = object, position
+        else
+            last_error = error_id
+            if error_id ~= "pf_f1_npc_status_no_space" then break end
+        end
+    end
+    return objects, last_error
+end

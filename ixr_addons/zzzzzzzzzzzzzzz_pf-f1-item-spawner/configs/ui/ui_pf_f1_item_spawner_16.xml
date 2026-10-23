@@ -406,6 +406,36 @@
 					<text align="c" vert_align="c" font="letterica16">pf_f1_weather_apply</text>
 				</weather_apply>
 			</tools_panel>
+			<npcs_panel x="36" y="99" width="953" height="525">
+				<kind_label x="0" y="0" width="230" height="20"><text font="letterica16">pf_f1_npc_kind</text></kind_label>
+				<kind x="0" y="25" width="230" height="29" list_length="2">
+					<text_color><e r="216" g="210" b="195"/><d r="120" g="120" b="115"/></text_color>
+					<list_font r="216" g="210" b="195" font="letterica16"/>
+				</kind>
+				<faction_label x="250" y="0" width="220" height="20"><text font="letterica16">pf_f1_npc_faction</text></faction_label>
+				<faction x="250" y="25" width="220" height="29" list_length="9">
+					<text_color><e r="216" g="210" b="195"/><d r="120" g="120" b="115"/></text_color>
+					<list_font r="216" g="210" b="195" font="letterica16"/>
+				</faction>
+				<search x="500" y="25" width="300" height="29" max_symb_count="80">
+					<texture>ui_inGame2_edit_box_1</texture><text x="5" align="l" vert_align="c" font="letterica16"/>
+				</search>
+				<search_button x="810" y="25" width="130" height="29" stretch="1">
+					<texture>ui_inGame2_button</texture><text align="c" vert_align="c" font="letterica16">pf_f1_search</text>
+				</search_button>
+				<list x="0" y="75" width="610" height="350" item_height="30" can_select="1" always_show_scroll="1">
+					<font font="letterica16" r="220" g="215" b="200"/><texture>ui_inGame2_pda_buttons_background</texture>
+				</list>
+				<name x="640" y="85" width="300" height="60"><text font="letterica18" align="c" complex_mode="1" r="225" g="215" b="190"/></name>
+				<model x="640" y="155" width="300" height="90"><text font="letterica16" complex_mode="1" r="145" g="190" b="215"/></model>
+				<count x="0" y="435" width="610" height="45"><text font="letterica16" complex_mode="1" r="205" g="205" b="198"/></count>
+				<spawn x="640" y="435" width="145" height="40" stretch="1">
+					<texture>ui_inGame2_button</texture><text align="c" vert_align="c" font="letterica18">pf_f1_npc_spawn</text>
+				</spawn>
+				<spawn_five x="795" y="435" width="145" height="40" stretch="1">
+					<texture>ui_inGame2_button</texture><text align="c" vert_align="c" font="letterica18">pf_f1_npc_spawn_five</text>
+				</spawn_five>
+			</npcs_panel>
 			<close_button x="857" y="635" width="132" height="29" stretch="1">
 				<texture>ui_inGame2_button</texture>
 				<text align="c" vert_align="c" font="letterica16">pf_f1_close</text>
@@ -425,6 +455,10 @@
 				<texture>ui_inGame2_button</texture>
 				<text align="c" vert_align="c" font="letterica16">pf_f1_tab_tools</text>
 			</world_tools_tab>
+			<npcs_tab x="882" y="57" width="107" height="27" stretch="1">
+				<texture>ui_inGame2_button</texture>
+				<text align="c" vert_align="c" font="letterica16">pf_f1_tab_npcs</text>
+			</npcs_tab>
 			<context_menu x="0" y="0" width="240" height="71" stretch="1">
 				<texture>ui_inGame2_pda_buttons_background</texture>
 				<spawn_inventory x="5" y="5" width="230" height="28" stretch="1">
