@@ -354,11 +354,11 @@ function get()
                 if key then stored[key] = value end
             end
             file:close()
-            if stored.settings_version == "1" or stored.settings_version == "2" or stored.settings_version == "3" or stored.settings_version == "4" or stored.settings_version == "5" or stored.settings_version == "6" or stored.settings_version == "7" or stored.settings_version == "8" or stored.settings_version == "9" or stored.settings_version == "10" or stored.settings_version == "11" then
+            if stored.settings_version == "1" or stored.settings_version == "2" or stored.settings_version == "3" or stored.settings_version == "4" or stored.settings_version == "5" or stored.settings_version == "6" or stored.settings_version == "7" or stored.settings_version == "8" or stored.settings_version == "9" or stored.settings_version == "10" or stored.settings_version == "11" or stored.settings_version == "12" then
                 for _, item in ipairs(schema) do
                     local text = stored[item.key]
-                    if item.key=="grass_wind_enabled" and stored.settings_version~="11" then text=stored.wind_enabled or "false" end
-                    if item.key=="fog_scattering_enabled" and (stored.settings_version~="7" and stored.settings_version~="8" and stored.settings_version~="9" and stored.settings_version~="10" and stored.settings_version~="11") then text="false" end
+                    if item.key=="grass_wind_enabled" and stored.settings_version~="11" and stored.settings_version~="12" then text=stored.wind_enabled or "false" end
+                    if item.key=="fog_scattering_enabled" and (stored.settings_version~="7" and stored.settings_version~="8" and stored.settings_version~="9" and stored.settings_version~="10" and stored.settings_version~="11" and stored.settings_version~="12") then text="false" end
                     if stored.settings_version == "1" and not text then
                         -- Valid v1 migrates only newly added fields; old mandatory fields remain strict.
                         for index=21,#schema do
@@ -374,29 +374,11 @@ function get()
                 end
                 local stored_valid = validate(values)
                 if not stored_valid then values = defaults();values.puddles_enabled=false;values.rain_enabled=false;values.parallax_enabled=false;values.wind_enabled=false;values.grass_wind_enabled=false;values.grass_enabled=false
-                elseif stored.settings_version == "5" then
-                    -- v6: permit complete drying and enable the restored rain-step sounds.
-                    -- Keep the player's puddle switch, colours, drying speed and reflection settings.
-                    values.puddles_min_wetness=0;values.puddles_always=false
-                    values.footsteps_enabled=true;values.ssr_sky=0.5
-                    state.profile_update_pending=true
-                elseif stored.settings_version == "6" or stored.settings_version == "7" or stored.settings_version == "8" then
-                    -- v9: preserve puddle/audio choices and permanently suppress removed modules.
-                    values.parallax_enabled=false
-                    state.profile_update_pending=true
-                elseif stored.settings_version ~= "9" and stored.settings_version ~= "10" and stored.settings_version ~= "11" then
-                    -- Preserve OFF and restore the admired puddle profile from its backup.
-                    local puddles=values.enabled and values.puddles_enabled
-                    values=defaults();values.puddles_enabled=puddles
-                    state.profile_update_pending=true
-                end
-                -- v10 restores tree wind only; retain every valid puddle/audio preference.
-                if stored.settings_version ~= "10" and stored.settings_version ~= "11" and stored_valid then
-                    values.wind_enabled=true;values.wind_min=0.3;values.wind_tree_bend=0.1
-                    state.profile_update_pending=true
-                end
-                if stored.settings_version~="11" and stored_valid then
-                    values.grass_enabled=true;values.grass_anomalies=false
+                elseif stored.settings_version ~= "12" then
+                    -- v12: one-time user-requested equivalent of "Reset SSS only".
+                    -- Use the same complete defaults as the button, not a separate preset.
+                    -- Explicit choices saved after this reset remain authoritative.
+                    values=defaults()
                     state.profile_update_pending=true
                 end
             else
@@ -441,7 +423,7 @@ function save(values)
     if not valid then return false,why end
     if not available() then return false,"pf_sss_unavailable" end
     values=impl.normalize(values)
-    local lines = {"settings_version=11"}
+    local lines = {"settings_version=12"}
     for _, item in ipairs(schema) do lines[#lines+1] = item.key .. "=" .. tostring(values[item.key]) end
     local target,temp,previous = impl.path(),impl.path(".tmp"),impl.path(".previous")
     local file = io.open(temp,"wb")
