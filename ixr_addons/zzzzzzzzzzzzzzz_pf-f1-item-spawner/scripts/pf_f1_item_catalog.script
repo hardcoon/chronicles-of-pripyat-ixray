@@ -375,7 +375,8 @@ function build_catalog()
 	for index = 0, ini:line_count(REGISTRY_SECTION) - 1 do
 		local result, section, raw_group = ini:r_line(REGISTRY_SECTION, index, "", "")
 		local group = result and resolve_group(raw_group) or nil
-		if result and section and allowed_group(group, developer_enabled) then
+		if result and section and allowed_group(group, developer_enabled) and
+            not read_bool(ini, section, "pf_spawn_hidden") then
 			if ini:section_exist(section) then
 				if group == WEAPON_GROUP and
 					is_scoped_weapon_variant(section, weapon_sections, scope_sections) then

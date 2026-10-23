@@ -1,4 +1,5 @@
 -- Persistent observations, independent of game saves. Presence is never saved.
+-- The optional fifth log field "op" retains the last observed channel role.
 local state = { records = {}, seen = {}, loaded = false, revision = 0 }
 local impl = {}
 
@@ -62,6 +63,7 @@ function impl.put(network, identity, nick, payload)
         if weak.current_values then
             record.values, record.payload = weak.current_values, weak.current_payload
         end
+        if weak.operator then record.operator = true end
         state.records[weak_key] = nil
         changed = true
     end
@@ -90,9 +92,17 @@ function impl.load()
     end
     for line in content:gmatch("[^\r\n]+") do
         if #line <= 2048 then
-            local network, identity, nick, payload = line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)$")
-            if network then impl.put(impl.unescape(network), impl.unescape(identity),
-                impl.unescape(nick), payload) end
+            local network, identity, nick, payload, role =
+                line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t(op)$")
+            if not network then
+                network, identity, nick, payload =
+                    line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)$")
+            end
+            if network then
+                local record = impl.put(impl.unescape(network), impl.unescape(identity),
+                    impl.unescape(nick), payload)
+                if record and role == "op" then record.operator = true end
+            end
         end
     end
 end
@@ -101,11 +111,39 @@ function impl.changed()
     state.dirty = true
 end
 
+function impl.roles(channels, confirmed)
+    local roles = { nicks = {}, identities = {} }
+    for _, channel in pairs(channels or {}) do
+        if channel.ready then
+            for _, user in pairs(channel.users or {}) do
+                local nick = canonical_nick(user.nick)
+                local identity = confirmed[nick]
+                -- The bridge normalizes channel owner/admin/operator to @.
+                -- Accept raw equivalents too; + (voice) is not an operator.
+                local operator = tostring(user.prefix or ""):find("[@&~]") ~= nil
+                roles.nicks[nick] = roles.nicks[nick] or operator
+                if identity then roles.identities[identity] = roles.identities[identity] or operator end
+            end
+        end
+    end
+    return roles
+end
+
+function impl.observe_role(record, roles)
+    local nick, identity = roles.nicks[canonical_nick(record.nick)], roles.identities[record.identity]
+    if nick == nil and identity == nil then return end
+    local operator = nick == true or identity == true
+    if (record.operator == true) ~= operator then
+        record.operator = operator
+        impl.changed()
+    end
+end
+
 function bind_self(profile, nick, identity)
     impl.load()
     state.self = nil
     if not impl.valid(nick, 128) or not impl.valid(identity, 260) or
-        identity:sub(1, 8) ~= "install:" then return end
+        not has_copid(identity) then return end
     local network = impl.network(profile)
     state.self = {network = network, nick = canonical_nick(nick), identity = identity:lower()}
     local _, _, changed = impl.put(network, identity, nick, "-")
@@ -128,6 +166,9 @@ function sync(profile, channels)
     if state.self and state.self.network == network then
         confirmed[state.self.nick] = state.self.identity
     end
+    -- Gather all channels before applying roles: operator in any joined
+    -- channel wins, regardless of channel iteration order.
+    local roles = impl.roles(channels, confirmed)
     for _, record in pairs(state.records) do record.next_presence = "offline" end
     for channel_key, channel in pairs(channels or {}) do
         if channel.ready then
@@ -166,31 +207,45 @@ function sync(profile, channels)
     end
     state.seen = seen
     for key, record in pairs(state.records) do
+        -- Also classify old cached entries by their exact IRC nickname. This
+        -- changes visibility only, without merging or discarding identities.
+        if record.network == network then impl.observe_role(record, roles) end
         record.presence = record.next_presence or "offline"
-        signature[#signature + 1] = key .. record.nick .. record.payload .. record.presence
+        signature[#signature + 1] = key .. record.nick .. record.payload .. record.presence ..
+            (record.operator and "op" or "")
     end
     table.sort(signature)
     local current = table.concat(signature, "\n")
     if current ~= state.signature then state.signature = current; state.revision = state.revision + 1 end
 end
 
+-- COPID is the bridge's advertised install GUID; other IRC identities do not
+-- qualify for statistics. Presence of a COPID is not proof of authenticity.
+function has_copid(identity)
+    identity = tostring(identity or ""):lower()
+    local a, b, c, d, e = identity:match("^install:(%x+)%-(%x+)%-(%x+)%-(%x+)%-(%x+)$")
+    return a ~= nil and #a == 8 and #b == 4 and #c == 4 and #d == 4 and #e == 12 and
+        identity ~= "install:00000000-0000-0000-0000-000000000000"
+end
+
 function records(profile)
     impl.load()
     local network, result = impl.network(profile), {}
-    local confirmed = {}
     for _, record in pairs(state.records) do
-        if record.network == network and impl.strength(record.identity) >= 3 then
-            confirmed[canonical_nick(record.nick)] = true
+        if record.network == network and has_copid(record.identity) and not record.operator then
+            result[#result + 1] = record
         end
-    end
-    for _, record in pairs(state.records) do
-        if record.network == network and (impl.strength(record.identity) >= 3 or
-            not confirmed[canonical_nick(record.nick)]) then result[#result + 1] = record end
     end
     return result
 end
 
 function is_confirmed(identity) return impl.strength(tostring(identity or "")) >= 3 end
+
+function is_operator(profile, identity)
+    impl.load()
+    local record = state.records[impl.key(impl.network(profile), tostring(identity or ""):lower())]
+    return record ~= nil and record.operator == true
+end
 
 function revision() return state.revision end
 
@@ -200,8 +255,9 @@ function flush()
     if now < (state.retry_after or 0) then return false end
     local lines = { "PF_STATS_1" }
     for _, record in pairs(state.records) do
-        lines[#lines + 1] = table.concat({ impl.escape(record.network), impl.escape(record.identity),
+        local line = table.concat({ impl.escape(record.network), impl.escape(record.identity),
             impl.escape(record.nick), record.payload }, "\t")
+        lines[#lines + 1] = line .. (record.operator and "\top" or "")
     end
     table.sort(lines, function(a, b)
         if a == "PF_STATS_1" then return true end

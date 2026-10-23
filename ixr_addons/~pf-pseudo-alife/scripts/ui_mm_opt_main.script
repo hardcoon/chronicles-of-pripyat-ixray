@@ -99,8 +99,13 @@ function options_dialog:InitControls()
         self.dlg_sss:Show(false)
         menu_xml = sss_xml
         self:Register(self.dlg_sss.reset, "btn_sss_defaults")
+        for _,section in ipairs(self.dlg_sss.sections) do
+            self:Register(section.button,"sss_category_"..section.id)
+        end
         self:Register(self.dlg_sss.controls.puddles_enabled, "sss_puddles")
-        self:Register(self.dlg_sss.controls.footsteps_enabled, "sss_footsteps_enabled")
+        for _,key in ipairs({"footsteps_enabled","wind_enabled","grass_wind_enabled","grass_enabled"}) do
+            self:Register(self.dlg_sss.controls[key],"sss_"..key)
+        end
     end
     self.tab = menu_xml:InitTab("menu_tab", self.dialog)
 	self:Register				(self.tab, "tab")
@@ -178,9 +183,17 @@ end
 
 function options_dialog:InitCallBacks()
     if self.dlg_sss then
-        -- CUICheckButton dispatches BUTTON_CLICKED after updating its checked state.
+        for _,section in ipairs(self.dlg_sss.sections) do
+            local id=section.id
+            self:AddCallback("sss_category_"..id,ui_events.BUTTON_CLICKED,function()
+                self.dlg_sss:ToggleSection(id)
+            end,self)
+        end
+        -- CUICheckButton sends BUTTON_CLICKED after changing its checked state.
         self:AddCallback("sss_puddles", ui_events.BUTTON_CLICKED, self.OnSSSPuddles, self)
-        self:AddCallback("sss_footsteps_enabled", ui_events.BUTTON_CLICKED, self.OnSSSDependent, self)
+        for _,key in ipairs({"footsteps_enabled","wind_enabled","grass_wind_enabled","grass_enabled"}) do
+            self:AddCallback("sss_"..key,ui_events.BUTTON_CLICKED,self.OnSSSDependent,self)
+        end
     end
     if self.dlg_sss then
         self:AddCallback("btn_sss_defaults", ui_events.BUTTON_CLICKED, self.OnSSSDefaults, self)
@@ -253,7 +266,6 @@ end
 
 function options_dialog:OnSSSDefaults()
     local values = pf_sss_settings.defaults()
-    values.puddles_enabled = pf_sss_settings.get().puddles_enabled
     self.dlg_sss:SetValues(values)
 end
 

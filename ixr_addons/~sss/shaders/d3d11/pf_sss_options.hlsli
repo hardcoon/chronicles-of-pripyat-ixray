@@ -62,6 +62,7 @@ uniform float4 pf_sss_options57;
 uniform float4 pf_sss_options58;
 uniform float4 pf_sss_options59;
 uniform float4 pf_sss_options60;
+uniform float4 pf_sss_options61;
 #define PF_SSS_SSR_ENABLED pf_sss_options0.x
 #define PF_SSS_SSR_QUALITY pf_sss_options0.y
 #define PF_SSS_SSR_RENDER_SCALE pf_sss_options0.z
@@ -306,4 +307,5 @@ uniform float4 pf_sss_options60;
 #define PF_SSS_WET_BUILDUP pf_sss_options60.y
 #define PF_SSS_WET_DRYING pf_sss_options60.z
 #define PF_SSS_WET_COVER_RESOLUTION pf_sss_options60.w
+#define PF_SSS_GRASS_WIND_ENABLED pf_sss_options61.x
 #endif

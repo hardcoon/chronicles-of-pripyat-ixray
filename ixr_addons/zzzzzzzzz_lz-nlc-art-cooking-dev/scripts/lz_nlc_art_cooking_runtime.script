@@ -14,17 +14,11 @@ local state = {
 	operation_keys = {},
 	cooked_marker_sync_due = nil,
 	qa_cleanup_due = nil,
-	art_stash_due = nil,
-	art_stash_scan_done = false,
-	qa_art_stash_scan_done = false,
-	art_stash_audit_due = nil,
-	art_stash_audit_done = false,
 	hunger_due = 0,
 	analyzer_due = 0,
 	analyzer_scan_due = 0,
 	analyzer_equipped = false,
 	analyzer_frame = -1,
-	qa_mode_wait_until = nil
 }
 local impl = {}
 
@@ -50,8 +44,6 @@ local settings = {
 	cooking_accept_radius = 5.0,
 	drop_watch_ms = 5000,
 	drop_probe_ms = 50,
-	qa_mode_grace_ms = 10000,
-	qa_art_stash_revision = 3,
 }
 
 local registry = lz_nlc_anomaly_registry
@@ -75,25 +67,6 @@ local legacy_qa_zone_sections = {
 	lz_nlc_qa_zone_buzz = true,
 	lz_nlc_qa_zone_zharka = true
 }
-
-local QA_ART_STASH_SECTION = "lz_nlc_qa_art_stash"
-
--- Family order is intentional: every base artifact is followed by the four
--- products in its own cooking branch. The inventory may apply its own visual
--- sorting, but the saved container data remains easy to inspect and validate.
-local qa_art_stash_items = {
-	"af_soul", "af_spirit_1", "af_spirit_2", "af_spirit_3", "af_spirit_4",
-	"af_electra_flash", "af_cry_1", "af_cry_2", "af_cry_3", "af_cry_4",
-	"af_rusty_sea-urchin", "af_dik_1", "af_dik_2", "af_dik_3", "af_dik_4",
-	"af_dummy_kolobok", "af_kol_1", "af_kol_2", "af_kol_3", "af_kol_4",
-	"lz_nlc_af_dummy_glassbeads", "af_babka_1", "af_babka_2", "af_babka_3", "af_babka_4",
-	"lz_nlc_af_dummy_dummy", "af_pudd_1", "af_pudd_2", "af_pudd_3", "af_pudd_4",
-	"af_dummy_pellicle", "af_armor_1", "af_armor_2", "af_armor_3", "af_armor_4",
-	"af_dummy_buliz", ANALYZER_SECTION
-}
-
-local qa_art_stash_item_counts = {}
-for _, section in ipairs(qa_art_stash_items) do qa_art_stash_item_counts[section] = 1 end
 
 function impl.message(text_id)
 	if db.actor and news_manager and news_manager.send_tip then
@@ -784,135 +757,6 @@ function impl.remove_legacy_qa_zones(now)
 	printf("lz_nlc_art_cooking: removed legacy startup QA zones=[%s]", tostring(#ids))
 end
 
-function impl.find_start_stash()
-	local id = tonumber(xr_logic.pstor_retrieve(db.actor, "lz_nm_start_stash_id", -1)) or -1
-	local stash = id >= 0 and alife():object(id, true) or nil
-	if stash and stash:section_name() == "lz_nm_start_stash" then return stash end
-	if state.art_stash_scan_done then return nil end
-	state.art_stash_scan_done = true
-	for _, object in alife():objects() do
-		if object:section_name() == "lz_nm_start_stash" then return object end
-	end
-	return nil
-end
-
-function impl.find_qa_art_stash(data)
-	local id = tonumber(data.qa_art_stash_id) or -1
-	local stash = id >= 0 and alife():object(id, true) or nil
-	if stash and stash:section_name() == QA_ART_STASH_SECTION then return stash end
-	if state.qa_art_stash_scan_done then return nil end
-	state.qa_art_stash_scan_done = true
-	for _, object in alife():objects() do
-		if object:section_name() == QA_ART_STASH_SECTION then
-			data.qa_art_stash_id = object.id
-			return object
-		end
-	end
-	return nil
-end
-
-function impl.spawn_qa_art_stash(start_stash)
-	if not impl.developer_mode() or not start_stash then return nil end
-	local direction = db.actor:direction()
-	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
-	local forward_x = length > 0.001 and direction.x / length or 1
-	local forward_z = length > 0.001 and direction.z / length or 0
-	local right_x = -forward_z
-	local right_z = forward_x
-	local position = vector():set(
-		start_stash.position.x + right_x * 1.4,
-		start_stash.position.y,
-		start_stash.position.z + right_z * 1.4
-	)
-	local stash = alife():create(
-		QA_ART_STASH_SECTION,
-		position,
-		start_stash.m_level_vertex_id,
-		start_stash.m_game_vertex_id
-	)
-	if stash then
-		stash.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
-	end
-	return stash
-end
-
-function impl.ensure_qa_art_stash(now)
-	if not state.art_stash_due or now < state.art_stash_due then return end
-	if level.name() ~= settings.qa_level then
-		state.art_stash_due = nil
-		return
-	end
-	if not impl.developer_mode() then
-		if state.qa_mode_wait_until and now < state.qa_mode_wait_until then
-			state.art_stash_due = now + 250
-		else
-			state.art_stash_due = nil
-		end
-		return
-	end
-	local data = impl.storage()
-	local stash = impl.find_qa_art_stash(data)
-	if stash and tonumber(data.qa_art_stash_revision) == settings.qa_art_stash_revision then
-		state.art_stash_due = nil
-		return
-	end
-	local start_stash = impl.find_start_stash()
-	if not stash and start_stash then
-		stash = impl.spawn_qa_art_stash(start_stash)
-		if stash then data.qa_art_stash_id = stash.id end
-	end
-	if not stash then
-		state.art_stash_due = now + 1000
-		return
-	end
-	local counts = {}
-	for _, section in ipairs(qa_art_stash_items) do counts[section] = 0 end
-	for child_id in alife():get_children(stash) do
-		local child = alife():object(child_id, true)
-		local section = child and child:section_name() or nil
-		if section and counts[section] ~= nil then counts[section] = counts[section] + 1 end
-	end
-	local created = 0
-	for _, section in ipairs(qa_art_stash_items) do
-		local target_count = qa_art_stash_item_counts[section] or 1
-		for _ = counts[section] + 1, target_count do
-			if alife():create(section, vector(), 0, 0, stash.id) then created = created + 1 end
-		end
-	end
-	data.qa_art_stash_id = stash.id
-	data.qa_art_stash_revision = settings.qa_art_stash_revision
-	state.art_stash_due = nil
-	printf("lz_nlc_art_cooking: dedicated artifact QA stash ready with [%s] added item(s)", tostring(created))
-end
-
-function impl.audit_qa_art_stash(now)
-	if state.art_stash_audit_done or not state.art_stash_audit_due or
-		now < state.art_stash_audit_due then return end
-	state.art_stash_audit_done = true
-	if impl.developer_mode() then return end
-	local data = impl.storage()
-	local removed = 0
-	local stashes = {}
-	for _, object in alife():objects() do
-		if object:section_name() == QA_ART_STASH_SECTION then table.insert(stashes, object) end
-	end
-	for _, stash in ipairs(stashes) do
-		local children = {}
-		for child_id in alife():get_children(stash) do table.insert(children, child_id) end
-		for _, child_id in ipairs(children) do
-			local child = alife():object(child_id, true)
-			if child then alife():release(child, true) end
-		end
-		alife():release(stash, true)
-		removed = removed + 1
-	end
-	data.qa_art_stash_id = nil
-	data.qa_art_stash_revision = nil
-	if removed > 0 then
-		printf("lz_nlc_art_cooking: removed [%s] artifact QA stash(es) outside developer mode", tostring(removed))
-	end
-end
-
 function actor_on_inventory_item_drop(item)
 	if not item then return end
 	impl.remove_boulder(item)
@@ -963,17 +807,11 @@ function on_game_load()
 	state.operation_keys = {}
 	state.cooked_marker_sync_due = time_global() + 500
 	state.qa_cleanup_due = time_global() + 500
-	state.art_stash_due = time_global() + 750
-	state.art_stash_scan_done = false
-	state.qa_art_stash_scan_done = false
-	state.art_stash_audit_due = time_global() + settings.qa_mode_grace_ms
-	state.art_stash_audit_done = false
 	state.hunger_due = time_global() + 1000
 	state.analyzer_due = time_global()
 	state.analyzer_scan_due = time_global() + 30000
 	state.analyzer_equipped = false
 	state.analyzer_frame = -1
-	state.qa_mode_wait_until = time_global() + settings.qa_mode_grace_ms
 	impl.fill_random_queue(impl.storage())
 	impl.collect_anomalies()
 	impl.scan_boulders()
@@ -987,8 +825,6 @@ function update(now)
 	impl.complete_operations(now)
 	impl.sync_cooked_markers(now)
 	impl.remove_legacy_qa_zones(now)
-	impl.ensure_qa_art_stash(now)
-	impl.audit_qa_art_stash(now)
 	-- Boulder hunger is handled by satiety_restore_speed in the artefact LTX.
 	-- A second real-time drain here would stack the legacy difficulty penalty
 	-- on top of the configured effect instead of giving the intended +20%.

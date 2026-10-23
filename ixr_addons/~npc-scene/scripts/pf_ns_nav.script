@@ -1,0 +1,135 @@
+-- Local, bounded AI-node inspection. Never enumerate the level graph.
+local S={enabled=true,snap=false,offmesh=false,id=nil,pool={},nodes={},seen={},cursor=1,offsets={},route_pool={}}
+local I={}
+local C={cell=.7,half=.31,radius=3,per_frame=3,max_nodes=49,max_route=64,prefix="pf_ns_nav_"}
+
+function I.copy(p) return vector():set(p.x,p.y,p.z) end
+function I.can_draw()
+    local native=rawget(_G,"debug_render")
+    return native and type(native.add_object)=="function" and type(native.available)=="function" and native.available()
+end
+function I.valid(id) return id~=nil and id~=4294967295 and level.valid_vertex_id(id) end
+function I.access(id)
+    if not I.valid(id) then return false end
+    local object=S.id and level.object_by_id(S.id)
+    if object then return object:accessible(id)==true end
+    return level.is_accessible_vertex_id(id)==true
+end
+function I.near(a,b,xz,y)
+    local dx,dz=a.x-b.x,a.z-b.z
+    return dx*dx+dz*dz<=xz*xz and math.abs(a.y-b.y)<=y
+end
+function I.line(pool,index,a,b,tint)
+    local h=pool[index]
+    if not h then
+        local group=pool==S.pool and "node_" or "route_"
+        h=debug_render.add_object(C.prefix..group..index,DBG_ScriptObject.line):cast_dbg_line()
+        pool[index]=h
+    end
+    h.point_a=a;h.point_b=b;h.color=tint;h.visible=true
+end
+function I.hide(pool) for _,h in ipairs(pool) do h.visible=false end end
+function configure(id,snap,offmesh)
+    S.id=id;S.snap=snap==true;S.offmesh=offmesh==true;S.cached=nil
+end
+function flags() return S.enabled,S.snap,S.offmesh end
+function toggle(which)
+    if which=="grid" then S.enabled=not S.enabled
+    elseif which=="snap" then S.snap=not S.snap
+    elseif which=="offmesh" then S.offmesh=not S.offmesh end
+    S.cached=nil;S.center=nil
+    if not S.enabled then I.hide(S.pool) end
+end
+function resolve(position,rotation,confirming,anchor)
+    -- One native lookup for a changed candidate, zero for a stationary one.
+    -- Confirmation rechecks masks/access and never moves an unsnapped candidate.
+    local cached=S.cached
+    local unchanged=cached and I.near(position,cached.position,.00001,.00001)
+    if not unchanged then
+        local id=level.vertex_id(position)
+        cached={position=I.copy(position),id=id,node=I.valid(id) and level.vertex_position(id) or nil}
+        S.cached=cached
+    end
+    local id,node=cached.id,cached.node
+    local close=node and I.near(position,node,.78,.65)
+    if S.offmesh then
+        id=anchor and anchor.level_vertex_id
+        if not I.valid(id) then return position,nil,nil,false,"pf_ns_no_ai" end
+        return position,id,anchor.game_vertex_id,true,nil
+    end
+    if not close then return position,nil,nil,false,"pf_ns_no_ai" end
+    if not I.access(id) then return position,id,nil,false,"pf_ns_blocked_ai" end
+    local result=S.snap and I.copy(node) or position
+    return result,id,anchor and anchor.game_vertex_id or db.actor:game_vertex_id(),true,nil
+end
+function I.offsets()
+    if #S.offsets>0 then return end
+    for x=-C.radius,C.radius do for z=-C.radius,C.radius do
+        S.offsets[#S.offsets+1]={x=x,z=z,d=x*x+z*z}
+    end end
+    table.sort(S.offsets,function(a,b) return a.d<b.d end)
+end
+function update(position)
+    if not S.enabled or not position or not I.can_draw() then return end
+    I.offsets()
+    if not S.center or not I.near(position,S.center,C.cell,.45) then
+        S.center=I.copy(position);S.nodes={};S.seen={};S.cursor=1;I.hide(S.pool)
+    end
+    local timer=profile_timer();timer:start()
+    for n=1,C.per_frame do
+        local offset=S.offsets[S.cursor]
+        if not offset then break end
+        S.cursor=S.cursor+1
+        local sample=vector():set(S.center.x+offset.x*C.cell,S.center.y,S.center.z+offset.z*C.cell)
+        local id=level.vertex_id(sample)
+        if I.valid(id) and not S.seen[id] then
+            local p=level.vertex_position(id)
+            if I.near(p,S.center,C.cell*(C.radius+1),.7) and I.near(p,sample,.8,.7) then
+                S.seen[id]=true
+                local index=#S.nodes+1
+                S.nodes[index]={id=id,p=I.copy(p)}
+                local tint=I.access(id) and fcolor():set(.2,.7,.35,1) or fcolor():set(.9,.2,.15,1)
+                local y=p.y+.035
+                local corners={vector():set(p.x-C.half,y,p.z-C.half),vector():set(p.x+C.half,y,p.z-C.half),
+                    vector():set(p.x+C.half,y,p.z+C.half),vector():set(p.x-C.half,y,p.z+C.half)}
+                for edge=1,4 do I.line(S.pool,(index-1)*4+edge,corners[edge],corners[edge%4+1],tint) end
+            end
+        end
+        timer:stop()
+        if timer:time()>250 then break end
+        timer:start()
+    end
+end
+function draw_route(record)
+    if not I.can_draw() then return end
+    local route=record and record.route
+    local signature={record and record.id or "none",route and route.loop and "loop" or "stop"}
+    for index,point in ipairs(route and route.points or {}) do
+        if index>C.max_route then break end
+        signature[#signature+1]=string.format("%.6f,%.6f,%.6f",point.x,point.y,point.z)
+    end
+    local key=table.concat(signature,";")
+    if key==S.route_key then return end
+    S.route_key=key
+    I.hide(S.route_pool)
+    if not route then return end
+    local tint=fcolor():set(1,.67,.2,1)
+    for index,point in ipairs(route.points or {}) do
+        if index>C.max_route then break end
+        local p=vector():set(point.x,point.y+.08,point.z)
+        local a=vector():set(p.x-.12,p.y,p.z)
+        local b=vector():set(p.x+.12,p.y,p.z)
+        I.line(S.route_pool,index*3-2,a,b,tint)
+        I.line(S.route_pool,index*3-1,vector():set(p.x,p.y,p.z-.12),vector():set(p.x,p.y,p.z+.12),tint)
+        local next_point=route.points[index+1] or (route.loop and route.points[1])
+        if next_point then I.line(S.route_pool,index*3,p,vector():set(next_point.x,next_point.y+.08,next_point.z),tint) end
+    end
+end
+function clear()
+    local native=rawget(_G,"debug_render")
+    if native and type(native.clear_owner)=="function" then native.clear_owner(C.prefix) end
+    S.pool={};S.route_pool={};S.nodes={};S.seen={};S.cached=nil;S.center=nil;S.id=nil;S.route_key=nil
+end
+
+-- Deliberately exposed for exact budget/floor/confirmation fixtures.
+function inspect() return S end

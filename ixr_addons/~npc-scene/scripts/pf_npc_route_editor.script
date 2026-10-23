@@ -1516,3 +1516,46 @@ function export_now(adapter)
 	if not impl.configure(adapter or state.adapter) then return false, "adapter", 0 end
 	return impl.export_routes()
 end
+
+-- Unified editor uses the established route executor without its legacy windows.
+function scene_api(adapter) impl.configure(adapter);return impl end
+
+-- Keep exact authored placement for scenes created by this addon; legacy paused
+-- records retain their previous ownership until explicitly edited.
+local scene_pause_original=impl.pause_runtime
+function impl.scene_remember(record)
+    if type(state.adapter.capture_transform)~="function" then return end
+    local captured=state.adapter.capture_transform(record.id)
+    if not captured then return end
+    local item=state.adapter.get_state(captured.state)
+    if not item or item.definition.movement~=move.stand then
+        captured.state=impl.default_state(level.object_by_id(record.id),C.FALLBACK_STATE)
+    end
+    record.x,record.y,record.z=captured.position.x,captured.position.y,captured.position.z
+    record.yaw=captured.yaw;record.state=captured.state
+    if state.adapter.valid_level_vertex(captured.level_vertex_id) then record.level_vertex_id=captured.level_vertex_id end
+    record.game_vertex_id=captured.game_vertex_id or record.game_vertex_id
+    record.scene_static_owner=true;impl.save(record)
+end
+function impl.pause_runtime(record,quiet)
+    local route=impl.route(record,false)
+    local was_active=route and C.ACTIVE[route.status]
+    local result=scene_pause_original(record,quiet)
+    if was_active then impl.scene_remember(record) end
+    return result
+end
+local scene_advance_original=impl.advance
+function impl.advance(record,route)
+    scene_advance_original(record,route)
+    if route.status=="completed" then impl.scene_remember(record) end
+end
+local scene_fail_original=impl.fail
+function impl.fail(record,route,reason)
+    scene_fail_original(record,route,reason);impl.scene_remember(record)
+end
+function owns_npc(record)
+    local route=impl.route(record,false)
+    if not route or #route.points==0 then return false end
+    if C.ACTIVE[route.status] then return true end
+    return record.scene_static_owner~=true and C.STATUS[route.status]==true
+end

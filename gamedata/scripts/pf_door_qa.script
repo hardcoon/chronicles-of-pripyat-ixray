@@ -1,0 +1,1220 @@
+-- Developer-only native-door placement editor for IX-Ray.
+-- Its in-world workflow is the deliberately smaller door-specific variant of
+-- PF NPC Editor: the normal crosshair chooses direction, number keys select
+-- distance from the moving actor and the real OGF lower edge snaps to floor.
+
+local TOOL_SECTION = "pf_door_spawn_tool"
+local PREVIEW_PSTOR = "pf_door_qa_active_preview_id"
+local PLACEMENT_LOG_FILENAME = "pf_door_qa_placements.log"
+local EVENT_LOG_FILENAME = "pf_door_qa_events.log"
+local PLACEMENT_LOG_HEADER = "# object_id\tlevel\tcatalog_id\tsection\tmodel\tx\ty\tz\tyaw_rad\tyaw_deg\tdir_x\tdir_y\tdir_z\tlevel_vertex_id\tgame_vertex_id\tcreated_game_time"
+local EVENT_LOG_HEADER = "# event\tevent_time\tlevel\tobject_id\tprevious_id\tcatalog_id\tsection\tmodel\tx\ty\tz\tyaw_rad\tyaw_deg\tdir_x\tdir_y\tdir_z\tlevel_vertex_id\tgame_vertex_id"
+
+local INVALID_LEVEL_VERTEX_ID = 4294967295
+local TARGET_RAY_DISTANCE = 25.0
+local GROUND_RAY_START_HEIGHT = 1.5
+local GROUND_RAY_RANGE = 20.0
+local ROTATION_STEP = math.rad(5)
+local LIVE_MOVE_DISTANCE_SQR = 0.0004
+local GROUND_CLEARANCE = 0.01
+local HEIGHT_ADJUST_STEP = 0.05
+
+-- min_x/max_x/min_y are the actual OGF bounding-box limits. Together with
+-- the model-depth bounds below they let the editor test the floor under the
+-- whole leaf and place its real lower edge on that floor instead of assuming
+-- that every OGF origin is at its bottom.
+local DOORS = {
+    { id = "wood_100x190", label = "Деревянная 100x190", section = "pf_qa_door_wood_100x190", model = "dynamics\\door\\door_wood_100x190_01.ogf", min_x = 0.000, max_x = 0.992, min_y = 0.000 },
+    { id = "wood_120x240", label = "Деревянная 120x240", section = "pf_qa_door_wood_120x240", model = "dynamics\\door\\door_wood_120x240_01.ogf", min_x = -1.200, max_x = 0.000, min_y = 0.000 },
+    { id = "wood_130x245", label = "Деревянная 130x245", section = "pf_qa_door_wood_130x245", model = "dynamics\\door\\door_wood_130x245_01.ogf", min_x = -1.300, max_x = 0.000, min_y = 0.000 },
+    { id = "wood_130x250", label = "Деревянная 130x250", section = "pf_qa_door_wood_130x250", model = "dynamics\\door\\door_wood_130x250_01.ogf", min_x = -1.300, max_x = 0.000, min_y = 0.000 },
+    { id = "wood_200x250_l", label = "Деревянная двойная 200x250 — левая", section = "pf_qa_door_wood_200x250_l", model = "dynamics\\door\\door_wood_200x250_01_l.ogf", min_x = 0.000, max_x = 1.000, min_y = 0.000 },
+    { id = "wood_200x250_r", label = "Деревянная двойная 200x250 — правая", section = "pf_qa_door_wood_200x250_r", model = "dynamics\\door\\door_wood_200x250_01_r.ogf", min_x = -1.000, max_x = 0.000, min_y = 0.000 },
+    { id = "metal_145x230", label = "Металлическая 145x230", section = "pf_qa_door_metal_145x230", model = "dynamics\\door\\door_metal_145_230_01.ogf", min_x = -0.020, max_x = 1.430, min_y = 0.004 },
+    { id = "metal_150x260_01", label = "Металлическая 150x260 №1", section = "pf_qa_door_metal_150x260_01", model = "dynamics\\door\\door_metal_150x260_01.ogf", min_x = -1.500, max_x = 0.000, min_y = 0.000 },
+    { id = "metal_150x260_02", label = "Металлическая 150x260 №2", section = "pf_qa_door_metal_150x260_02", model = "dynamics\\door\\door_metal_150x260_02.ogf", min_x = -1.500, max_x = 0.000, min_y = 0.000 },
+    { id = "metal_185x297_l", label = "Металлическая двойная 185x297 — левая", section = "pf_qa_door_metal_185x297_l", model = "dynamics\\door\\door_metal_185x297_01_l.ogf", min_x = 0.000, max_x = 0.925, min_y = 0.000 },
+    { id = "metal_185x297_r", label = "Металлическая двойная 185x297 — правая", section = "pf_qa_door_metal_185x297_r", model = "dynamics\\door\\door_metal_185x297_01_r.ogf", min_x = -0.925, max_x = 0.000, min_y = 0.000 },
+    { id = "metal_220x260_l", label = "Металлическая двойная 220x260 — левая", section = "pf_qa_door_metal_220x260_l", model = "dynamics\\door\\door_metal_220x260_01_l.ogf", min_x = -0.022, max_x = 1.095, min_y = -0.358 },
+    { id = "metal_220x260_r", label = "Металлическая двойная 220x260 — правая", section = "pf_qa_door_metal_220x260_r", model = "dynamics\\door\\door_metal_220x260_01_r.ogf", min_x = -1.095, max_x = 0.022, min_y = -0.358 },
+    { id = "trader", label = "Металлическая дверь торговца", section = "pf_qa_door_trader", model = "dynamics\\door\\door_trader.ogf", min_x = -0.038, max_x = 1.415, min_y = 0.000 },
+    { id = "ship_high_l", label = "Высокая корабельная — левая", section = "pf_qa_door_ship_high_l", model = "dynamics\\door\\door_ship_high_l.ogf", min_x = -0.022, max_x = 1.383, min_y = -0.572 },
+    { id = "ship_high_r", label = "Высокая корабельная — правая", section = "pf_qa_door_ship_high_r", model = "dynamics\\door\\door_ship_high_r.ogf", min_x = -1.387, max_x = 0.018, min_y = -0.572 }
+}
+
+local DOOR_Z_BOUNDS = {
+    wood_100x190 = { -0.0655, 0.0148 },
+    wood_120x240 = { -0.1050, 0.1557 },
+    wood_130x245 = { -0.0219, 0.0508 },
+    wood_130x250 = { -0.1050, 0.1557 },
+    wood_200x250_l = { -0.1052, 0.1555 },
+    wood_200x250_r = { -0.1050, 0.1557 },
+    metal_145x230 = { -0.1219, 0.0480 },
+    metal_150x260_01 = { -0.0572, 0.1172 },
+    metal_150x260_02 = { -0.0572, 0.1172 },
+    metal_185x297_l = { -0.0889, 0.1602 },
+    metal_185x297_r = { -0.0889, 0.1602 },
+    metal_220x260_l = { -0.1081, 0.1919 },
+    metal_220x260_r = { -0.1081, 0.1919 },
+    trader = { -0.1372, 0.2216 },
+    ship_high_l = { -0.0807, 0.1462 },
+    ship_high_r = { -0.0902, 0.1358 },
+}
+
+local DOOR_BY_SECTION = {}
+local PREVIEW_BY_SECTION = {}
+for index, entry in ipairs(DOORS) do
+    DOOR_BY_SECTION[entry.section] = index
+    entry.preview_section = entry.section .. "_preview"
+    PREVIEW_BY_SECTION[entry.preview_section] = index
+    local z_bounds = DOOR_Z_BOUNDS[entry.id]
+    entry.min_z = z_bounds and z_bounds[1] or 0
+    entry.max_z = z_bounds and z_bounds[2] or 0
+end
+
+local callbacks_registered = false
+local active_dialog = nil
+local dialog_open_request = 0
+local placement = {
+    active = false,
+    catalog_index = nil,
+    original_id = nil,
+    preview_id = nil,
+    position = nil,
+    yaw = 0,
+    distance = 3.0,
+    height_offset = 0,
+    floor_snap = true,
+    free_base_y = nil,
+    level_vertex_id = nil,
+    game_vertex_id = nil,
+    valid = false,
+    invalid_reason = nil,
+    ground_ray = nil,
+    hud = nil,
+    last_applied_position = nil,
+    next_preview_refresh = 0,
+    return_to_catalog = false,
+    actor_active_slot_before = 0,
+    input_action_pending = nil,
+    input_action_dik = nil,
+    input_action_released = false,
+    restore_after_release_dik = nil,
+}
+local equipment_restore = { slot = 0, release_dik = nil }
+local tool_access = {
+    actor_id = nil,
+    developer = nil,
+    complete = false,
+    next_update = 0,
+}
+
+local function tr(id)
+    local value = game.translate_string(id) or id
+    return string.gsub(value, "\\n", "\n")
+end
+
+local function trf(id, ...)
+    local ok, value = pcall(string.format, tr(id), ...)
+    return ok and value or tr(id)
+end
+
+local function copy_vector(value)
+    return vector():set(value.x, value.y, value.z)
+end
+
+local function horizontal_distance_sqr(left, right)
+    local x = left.x - right.x
+    local z = left.z - right.z
+    return x * x + z * z
+end
+
+local function normalize_yaw(yaw)
+    while yaw > math.pi do yaw = yaw - math.pi * 2 end
+    while yaw < -math.pi do yaw = yaw + math.pi * 2 end
+    return yaw
+end
+
+local function direction_from_yaw(yaw)
+    return vector():set(math.sin(yaw), 0, math.cos(yaw))
+end
+
+local function horizontal_camera_yaw()
+    local direction = vector():set(device().cam_dir)
+    local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+    if length < 0.001 and db.actor then
+        direction = vector():set(db.actor:direction())
+        length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
+    end
+    if length < 0.001 then return 0 end
+    return normalize_yaw(math.atan2(direction.x / length, direction.z / length))
+end
+
+local function developer_mode_enabled()
+    local ok, enabled = pcall(function()
+        return pf_stash_qa and pf_stash_qa.is_developer_mode and
+            pf_stash_qa.is_developer_mode() == true
+    end)
+    if ok and enabled == true then return true end
+    if not db.actor then return false end
+    local stored_ok, stored = pcall(
+        xr_logic.pstor_retrieve, db.actor, "pf_developer_mode", false)
+    return stored_ok and stored == true
+end
+
+local function report(message, hud_silent)
+    printf("[PF DOOR QA] %s", tostring(message))
+    if db.actor and hud_silent ~= true then
+        db.actor:give_game_news("Door QA", tostring(message), "pf_news_stash", 0, 3500)
+    end
+end
+
+local function require_developer_mode()
+    if developer_mode_enabled() then return true end
+    report("Редактор дверей доступен только в режиме разработчика")
+    return false
+end
+
+local function timestamp()
+    local year, month, day, hour, minute, second, millisecond = 0, 0, 0, 0, 0, 0, 0
+    year, month, day, hour, minute, second, millisecond = game.get_game_time():get(
+        year, month, day, hour, minute, second, millisecond
+    )
+    return string.format("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second)
+end
+
+local function log_path(filename)
+    return getFS():update_path("$logs$", filename)
+end
+
+local function preflight_log(filename)
+    local path = log_path(filename)
+    local file = io.open(path, "a")
+    if not file then return false, path end
+    file:close()
+    return true, path
+end
+
+local function open_append_log(filename, header)
+    local path = log_path(filename)
+    local needs_header = true
+    local existing = io.open(path, "r")
+    if existing then
+        needs_header = existing:read("*l") == nil
+        existing:close()
+    end
+    local file = io.open(path, "a")
+    if not file then return nil, path end
+    if needs_header then file:write(header .. "\n") end
+    return file, path
+end
+
+local function snapshot(object)
+    local yaw = object.angle and object.angle.y or 0
+    return {
+        position = copy_vector(object.position),
+        yaw = yaw,
+        direction = direction_from_yaw(yaw),
+        level_vertex_id = object.m_level_vertex_id,
+        game_vertex_id = object.m_game_vertex_id,
+    }
+end
+
+local function append_placement_log(object, entry, state)
+    local file, path = open_append_log(PLACEMENT_LOG_FILENAME, PLACEMENT_LOG_HEADER)
+    if not file then return false, path end
+    file:write(string.format(
+        "%s\t%s\t%s\t%s\t%s\t%.6f\t%.6f\t%.6f\t%.9f\t%.6f\t%.6f\t%.6f\t%.6f\t%s\t%s\t%s\n",
+        tostring(object.id), level.name(), entry.id, entry.section, entry.model,
+        state.position.x, state.position.y, state.position.z,
+        state.yaw, math.deg(state.yaw),
+        state.direction.x, state.direction.y, state.direction.z,
+        tostring(state.level_vertex_id), tostring(state.game_vertex_id), timestamp()
+    ))
+    file:close()
+    return true, path
+end
+
+local function append_event(event_name, object_id, previous_id, entry, state)
+    local file, path = open_append_log(EVENT_LOG_FILENAME, EVENT_LOG_HEADER)
+    if not file then return false, path end
+    file:write(string.format(
+        "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.6f\t%.6f\t%.6f\t%.9f\t%.6f\t%.6f\t%.6f\t%.6f\t%s\t%s\n",
+        event_name, timestamp(), level.name(), tostring(object_id),
+        previous_id and tostring(previous_id) or "-", entry.id, entry.section, entry.model,
+        state.position.x, state.position.y, state.position.z,
+        state.yaw, math.deg(state.yaw),
+        state.direction.x, state.direction.y, state.direction.z,
+        tostring(state.level_vertex_id), tostring(state.game_vertex_id)
+    ))
+    file:close()
+    return true, path
+end
+
+local function valid_level_vertex_id(vertex_id)
+    return vertex_id ~= nil and vertex_id ~= INVALID_LEVEL_VERTEX_ID and
+        level.valid_vertex_id(vertex_id)
+end
+
+local function linked_vertices(position)
+    local level_vertex_id = level.vertex_id(position)
+    if not valid_level_vertex_id(level_vertex_id) and db.actor then
+        level_vertex_id = db.actor:level_vertex_id()
+    end
+    local game_vertex_id = db.actor and db.actor:game_vertex_id() or 0
+    return level_vertex_id, game_vertex_id
+end
+
+local function create_ray(range, ignored_object)
+    local ray = ray_pick()
+    ray:set_flags(3)
+    ray:set_range(range)
+    ray:set_ignore_object(ignored_object or db.actor)
+    return ray
+end
+
+local function preview_client_object()
+    return placement.preview_id and level.object_by_id(placement.preview_id) or nil
+end
+
+local function crosshair_horizontal_direction()
+    local forward = vector():set(device().cam_dir)
+    forward.y = 0
+    local forward_length = math.sqrt(
+        forward.x * forward.x + forward.z * forward.z)
+    if forward_length < 0.00001 and db.actor then
+        forward = vector():set(db.actor:direction())
+        forward.y = 0
+        forward_length = math.sqrt(
+            forward.x * forward.x + forward.z * forward.z)
+    end
+    if forward_length < 0.00001 then return vector():set(0, 0, 1) end
+    return forward:mul(1 / forward_length)
+end
+
+local function floor_height(x, z, reference_y, ignored_object)
+    local origin = vector():set(x, reference_y + GROUND_RAY_START_HEIGHT, z)
+    local direction = vector():set(0, -1, 0)
+    if not placement.ground_ray then
+        placement.ground_ray = ray_pick()
+        -- Static geometry only: movable props must never become a door floor.
+        placement.ground_ray:set_flags(2)
+    end
+    placement.ground_ray:set_ignore_object(ignored_object or db.actor)
+    placement.ground_ray:set_range(GROUND_RAY_RANGE)
+    placement.ground_ray:set_position(origin)
+    placement.ground_ray:set_direction(direction)
+    if not placement.ground_ray:query() then return nil end
+    return origin.y - placement.ground_ray:get_distance()
+end
+
+local function ground_position(entry, x, z, reference_y, ignored_object, yaw)
+    local min_x = tonumber(entry.min_x) or 0
+    local max_x = tonumber(entry.max_x) or 0
+    local min_z = tonumber(entry.min_z) or 0
+    local max_z = tonumber(entry.max_z) or 0
+    local min_y = tonumber(entry.min_y) or 0
+    local cosine = math.cos(yaw)
+    local sine = math.sin(yaw)
+    local root_floor_y = floor_height(x, z, reference_y, ignored_object)
+    if not root_floor_y then return nil end
+    local required_origin_y = root_floor_y - min_y
+    for _, local_x in ipairs({ min_x, (min_x + max_x) * 0.5, max_x }) do
+        for _, local_z in ipairs({ min_z, 0, max_z }) do
+            -- IX-Ray rotateY maps the model's local axes to
+            -- X=(cos,0,-sin), Z=(sin,0,cos). Sample all nine points beneath
+            -- the leaf so neither a right-hand edge nor its thickness sinks.
+            local sample_x = x + local_x * cosine + local_z * sine
+            local sample_z = z - local_x * sine + local_z * cosine
+            local sample_floor_y = floor_height(
+                sample_x, sample_z, reference_y, ignored_object)
+            if not sample_floor_y then return nil end
+            local sample_origin_y = sample_floor_y - min_y
+            required_origin_y = math.max(required_origin_y, sample_origin_y)
+        end
+    end
+    local position = vector():set(
+        x, required_origin_y + GROUND_CLEARANCE, z)
+    local floor_anchor = vector():set(x, root_floor_y, z)
+    local level_vertex_id, game_vertex_id = linked_vertices(floor_anchor)
+    if not valid_level_vertex_id(level_vertex_id) then return nil end
+    return position, level_vertex_id, game_vertex_id
+end
+
+local function placement_candidate()
+    if not db.actor then return nil, nil, nil, false, "target" end
+    local entry = DOORS[placement.catalog_index or 0]
+    if not entry then return nil, nil, nil, false, "target" end
+    local preview = preview_client_object()
+    local original = placement.original_id and level.object_by_id(placement.original_id) or nil
+    local ignored_object = preview or original or db.actor
+    local horizontal = crosshair_horizontal_direction()
+    local length = math.sqrt(horizontal.x * horizontal.x + horizontal.z * horizontal.z)
+    if length < 0.00001 then
+        horizontal = vector():set(db.actor:direction())
+        horizontal.y = 0
+        length = math.sqrt(horizontal.x * horizontal.x + horizontal.z * horizontal.z)
+    end
+    if length < 0.00001 then return nil, nil, nil, false, "target" end
+    horizontal:mul(1 / length)
+    local actor_position = vector():set(db.actor:position())
+    local raw = vector():set(actor_position)
+    raw:mad(actor_position, horizontal, tonumber(placement.distance) or 3.0)
+    local position, level_vertex_id, game_vertex_id
+    if placement.floor_snap ~= false then
+        position, level_vertex_id, game_vertex_id = ground_position(
+            entry, raw.x, raw.z, actor_position.y, ignored_object, placement.yaw)
+        if not position then
+            return nil, nil, nil, false, "surface"
+        end
+    else
+        -- Free-height mode deliberately skips every floor ray. Its base Y is
+        -- captured when key 9 disables snapping, while X/Z continue to follow
+        -- the actor and crosshair at the selected distance.
+        local base_y = tonumber(placement.free_base_y) or actor_position.y
+        position = vector():set(raw.x, base_y, raw.z)
+        level_vertex_id, game_vertex_id = linked_vertices(position)
+    end
+    -- Floor snapping remains the stable base position. The QA offset is
+    -- applied afterwards so it survives actor movement, distance changes and
+    -- rotation without becoming part of the next floor calculation.
+    position.y = position.y + (tonumber(placement.height_offset) or 0)
+    return position, level_vertex_id, game_vertex_id, true, nil
+end
+
+local function set_saved_preview_id(id)
+    if db.actor then
+        xr_logic.pstor_store(db.actor, PREVIEW_PSTOR, tonumber(id) or 0)
+    end
+end
+
+local function door_angle(entry, yaw)
+    return vector():set(entry.pitch or 0, normalize_yaw(yaw), entry.roll or 0)
+end
+
+local function create_world_object(section, entry, position, yaw, level_vertex_id, game_vertex_id)
+    local sim = alife()
+    if not sim or not db.actor then return nil end
+    level_vertex_id = level_vertex_id or db.actor:level_vertex_id()
+    game_vertex_id = game_vertex_id or db.actor:game_vertex_id()
+    local object = sim:create(section, position, level_vertex_id, game_vertex_id)
+    if object then
+        object.position = copy_vector(position)
+        object.angle = door_angle(entry, yaw)
+        object.m_level_vertex_id = level_vertex_id
+        object.m_game_vertex_id = game_vertex_id
+    end
+    return object
+end
+
+local function create_door(entry, position, yaw, level_vertex_id, game_vertex_id)
+    return create_world_object(
+        entry.section, entry, position, yaw, level_vertex_id, game_vertex_id)
+end
+
+local function create_preview(entry, position, yaw, level_vertex_id, game_vertex_id)
+    return create_world_object(
+        entry.preview_section, entry, position, yaw, level_vertex_id, game_vertex_id)
+end
+
+local function recreate_preview()
+    if not placement.active or not placement.position then return false end
+    local entry = DOORS[placement.catalog_index or 0]
+    local sim = alife()
+    if not entry or not sim then return false end
+    local old_id = placement.preview_id
+    local replacement = create_preview(
+        entry, placement.position, placement.yaw,
+        placement.level_vertex_id, placement.game_vertex_id)
+    if not replacement then
+        report("Не удалось обновить поворот предварительной двери")
+        return false
+    end
+    placement.preview_id = replacement.id
+    placement.last_applied_position = copy_vector(placement.position)
+    placement.next_preview_refresh = time_global() + 33
+    set_saved_preview_id(replacement.id)
+    local old_object = old_id and sim:object(old_id, true) or nil
+    if old_object then sim:release(old_object, true) end
+    return true
+end
+
+class "pf_door_placement_hud" (CUIScriptWnd)
+
+function pf_door_placement_hud:__init() super()
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_pf_door_placement.xml")
+    xml:InitWindow("placement", 0, self)
+    self.panel = xml:InitFrame("placement:panel", self)
+    self.title = xml:InitTextWnd("placement:panel:title", self.panel)
+    self.controls = xml:InitTextWnd("placement:panel:controls", self.panel)
+    self.adjust = xml:InitTextWnd("placement:panel:adjust", self.panel)
+    self.height_adjust = xml:InitTextWnd("placement:panel:height_adjust", self.panel)
+    self.door = xml:InitTextWnd("placement:panel:door", self.panel)
+    self.status = xml:InitTextWnd("placement:panel:status", self.panel)
+    self.hint = xml:InitTextWnd("placement:panel:hint", self.panel)
+    self:SetAutoDelete(true)
+end
+
+function pf_door_placement_hud:Refresh(entry)
+    self.adjust:SetText(trf(
+        "pf_door_placement_adjust", tonumber(placement.distance) or 3.0))
+    self.height_adjust:SetText(trf(
+        "pf_door_placement_height",
+        (tonumber(placement.height_offset) or 0) * 100,
+        tr(placement.floor_snap ~= false and
+            "pf_door_placement_floor_on" or "pf_door_placement_floor_off")))
+    local coordinates = placement.position and string.format(
+        "X %.3f   Y %.3f   Z %.3f   yaw %.1f°",
+        placement.position.x, placement.position.y, placement.position.z,
+        math.deg(placement.yaw)
+    ) or "—"
+    self.door:SetText(trf("pf_door_placement_door", entry.label, coordinates))
+    local status_id
+    if placement.valid then
+        status_id = placement.floor_snap ~= false and
+            "pf_door_placement_valid" or "pf_door_placement_valid_free"
+    else
+        status_id = "pf_door_placement_invalid_" ..
+            tostring(placement.invalid_reason or "unknown")
+    end
+    self.status:SetText(tr(status_id))
+    self.status:SetTextColor(placement.valid and
+        GetARGB(255, 105, 225, 135) or GetARGB(255, 240, 105, 90))
+end
+
+local function remove_placement_hud()
+    local hud = get_hud()
+    if placement.hud and hud then hud:RemoveDialogToRender(placement.hud) end
+    placement.hud = nil
+end
+
+local function show_placement_hud()
+    if not placement.hud then
+        placement.hud = pf_door_placement_hud()
+        -- Render-only HUD: it neither shows a UI cursor nor captures input.
+        -- Camera look and ordinary actor movement therefore remain native.
+        local hud = get_hud()
+        if hud then hud:AddDialogToRender(placement.hud) end
+    end
+    local entry = DOORS[placement.catalog_index or 0]
+    if entry then placement.hud:Refresh(entry) end
+end
+
+local function reopen_catalog_after_placement(should_reopen)
+    local catalog = active_dialog
+    if not should_reopen or not catalog then return end
+    -- Reopen on the next update so the RMB event that closes placement
+    -- cannot immediately close the restored catalogue as well.
+    level.add_call(
+        function() return not placement.active end,
+        function()
+            if catalog ~= active_dialog or placement.active or
+                not developer_mode_enabled() then return end
+            catalog:Enable(true)
+            catalog:ShowDialog(true)
+        end
+    )
+end
+
+local function restore_actor_equipment(slot)
+    slot = tonumber(slot) or 0
+    if db.actor then
+        if slot ~= 0 and db.actor:item_in_slot(slot) then
+            db.actor:activate_slot(slot)
+        end
+        level.show_weapon(true)
+    end
+end
+
+local function flush_pending_equipment_restore()
+    local slot = equipment_restore.slot
+    equipment_restore.slot = 0
+    equipment_restore.release_dik = nil
+    restore_actor_equipment(slot)
+end
+
+local function clear_placement(keep_preview, should_reopen)
+    local sim = alife()
+    local restore_slot = tonumber(placement.actor_active_slot_before) or 0
+    local restore_after_release_dik = placement.restore_after_release_dik
+    if not keep_preview and sim and placement.preview_id then
+        local preview = sim:object(placement.preview_id, true)
+        if preview then sim:release(preview, true) end
+    end
+    set_saved_preview_id(0)
+    remove_placement_hud()
+    placement.active = false
+    placement.catalog_index = nil
+    placement.original_id = nil
+    placement.preview_id = nil
+    placement.position = nil
+    placement.yaw = 0
+    placement.distance = 3.0
+    placement.height_offset = 0
+    placement.floor_snap = true
+    placement.free_base_y = nil
+    placement.level_vertex_id = nil
+    placement.game_vertex_id = nil
+    placement.valid = false
+    placement.invalid_reason = nil
+    placement.ground_ray = nil
+    placement.last_applied_position = nil
+    placement.next_preview_refresh = 0
+    placement.return_to_catalog = false
+    placement.actor_active_slot_before = 0
+    placement.input_action_pending = nil
+    placement.input_action_dik = nil
+    placement.input_action_released = false
+    placement.restore_after_release_dik = nil
+    if restore_after_release_dik then
+        equipment_restore.slot = restore_slot
+        equipment_restore.release_dik = restore_after_release_dik
+    else
+        restore_actor_equipment(restore_slot)
+    end
+    reopen_catalog_after_placement(should_reopen)
+end
+
+local function cancel_placement(silent, allow_reopen)
+    if not placement.active then return false end
+    local should_reopen = placement.return_to_catalog and allow_reopen ~= false
+    clear_placement(false, should_reopen)
+    if not silent then report("3D-размещение двери отменено") end
+    return true
+end
+
+local function start_placement(index, original_object, return_to_catalog)
+    if not require_developer_mode() then return false end
+    local entry = DOORS[tonumber(index) or 0]
+    if not entry or not db.actor or not alife() then
+        report("Не удалось определить выбранную дверь")
+        return false
+    end
+    if placement.active then
+        report("Сначала завершите или отмените текущую установку двери")
+        return false
+    end
+
+    placement.active = true
+    placement.catalog_index = index
+    placement.original_id = original_object and original_object.id or nil
+    placement.yaw = original_object and original_object.angle and
+        original_object.angle.y or horizontal_camera_yaw()
+    placement.distance = 3.0
+    placement.height_offset = 0
+    placement.floor_snap = true
+    placement.free_base_y = nil
+    placement.return_to_catalog = return_to_catalog == true
+    placement.last_applied_position = nil
+    placement.next_preview_refresh = 0
+    placement.invalid_reason = nil
+    placement.actor_active_slot_before = tonumber(db.actor:active_slot()) or 0
+    placement.input_action_pending = nil
+    placement.input_action_dik = nil
+    placement.input_action_released = false
+    placement.restore_after_release_dik = nil
+
+    local position, level_vertex_id, game_vertex_id, valid, invalid_reason =
+        placement_candidate()
+    if not position then
+        clear_placement(false, false)
+        report("Не удалось начать установку: на выбранном расстоянии от актёра нет подходящего пола")
+        return false
+    end
+    placement.position = position
+    placement.level_vertex_id = level_vertex_id
+    placement.game_vertex_id = game_vertex_id
+    placement.valid = valid == true
+    placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+
+    local preview = create_preview(
+        entry, placement.position, placement.yaw,
+        placement.level_vertex_id, placement.game_vertex_id)
+    if not preview then
+        clear_placement(false, return_to_catalog == true)
+        report("Не удалось создать видимую предварительную дверь: " .. entry.label)
+        return false
+    end
+    placement.preview_id = preview.id
+    placement.last_applied_position = copy_vector(placement.position)
+    placement.next_preview_refresh = time_global() + 33
+    set_saved_preview_id(preview.id)
+
+    level.show_weapon(false)
+    db.actor:activate_slot(0)
+    if active_dialog and active_dialog:IsShown() then active_dialog:HideDialog() end
+    local hud = get_hud()
+    if hud then hud:HideActorMenu() end
+    show_placement_hud()
+    report("Установка прицелом включена: ЛКМ — принять, ПКМ — отменить, колесо или Q/R — повернуть, 5/6 — высота ±5 см, 9 — привязка к полу")
+    return true
+end
+
+local function confirm_placement()
+    if not placement.active then return false end
+    if not require_developer_mode() then
+        cancel_placement(true, false)
+        return false
+    end
+    if not placement.valid or not placement.position then
+        report("Позиция двери недопустима: на выбранном расстоянии от актёра не найден подходящий пол")
+        return false
+    end
+    local entry = DOORS[placement.catalog_index or 0]
+    local sim = alife()
+    local preview = sim and placement.preview_id and sim:object(placement.preview_id, true) or nil
+    if not entry or not preview then
+        report("Предварительная дверь потеряна; размещение отменено")
+        cancel_placement(true, true)
+        return false
+    end
+
+    local placement_ok, placement_path = preflight_log(PLACEMENT_LOG_FILENAME)
+    local event_ok, event_path = preflight_log(EVENT_LOG_FILENAME)
+    if not placement_ok or not event_ok then
+        report("Лог двери недоступен; размещение не подтверждено: " ..
+            tostring(not placement_ok and placement_path or event_path))
+        return false
+    end
+
+    -- The preview is deliberately only a non-physical visual script_object.
+    -- Create the real ph_door once at its final transform so its hinge is
+    -- registered at the correct position and never needs to be moved.
+    local previous_id = placement.original_id
+    local final = create_door(
+        entry, placement.position, placement.yaw,
+        placement.level_vertex_id, placement.game_vertex_id)
+    if not final then
+        report("Не удалось создать неподвижную финальную дверь; предварительная дверь оставлена в режиме размещения")
+        return false
+    end
+
+    local state = snapshot(final)
+    local logged_placement = append_placement_log(final, entry, state)
+    local logged_event = append_event(
+        previous_id and "MOVE" or "SPAWN", final.id, previous_id, entry, state)
+    if not logged_placement or not logged_event then
+        sim:release(final, true)
+        report("Не удалось записать журналы; предварительная дверь оставлена в режиме размещения")
+        return false
+    end
+
+    sim:release(preview, true)
+    if previous_id then
+        local original = sim:object(previous_id, true)
+        if original then sim:release(original, true) end
+    end
+    local final_id = final.id
+    local should_reopen = placement.return_to_catalog
+    placement.preview_id = nil
+    set_saved_preview_id(0)
+    clear_placement(true, should_reopen)
+    report(string.format(
+        "%s установлена: %.3f, %.3f, %.3f; yaw %.2f°; id %s%s",
+        entry.label, state.position.x, state.position.y, state.position.z,
+        math.deg(state.yaw), tostring(final_id),
+        previous_id and ("; прежний id " .. tostring(previous_id)) or ""
+    ))
+    return true
+end
+
+local function crosshair_door()
+    if not db.actor or not alife() then return nil, nil, "Актёр или симулятор недоступен" end
+    local camera_position = vector():set(device().cam_pos)
+    local camera_direction = vector():set(device().cam_dir):normalize()
+    local ray = create_ray(TARGET_RAY_DISTANCE, db.actor)
+    ray:set_position(camera_position)
+    ray:set_direction(camera_direction)
+    if not ray:query() then return nil, nil, "Под прицелом нет QA-двери" end
+    local client_object = ray:get_object()
+    local server_object = client_object and alife():object(client_object:id(), true) or nil
+    local section = server_object and server_object:section_name() or nil
+    local index = section and DOOR_BY_SECTION[section] or nil
+    if not server_object or not index then
+        return nil, nil, "Под прицелом нет двери, созданной этим QA-предметом"
+    end
+    return server_object, index, nil
+end
+
+function record_target_door(_item)
+    if not require_developer_mode() then return false end
+    local object, index, error_message = crosshair_door()
+    if not object then report(error_message) return false end
+    local entry = DOORS[index]
+    local state = snapshot(object)
+    local ok, path = append_event("RECORD", object.id, nil, entry, state)
+    if not ok then
+        report("Не удалось записать параметры двери: " .. tostring(path))
+        return false
+    end
+    report(string.format(
+        "Записано: id %s; %.3f, %.3f, %.3f; направление %.6f, %.6f, %.6f; yaw %.2f°",
+        tostring(object.id), state.position.x, state.position.y, state.position.z,
+        state.direction.x, state.direction.y, state.direction.z, math.deg(state.yaw)
+    ))
+    return false
+end
+
+function move_target_door(_item)
+    if not require_developer_mode() then return false end
+    local object, index, error_message = crosshair_door()
+    if not object then report(error_message) return false end
+    start_placement(index, object, false)
+    return false
+end
+
+function delete_target_door(_item)
+    if not require_developer_mode() then return false end
+    local object, index, error_message = crosshair_door()
+    if not object then report(error_message) return false end
+    local ok, path = preflight_log(EVENT_LOG_FILENAME)
+    if not ok then
+        report("Лог недоступен; дверь не удалена: " .. tostring(path))
+        return false
+    end
+    local entry = DOORS[index]
+    local state = snapshot(object)
+    local object_id = object.id
+    alife():release(object, true)
+    ok, path = append_event("DELETE", object_id, nil, entry, state)
+    if not ok then
+        report("Дверь удалена, но не удалось записать отметку: " .. tostring(path))
+        return false
+    end
+    report(string.format(
+        "Дверь удалена и отмечена в логе: id %s; %.3f, %.3f, %.3f",
+        tostring(object_id), state.position.x, state.position.y, state.position.z
+    ))
+    return false
+end
+
+local function update_placement()
+    if not placement.active or not db.actor then return end
+    if not developer_mode_enabled() then
+        cancel_placement(true, false)
+        return
+    end
+    local pending = placement.input_action_pending
+    if pending then
+        local pending_dik = placement.input_action_dik
+        local pending_released = placement.input_action_released
+        placement.input_action_pending = nil
+        placement.restore_after_release_dik = not pending_released and pending_dik or nil
+        if pending == "confirm" then
+            confirm_placement()
+        elseif pending == "cancel" then
+            cancel_placement(false, true)
+        end
+        if placement.active then
+            -- Confirmation may fail while the floor position is invalid.
+            placement.input_action_dik = nil
+            placement.input_action_released = false
+            placement.restore_after_release_dik = nil
+        end
+        return
+    end
+    -- Mouse wheel reaches the actor after the script callback. Keep hands
+    -- empty so rotating a door cannot also select a weapon slot.
+    if db.actor:active_slot() ~= 0 then db.actor:activate_slot(0) end
+    local position, level_vertex_id, game_vertex_id, valid, invalid_reason =
+        placement_candidate()
+    placement.valid = valid == true
+    placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+    if position then
+        placement.position = position
+        placement.level_vertex_id = level_vertex_id
+        placement.game_vertex_id = game_vertex_id
+        if placement.valid and (not placement.last_applied_position or
+            horizontal_distance_sqr(position, placement.last_applied_position) > LIVE_MOVE_DISTANCE_SQR or
+            math.abs(position.y - placement.last_applied_position.y) > 0.02) then
+            -- IX-Ray force_set_position() rebuilds the client matrix with
+            -- Fmatrix::translate(), which resets its rotation to identity.
+            -- Replace the lightweight visual preview instead, so position and
+            -- saved yaw are always applied together as one spawn transform.
+            if time_global() >= placement.next_preview_refresh then
+                recreate_preview()
+            end
+        end
+    end
+    show_placement_hud()
+end
+
+local function rotate_placement(step)
+    if not placement.active or not placement.position then return false end
+    placement.yaw = normalize_yaw(placement.yaw + step)
+    local position, level_vertex_id, game_vertex_id, valid, invalid_reason =
+        placement_candidate()
+    placement.valid = valid == true
+    placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+    if position then
+        placement.position = position
+        placement.level_vertex_id = level_vertex_id
+        placement.game_vertex_id = game_vertex_id
+    end
+    show_placement_hud()
+    if not placement.valid then return false end
+    return recreate_preview()
+end
+
+local function set_placement_distance(distance)
+    if not placement.active or not placement.position then return false end
+    placement.distance = distance
+    local position, level_vertex_id, game_vertex_id, valid, invalid_reason =
+        placement_candidate()
+    placement.valid = valid == true
+    placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+    if position then
+        placement.position = position
+        placement.level_vertex_id = level_vertex_id
+        placement.game_vertex_id = game_vertex_id
+    end
+    show_placement_hud()
+    if not placement.valid then return false end
+    return recreate_preview()
+end
+
+local function adjust_placement_height(delta)
+    if not placement.active or not placement.position then return false end
+    placement.height_offset = (tonumber(placement.height_offset) or 0) + delta
+    local position, level_vertex_id, game_vertex_id, valid, invalid_reason =
+        placement_candidate()
+    placement.valid = valid == true
+    placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+    if position then
+        placement.position = position
+        placement.level_vertex_id = level_vertex_id
+        placement.game_vertex_id = game_vertex_id
+    end
+    show_placement_hud()
+    if not placement.valid then return false end
+    return recreate_preview()
+end
+
+local function toggle_floor_snap()
+    if not placement.active or not placement.position then return false end
+    if placement.floor_snap ~= false then
+        -- Preserve the currently visible world height when floor checks are
+        -- disabled; future 5/6 presses adjust this captured base in 5 cm steps.
+        placement.free_base_y = placement.position.y -
+            (tonumber(placement.height_offset) or 0)
+        placement.floor_snap = false
+    else
+        placement.floor_snap = true
+        placement.free_base_y = nil
+    end
+    local position, level_vertex_id, game_vertex_id, valid, invalid_reason =
+        placement_candidate()
+    placement.valid = valid == true
+    placement.invalid_reason = placement.valid and nil or invalid_reason or "unknown"
+    if position then
+        placement.position = position
+        placement.level_vertex_id = level_vertex_id
+        placement.game_vertex_id = game_vertex_id
+    end
+    show_placement_hud()
+    if not placement.valid then return false end
+    return recreate_preview()
+end
+
+function on_key_press(dik)
+    if not placement.active then return false end
+    if not developer_mode_enabled() then
+        cancel_placement(true, false)
+        return true
+    end
+    if dik == DIK_keys.MOUSE_1 then
+        -- Defer until the next update. During the rest of this input event the
+        -- actor still has empty hands, so LMB cannot fire a restored weapon.
+        db.actor:activate_slot(0)
+        placement.input_action_pending = "confirm"
+        placement.input_action_dik = dik
+        placement.input_action_released = false
+        return true
+    elseif dik == DIK_keys.DIK_1 then
+        set_placement_distance(0.5)
+        return true
+    elseif dik == DIK_keys.DIK_2 then
+        set_placement_distance(1.0)
+        return true
+    elseif dik == DIK_keys.DIK_3 then
+        set_placement_distance(2.0)
+        return true
+    elseif dik == DIK_keys.DIK_5 then
+        adjust_placement_height(HEIGHT_ADJUST_STEP)
+        return true
+    elseif dik == DIK_keys.DIK_6 then
+        adjust_placement_height(-HEIGHT_ADJUST_STEP)
+        return true
+    elseif dik == DIK_keys.DIK_9 then
+        toggle_floor_snap()
+        return true
+    elseif dik == DIK_keys.DIK_Q or dik == DIK_keys.DIK_LBRACKET then
+        rotate_placement(-ROTATION_STEP)
+        return true
+    elseif dik == DIK_keys.DIK_R or dik == DIK_keys.DIK_RBRACKET then
+        rotate_placement(ROTATION_STEP)
+        return true
+    elseif dik == DIK_keys.MOUSE_2 then
+        db.actor:activate_slot(0)
+        placement.input_action_pending = "cancel"
+        placement.input_action_dik = dik
+        placement.input_action_released = false
+        return true
+    end
+    -- Native actor input remains enabled: mouse look and WASD, including
+    -- left/right strafing, work exactly as outside the editor.
+    return false
+end
+
+function on_key_release(dik)
+    if placement.active and placement.input_action_dik == dik then
+        placement.input_action_released = true
+    end
+    if equipment_restore.release_dik == dik then
+        flush_pending_equipment_restore()
+    end
+    return false
+end
+
+function on_key_hold(_dik) return false end
+
+function on_mouse_wheel(direction)
+    if not placement.active then return false end
+    if not developer_mode_enabled() then
+        cancel_placement(true, false)
+        return true
+    end
+    if direction == 0 then return true end
+    rotate_placement(direction > 0 and -ROTATION_STEP or ROTATION_STEP)
+    return true
+end
+
+function on_actor_net_destroy()
+    if placement.active then pcall(function() cancel_placement(true, false) end) end
+    if equipment_restore.release_dik then
+        pcall(flush_pending_equipment_restore)
+    end
+end
+
+class "pf_door_list_item" (CUIListBoxItem)
+
+function pf_door_list_item:__init(index, entry, width) super(28)
+    self.data = index
+    self:SetWndSize(vector2():set(width, 28))
+    local text = self:GetTextItem()
+    text:SetFont(GetFontLetterica16Russian())
+    text:SetEllipsis(true)
+    text:SetWndPos(vector2():set(5, 0))
+    text:SetWndSize(vector2():set(width - 10, 28))
+    text:SetText(string.format("%02d. %s", index, entry.label))
+    self:SetTextColor(GetARGB(255, 205, 215, 205))
+end
+
+class "pf_door_qa_dialog" (CUIScriptWnd)
+
+function pf_door_qa_dialog:__init() super()
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_pf_door_qa.xml")
+    self.form = xml:InitStatic("form", self)
+    xml:InitStatic("form:caption", self.form)
+    xml:InitStatic("form:hint", self.form)
+    xml:InitFrame("form:list_frame", self.form)
+    self.list_box = xml:InitListBox("form:list", self.form)
+    self.list_box:ShowSelectedItem(true)
+    self.details = xml:InitTextWnd("form:details", self.form)
+    self:Register(self.list_box, "door_list")
+    local button = xml:Init3tButton("form:btn_spawn", self.form)
+    self:Register(button, "spawn_button")
+    button = xml:Init3tButton("form:btn_cancel", self.form)
+    self:Register(button, "cancel_button")
+    self:AddCallback("door_list", ui_events.LIST_ITEM_CLICKED, self.OnSelectionChanged, self)
+    self:AddCallback("door_list", ui_events.WINDOW_LBUTTON_DB_CLICK, self.OnSpawnClicked, self)
+    self:AddCallback("spawn_button", ui_events.BUTTON_CLICKED, self.OnSpawnClicked, self)
+    self:AddCallback("cancel_button", ui_events.BUTTON_CLICKED, self.OnCancelClicked, self)
+    self:SetAutoDelete(false)
+    self:FillList()
+end
+
+function pf_door_qa_dialog:__finalize()
+end
+
+function pf_door_qa_dialog:FillList()
+    self.list_box:RemoveAll()
+    local width = self.list_box:GetWidth() - 8
+    for index, entry in ipairs(DOORS) do
+        self.list_box:AddExistingItem(pf_door_list_item(index, entry, width))
+    end
+end
+
+function pf_door_qa_dialog:SelectedEntry()
+    local item = self.list_box:GetSelectedItem()
+    local index = item and tonumber(item.data) or nil
+    return index, index and DOORS[index] or nil
+end
+
+function pf_door_qa_dialog:OnSelectionChanged()
+    local _, entry = self:SelectedEntry()
+    self.details:SetText(entry and (entry.section .. "\n" .. entry.model) or "")
+end
+
+function pf_door_qa_dialog:Abort()
+    self:HideDialog()
+end
+
+function pf_door_qa_dialog:OnSpawnClicked()
+    if not require_developer_mode() then self:Abort() return end
+    local index = self:SelectedEntry()
+    if not index then report("Сначала выберите дверь из списка") return end
+    self:HideDialog()
+    if not start_placement(index, nil, true) then self:ShowDialog(true) end
+end
+
+function pf_door_qa_dialog:OnCancelClicked()
+    self:Abort()
+end
+
+function pf_door_qa_dialog:OnKeyboard(dik, keyboard_action)
+    if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+        if dik_to_bind(dik) == key_bindings.kQUIT then
+            self:Abort()
+            return true
+        elseif dik == 40 then
+            self:OnSpawnClicked()
+            return true
+        end
+    end
+    return CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+end
+
+local function open_selector_dialog(request)
+    if request ~= dialog_open_request or placement.active or not db.actor or
+        not developer_mode_enabled() then return end
+    local hud = get_hud()
+    if hud then hud:HideActorMenu() end
+    if not active_dialog then
+        local ok, created = pcall(function() return pf_door_qa_dialog() end)
+        if not ok then report("Не удалось создать UI каталога дверей: " .. tostring(created)) return end
+        active_dialog = created
+    end
+    active_dialog:ShowDialog(true)
+end
+
+function open_selector(_item)
+    if not require_developer_mode() or not db.actor or not alife() then return false end
+    if placement.active then
+        report("Сначала завершите или отмените текущую установку двери")
+        return false
+    end
+    dialog_open_request = dialog_open_request + 1
+    local request = dialog_open_request
+    local ready_at = time_global() + 1
+    level.add_call(
+        function() return time_global() >= ready_at end,
+        function() open_selector_dialog(request) end
+    )
+    return false
+end
+
+local function remove_tool_outside_developer_mode()
+    local actor = db.actor
+    local sim = alife()
+    if not actor or not sim then return false end
+    local ids = {}
+    actor:iterate_inventory(function(_, item)
+        if item and item:section() == TOOL_SECTION then ids[#ids + 1] = item:id() end
+    end, actor)
+    local complete = true
+    for _, id in ipairs(ids) do
+        local object = sim:object(id, true)
+        if object then sim:release(object, true) else complete = false end
+    end
+    if #ids > 0 then
+        report(string.format(
+            "Удалено QA-предметов дверей вне режима разработчика: %d", #ids), true)
+    end
+    return complete
+end
+
+local function ensure_tool_in_developer_mode()
+    return pf_dev_loadout.request()
+end
+
+local function sync_tool_access()
+    if not db.actor then return end
+    local actor_id = db.actor:id()
+    local developer = developer_mode_enabled()
+    if tool_access.actor_id ~= actor_id or tool_access.developer ~= developer then
+        tool_access.actor_id = actor_id
+        tool_access.developer = developer
+        tool_access.complete = false
+    end
+    if tool_access.complete then return end
+    if developer then
+        tool_access.complete = ensure_tool_in_developer_mode()
+    else
+        tool_access.complete = remove_tool_outside_developer_mode()
+    end
+end
+
+local function cleanup_saved_preview()
+    if not db.actor or placement.active then return end
+    local id = tonumber(xr_logic.pstor_retrieve(db.actor, PREVIEW_PSTOR, 0)) or 0
+    if id <= 0 then return end
+    local sim = alife()
+    local object = sim and sim:object(id, true) or nil
+    local section = object and object:section_name() or nil
+    -- DOOR_BY_SECTION keeps cleanup compatible with saves made before previews
+    -- were changed from physical doors to non-physical visual objects.
+    if object and (PREVIEW_BY_SECTION[section] or DOOR_BY_SECTION[section]) then
+        sim:release(object, true)
+        report("Удалена незавершённая предварительная дверь из сохранения: id " .. tostring(id), true)
+    end
+    set_saved_preview_id(0)
+end
+
+function update(_delta)
+    cleanup_saved_preview()
+    if placement.active then update_placement() end
+    if not db.actor then return end
+    local now = time_global()
+    if now >= tool_access.next_update then
+        tool_access.next_update = now + 1000
+        sync_tool_access()
+    end
+end
+
+function catalog_size()
+    return #DOORS
+end
+
+function on_game_load()
+    if placement.active then
+        pcall(function() cancel_placement(true, false) end)
+    end
+    if equipment_restore.release_dik then
+        pcall(flush_pending_equipment_restore)
+    end
+    if active_dialog then pcall(function() active_dialog:HideDialog() end) end
+    active_dialog = nil
+    dialog_open_request = dialog_open_request + 1
+    tool_access.actor_id = nil
+    tool_access.developer = nil
+    tool_access.complete = false
+    tool_access.next_update = 0
+end
+
+function on_game_start()
+    if callbacks_registered then return true end
+    if type(RegisterScriptCallback) ~= "function" then
+        report("RegisterScriptCallback недоступен для режима установки дверей", true)
+        return false
+    end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_game_load)
+    callbacks_registered = true
+    return true
+end
+
+on_game_start()

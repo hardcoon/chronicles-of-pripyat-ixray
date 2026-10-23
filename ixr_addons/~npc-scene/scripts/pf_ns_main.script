@@ -1,0 +1,341 @@
+-- NPC Scene facade: one tool, one window and the furniture placement gestures.
+local S={registered=false,dialog=nil,mode="npcs",id=nil,profile=nil,pose="wait_trade",point=1,
+    tx=nil,history={},future={},pending=nil,next_tick=0,next_pending=0,tool_actor=nil,tool_dev=nil,tool_pending=nil}
+local I={}
+
+function I.backend() return pf_npc_editor.scene_api() end
+function I.routes() return pf_npc_route_editor.scene_api(I.backend().get_route_adapter()) end
+function allowed()
+    local qa=rawget(_G,"pf_stash_qa")
+    return qa and type(qa.is_developer_mode)=="function" and qa.is_developer_mode()==true
+end
+function I.copy(value)
+    if type(value)~="table" then return value end
+    local result={};for key,v in pairs(value) do result[key]=I.copy(v) end;return result
+end
+function I.text(id) return game.translate_string(id) or id end
+function status(id,extra)
+    S.message=I.text(id)..(extra and ("  "..tostring(extra)) or "")
+    if S.dialog then S.dialog.status:SetText(S.message) end
+end
+function state() return S end
+function I.record() return S.id and I.backend().get_record(S.id) end
+function I.changed(before,after)
+    S.history[#S.history+1]={before=before,after=after}
+    if #S.history>30 then table.remove(S.history,1) end
+    S.future={}
+end
+function I.refresh()
+    if S.dialog and S.dialog:IsShown() then S.dialog:Refresh() end
+end
+function I.restore(snapshot)
+    if not snapshot then return false end
+    local b=I.backend();local record=b.get_record(snapshot.id)
+    local server=alife():object(snapshot.id,true)
+    if not record or not server or server:section_name()~=snapshot.wrapper then return false end
+    I.routes().pause_runtime(record,true)
+    record.route=I.copy(snapshot.route);record.pending_delete=snapshot.pending_delete;record.delete_after=snapshot.delete_after
+    record.scene_static_owner=snapshot.scene_static_owner
+    for k,v in pairs(snapshot) do record[k]=I.copy(v) end
+    if record.route then record.route.status="paused" end
+    b.put_record(record);b.pin_server_record(server,record)
+    b.restore_record_snapshot(record)
+    pf_npc_editor.scene_invalidate(record.id)
+    return true
+end
+function undo(redo)
+    if not allowed() or S.tx then return false end
+    local source=redo and S.future or S.history
+    local item=table.remove(source)
+    if not item then status("pf_ns_no_history");return false end
+    local ok=I.restore(redo and item.after or item.before)
+    if ok then
+        local target=redo and S.history or S.future;target[#target+1]=item
+        status(redo and "pf_ns_redone" or "pf_ns_undone");I.refresh()
+    else source[#source+1]=item;status("pf_ns_target_lost") end
+    return ok
+end
+function I.selectable(item,object,offmesh)
+    return item and item.compatible and item.safe and item.definition.movement==move.stand and
+        (not object or I.backend().state_weapon_compatible(object,item)) and
+        (not offmesh or not item.direction_limited)
+end
+function poses()
+    local result={};local object=S.id and level.object_by_id(S.id)
+    for _,item in ipairs(I.backend().load_states()) do
+        if I.selectable(item,object,false) then result[#result+1]=item end
+    end
+    return result
+end
+function apply_pose(name)
+    if not allowed() then return false end
+    local b=I.backend();b.load_states()
+    local record=I.record();local object=S.id and level.object_by_id(S.id)
+    local ready,storage=b.ready_remark_object(object,record~=nil)
+    local item=b.get_route_adapter().get_state(name)
+    if not ready or not I.selectable(item,object,record and record.off_mesh) then status("pf_ns_not_ready");return false end
+    if S.tx then
+        if S.tx.operation~="place" and not I.routes().state_allowed(item,object) then return false end
+        if not b.apply_state_target(object,storage,name,object:position(),S.tx.last_pose.rotation.y,true) then return false end
+        S.tx.pose=name;S.pose=name;return true
+    end
+    if record then
+        I.routes().pause_runtime(record,true)
+        local before=I.copy(record)
+        if not b.apply_state_target(object,storage,name,object:position(),record.yaw,true) then status("pf_ns_not_ready");return false end
+        record.state=name;b.put_record(record);pf_npc_editor.scene_invalidate(record.id)
+        record.scene_static_owner=true
+        I.changed(before,I.copy(record))
+    else
+        local transform=b.target_transform(S.id)
+        if not b.apply_existing_transform(S.id,transform.position,transform.yaw,name,transform.label,true,
+            transform.level_vertex_id,transform.game_vertex_id) then return false end
+    end
+    S.pose=name;status("pf_ns_pose_applied",name);I.refresh();return true
+end
+function I.cycle_pose(direction)
+    local items=poses();local index=1
+    if #items==0 then return end
+    for n,item in ipairs(items) do if item.name==S.tx.pose then index=n;break end end
+    local item=items[(index-1+direction)%#items+1]
+    if item then apply_pose(item.name) end
+end
+function I.input(event,key)
+    if not S.tx then return false end
+    local actions={[DIK_keys.DIK_G]="grid",[DIK_keys.DIK_N]="snap",[DIK_keys.DIK_O]="offmesh"}
+    local action=actions[key]
+    if action then
+        if event==0 then
+            if action=="offmesh" and (not S.tx.owned or S.tx.operation~="place") then status("pf_ns_static_only")
+            else pf_ns_nav.toggle(action) end
+        end
+        return true
+    end
+    if key==DIK_keys.DIK_Z or key==DIK_keys.DIK_X then
+        if event==0 then I.cycle_pose(key==DIK_keys.DIK_Z and -1 or 1) end
+        return true
+    end
+    return false
+end
+function I.live(pose,session)
+    local tx=S.tx;if not tx then return end
+    local object=level.object_by_id(tx.id)
+    if not object or object:section()~=tx.section then error("NPC Scene target lost") end
+    -- Only the selected client moves during a gesture. Persistence is untouched.
+    local current=object:position()
+    local dx,dy,dz=current.x-pose.position.x,current.y-pose.position.y,current.z-pose.position.z
+    if session.valid and dx*dx+dy*dy+dz*dz>1e-10 then object:set_npc_position(pose.position) end
+    local storage=db.storage[tx.id]
+    if session.valid and storage and storage.state_mgr then
+        local direction,look_position=I.backend().state_look(pose.position,pose.rotation.y)
+        storage.state_mgr.look_position=look_position;storage.state_mgr.look_object=nil
+        object:set_desired_direction(direction);object:set_sight(look.direction,direction,true)
+    end
+    tx.last_pose=pose
+end
+function I.finish(confirmed,reason)
+    local tx=S.tx;if not tx then return end
+    S.tx=nil
+    pf_npc_editor.scene_hold(nil)
+    pf_ns_nav.clear()
+    if not confirmed and reason~="load" and reason~="owner_lost" and reason~="source_lost" then
+        local object=level.object_by_id(tx.id)
+        if object and object:alive() and object:section()==tx.section then
+            object:set_npc_position(tx.original.position)
+            local ready,storage=I.backend().ready_remark_object(object,tx.owned)
+            if ready then I.backend().apply_state_target(object,storage,tx.original.state,tx.original.position,tx.original.yaw,true) end
+        end
+    end
+    pf_npc_editor.scene_invalidate(tx.id)
+    if reason~="load" and reason~="owner_lost" and reason~="source_lost" then
+        S.reopen=true
+        status(confirmed and "pf_ns_saved" or "pf_ns_cancelled")
+    end
+end
+function I.confirm(pose)
+    local tx=S.tx;if not tx or not allowed() then return nil,"access" end
+    local object=level.object_by_id(tx.id)
+    if not object or not object:alive() or object:section()~=tx.section then return nil,"target" end
+    local b=I.backend();local record=b.get_record(tx.id)
+    local _,_,offmesh=pf_ns_nav.flags()
+    if tx.operation~="place" then
+        if not record then return nil,"target" end
+        local result={position=pose.position,yaw=pose.rotation.y,state=tx.pose,
+            level_vertex_id=pose.level_vertex_id,game_vertex_id=pose.game_vertex_id}
+        local previous=tx.operation=="point_edit" and record.route.points[tx.index] or nil
+        local point=I.routes().point_from_placement(result,previous,level.object_by_id(tx.id))
+        if not point then return nil,"state" end
+        point.wait_seconds=tx.wait_seconds or point.wait_seconds
+        local before=I.copy(record)
+        local route=I.routes().route(record,true)
+        if tx.operation=="point_edit" then route.points[tx.index]=point;S.point=tx.index
+        else route.points[#route.points+1]=point;S.point=#route.points end
+        route.status="paused";record.scene_static_owner=true;b.put_record(record);I.changed(before,I.copy(record))
+        local object=level.object_by_id(tx.id)
+        object:set_npc_position(tx.original.position)
+        local ready,storage=b.ready_remark_object(object,true)
+        if ready then b.apply_state_target(object,storage,tx.original.state,tx.original.position,tx.original.yaw,true) end
+    elseif record then
+        local before=I.copy(record)
+        record.x,record.y,record.z=pose.position.x,pose.position.y,pose.position.z
+        record.yaw=pose.rotation.y;record.state=tx.pose;record.off_mesh=offmesh
+        record.scene_static_owner=true
+        record.level_vertex_id=pose.level_vertex_id;record.game_vertex_id=pose.game_vertex_id
+        b.put_record(record);b.pin_server_record(alife():object(tx.id,true),record)
+        I.changed(before,I.copy(record))
+    else
+        if not b.apply_existing_transform(tx.id,pose.position,pose.rotation.y,tx.pose,tx.original.label,false,
+            pose.level_vertex_id,pose.game_vertex_id) then return nil,"target" end
+    end
+    return tx.id
+end
+function place(id,operation,index,wait_seconds)
+    if not allowed() or S.tx or pf_runtime_editor.is_active() or pf_ns_placement.is_active() then return false end
+    local b=I.backend();b.load_states();S.id=id or S.id
+    local record=I.record();local object=S.id and level.object_by_id(S.id)
+    local ready=b.ready_remark_object(object,record~=nil)
+    if not ready then status("pf_ns_not_ready");return false end
+    if operation and operation~="place" and not record then status("pf_ns_owned_only");return false end
+    if operation=="point_edit" and not (record.route and record.route.points and record.route.points[index]) then
+        status("pf_ns_select_point");return false
+    end
+    if operation and operation~="place" and wait_seconds~=nil then
+        if wait_seconds~=wait_seconds or wait_seconds<.1 or wait_seconds>3600 then status("pf_ns_bad_wait");return false end
+    end
+    if operation=="point_add" and record.route and #record.route.points>=64 then status("pf_ns_route_limit");return false end
+    local original=b.target_transform(S.id)
+    original.position=vector():set(object:position());original.yaw=b.direction_yaw(object:direction())
+    if not record and not b.snapshot_existing(S.id) then status("pf_ns_not_ready");return false end
+    if record then I.routes().pause_runtime(record,true) end
+    local point=record and record.route and index and record.route.points[index]
+    local initial=point and {position=vector():set(point.x,point.y,point.z),yaw=point.yaw,state=point.state} or original
+    local tx={id=S.id,section=object:section(),owned=record~=nil,original=original,
+        pose=initial.state,operation=operation or "place",index=index,wait_seconds=wait_seconds}
+    tx.last_pose={position=initial.position,rotation=vector():set(0,initial.yaw,0)}
+    S.tx=tx;S.pose=tx.pose
+    pf_npc_editor.scene_hold(tx.id)
+    local enabled,snap=pf_ns_nav.flags()
+    pf_ns_nav.configure(tx.id,snap,tx.operation=="place" and original.off_mesh==true)
+    if S.dialog then S.dialog:HideDialog() end
+    local queued=pf_ns_placement.defer_start(function()
+        local bounds={min=vector():set(-.26,0,-.26),max=vector():set(.26,1.8,.26),pivot=vector():set(0,0,0)}
+        local ok=pf_ns_placement.begin({section=tx.section,title="pf_ns_title",source_object_id=tx.id,
+            bounds=bounds,initial_pose=tx.last_pose,keep_source_visible=true,upright=true,check_collision=false,
+            authorized=function() return allowed() and object:alive() end,
+            on_input=I.input,on_pose=I.live,on_finish=I.finish,on_confirm=I.confirm,
+            resolve_pose=function(position,rotation,confirming)
+                local _,_,offmesh=pf_ns_nav.flags()
+                local item=b.get_route_adapter().get_state(tx.pose)
+                if offmesh and not I.selectable(item,object,true) then return position,nil,nil,false,"pf_ns_static_only" end
+                return pf_ns_nav.resolve(position,rotation,confirming,original)
+            end})
+        if not ok then I.finish(false,"start_failed");status("pf_ns_start_failed") end
+    end,function() I.finish(false,"start_failed") end)
+    if not queued then I.finish(false,"start_failed");return false end
+    return true
+end
+function placement_frame()
+    if not S.tx or not S.tx.last_pose then return end
+    pf_ns_nav.update(S.tx.last_pose.position)
+    if not S.tx.route_drawn then pf_ns_nav.draw_route(I.record());S.tx.route_drawn=true end
+end
+function placement_status()
+    if not S.tx then return "" end
+    local grid,snap,offmesh=pf_ns_nav.flags()
+    return "\\n"..I.text("pf_ns_poses")..": "..tostring(S.tx.pose).."\\n"..
+        I.text(grid and "pf_ns_grid_on" or "pf_ns_grid_off").." | "..
+        I.text(snap and "pf_ns_snap_on" or "pf_ns_snap_off").."\\n"..
+        I.text(offmesh and "pf_ns_offmesh_on" or "pf_ns_offmesh_off")
+end
+function open(mode)
+    if not allowed() or not db.actor or S.tx or pf_runtime_editor.is_active() then return false end
+    if mode then S.mode=mode end
+    return pf_ns_placement.defer_start(function()
+        if not allowed() then return end
+        if not S.dialog then S.dialog=ui_pf_ns.create() end
+        local hud=get_hud();if hud then hud:HideActorMenu() end
+        S.dialog:Refresh();S.dialog:ShowDialog(true)
+    end)
+end
+function close()
+    if S.dialog then S.dialog:HideDialog() end
+    pf_ns_nav.clear()
+    if not S.tx and db.actor and alife() then I.backend().restore_all_existing_previews() end
+end
+function spawn(profile)
+    if not allowed() or S.tx or not profile then return false end
+    if profile.risk~="generic" then
+        if S.confirm_profile~=profile.wrapper or time_global()>(S.confirm_until or 0) then
+            S.confirm_profile=profile.wrapper;S.confirm_until=time_global()+5000
+            status("pf_ns_profile_confirm");return false
+        end
+    end
+    local record,why=I.backend().create_editor_npc(profile,nil,nil,"wait_trade","")
+    if not record then status("pf_ns_spawn_failed",why);return false end
+    record.scene_static_owner=true;I.backend().put_record(record)
+    local removed=I.copy(record);removed.pending_delete=true;removed.delete_after=time_global()+5000
+    I.changed(removed,I.copy(record))
+    S.id=record.id;S.mode="npcs";S.pending={id=record.id,deadline=time_global()+10000}
+    status("pf_ns_preparing");I.refresh();return true
+end
+function route_action(action,index,value)
+    if not allowed() or S.tx then return false end
+    local record=I.record();if not record then status("pf_ns_owned_only");return false end
+    local r=I.routes();local route=r.route(record,true)
+    if action=="start" then r.start(record,true)
+    elseif action=="pause" then r.pause_runtime(record,false)
+    else
+        r.pause_runtime(record,true);local before=I.copy(record)
+        if action=="remove" and route.points[index] then table.remove(route.points,index);S.point=math.max(1,index-1)
+        elseif action=="wait" and route.points[index] then
+            local seconds=tonumber(value)
+            if not seconds or seconds~=seconds or seconds<.1 or seconds>3600 then status("pf_ns_bad_wait");return false end
+            route.points[index].wait_seconds=seconds
+        elseif action=="loop" then route.loop=not route.loop
+        else return false end
+        I.backend().put_record(record);I.changed(before,I.copy(record))
+    end
+    status("pf_ns_route_updated");I.refresh();return true
+end
+function export()
+    if not allowed() then return false end
+    local ok,path=I.backend().export_records()
+    local route_ok=pf_npc_route_editor.export_now(I.backend().get_route_adapter())
+    status(ok and route_ok and "pf_ns_exported" or "pf_ns_export_failed",path)
+    return ok and route_ok
+end
+function remove()
+    if not allowed() or S.tx then return false end
+    local record=I.record();if not record then status("pf_ns_owned_only");return false end
+    I.routes().pause_runtime(record,true)
+    local before=I.copy(record);record.pending_delete=true;record.delete_after=time_global()+5000
+    I.backend().put_record(record);I.changed(before,I.copy(record))
+    status("pf_ns_delete_pending");I.refresh();return true
+end
+function inventory_ready() end
+function I.update()
+    if not db.actor or not alife() then return end
+    if S.reopen then S.reopen=nil;open() end
+    if S.pending and time_global()>S.next_pending then
+        S.next_pending=time_global()+100
+        if I.backend().ready_remark_object(level.object_by_id(S.pending.id),true) then
+            local id=S.pending.id;S.pending=nil;place(id)
+        elseif time_global()>S.pending.deadline then S.pending=nil;status("pf_ns_not_ready") end
+    end
+    if time_global()<S.next_tick then return end
+    S.next_tick=time_global()+1000
+    if not allowed() then
+        S.tool_dev=nil;close()
+        if S.tx then pf_ns_placement.cancel("access_lost") end
+    end
+end
+function I.load()
+    if S.tx then pf_ns_placement.cancel("load") end
+    close();S.history={};S.future={};S.pending=nil;S.id=nil;S.profile=nil;S.reopen=nil
+    S.tool_actor=nil;S.tool_dev=nil;S.tool_pending=nil;S.next_tick=0
+end
+function on_game_start()
+    if S.registered then return end
+    RegisterScriptCallback("update",I.update);RegisterScriptCallback("load",I.load);S.registered=true
+end
+on_game_start()

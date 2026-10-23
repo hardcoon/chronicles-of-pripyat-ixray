@@ -66,18 +66,6 @@ local QA_TOOL_SECTIONS = {}
 for _, definition in ipairs(QA_TOOL_DEFINITIONS) do
 	QA_TOOL_SECTIONS[definition[1]] = true
 end
-local DEVELOPER_ESSENTIAL_DEFINITIONS = {
-	{ "device_torch", "developer flashlight" },
-	{ "wpn_knife", "developer knife" }
-}
-local DEVELOPER_KEEP_SECTIONS = {
-	device_torch = true,
-	wpn_knife = true,
-	pf_nocturne_route_tool = true
-}
-for section in pairs(QA_TOOL_SECTIONS) do
-	DEVELOPER_KEEP_SECTIONS[section] = true
-end
 local QA_DELETABLE_SECTIONS = {
 	[QA_STASH_SECTION] = true
 }
@@ -164,12 +152,13 @@ function award_developer_achievement()
 	end
 	-- This flag belongs to the save and is never cleared by disabling access.
 	xr_logic.pstor_store(actor, DEVELOPER_ACHIEVEMENT_PSTOR, true)
+	if not is_developer_mode() then
 	xr_sound.set_sound_play(actor:id(), "pda_tips")
 	actor:give_game_news(
 		game.translate_string("pf_developer_achievement_name"),
 		game.translate_string("pf_developer_achievement_descr"),
 		"pf_developer_achievement_icon", 0, 10000)
-	printf("[PF STASH QA] Developer achievement awarded to the current save")
+	end
 	return true
 end
 
@@ -278,39 +267,12 @@ local function prepare_developer_environment(hud_silent)
 end
 
 function prepare_developer_new_game()
-	local actor = db.actor
-	local sim = alife()
-	if not actor or not sim then return false end
-
-	set_developer_mode(true)
-	prepare_developer_environment(true)
-	local remove_ids = {}
-	actor:iterate_inventory(function(_, item)
-		if item and not DEVELOPER_KEEP_SECTIONS[item:section()] then
-			table.insert(remove_ids, item:id())
-		end
-	end, actor)
-
-	local removed = 0
-	for _, id in ipairs(remove_ids) do
-		local server_item = sim:object(id, true)
-		if server_item then
-			sim:release(server_item, true)
-			removed = removed + 1
-		end
-	end
-
-	local ready = ensure_stash_qa_tools(true)
-	qa_tools_checked = ready
-	local nocturne_route = rawget(_G, "pf_nocturne_route")
-	if nocturne_route and type(nocturne_route.issue_new_game_tool) == "function" then
-		nocturne_route.issue_new_game_tool()
-	end
-	report(string.format(
-		"Developer inventory prepared: removed %d regular items, QA tools ready=%s",
-		removed, tostring(ready)
-	), true)
-	return ready
+    if not db.actor or not alife() then return false end
+    set_developer_mode(true)
+    prepare_developer_environment(true)
+    local bench = rawget(_G, "pf_hf_workbench")
+    if bench and type(bench.schedule_new_game) == "function" then bench.schedule_new_game() end
+    return pf_dev_loadout.request()
 end
 
 local function process_new_game_mode_request()
@@ -346,7 +308,6 @@ local function process_new_game_mode_request()
 			world.schedule_developer_start_stash()
 		end
 	end
-	report("New-game mode initialized: " .. mode .. " (" .. difficulty .. ")", true)
 end
 
 local function configured_model(section)
@@ -469,126 +430,10 @@ local function append_catalog_rejection_log(object, position)
 	return true, true
 end
 
-local function reconcile_actor_developer_items(hud_silent)
-	local actor = db.actor
-	local sim = alife()
-	if not actor or not sim then return nil end
-
-	local actor_id = actor:id()
-	if qa_issue_actor_id ~= actor_id then
-		qa_issue_actor_id = actor_id
-		qa_pending_sections = {}
-	end
-
-	local ids_by_section = {}
-	actor:iterate_inventory(function(_, item)
-		local section = item and item:section() or nil
-		if section and DEVELOPER_KEEP_SECTIONS[section] then
-			ids_by_section[section] = ids_by_section[section] or {}
-			table.insert(ids_by_section[section], item:id())
-		end
-	end, actor)
-
-	local present = {}
-	local duplicate_ids = {}
-	for section, ids in pairs(ids_by_section) do
-		table.sort(ids)
-		local client_item = actor:object(section)
-		local keep_id = client_item and client_item:id() or ids[1]
-		present[section] = true
-		qa_pending_sections[section] = nil
-		for _, id in ipairs(ids) do
-			if id ~= keep_id then
-				table.insert(duplicate_ids, id)
-			end
-		end
-	end
-
-	local removed = 0
-	for _, id in ipairs(duplicate_ids) do
-		local duplicate = sim:object(id, true)
-		if duplicate then
-			sim:release(duplicate, true)
-			removed = removed + 1
-		end
-	end
-	if removed > 0 then
-		report(string.format("Removed %d duplicate Developer inventory items", removed), hud_silent)
-	end
-	return present
-end
-
-local function ensure_qa_tool(section, label, present, hud_silent)
-	if not db.actor then return false end
-	if (present and present[section]) or db.actor:object(section) then
-		if present then present[section] = true end
-		qa_pending_sections[section] = nil
-		return true
-	end
-	if qa_pending_sections[section] then
-		return true
-	end
-	local item = alife():create(
-		section, vector(), 0, 0, db.actor:id()
-	)
-	if not item then
-		report("Failed to issue the QA " .. label, hud_silent)
-		return false
-	end
-	qa_pending_sections[section] = true
-	if present then present[section] = true end
-	report("QA " .. label .. " added to inventory", hud_silent)
-	return true
-end
-
-local function retire_legacy_rejection_tool(hud_silent)
-	if not db.actor then return false end
-	local item = db.actor:object(LEGACY_QA_REJECTION_TOOL_SECTION)
-	if not item then return true end
-
-	local sim = alife()
-	local server_object = sim and sim:object(item:id(), true) or nil
-	if not server_object then return false end
-	sim:release(server_object, true)
-	report("Removed obsolete standalone nearest-stash QA tool from inventory", hud_silent)
-	return true
-end
-
-local function retire_legacy_crosshair_rejection_tool(hud_silent)
-	if not db.actor then return false end
-	local sim = alife()
-	if not sim then return false end
-
-	local legacy_ids = {}
-	db.actor:iterate_inventory(function(_, item)
-		if item and item:section() == LEGACY_QA_CROSSHAIR_REJECTION_TOOL_SECTION then
-			table.insert(legacy_ids, item:id())
-		end
-	end, db.actor)
-
-	for _, id in ipairs(legacy_ids) do
-		local server_object = sim:object(id, true)
-		if server_object then sim:release(server_object, true) end
-	end
-	if #legacy_ids > 0 then
-		report("Replaced obsolete overlong crosshair QA tool with quick-slot-safe version", hud_silent)
-	end
-	return true
-end
-
-function ensure_stash_qa_tools(hud_silent)
-	local all_ready = retire_legacy_rejection_tool(hud_silent)
-	if not retire_legacy_crosshair_rejection_tool(hud_silent) then all_ready = false end
-	if not is_developer_mode() then return all_ready end
-	local present = reconcile_actor_developer_items(hud_silent)
-	if not present then return false end
-	for _, essential in ipairs(DEVELOPER_ESSENTIAL_DEFINITIONS) do
-		if not ensure_qa_tool(essential[1], essential[2], present, hud_silent) then all_ready = false end
-	end
-	for _, tool in ipairs(QA_TOOL_DEFINITIONS) do
-		if not ensure_qa_tool(tool[1], tool[2], present, hud_silent) then all_ready = false end
-	end
-	return all_ready
+-- Compatibility entry point: requesting an already issued loadout is inert.
+function ensure_stash_qa_tools(_hud_silent)
+    if not is_developer_mode() then return true end
+    return pf_dev_loadout.request()
 end
 
 local function nearest_catalog_stash()

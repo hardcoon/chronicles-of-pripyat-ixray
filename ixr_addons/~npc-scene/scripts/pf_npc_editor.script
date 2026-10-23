@@ -472,70 +472,10 @@ function impl.editor_tool_section_available()
 	return false
 end
 
-function issue_tool(force)
-	-- force requests a fresh reconciliation, but never bypasses Developer mode.
-	if not db.actor or not impl.developer_mode_enabled() then return false end
-	-- A Lua reload cannot add a new LTX section to an already running engine.
-	-- Fail closed instead of passing an unknown section to alife():create.
-	if not impl.editor_tool_section_available() then return false end
-	if force then impl.tool_access.complete = false end
-	local editor_ok = impl.ensure_tool(
-		TOOL_SECTION, "pending_id", "tool_issued", "NPC editor")
-	local route_ok = not impl.setting_bool("route_editor_enabled", true) or
-		impl.ensure_tool(
-		ROUTE_TOOL_SECTION, "route_pending_id", "route_tool_issued",
-		"NPC route editor")
-	return editor_ok and route_ok
-end
-
-function impl.on_developer_inventory_prepared()
-	-- pf_stash_qa deliberately removes every non-essential inventory item while
-	-- preparing a fresh Developer game. Issue both addon-owned tools only after
-	-- that cleanup has finished, otherwise the first update can create an item
-	-- which the same frame immediately deletes again.
-	impl.tool_access.pending_id = nil
-	impl.tool_access.route_pending_id = nil
-	impl.tool_access.complete = false
-	if not impl.setting_bool("auto_issue_tool", true) then return end
-	local ok, issued = pcall(issue_tool, true)
-	if not ok then
-		impl.report("Developer-start QA tool issue failed: " .. tostring(issued))
-	elseif issued then
-		impl.report("Developer-start NPC editor tools issued after inventory setup")
-	end
-end
-
-function impl.install_developer_start_hook()
-	local qa = rawget(_G, "pf_stash_qa")
-	if not qa or type(qa.prepare_developer_new_game) ~= "function" then
-		return false
-	end
-	if qa._pf_npc_editor_developer_start_hook_owner == impl and
-		type(qa._pf_npc_editor_developer_start_hook) == "function" and
-		qa.prepare_developer_new_game == qa._pf_npc_editor_developer_start_hook then
-		impl.tool_access.developer_start_hook_installed = true
-		return true
-	end
-
-	-- Preserve the original function across script reloads instead of wrapping
-	-- an older copy of this addon's hook and issuing duplicate tools.
-	local original = qa._pf_npc_editor_prepare_developer_new_game_original
-	if type(original) ~= "function" then
-		original = qa.prepare_developer_new_game
-		qa._pf_npc_editor_prepare_developer_new_game_original = original
-	end
-	local hook = function(...)
-		local result = original(...)
-		impl.on_developer_inventory_prepared()
-		return result
-	end
-	qa._pf_npc_editor_developer_start_hook_owner = impl
-	qa._pf_npc_editor_developer_start_hook = hook
-	qa.prepare_developer_new_game = hook
-	impl.tool_access.developer_start_hook_installed = true
-	impl.report("Developer-start inventory hook installed")
-	return true
-end
+-- Existing console calls also use the single, persistent issuance ledger.
+function issue_tool(_force) return pf_dev_loadout.request() end
+function impl.on_developer_inventory_prepared() end
+function impl.install_developer_start_hook() return true end
 
 function impl.remove_tool_outside_developer_mode()
 	local actor = db.actor
@@ -795,7 +735,9 @@ function impl.apply_owned_online(object, server_object, record)
 	if not ready then return end
 	local desired_position = vector():set(record.x, record.y, record.z)
 	if not prepared_online[object:id()] or
-		impl.horizontal_distance_sqr(object:position(), desired_position) > POSITION_TOLERANCE_SQR then
+		impl.horizontal_distance_sqr(object:position(), desired_position) >
+			(record.scene_static_owner and 0.0001 or POSITION_TOLERANCE_SQR) or
+		(record.scene_static_owner and math.abs(object:position().y-desired_position.y)>0.03) then
 		object:set_npc_position(impl.copy_vector(desired_position))
 		pose_applied[object:id()] = nil
 		next_direction_retry[object:id()] = nil
@@ -859,7 +801,7 @@ function impl.process_editor_records()
 		local id = tonumber(record.id) or tonumber(key)
 		local server_object = id and alife():object(id, true) or nil
 		local client_object = id and level.object_by_id(id) or nil
-		if placement.active and placement.target_id == id then
+		if impl.scene_target_id == id then
 			-- The placement tool temporarily owns the client transform.
 		elseif record.pending_delete then
 			if time_global() >= (record.delete_after or 0) and not client_object then
@@ -1183,6 +1125,7 @@ function impl.nearest_spawn_position(requested)
 end
 
 function impl.create_editor_npc(profile, position, yaw, state_name, label)
+    if not impl.developer_mode_enabled() then return nil,"developer_required" end
 	if not profile then return nil, "profile" end
 	if not db.actor or not alife() then return nil, "runtime" end
 	position = position or impl.copy_vector(db.actor:position()):add(impl.copy_vector(db.actor:direction()):mul(2.5))
@@ -3233,39 +3176,6 @@ function use_tool(item)
 	return false
 end
 
-function impl.ensure_tool(section, pending_field, state_field, label)
-	local state = impl.current_state_root()
-	if impl.actor_has_item_section(section) then
-		local was_pending = impl.tool_access[pending_field] ~= nil
-		impl.tool_access[pending_field] = nil
-		state[state_field] = true
-		if was_pending then
-			impl.report(label .. " QA tool confirmed in Developer inventory")
-		end
-		return true
-	end
-	local sim = alife()
-	local pending_id = impl.tool_access[pending_field]
-	if pending_id and sim and sim:object(pending_id, true) then
-		state[state_field] = true
-		return true
-	end
-	impl.tool_access[pending_field] = nil
-	if god and god.spawn_item_in_inv then
-		local spawned = god.spawn_item_in_inv(section, db.actor)
-		if not spawned then
-			impl.report(label .. " QA tool issue failed")
-			state[state_field] = false
-			return false
-		end
-		impl.tool_access[pending_field] = spawned.id
-		state[state_field] = true
-		impl.report(label .. " QA tool issued")
-		return true
-	end
-	return false
-end
-
 function use_route_tool(item)
 	if not item or not db.actor then return false end
 	if not impl.developer_mode_enabled() then
@@ -3849,7 +3759,7 @@ function impl.update()
 		update_seen = true
 		impl.report("update callback entered")
 	end
-	if placement.active then impl.update_placement() end
+	-- Placement is driven exclusively by the NPC Scene HUD.
 	if not db.actor or not alife() then
 		runtime_ready_at = nil
 		return
@@ -3908,3 +3818,20 @@ end
 -- mod_script imports modules but does not invoke this callback automatically.
 impl.report("module loaded")
 on_game_start()
+
+
+-- NPC Scene compatibility bridge. Persistent records keep the established v2 format.
+function scene_api() return impl end
+function impl.bind_actor_input() end
+function impl.install_developer_start_hook() return true end
+function use_tool(item) return pf_ns_main.open() end
+function use_route_tool(item) return pf_ns_main.open("routes") end
+function impl.begin_placement(id) return pf_ns_main.place(id) end
+function scene_hold(id)
+    impl.scene_target_id=id
+end
+function scene_invalidate(id)
+    prepared_online[id]=nil;pose_applied[id]=nil;next_direction_retry[id]=nil
+end
+
+function impl.on_developer_inventory_prepared() pf_ns_main.inventory_ready() end

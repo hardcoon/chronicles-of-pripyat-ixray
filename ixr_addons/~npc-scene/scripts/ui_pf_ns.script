@@ -1,0 +1,230 @@
+local I={}
+function I.tr(id) return game.translate_string(id) or id end
+function I.backend() return pf_npc_editor.scene_api() end
+function I.category(name)
+    name=string.lower(name or "")
+    if name:find("sit",1,true) then return "sit" end
+    if name:find("sleep",1,true) or name:match("^lay") or name:find("_lay",1,true) then return "rest" end
+    for _,word in ipairs({"eat","drink","smok","guitar","harmonica","work","repair","search","writ"}) do
+        if name:find(word,1,true) then return "actions" end
+    end
+    return "stand"
+end
+function I.safe_text(item)
+    if item.kind=="profile" then
+        return I.backend().translated_profile_name(item.value).." / "..item.value.community
+    elseif item.kind=="pose" then
+        local key="pf_ns_pose_"..item.value.name
+        local translated=I.tr(key)
+        return translated~=key and translated or I.tr("pf_ns_category_"..I.category(item.value.name)).." / "..item.value.name
+    elseif item.kind=="point" then
+        return string.format("%02d  %s  %.1f s",item.index,item.value.state,item.value.wait_seconds or 5)
+    end
+    return (item.value.owned and "* " or "")..item.value.name
+end
+class "pf_ns_row" (CUIListBoxItem)
+function pf_ns_row:__init(item) super(27)
+    self.data=item;self:SetWndSize(vector2():set(246,27))
+    local text=self:GetTextItem();text:SetFont(GetFontLetterica16Russian());text:SetEllipsis(true)
+    text:SetWndPos(vector2():set(5,0));text:SetWndSize(vector2():set(235,27));text:SetText(I.safe_text(item))
+end
+class "pf_ns_window" (CUIScriptWnd)
+function pf_ns_window:__init() super()
+    local xml=CScriptXmlInit();xml:ParseFile("ui_pf_ns.xml");xml:InitWindow("main",0,self)
+    self:SetWindowName("pf_ns_window");self:SetAutoDelete(false)
+    for _,name in ipairs({"left_bg","right_bg","bottom_bg"}) do xml:InitStatic("main:"..name,self) end
+    self.title=xml:InitTextWnd("main:title",self)
+    self.details=xml:InitTextWnd("main:details",self)
+    self.status=xml:InitTextWnd("main:status",self)
+    self.hint=xml:InitTextWnd("main:hint",self)
+    self.page_label=xml:InitTextWnd("main:page_label",self)
+    self.list=xml:InitListBox("main:list",self);self:Register(self.list,"ns_list")
+    self:AddCallback("ns_list",ui_events.LIST_ITEM_SELECT,self.OnSelect,self)
+    self.search=xml:InitEditBox("main:search",self)
+    self.wait=xml:InitEditBox("main:wait",self);self.wait:SetText("5")
+    xml:InitTextWnd("main:wait_label",self)
+    self.buttons={};self.page=1;self.rows={};self.filter="";self.last_mode=nil;self.category=1
+    local definitions={npcs={12,34,120,"pf_ns_npcs"},profiles={138,34,120,"pf_ns_profiles"},
+        poses={264,34,120,"pf_ns_poses"},routes={390,34,120,"pf_ns_routes"},
+        grid={756,34,126,"pf_ns_grid"},close={888,34,124,"pf_ns_close"},
+        search={212,100,58,"pf_ns_find"},category={16,76,252,"pf_ns_category_all"},previous={14,640,54,"pf_ns_previous"},next={214,640,54,"pf_ns_next"},
+        undo={12,696,118,"pf_ns_undo"},redo={136,696,118,"pf_ns_redo"},export={762,696,250,"pf_ns_export"}}
+    for name,definition in pairs(definitions) do
+        local button=xml:Init3tButton("main:button_"..name,self)
+        button:SetText(I.tr(definition[4]));self:Register(button,"ns_"..name)
+        local action=name
+        self:AddCallback("ns_"..name,ui_events.BUTTON_CLICKED,function() self:Command(action) end,self)
+        self.buttons[name]=button
+    end
+    self.actions={}
+    for n=1,7 do
+        local button=xml:Init3tButton("main:action_"..n,self)
+        self:Register(button,"ns_action_"..n)
+        local index=n
+        self:AddCallback("ns_action_"..n,ui_events.BUTTON_CLICKED,function() self:Action(index) end,self)
+        self.actions[n]=button
+    end
+end
+function pf_ns_window:Refresh()
+    local s=pf_ns_main.state();local b=I.backend();b.load_states()
+    if self.last_mode~=s.mode then self.page=1;self.last_mode=s.mode;self.selected=nil;self.category=1 end
+    self.title:SetText(I.tr("pf_ns_title").." / "..I.tr("pf_ns_"..s.mode))
+    self.rows={}
+    local function add(kind,value,index)
+        local item={kind=kind,value=value,index=index}
+        local haystack=string.lower(I.safe_text(item).." "..tostring(value.specific or value.name or ""))
+        if self.filter=="" or string.find(haystack,self.filter,1,true) then self.rows[#self.rows+1]=item end
+    end
+    if s.mode=="profiles" then
+        for _,profile in ipairs(b.load_profiles()) do add("profile",profile) end
+    elseif s.mode=="poses" then
+        local categories={"all","stand","sit","rest","actions"}
+        local category=categories[self.category]
+        for _,pose in ipairs(pf_ns_main.poses()) do
+            if category=="all" or I.category(pose.name)==category then add("pose",pose) end
+        end
+    elseif s.mode=="routes" then
+        local record=s.id and b.get_record(s.id)
+        for index,point in ipairs(record and record.route and record.route.points or {}) do add("point",point,index) end
+    else
+        -- Online registry + owned records only. Opening/searching never snapshots ALife.
+        local seen={}
+        for _,record in pairs(b.current_state_root().npcs) do
+            if record.level==level.name() and not record.pending_delete then
+                add("npc",{id=record.id,name=record.label or record.specific,owned=true,record=record})
+                seen[record.id]=true
+            end
+        end
+        for id in pairs(db.storage) do
+            if not seen[id] and type(id)=="number" and id>=0 and id<65535 and id%1==0 then
+                -- Storage can outlive its native object after unload/destruction.
+                -- Resolve the current online object before calling any native method.
+                local object=level.object_by_id(id)
+                if object and IsStalker(object) and object:alive() then
+                    add("npc",{id=id,name=object:character_name(),owned=false})
+                end
+            end
+        end
+        table.sort(self.rows,function(a,b) return I.safe_text(a)<I.safe_text(b) end)
+    end
+    local pages=math.max(1,math.ceil(#self.rows/18));self.page=math.min(pages,math.max(1,self.page))
+    self.list:RemoveAll();self.visible_rows={}
+    self.rebuilding=true
+    for index=(self.page-1)*18+1,math.min(self.page*18,#self.rows) do
+        local row=pf_ns_row(self.rows[index]);self.list:AddExistingItem(row);self.visible_rows[#self.visible_rows+1]=row
+    end
+    self.rebuilding=false
+    self.page_label:SetText(string.format("%d / %d",self.page,pages))
+    local enabled,snap,offmesh=pf_ns_nav.flags()
+    self.buttons.grid:SetText(I.tr(enabled and "pf_ns_grid_on" or "pf_ns_grid_off"))
+    self.buttons.category:Show(s.mode=="poses")
+    self.buttons.category:SetText(I.tr("pf_ns_category_"..({"all","stand","sit","rest","actions"})[self.category]))
+    self.status:SetText(s.message or I.tr("pf_ns_welcome"))
+    self:SetActions();self:Details()
+end
+function pf_ns_window:OnSelect()
+    if self.rebuilding then return end
+    local row=self.list:GetSelectedItem();if not row then return end
+    self.selected=row.data
+    local s=pf_ns_main.state()
+    if row.data.kind=="npc" then
+        s.id=row.data.value.id
+        local transform=I.backend().target_transform(s.id)
+        if transform then s.pose=transform.state end
+    elseif row.data.kind=="profile" then s.profile=row.data.value
+    elseif row.data.kind=="pose" then s.pose=row.data.value.name
+    elseif row.data.kind=="point" then s.point=row.data.index;self.wait:SetText(tostring(row.data.value.wait_seconds or 5)) end
+    self:Details();self:SetActions()
+end
+function pf_ns_window:Details()
+    local s=pf_ns_main.state();local b=I.backend()
+    local record=s.id and b.get_record(s.id)
+    local object=s.id and level.object_by_id(s.id)
+    local transform=s.id and b.target_transform(s.id)
+    local text=I.tr("pf_ns_select_npc")
+    if s.mode=="profiles" and s.profile then
+        text=I.safe_text({kind="profile",value=s.profile}).."\n"..s.profile.specific.."\n"..s.profile.risk
+    elseif transform then
+        text=(record and record.label or (object and object:character_name()) or tostring(s.id)).."\n"..
+            I.tr(record and "pf_ns_owned" or "pf_ns_preview_only").."\n"..
+            string.format("X %.3f   Y %.3f\nZ %.3f   %.1f°\n",transform.position.x,transform.position.y,transform.position.z,math.deg(transform.yaw))..
+            I.tr("pf_ns_poses")..": "..tostring(s.pose or transform.state)
+        if record and record.route then text=text.."\n"..I.tr("pf_ns_routes")..": "..tostring(record.route.status) end
+    end
+    self.details:SetText(text:gsub("\n","\\n"))
+    self.hint:SetText(I.tr("pf_ns_hint_"..s.mode))
+    if record then pf_ns_nav.draw_route(record) end
+end
+function pf_ns_window:SetActions()
+    local s=pf_ns_main.state();local record=s.id and I.backend().get_record(s.id)
+    local object=s.id and level.object_by_id(s.id)
+    local ready=object and I.backend().ready_remark_object(object,record~=nil)
+    local labels={}
+    if s.mode=="profiles" then labels={"pf_ns_create"}
+    elseif s.mode=="poses" then labels={"pf_ns_apply_pose","pf_ns_place"}
+    elseif s.mode=="routes" then labels={"pf_ns_add_point","pf_ns_move_point","pf_ns_wait_apply","pf_ns_remove_point",
+        "pf_ns_play_route","pf_ns_pause_route",record and record.route and record.route.loop and "pf_ns_loop_on" or "pf_ns_loop_off"}
+    else labels={"pf_ns_place","pf_ns_poses","pf_ns_routes","pf_ns_clone","pf_ns_remove"} end
+    for n,button in ipairs(self.actions) do
+        button:Show(labels[n]~=nil);button:SetText(labels[n] and I.tr(labels[n]) or "")
+        local enabled=s.mode=="profiles" and s.profile~=nil or ready==true
+        if s.mode=="routes" then enabled=record~=nil and (n==3 or n==4 or n==6 or n==7 or ready==true) end
+        if s.mode=="npcs" and (n==3 or n==5) then enabled=record~=nil end
+        if s.mode=="npcs" and n==4 then enabled=object~=nil end
+        if s.mode=="poses" and n==1 then enabled=ready==true and s.pose~=nil end
+        button:Enable(enabled==true)
+    end
+end
+function pf_ns_window:Command(action)
+    local s=pf_ns_main.state()
+    if action=="close" then pf_ns_main.close();return end
+    if action=="undo" then pf_ns_main.undo(false);return end
+    if action=="redo" then pf_ns_main.undo(true);return end
+    if action=="export" then pf_ns_main.export();return end
+    if action=="grid" then pf_ns_nav.toggle("grid")
+    elseif action=="category" then self.category=self.category%5+1;self.page=1
+    elseif action=="previous" then self.page=self.page-1
+    elseif action=="next" then self.page=self.page+1
+    elseif action=="search" then self.filter=string.lower(self.search:GetText());self.page=1
+    else s.mode=action;self.filter="";self.search:SetText("");self.selected=nil end
+    self:Refresh()
+end
+function pf_ns_window:Action(index)
+    local s=pf_ns_main.state()
+    if s.mode=="profiles" then pf_ns_main.spawn(s.profile)
+    elseif s.mode=="poses" then
+        if index==1 then pf_ns_main.apply_pose(s.pose) else pf_ns_main.place(s.id) end
+    elseif s.mode=="routes" then
+        if index==1 then pf_ns_main.place(s.id,"point_add",nil,tonumber(self.wait:GetText()))
+        elseif index==2 then pf_ns_main.place(s.id,"point_edit",s.point,tonumber(self.wait:GetText()))
+        elseif index==3 then pf_ns_main.route_action("wait",s.point,self.wait:GetText())
+        elseif index==4 then pf_ns_main.route_action("remove",s.point)
+        elseif index==5 then pf_ns_main.route_action("start")
+        elseif index==6 then pf_ns_main.route_action("pause")
+        elseif index==7 then pf_ns_main.route_action("loop") end
+    elseif index==1 then pf_ns_main.place(s.id)
+    elseif index==2 then self:Command("poses")
+    elseif index==3 then self:Command("routes")
+    elseif index==4 then
+        local target={id=s.id,record=I.backend().get_record(s.id)}
+        pf_ns_main.spawn(I.backend().profile_for_existing(target))
+    elseif index==5 then pf_ns_main.remove() end
+end
+function pf_ns_window:OnKeyboard(key,action)
+    if action==ui_events.WINDOW_KEY_PRESSED then
+        if key==DIK_keys.DIK_ESCAPE then pf_ns_main.close();return true end
+        if key==DIK_keys.DIK_RETURN then self:Command("search");return true end
+    end
+    return CUIScriptWnd.OnKeyboard(self,key,action)
+end
+function pf_ns_window:Update()
+    CUIScriptWnd.Update(self)
+    if not self:IsShown() or not pf_ns_main.allowed() then return end
+    local s=pf_ns_main.state()
+    local object=s.id and level.object_by_id(s.id)
+    pf_ns_nav.update(object and object:position() or db.actor:position())
+    if s.mode=="routes" and time_global()>(self.next_details or 0) then
+        self.next_details=time_global()+500;self:Details()
+    end
+end
+function create() return pf_ns_window() end

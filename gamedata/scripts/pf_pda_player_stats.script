@@ -97,7 +97,7 @@ function get_rows()
         end
     end
     local values = local_values()
-    if values then
+    if values and pf_player_stats_cache.has_copid(own_id) and not pf_player_stats_cache.is_operator(profile, own_id) then
         result[#result + 1] = { nick = player_name(), sort_nick = player_name():lower(), own = true,
             identity = own_id, values = values, rank = rank(values),
             presence = connected and (status.presence or "away") or "offline" }

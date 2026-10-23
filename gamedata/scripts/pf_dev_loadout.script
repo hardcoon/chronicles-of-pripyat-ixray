@@ -1,0 +1,265 @@
+-- The only automatic Developer loadout owner. Grants belong to the save,
+-- never to the current inventory contents. Drop/use/transfer/load cannot refill.
+local S = { registered=false, phase=nil, due=0, config=nil, moves={}, index=1 }
+local I = {}
+local C = { key="pf_developer_loadout", box="lz_nm_start_stash", step=8,
+    boxes={lz_nm_start_stash=true, lz_nlc_qa_art_stash=true,
+        lz_nlc_natural_qa_art_stash=true, lz_nm_lore_test_stash=true},
+    retired={pf_npc_route_editor_tool_native=true, pf_npc_route_editor_tool=true,
+        pf_stash_rejection_tool=true, pf_stash_crosshair_rejection_tool=true} }
+
+function I.allowed()
+    local qa=rawget(_G,"pf_stash_qa")
+    return qa and type(qa.is_developer_mode)=="function" and qa.is_developer_mode()==true
+end
+function I.data()
+    local root=alife_storage_manager.get_state()
+    if type(root[C.key])~="table" then root[C.key]={version=1,tools={},delivered={}} end
+    local d=root[C.key]
+    d.tools=d.tools or {};d.delivered=d.delivered or {};d.documents=d.documents or {}
+    return d
+end
+function I.config()
+    if S.config then return S.config end
+    local ini=ini_file("pf_dev_loadout.ltx")
+    local result={tools={},supplies={}}
+    for _,group in ipairs({"tools","supplies"}) do
+        for n=0,ini:line_count(group)-1 do
+            local ok,section,value=ini:r_line(group,n,"","")
+            if ok then result[group][#result[group]+1]={section=section,count=tonumber(value) or 1} end
+        end
+    end
+    S.config=result;return result
+end
+function I.qa(section)
+    S.qa_cache=S.qa_cache or {}
+    if S.qa_cache[section]~=nil then return S.qa_cache[section] end
+    local ini=system_ini()
+    local result=ini:line_exist("inventory_sort_registry",section) and
+        ini:r_string("inventory_sort_registry",section)=="qa"
+    S.qa_cache[section]=result
+    return result
+end
+function I.object(id,section)
+    local object=id and alife():object(id,true)
+    if object and (not section or object:section_name()==section) then return object end
+end
+function I.children(object)
+    local ids={}
+    for id in alife():get_children(object) do ids[#ids+1]=id end
+    return ids
+end
+function I.create_box(d)
+    local actor=db.actor
+    local p=actor:position();local dir=actor:direction()
+    local length=math.sqrt(dir.x*dir.x+dir.z*dir.z)
+    local dx,dz=length>.001 and dir.x/length or 1,length>.001 and dir.z/length or 0
+    local position=vector():set(p.x+dx*2.25,p.y+.15,p.z+dz*2.25)
+    local lv=level.vertex_id(position)
+    if not lv or not level.valid_vertex_id(lv) then lv=actor:level_vertex_id() end
+    if not lv or not level.valid_vertex_id(lv) then return nil end
+    local box=alife():create(C.box,position,lv,actor:game_vertex_id())
+    if not box then return nil end
+    box.angle=vector():set(0,-math.atan2(dx,dz),0)
+    d.chest_id=box.id
+    xr_logic.pstor_store(actor,"lz_nm_start_stash_id",box.id)
+    xr_logic.pstor_store(actor,"lz_nm_start_stash_spawned",true)
+    level.map_add_object_spot_ser(box.id,"ui_pda2_actor_box_location",game.translate_string("lz_nm_start_stash_marker"))
+    return box
+end
+function I.start()
+    local d=I.data()
+    if d.settled then S.phase="done";return true end
+    local box=I.object(d.chest_id,C.box)
+    local boxes,seen,counts,retired={},{},{},{}
+    -- One startup pass, only until consolidation is complete. IDs are retained;
+    -- live transfers preserve ammo, upgrades, charge and per-object metadata.
+    for _,object in alife():objects() do
+        local section=object:section_name()
+        if C.boxes[section] and (not box or object.id~=box.id) then boxes[#boxes+1]=object.id end
+        if C.retired[section] then retired[#retired+1]=object.id
+        elseif I.qa(section) then seen[section]=true end
+    end
+    if not box then box=I.create_box(d) end
+    if not box then return false end
+    S.sources=boxes;S.actor_items={};S.retired=retired;S.moves={}
+    local migration=#boxes>0 or xr_logic.pstor_retrieve(db.actor,"lz_nm_start_stash_polarity_v22",false)==true
+    -- A pre-existing developer kit has already been issued. Consolidating its
+    -- remaining contents must not recreate items taken from those old boxes.
+    for _,id in ipairs(boxes) do
+        local source=I.object(id)
+        for _,child_id in ipairs(I.children(source)) do
+            local item=I.object(child_id)
+            if item then local sec=item:section_name();counts[sec]=(counts[sec] or 0)+1 end
+        end
+    end
+    for _,id in ipairs(I.children(box)) do
+        local item=I.object(id)
+        if item then local sec=item:section_name();counts[sec]=(counts[sec] or 0)+1 end
+    end
+    if not d.inventory_done then
+        db.actor:iterate_inventory(function(_,item)
+            local sec=item:section()
+            -- The engine's non-ALife bolt is an internal actor slot, not loot.
+            if sec~="bolt" and not I.qa(sec) and not C.retired[sec] then
+                S.actor_items[#S.actor_items+1]=item:id();counts[sec]=(counts[sec] or 0)+1
+            end
+        end,db.actor)
+    end
+    local cfg=I.config()
+    for _,entry in ipairs(cfg.tools) do
+        if seen[entry.section] then d.tools[entry.section]=true end
+    end
+    for _,entry in ipairs(cfg.supplies) do
+        if migration then d.delivered[entry.section]=entry.count
+        else d.delivered[entry.section]=math.max(d.delivered[entry.section] or 0,math.min(entry.count,counts[entry.section] or 0)) end
+    end
+    S.phase="retire";S.index=1
+    return true
+end
+function I.transfer(item_id,from_id,to_id)
+    local item=I.object(item_id)
+    if not item or tonumber(item.parent_id)~=from_id then S.moves[item_id]=nil;return true end
+    local now=time_global()
+    if S.moves[item_id] and now<S.moves[item_id] then return false end
+    local from=level.object_by_id(from_id);local to=level.object_by_id(to_id)
+    local client=level.object_by_id(item_id)
+    if not from or not to or not client then return false end
+    from:transfer_item(client,to)
+    S.moves[item_id]=now+1000
+    return false -- Confirm the server parent on a later frame, before deleting a box.
+end
+function I.sources(d,box)
+    local source=I.object(S.sources[S.index])
+    if not source then S.index=S.index+1;return true end
+    if not level.object_by_id(source.id) then
+        if not source.online and not S.moves["box"..source.id] then
+            -- Offline QA boxes are brought online beside the destination only
+            -- for the migration. No gameplay stash sections are admitted here.
+            alife():teleport_object(source.id,box.m_game_vertex_id,box.m_level_vertex_id,box.position)
+            alife():set_switch_online(source.id,true)
+            alife():set_switch_offline(source.id,false)
+            S.moves["box"..source.id]=true
+        end
+        return false
+    end
+    local children=I.children(source)
+    if #children==0 then
+        if level.map_has_object_spot(source.id,"ui_pda2_actor_box_location")~=0 then
+            level.map_remove_object_spot(source.id,"ui_pda2_actor_box_location")
+        end
+        alife():release(source,true);S.index=S.index+1;return true
+    end
+    for n=1,math.min(#children,C.step) do
+        local item=I.object(children[n])
+        if item then
+            local sec=item:section_name()
+            if C.retired[sec] then alife():release(item,true)
+            else I.transfer(item.id,source.id,I.qa(sec) and db.actor:id() or box.id) end
+        end
+    end
+    return false
+end
+function I.grant(entry,d,box,tool)
+    local ledger=tool and d.tools or d.delivered
+    local previous=tool and (ledger[entry.section] and 1 or 0) or (ledger[entry.section] or 0)
+    if previous>=entry.count then return true end
+    if not system_ini():section_exist(entry.section) then return true end
+    local parent=tool and db.actor:id() or box.id
+    local item=alife():create(entry.section,vector(),0,0,parent)
+    if not item then return false end
+    ledger[entry.section]=tool and true or previous+1
+    return previous+1>=entry.count
+end
+function I.step()
+    local d=I.data();local box=I.object(d.chest_id,C.box)
+    if not box then return end -- Destroying the issued chest never refills it.
+    local cfg=I.config()
+    local started=os.clock()
+    for _=1,C.step do
+        if S.phase=="retire" then
+            local id=S.retired[S.index]
+            if not id then S.phase="actor";S.index=1
+            else local item=I.object(id);if item then alife():release(item,true) end;S.index=S.index+1 end
+        elseif S.phase=="actor" then
+            local id=S.actor_items[S.index]
+            if not id then S.phase="actor_confirm";S.index=1
+            elseif I.transfer(id,db.actor:id(),box.id) or S.moves[id] then S.index=S.index+1
+            else return end
+        elseif S.phase=="actor_confirm" then
+            local id=S.actor_items[S.index]
+            if not id then d.inventory_done=true;S.phase="sources";S.index=1
+            elseif I.transfer(id,db.actor:id(),box.id) then S.index=S.index+1
+            else return end
+        elseif S.phase=="sources" then
+            if not S.sources[S.index] then S.phase="tools";S.index=1
+            elseif not I.sources(d,box) then return end
+        elseif S.phase=="tools" or S.phase=="supplies" then
+            local tool=S.phase=="tools";local entries=tool and cfg.tools or cfg.supplies
+            local entry=entries[S.index]
+            if not entry then
+                if tool then S.phase="supplies";S.index=1
+                else d.settled=true;S.phase="done";return end
+            elseif I.grant(entry,d,box,tool) then S.index=S.index+1 end
+        else return end
+        if os.clock()-started>.002 then return end
+    end
+end
+function request()
+    if not db.actor or not I.allowed() then return false end
+    if not S.phase then S.phase="wait";S.due=time_global()+3000 end
+    return true
+end
+function add_documents(sections)
+    if not I.allowed() then return false end
+    local d=I.data()
+    if not d.settled or not I.object(d.chest_id,C.box) then return false end
+    -- Explicit QA action, still addressed to the same box. The persisted queue
+    -- and ledger make F9/repeated callbacks safe without inventory polling.
+    d.document_queue=d.document_queue or {}
+    for _,section in ipairs(sections) do
+        if not d.documents[section] then d.document_queue[section]=true end
+    end
+    return true
+end
+function I.documents()
+    local d=I.data();local box=I.object(d.chest_id,C.box)
+    if not box or not d.document_queue then return end
+    local n=0
+    for section in pairs(d.document_queue) do
+        if system_ini():section_exist(section) then
+            if not alife():create(section,vector(),0,0,box.id) then return end
+            d.documents[section]=true
+        end
+        d.document_queue[section]=nil;n=n+1
+        if n>=C.step then return end
+    end
+    d.document_queue=nil
+end
+function I.update()
+    if not db.actor or not alife() then return end
+    if not I.allowed() then return end
+    if not S.phase then request() end
+    if S.phase=="wait" then
+        if time_global()<S.due then return end
+        if not I.start() then S.due=time_global()+1000;return end
+    end
+    if S.phase=="done" then
+        local d=I.data()
+        if d.document_queue then I.documents() end
+        return
+    end
+    I.step()
+end
+function reset()
+    S.phase=nil;S.due=0;S.moves={};S.index=1
+    S.sources=nil;S.actor_items=nil;S.retired=nil
+end
+function ready() return S.phase=="done" end
+function on_game_start()
+    if S.registered then return end
+    RegisterScriptCallback("update",I.update)
+    RegisterScriptCallback("load",reset)
+    S.registered=true
+end
+on_game_start()

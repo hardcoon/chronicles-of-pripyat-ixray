@@ -3,18 +3,21 @@ class "panel" (CUIWindow)
 function panel:__init() super()
     self.controls = {}
     self.captions = {}
+    self.sections = {}
+    self.section_by_id = {}
 end
 function panel:__finalize() end
 function panel:InitControls(xml, rows)
     self:SetAutoDelete(true)
     self.rows = rows
     self.scroll = xml:InitScrollView("scroll",self)
+    local section
     for _, item in ipairs(rows) do
         if item.key ~= "enabled" and not item.hidden then
             if item.group then
-                local heading = xml:InitStatic("heading_row",nil)
-                xml:InitStatic("heading",heading):TextControl():SetTextST("pf_sss_group_" .. item.group)
-                self.scroll:AddWindow(heading,true); heading:SetAutoDelete(false)
+                section={id=item.group,button=xml:Init3tButton("category",nil),rows={},expanded=false}
+                self.sections[#self.sections+1]=section
+                self.section_by_id[item.group]=section
             end
             local row = xml:InitStatic("row",nil)
             local caption=xml:InitStatic("caption",row)
@@ -30,10 +33,32 @@ function panel:InitControls(xml, rows)
                 control:SetOptFBounds(item.min,item.max)
             end
             self.controls[item.key] = control
-            self.scroll:AddWindow(row,true); row:SetAutoDelete(false)
+            section.rows[#section.rows+1]=row
         end
     end
     self.reset = xml:Init3tButton("reset",self)
+    self:RebuildSections()
+end
+function panel:RebuildSections()
+    local position=self.scroll:GetCurrentScrollPos()
+    -- Retain the same controls and their drafts while rebuilding the scroll layout.
+    self.scroll:Clear()
+    for _,section in ipairs(self.sections) do
+        section.button:SetText((section.expanded and "[ - ] " or "[ + ] ")..game.translate_string("pf_sss_group_"..section.id))
+        self.scroll:AddWindow(section.button,true);section.button:SetAutoDelete(false)
+        for _,row in ipairs(section.rows) do
+            row:Show(section.expanded)
+            if section.expanded then self.scroll:AddWindow(row,true);row:SetAutoDelete(false) end
+        end
+    end
+    -- SetScrollPos also recalculates the native scroll range and clamps the offset.
+    self.scroll:SetScrollPos(position)
+end
+function panel:ToggleSection(id)
+    local section=self.section_by_id[id]
+    if not section then return end
+    section.expanded=not section.expanded
+    self:RebuildSections()
 end
 function panel:SetValues(values)
     self.values = values
@@ -56,12 +81,19 @@ end
 function panel:UpdateEnabled()
     local puddles=self.controls.puddles_enabled:GetCheck()==true
     local steps=self.controls.footsteps_enabled:GetCheck()==true
+    local wind=self.controls.wind_enabled:GetCheck()==true
+    local grass_wind=self.controls.grass_wind_enabled:GetCheck()==true
+    local grass=self.controls.grass_enabled:GetCheck()==true
     for key,control in pairs(self.controls) do
-        local master=key=="puddles_enabled"
+        local master=key=="puddles_enabled" or key=="wind_enabled" or key=="grass_wind_enabled" or key=="grass_enabled"
         local enabled=true
-        if not master then
+        if key=="wind_min" then enabled=wind or grass_wind
+        elseif not master then
             if key:match("^puddles_") or key:match("^ssr_") or key=="wet_buildup" or key=="wet_drying" or key=="footsteps_enabled" then enabled=puddles
             elseif key=="footsteps_volume" then enabled=puddles and steps
+            elseif key:match("^wind_grass_") then enabled=grass_wind
+            elseif key:match("^grass_") then enabled=grass
+            elseif key:match("^wind_") then enabled=wind
             end
         end
         control:Enable(enabled)

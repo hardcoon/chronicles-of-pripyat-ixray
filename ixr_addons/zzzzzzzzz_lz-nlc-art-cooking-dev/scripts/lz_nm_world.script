@@ -1,9 +1,6 @@
 -- World objects, starter content, lore, sleep, backpacks, and strange consumables.
 -- Engine callbacks are owned by the lz_new_mechanics facade.
 local state = {
-	start_stash_due = nil,
-	start_stash_force_new = false,
-	start_stash_revision_checked = false,
 	pending_backpack_boxes = {},
 	pending_backpack_deploy = nil,
 	sleep_was_active = false,
@@ -15,7 +12,6 @@ local state = {
 	strange_consumable_encounter = nil,
 	strange_consumable_fallback = nil,
 	removed_items_cleaned = false,
-	missing_start_stash_sections_logged = {},
 	mechanics_encyclopedia_ini = nil
 }
 local impl = {}
@@ -39,41 +35,6 @@ local removed_item_sections = {
 
 -- Detector salvage is deliberately tiered. Low-end detectors yield only
 -- common electronic parts, while Svarog guarantees one of every material.
-
-local start_stash_items = {
-	"mineral_water",
-	"drug_sleep",
-	"itm_gunsmith_toolkit",
-	"itm_outfit_toolkit",
-	"itm_repairkit_tier_1",
-	"itm_repairkit_tier_2",
-	"itm_repairkit_tier_soft",
-	"itm_repairkit_tier_3",
-	"itm_backpack",
-	"itm_sleepbag",
-	"lz_nm_radio_beacon",
-	"mutant_part_krovosos_jaw",
-	"mutant_part_boar_leg",
-	"mutant_part_chimera_kogot",
-	"mutant_part_chimera_claw",
-	"mutant_part_dog_tail",
-	"mutant_part_flesh_eye",
-	"mutant_part_psevdodog_tail",
-	"mutant_part_snork_hand",
-	"mutant_part_tushkano_head",
-	"mutant_part_pseudogigant_hand",
-	"mutant_part_pseudogigant_eye",
-	"mutant_part_controller_glass",
-	"mutant_part_controller_hand",
-	"mutant_part_burer_hand",
-	"mutant_part_krovosos_meat",
-	"mutant_part_boar_chop",
-	"mutant_part_chimera_meat",
-	"mutant_part_dog_meat",
-	"mutant_part_flesh_meat",
-	"mutant_part_psevdodog_meat",
-	"mutant_part_tushkano_meat"
-}
 
 -- Stable collection order defines the matching "Ghost City" encyclopedia
 -- article numbers. Production spawning is owned by pf_dynamic_stashes; the
@@ -313,82 +274,6 @@ function mark_mechanics_encyclopedia_read()
 	return true
 end
 
--- Mechanical QA items are kept together so both new games and upgraded saves
--- receive the same minimum of two copies without touching larger stacks.
-local start_stash_mechanic_items = {
-	"af_dummy_buliz",
-	"lz_nm_stash_beacon",
-	"lz_nm_radio_beacon",
-	"pf_metal_detector_homemade",
-	"pf_metal_detector_wave",
-	"pf_metal_detector_magnet",
-	"lz_nm_krona_battery",
-	"hand_radio",
-	"detector_simple",
-	"detector_advanced",
-	"detector_elite",
-	"detector_scientific",
-	"itm_backpack",
-	"itm_sleepbag",
-	"itm_gunsmith_toolkit",
-	"itm_outfit_toolkit",
-	"lz_nm_weapon_disassembly_kit",
-	"itm_repairkit_tier_1",
-	"itm_repairkit_tier_2",
-	"itm_repairkit_tier_soft",
-	"itm_repairkit_tier_3",
-	"itm_field_upgrade_kit_blue",
-	"itm_field_upgrade_kit_red",
-	"itm_field_upgrade_kit_yellow",
-	"itm_field_upgrade_kit_green",
-	"lz_nm_metal_part",
-	"lz_nm_armor_pouch",
-	"lz_nm_rubber_padding",
-	"lz_nm_combat_boots",
-	"lz_nm_used_filter",
-	"lz_nm_strange_stew",
-	"lz_nm_strange_shot",
-	"lz_nm_strange_drink",
-	"pda_hack_usb_1",
-	"pda_hack_usb_2",
-	"pda_hack_usb_3",
-	"pf_stash_pda_novice",
-	"pf_stash_pda_stalker",
-	"pf_stash_pda_veteran",
-	"pf_stash_pda_master"
-}
-
--- Field kits use their own count because ordinary starter supplies are doubled.
-local start_stash_variant_kits = {
-	"itm_field_upgrade_kit_blue",
-	"itm_field_upgrade_kit_red",
-	"itm_field_upgrade_kit_yellow",
-	"itm_field_upgrade_kit_green"
-}
-local START_STASH_FIELD_KIT_COUNT = 6
-
--- Single-copy QA items are also injected into already existing starter stashes.
-local start_stash_single_items = {
-	"lz_ph_reflash_module",
-	"lz_nlc_anomaly_analyzer",
-	"af_polarity",
-	"pf_key_liquidator",
-	"pf_key_hacker",
-	"pf_key_hunter",
-	"pf_key_strelok",
-	"pf_key_zulus",
-	"pf_key_charon",
-	"pf_key_home"
-}
-
-local START_STASH_FLAG = "lz_nm_start_stash_spawned"
-local START_STASH_ID_KEY = "lz_nm_start_stash_id"
-local START_STASH_REVISION_KEY = "lz_nm_start_stash_polarity_v22"
-local LORE_TEST_STASH_SECTION = "lz_nm_lore_test_stash"
-local LORE_TEST_STASH_FLAG = "lz_nm_lore_test_stash_spawned"
-local LORE_TEST_STASH_ID_KEY = "lz_nm_lore_test_stash_id"
-local LORE_TEST_STASH_REVISION_KEY = "lz_nm_lore_test_stash_documents_v1"
-
 local STASH_SPOT = "ui_pda2_actor_box_location"
 local STRANGE_STEW_ARRIVAL_DISTANCE = 15
 local STRANGE_STEW_START_DELAY_MS = 50
@@ -416,421 +301,23 @@ local function cleanup_removed_items()
 end
 
 
-function impl.find_start_stash()
-	local stored_id = xr_logic.pstor_retrieve(db.actor, START_STASH_ID_KEY, -1)
-	if stored_id and stored_id >= 0 then
-		local stored = alife():object(stored_id, true)
-		if stored and stored:section_name() == "lz_nm_start_stash" then
-			return stored
-		end
-	end
-
-	-- Saves made by the first addon version contain only the boolean flag.
-	-- Recover their container without creating a duplicate.
-	for _, object in alife():objects() do
-		if object:section_name() == "lz_nm_start_stash" then
-			return object
-		end
-	end
-	return nil
-end
-
-function impl.mark_start_stash(stash)
-	if level.map_has_object_spot(stash.id, STASH_SPOT) == 0 then
-		level.map_add_object_spot_ser(
-			stash.id,
-			STASH_SPOT,
-			game.translate_string("lz_nm_start_stash_marker")
-		)
-	end
-	xr_logic.pstor_store(db.actor, START_STASH_ID_KEY, stash.id)
-	xr_logic.pstor_store(db.actor, START_STASH_FLAG, true)
-end
-
-function impl.find_lore_test_stash()
-	local stored_id = xr_logic.pstor_retrieve(db.actor, LORE_TEST_STASH_ID_KEY, -1)
-	if stored_id and stored_id >= 0 then
-		local stored = alife():object(stored_id, true)
-		if stored and stored:section_name() == LORE_TEST_STASH_SECTION then
-			return stored
-		end
-	end
-
-	for _, object in alife():objects() do
-		if object:section_name() == LORE_TEST_STASH_SECTION then return object end
-	end
-	return nil
-end
-
-function impl.mark_lore_test_stash(stash)
-	if level.map_has_object_spot(stash.id, STASH_SPOT) == 0 then
-		level.map_add_object_spot_ser(
-			stash.id,
-			STASH_SPOT,
-			game.translate_string("lz_nm_lore_test_stash_marker")
-		)
-	end
-	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_ID_KEY, stash.id)
-	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_FLAG, true)
-end
-
--- The all-documents box was a development aid and must not compete with the
--- production dynamic-stash distribution. Strip only its lore notes; preserve
--- the container when a player stored unrelated items inside it.
-function impl.retire_lore_test_stashes()
-	if not db.actor then return end
-	local test_stashes = {}
-	for _, object in alife():objects() do
-		if object:section_name() == LORE_TEST_STASH_SECTION then
-			table.insert(test_stashes, object)
-		end
-	end
-	local stripped = 0
-	local retired = 0
-	for _, stash in ipairs(test_stashes) do
-		local note_ids = {}
-		local has_other_items = false
-		for child_id in alife():get_children(stash) do
-			local child = alife():object(child_id, true)
-			if child and lore_note_indexes[child:section_name()] then
-				table.insert(note_ids, child_id)
-			elseif child then
-				has_other_items = true
-			end
-		end
-		for _, child_id in ipairs(note_ids) do
-			local child = alife():object(child_id, true)
-			if child then
-				alife():release(child, true)
-				stripped = stripped + 1
-			end
-		end
-		if level.map_has_object_spot(stash.id, STASH_SPOT) ~= 0 then
-			level.map_remove_object_spot(stash.id, STASH_SPOT)
-		end
-		if not has_other_items then
-			alife():release(stash, true)
-			retired = retired + 1
-		end
-	end
-	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_ID_KEY, -1)
-	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_FLAG, false)
-	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_REVISION_KEY, true)
-	if stripped > 0 or retired > 0 then
-		printf(
-			"lz_new_mechanics: retired lore test stash; stripped [%s] notes, removed [%s] empty boxes",
-			tostring(stripped), tostring(retired)
-		)
-	end
-end
-
--- Adds only missing sections. This upgrades an existing starter stash in
--- place, preserving everything the player has already stored inside it.
-function impl.ensure_start_stash_sections(stash, sections)
-	local present = {}
-	for child_id in alife():get_children(stash) do
-		local child = alife():object(child_id, true)
-		if child then present[child:section_name()] = true end
-	end
-
-	local created = 0
-	for _, section in ipairs(sections) do
-		if not core.get_sysini():section_exist(section) then
-			if not state.missing_start_stash_sections_logged[section] then
-				printf("lz_new_mechanics: optional starter-stash section [%s] is absent; skipped", section)
-				state.missing_start_stash_sections_logged[section] = true
-			end
-		elseif not present[section] and alife():create(section, vector(), 0, 0, stash.id) then
-			created = created + 1
-		end
-	end
-	return created
-end
-
-function impl.ensure_start_stash_section_copies(stash, sections, desired_count)
-	local counts = {}
-	for _, section in ipairs(sections) do counts[section] = 0 end
-	for child_id in alife():get_children(stash) do
-		local child = alife():object(child_id, true)
-		if child then
-			local section = child:section_name()
-			if counts[section] ~= nil then counts[section] = counts[section] + 1 end
-		end
-	end
-
-	local created = 0
-	for _, section in ipairs(sections) do
-		if not core.get_sysini():section_exist(section) then
-			if not state.missing_start_stash_sections_logged[section] then
-				printf("lz_new_mechanics: optional starter-stash section [%s] is absent; skipped", section)
-				state.missing_start_stash_sections_logged[section] = true
-			end
-		else
-			for _ = counts[section] + 1, desired_count do
-				if alife():create(section, vector(), 0, 0, stash.id) then
-					created = created + 1
-				end
-			end
-		end
-	end
-	return created
-end
-
-function impl.ensure_lore_test_stash()
-	local stash = impl.find_lore_test_stash()
-	if not stash then
-		local actor_position = db.actor:position()
-		local direction = db.actor:direction()
-		local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
-		local forward_x = length > 0.001 and direction.x / length or 1
-		local forward_z = length > 0.001 and direction.z / length or 0
-		local right_x = -forward_z
-		local right_z = forward_x
-		local position = vector():set(
-			actor_position.x + forward_x * 2.25 - right_x * 0.9,
-			actor_position.y + 0.2,
-			actor_position.z + forward_z * 2.25 - right_z * 0.9
-		)
-
-		stash = alife():create(
-			LORE_TEST_STASH_SECTION,
-			position,
-			db.actor:level_vertex_id(),
-			db.actor:game_vertex_id()
-		)
-		if not stash then return false end
-		stash.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
-	end
-
-	local created = impl.ensure_start_stash_sections(stash, lore_test_stash_items)
-	created = created + impl.ensure_start_stash_sections(stash, pripyat_city_note_items)
-	impl.mark_lore_test_stash(stash)
-	xr_logic.pstor_store(db.actor, LORE_TEST_STASH_REVISION_KEY, true)
-	printf(
-		"lz_new_mechanics: lore test stash ready; added [%s] missing documents",
-		tostring(created)
-	)
-	return true
-end
-
--- Remove retired or unsupported test items only from the addon starter stash;
--- do not touch matching objects already owned or stored elsewhere.
-local unsupported_start_stash_items = {
-	mutant_part_cat_tail = true,
-	mutant_part_fracture_hand = true,
-	mutant_part_zombi_hand = true,
-	-- The former armor-only kit is removed only from the tracked starter stash.
-	-- Instances already owned by the player remain save-compatible and behave
-	-- exactly like the unified kit through core.canonical_item_section().
-	lz_nm_armor_disassembly_kit = true
-}
-
--- The Kolobok family predates the dedicated artifact QA chest. Remove its
--- legacy copies only from the original starter chest; the cooking runtime
--- keeps one complete branch in the neighboring artifact chest.
-local moved_to_artifact_qa_stash = {
-	af_dummy_kolobok = true,
-	af_kol_1 = true,
-	af_kol_2 = true,
-	af_kol_3 = true,
-	af_kol_4 = true
-}
-
-local RECOVERED_UPGRADE_KEY_PREFIX = "lz_nm_recovered_upgrade_"
-
-local function is_unsupported_start_stash_item(child)
-	local section = child:section_name()
-	if unsupported_start_stash_items[section] then return true end
-	if moved_to_artifact_qa_stash[section] then return true end
-	if section ~= "lz_nm_recovered_upgrade" then return false end
-
-	-- A recovered stock upgrade needs per-object metadata written by the
-	-- disassembly script. Remove only raw QA placeholders; preserve a legitimate
-	-- extracted upgrade even if the player later stores it in this container.
-	local upgrade_id = xr_logic.pstor_retrieve(
-		db.actor, RECOVERED_UPGRADE_KEY_PREFIX .. tostring(child.id), ""
-	)
-	return tostring(upgrade_id or "") == ""
-end
-
-function impl.remove_unsupported_start_stash_items(stash)
-	local remove_ids = {}
-	for child_id in alife():get_children(stash) do
-		local child = alife():object(child_id, true)
-		if child and is_unsupported_start_stash_item(child) then
-			table.insert(remove_ids, child_id)
-		end
-	end
-	for _, child_id in ipairs(remove_ids) do
-		local child = alife():object(child_id, true)
-		if child then alife():release(child, true) end
-	end
-	return #remove_ids
-end
-
-function impl.ensure_start_stash_revision_items(stash)
-	local removed = impl.remove_unsupported_start_stash_items(stash)
-	if removed > 0 then
-		printf("lz_new_mechanics: removed [%s] retired or relocated starter-stash items", tostring(removed))
-	end
-	return impl.ensure_start_stash_sections(stash, start_stash_single_items) +
-		impl.ensure_start_stash_section_copies(stash, start_stash_mechanic_items, 2) +
-		impl.ensure_start_stash_section_copies(
-			stash, start_stash_variant_kits, START_STASH_FIELD_KIT_COUNT
-		)
-end
-
--- Older development builds could create several indistinguishable copies of
--- the new-game stash through a console helper. Keep the tracked legitimate
--- container and remove every extra copy, including its test contents.
-function impl.cleanup_duplicate_start_stashes()
-	if not db.actor then return end
-	local stored_id = tonumber(xr_logic.pstor_retrieve(db.actor, START_STASH_ID_KEY, -1)) or -1
-	local stashes = {}
-	local keep = nil
-	for _, object in alife():objects() do
-		if object:section_name() == "lz_nm_start_stash" then
-			table.insert(stashes, object)
-			if object.id == stored_id then keep = object end
-		end
-	end
-	if not keep then keep = stashes[1] end
-	local removed = 0
-	for _, stash in ipairs(stashes) do
-		if not keep or stash.id ~= keep.id then
-			if level.map_has_object_spot(stash.id, STASH_SPOT) ~= 0 then
-				level.map_remove_object_spot(stash.id, STASH_SPOT)
-			end
-			local children = {}
-			for child_id in alife():get_children(stash) do table.insert(children, child_id) end
-			for _, child_id in ipairs(children) do
-				local child = alife():object(child_id, true)
-				if child then alife():release(child, true) end
-			end
-			alife():release(stash, true)
-			removed = removed + 1
-		end
-	end
-	if keep then impl.mark_start_stash(keep) end
-	if removed > 0 then
-		printf("lz_new_mechanics: removed [%s] obsolete test stashes", tostring(removed))
-	end
-end
-
-function impl.spawn_start_stash(force_new)
-	if not db.actor or not developer_mode_enabled() then return false end
-
-	if not force_new then
-		local existing = impl.find_start_stash()
-		if existing then
-			impl.mark_start_stash(existing)
-			local created = impl.ensure_start_stash_revision_items(existing)
-			impl.retire_lore_test_stashes()
-			xr_logic.pstor_store(db.actor, START_STASH_REVISION_KEY, true)
-			printf("lz_new_mechanics: starter stash upgraded with [%s] revision items", tostring(created))
-			return true
-		end
-	end
-
-	-- The old object may have been lost while its flag remained in the save.
-	-- In that case, create a replacement instead of silently doing nothing.
-	xr_logic.pstor_store(db.actor, START_STASH_ID_KEY, -1)
-	xr_logic.pstor_store(db.actor, START_STASH_FLAG, false)
-
-	local actor_position = db.actor:position()
-	local direction = db.actor:direction()
-	local length = math.sqrt(direction.x * direction.x + direction.z * direction.z)
-	local forward_x = length > 0.001 and direction.x / length or 1
-	local forward_z = length > 0.001 and direction.z / length or 0
-	local right_x = -forward_z
-	local right_z = forward_x
-	local position = vector():set(
-		actor_position.x + forward_x * 2.25 + right_x * 0.75,
-		actor_position.y + 0.2,
-		actor_position.z + forward_z * 2.25 + right_z * 0.75
-	)
-
-	local stash = alife():create(
-		"lz_nm_start_stash",
-		position,
-		db.actor:level_vertex_id(),
-		db.actor:game_vertex_id()
-	)
-	if not stash then return false end
-
-	stash.angle = vector():set(0, math.rad(math.random(0, 359)), 0)
-	local created = 0
-	for _, section in ipairs(start_stash_items) do
-		for _ = 1, 2 do
-			if alife():create(section, vector(), 0, 0, stash.id) then
-				created = created + 1
-			end
-		end
-	end
-	created = created + impl.ensure_start_stash_revision_items(stash)
-
-	impl.mark_start_stash(stash)
-	impl.retire_lore_test_stashes()
-	xr_logic.pstor_store(db.actor, START_STASH_REVISION_KEY, true)
-	core.message("lz_nm_start_stash_ready")
-	printf("lz_new_mechanics: new-game stash created with [%s] items", tostring(created))
-	return true
-end
-
--- Replaces only the invisible end callback of the project's new-game intro.
--- The original setup remains intact and the addon stash is appended afterwards.
+-- Developer startup is owned by pf_dev_loadout. These public names remain
+-- for existing intro/facade callers, without independent timers or issuance.
 function new_game_start()
-	xr_effects.pf_new_game_start()
-	-- Let the new-game inventory synchronizer finish before creating identical
-	-- pairs. The items then form normal stacks without AddSimilar races.
-	state.start_stash_due = developer_mode_enabled() and time_global() + 3000 or nil
-	state.start_stash_force_new = false
-	return scan_owned_mechanics_items()
+    xr_effects.pf_new_game_start()
+    return scan_owned_mechanics_items()
 end
 
 -- QA shortcut: run_string lz_new_mechanics.debug_spawn_lore_test_stash()
 -- The historical name is retained for console compatibility, but the command
--- now gives one copy of every missing note directly to the actor. It never
--- creates the retired all-documents test stash.
+-- requests missing notes in the single startup chest. It never
+-- creates a separate test stash or adds ordinary documents to the actor.
 function debug_spawn_lore_test_stash()
-	if not db.actor then
-		printf("lz_new_mechanics: cannot issue lore test notes without actor")
-		return false
-	end
-
-	local present = {}
-	db.actor:iterate_inventory(function(_, item)
-		local section = item and item:section() or nil
-		if section and lore_encyclopedia_unlocks[section] then present[section] = true end
-	end, db.actor)
-
-	local created = 0
-	local unlocked = 0
-	local unavailable = 0
-	for _, collection in ipairs({ lore_test_stash_items, pripyat_city_note_items }) do
-		for _, section in ipairs(collection) do
-			local available = present[section] == true
-			if not present[section] then
-				if not core.get_sysini():section_exist(section) then
-					unavailable = unavailable + 1
-				elseif alife():create(section, vector(), 0, 0, db.actor:id()) then
-					created = created + 1
-					available = true
-				end
-			end
-			local info = lore_encyclopedia_unlocks[section]
-			if available and info and not db.actor:has_info(info) then
-				db.actor:give_info_portion(info)
-				impl.notify_lore_article(section)
-				unlocked = unlocked + 1
-			end
-		end
-	end
-	printf(
-		"lz_new_mechanics: lore test notes issued to inventory; added [%s], unlocked [%s], unavailable [%s]",
-		tostring(created), tostring(unlocked), tostring(unavailable)
-	)
-	return false
+    local sections = {}
+    for _, collection in ipairs({ lore_test_stash_items, pripyat_city_note_items }) do
+        for _, section in ipairs(collection) do sections[#sections + 1] = section end
+    end
+    return pf_dev_loadout.add_documents(sections)
 end
 
 -- Portable sleeping bag uses the native Call of Pripyat sleep dialog. One
@@ -1145,13 +632,8 @@ function reset_and_migrate_on_load()
 	state.strange_stew_target_slot = nil
 	state.strange_consumable_encounter = nil
 	state.strange_consumable_fallback = nil
-	state.start_stash_due = nil
-	state.start_stash_force_new = false
-	state.start_stash_revision_checked = false
 	state.pending_backpack_deploy = nil
 	state.sleep_was_active = db.actor ~= nil and db.actor:has_info("actor_is_sleeping")
-	impl.cleanup_duplicate_start_stashes()
-	impl.retire_lore_test_stashes()
 	if db.actor and not db.actor:has_info("lz_ghost_city_first_article_notified") and
 		impl.has_lore_encyclopedia_article(lore_test_stash_items) then
 		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
@@ -1165,27 +647,8 @@ function reset_and_migrate_on_load()
 	return scan_owned_mechanics_items()
 end
 
-function schedule_start_stash_on_load()
-	state.start_stash_due = nil
-	if developer_mode_enabled() and level.name() == "pripyat_full" then
-		local stash_was_created = xr_logic.pstor_retrieve(db.actor, START_STASH_FLAG, false)
-		local stash_id = xr_logic.pstor_retrieve(db.actor, START_STASH_ID_KEY, -1)
-		if stash_was_created or (stash_id and stash_id >= 0) then
-			state.start_stash_due = time_global() + 3000
-		end
-	end
-end
-
--- Developer is identified after the first actor update, while this module's
--- regular update may already have completed its one-shot starter check.
-function schedule_developer_start_stash()
-	if not db.actor or not developer_mode_enabled() or level.name() ~= "pripyat_full" then
-		return false
-	end
-	state.start_stash_force_new = false
-	state.start_stash_due = time_global() + 500
-	return true
-end
+function schedule_start_stash_on_load() end
+function schedule_developer_start_stash() return pf_dev_loadout.request() end
 
 function on_game_load()
 	reset_and_migrate_on_load()
@@ -1227,25 +690,7 @@ function update_strange_consumables(now)
 	end
 end
 
-function update_starter_check(now)
-	if state.start_stash_revision_checked then return end
-	state.start_stash_revision_checked = true
-	printf(
-		"lz_new_mechanics: starter check, level=[%s], revision=[%s]",
-		tostring(level.name()),
-		tostring(xr_logic.pstor_retrieve(db.actor, START_STASH_REVISION_KEY, false))
-	)
-	if not developer_mode_enabled() then
-		state.start_stash_due = nil
-		state.start_stash_force_new = false
-		return
-	end
-	if level.name() == "pripyat_full" and
-		not xr_logic.pstor_retrieve(db.actor, START_STASH_REVISION_KEY, false) then
-		state.start_stash_force_new = false
-		state.start_stash_due = now + 500
-	end
-end
+function update_starter_check(now) end
 
 function update_backpacks(now)
 	if state.pending_backpack_deploy and now >= state.pending_backpack_deploy.due then
@@ -1275,16 +720,4 @@ function update_backpacks(now)
 end
 
 function update_start_stash(now)
-	if not state.start_stash_due or now < state.start_stash_due then return end
-	if not developer_mode_enabled() then
-		state.start_stash_due = nil
-		state.start_stash_force_new = false
-		return
-	end
-	if impl.spawn_start_stash(state.start_stash_force_new) then
-		state.start_stash_due = nil
-		state.start_stash_force_new = false
-	else
-		state.start_stash_due = now + 1000
-	end
 end

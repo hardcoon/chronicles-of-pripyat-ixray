@@ -326,9 +326,6 @@ function beacon_on_game_load()
 	if lz_nlc_art_cooking_runtime and lz_nlc_art_cooking_runtime.on_game_load then
 		lz_nlc_art_cooking_runtime.on_game_load()
 	end
-	if lz_nlc_natural_artifacts_qa and lz_nlc_natural_artifacts_qa.on_game_load then
-		lz_nlc_natural_artifacts_qa.on_game_load()
-	end
 	if lz_nlc_art_spawn and lz_nlc_art_spawn.on_game_load then
 		lz_nlc_art_spawn.on_game_load()
 		local colors, scanner_groups = pf_anomaly_scanner.on_game_load(
@@ -367,9 +364,6 @@ function impl.actor_on_update_ordered()
 	-- RegisterScriptCallback registration is not invoked by this build.
 	if lz_nlc_art_cooking_runtime and lz_nlc_art_cooking_runtime.update then
 		lz_nlc_art_cooking_runtime.update(now)
-	end
-	if lz_nlc_natural_artifacts_qa and lz_nlc_natural_artifacts_qa.update then
-		lz_nlc_natural_artifacts_qa.update(now)
 	end
 	if lz_nlc_art_spawn and lz_nlc_art_spawn.update then
 		impl.scanner_events(lz_nlc_art_spawn.update(now))

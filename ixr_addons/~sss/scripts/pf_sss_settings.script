@@ -120,16 +120,16 @@ local schema = {
     {key="lut_table",default=1,min=0,max=3,step=0.01,kind="list",values={0,1,2,3}},
     {key="lut_intensity",default=0,min=0,max=1,step=0.05},
     {key="wind_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="wind"},
-    {key="wind_min",default=0.1,min=0,max=1,step=0.01},
+    {key="wind_min",default=0.3,min=0,max=1,step=0.01},
     {key="wind_grass_speed",default=9.5,min=0,max=20,step=0.01},
     {key="wind_grass_turbulence",default=1.4,min=0,max=4,step=0.01},
     {key="wind_grass_push",default=1.5,min=0,max=4,step=0.01},
     {key="wind_grass_wave",default=0.4,min=0,max=2,step=0.01},
     {key="wind_tree_speed",default=11,min=0,max=20,step=0.01},
     {key="wind_tree_trunk",default=0.15,min=0,max=1,step=0.01},
-    {key="wind_tree_bend",default=0.5,min=0,max=2,step=0.01},
+    {key="wind_tree_bend",default=0.1,min=0,max=2,step=0.01},
     {key="grass_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="grass"},
-    {key="grass_player",default=true,min=0,max=1,step=0.01,kind="check"},
+    {key="grass_player",default=false,min=0,max=1,step=0.01,kind="check"},
     {key="grass_mutants",default=true,min=0,max=1,step=0.01,kind="check"},
     {key="grass_entities",default=8,min=0,max=15,step=0.01,kind="list",values={0,4,8,12,15}},
     {key="grass_distance",default=44.721359549995796,min=10,max=100,step=1},
@@ -212,16 +212,16 @@ local schema = {
     {key="terrain_offset_g",default=0,min=-0.5,max=0.5,step=0.01},
     {key="terrain_offset_b",default=0,min=-0.5,max=0.5,step=0.01},
     {key="terrain_offset_a",default=0,min=-0.5,max=0.5,step=0.01},
-    {key="rain_enabled",default=true,min=0,max=1,step=0.01,kind="check",group="rain"},
-    {key="rain_quality",default=2,min=0,max=2,step=0.01,kind="list",values={0,1,2}},
+    {key="rain_enabled",default=false,min=0,max=1,step=0.01,kind="check",group="rain"},
+    {key="rain_quality",default=0,min=0,max=2,step=0.01,kind="list",values={0,1,2}},
     {key="rain_max_drops",default=2500,min=100,max=10000,step=100},
     {key="rain_radius",default=15,min=5,max=40,step=1},
-    {key="rain_alpha",default=0.8,min=0,max=1,step=0.01},
-    {key="rain_brightness",default=0.3,min=0,max=2,step=0.01},
+    {key="rain_alpha",default=0.1,min=0,max=1,step=0.01},
+    {key="rain_brightness",default=0.2,min=0,max=2,step=0.01},
     {key="rain_refraction",default=1,min=0,max=3,step=0.01},
     {key="rain_reflection",default=1,min=0,max=3,step=0.01},
     {key="rain_length",default=2,min=0.1,max=5,step=0.1},
-    {key="rain_width",default=0.1,min=0.01,max=0.5,step=0.01},
+    {key="rain_width",default=0.05,min=0.01,max=0.5,step=0.01},
     {key="rain_speed",default=0.6,min=0.1,max=2,step=0.01},
     {key="rain_splash_alpha",default=0.5,min=0,max=1,step=0.01},
     {key="rain_splash_refraction",default=1.5,min=0,max=3,step=0.01},
@@ -267,19 +267,41 @@ local schema = {
     {key="wet_drying",default=0.30000001192093,min=0.1,max=10,step=0.1},
     {key="wet_cover_resolution",default=256,min=64,max=2048,step=0.01,kind="list",values={64,128,256,512,1024,2048}},
 }
+schema[#schema+1]={key="fog_scattering_enabled",default=false,kind="check"}
+schema[#schema+1]={key="grass_wind_enabled",default=true,kind="check"}
 local visible = {}
+local tree_wind_keys = {wind_enabled=true,wind_min=true,wind_tree_speed=true,wind_tree_trunk=true,wind_tree_bend=true,wind_grass_speed=true,wind_grass_turbulence=true,wind_grass_push=true,wind_grass_wave=true}
+local grass_keys={grass_wind_enabled=true,grass_enabled=true,grass_player=true,grass_mutants=true,grass_entities=true,grass_distance=true,grass_radius=true,grass_horizontal=true,grass_vertical=true,grass_explosion_strength=true,grass_explosion_speed=true,grass_shooting_strength=true,grass_shooting_radius=true}
 for _, item in ipairs(schema) do
     local key=item.key
-    item.hidden=key:match("^puddles_tint_")~=nil or not (key=="footsteps_enabled" or key=="footsteps_volume" or key:match("^puddles_") or key=="ssr_quality" or key=="ssr_render_scale" or key=="ssr_blur" or key=="ssr_intensity" or key=="ssr_sky" or key=="ssr_temporal" or key=="wet_buildup" or key=="wet_drying")
+    item.hidden=not tree_wind_keys[key] and not grass_keys[key] and (key:match("^puddles_tint_")~=nil or not (key=="footsteps_enabled" or key=="footsteps_volume" or key:match("^puddles_") or key=="ssr_quality" or key=="ssr_render_scale" or key=="ssr_blur" or key=="ssr_intensity" or key=="ssr_sky" or key=="ssr_temporal" or key=="wet_buildup" or key=="wet_drying"))
     item.group=nil
-    if key=="puddles_enabled" then item.group="puddles";item.default=true end
-    if key=="ssr_quality" then item.group="ssr" end
-    if key=="footsteps_enabled" then item.group="footsteps" end
-    if (key:match("_enabled$") and key~="puddles_enabled" and key~="footsteps_enabled") or key=="shadow_sun" or key=="shadow_local" then item.default=false end
+    if key=="grass_wind_enabled" then item.default=true end
+    if key=="grass_anomalies" then item.default=false end
+    if key=="puddles_enabled" or key=="wind_enabled" then item.default=true end
+    if (key:match("_enabled$") and key~="puddles_enabled" and key~="footsteps_enabled" and key~="wind_enabled" and key~="grass_enabled" and key~="grass_wind_enabled") or key=="shadow_sun" or key=="shadow_local" then item.default=false end
 end
--- Puddle controls first, then their reflection controls; no global checkbox.
-for _, item in ipairs(schema) do if item.key:match("^puddles_") then visible[#visible+1]=item end end
-for _, item in ipairs(schema) do if not item.hidden and not item.key:match("^puddles_") then visible[#visible+1]=item end end
+-- Presentation order is independent of the renderer's fixed schema/uniform order.
+for _, group in ipairs({"puddles","ssr","footsteps","wind","grass"}) do
+    local first=true
+    local group_rows=schema
+    if group=="grass" then
+        group_rows={}
+        for _,key in ipairs({"grass_wind_enabled","wind_grass_speed","wind_grass_turbulence","wind_grass_push","wind_grass_wave","grass_enabled","grass_player","grass_mutants","grass_entities","grass_distance","grass_radius","grass_horizontal","grass_vertical","grass_explosion_strength","grass_explosion_speed","grass_shooting_strength","grass_shooting_radius"}) do
+            for _,item in ipairs(schema) do if item.key==key then group_rows[#group_rows+1]=item;break end end
+        end
+    end
+    for _, item in ipairs(group_rows) do
+        local key=item.key
+        local category=key:match("^([^_]+)_")
+        if key=="wet_buildup" or key=="wet_drying" then category="puddles" end
+        if key:match("^wind_grass_") then category="grass" end
+        if not item.hidden and category==group then
+            if first then item.group=group;first=false end
+            visible[#visible+1]=item
+        end
+    end
+end
 for _, item in ipairs(schema) do if item.hidden then visible[#visible+1]=item end end
 function rows() return visible end
 function defaults()
@@ -310,11 +332,12 @@ end
 function impl.normalize(values)
     local result=impl.copy(values)
     for _,item in ipairs(schema)do
-        if item.key:match("_enabled$") and item.key~="puddles_enabled" and item.key~="footsteps_enabled" then result[item.key]=false end
+        if item.key:match("_enabled$") and item.key~="puddles_enabled" and item.key~="footsteps_enabled" and item.key~="wind_enabled" and item.key~="grass_enabled" and item.key~="grass_wind_enabled" then result[item.key]=false end
     end
     result.shadow_sun=false;result.shadow_local=false
-    result.enabled=result.puddles_enabled;result.ssr_enabled=result.puddles_enabled
-    result.water_ice=false
+    result.fog_enabled=false;result.fog_scattering_enabled=false
+    result.enabled=result.puddles_enabled or result.grass_enabled;result.ssr_enabled=result.puddles_enabled
+    result.water_ice=false;result.grass_anomalies=false
     return result
 end
 function impl.path(suffix)
@@ -331,9 +354,11 @@ function get()
                 if key then stored[key] = value end
             end
             file:close()
-            if stored.settings_version == "1" or stored.settings_version == "2" or stored.settings_version == "3" or stored.settings_version == "4" or stored.settings_version == "5" or stored.settings_version == "6" then
+            if stored.settings_version == "1" or stored.settings_version == "2" or stored.settings_version == "3" or stored.settings_version == "4" or stored.settings_version == "5" or stored.settings_version == "6" or stored.settings_version == "7" or stored.settings_version == "8" or stored.settings_version == "9" or stored.settings_version == "10" or stored.settings_version == "11" then
                 for _, item in ipairs(schema) do
                     local text = stored[item.key]
+                    if item.key=="grass_wind_enabled" and stored.settings_version~="11" then text=stored.wind_enabled or "false" end
+                    if item.key=="fog_scattering_enabled" and (stored.settings_version~="7" and stored.settings_version~="8" and stored.settings_version~="9" and stored.settings_version~="10" and stored.settings_version~="11") then text="false" end
                     if stored.settings_version == "1" and not text then
                         -- Valid v1 migrates only newly added fields; old mandatory fields remain strict.
                         for index=21,#schema do
@@ -347,19 +372,36 @@ function get()
                         else values[item.key] = nil end
                     else values[item.key] = tonumber(text) end
                 end
-                if not validate(values) then values = defaults();values.puddles_enabled=false
+                local stored_valid = validate(values)
+                if not stored_valid then values = defaults();values.puddles_enabled=false;values.rain_enabled=false;values.parallax_enabled=false;values.wind_enabled=false;values.grass_wind_enabled=false;values.grass_enabled=false
                 elseif stored.settings_version == "5" then
                     -- v6: permit complete drying and enable the restored rain-step sounds.
                     -- Keep the player's puddle switch, colours, drying speed and reflection settings.
                     values.puddles_min_wetness=0;values.puddles_always=false
                     values.footsteps_enabled=true;values.ssr_sky=0.5
                     state.profile_update_pending=true
-                elseif stored.settings_version ~= "6" then
+                elseif stored.settings_version == "6" or stored.settings_version == "7" or stored.settings_version == "8" then
+                    -- v9: preserve puddle/audio choices and permanently suppress removed modules.
+                    values.parallax_enabled=false
+                    state.profile_update_pending=true
+                elseif stored.settings_version ~= "9" and stored.settings_version ~= "10" and stored.settings_version ~= "11" then
                     -- Preserve OFF and restore the admired puddle profile from its backup.
                     local puddles=values.enabled and values.puddles_enabled
                     values=defaults();values.puddles_enabled=puddles
                     state.profile_update_pending=true
                 end
+                -- v10 restores tree wind only; retain every valid puddle/audio preference.
+                if stored.settings_version ~= "10" and stored.settings_version ~= "11" and stored_valid then
+                    values.wind_enabled=true;values.wind_min=0.3;values.wind_tree_bend=0.1
+                    state.profile_update_pending=true
+                end
+                if stored.settings_version~="11" and stored_valid then
+                    values.grass_enabled=true;values.grass_anomalies=false
+                    state.profile_update_pending=true
+                end
+            else
+                values=defaults();values.puddles_enabled=false;values.wind_enabled=false
+                values.grass_wind_enabled=false;values.grass_enabled=false
             end
         end
         state.values = impl.normalize(values)
@@ -378,8 +420,9 @@ function apply(values)
     local console = get_console()
     console:execute("ssfx_enabled 0")
     for _, item in ipairs(schema) do
-        if item.key ~= "enabled" then
+        if item.key ~= "enabled" and item.key ~= "fog_scattering_enabled" then
             local value = values[item.key]
+            if item.key=="fog_scattering" and not values.fog_scattering_enabled then value=0 end
             if item.key == "footsteps_variation" or item.key == "footsteps_jump" or item.key == "footsteps_land" then
                 -- One volume control also scales random variation and jump/landing splashes.
                 value = math.min(item.max, value * values.footsteps_volume / 0.4)
@@ -398,7 +441,7 @@ function save(values)
     if not valid then return false,why end
     if not available() then return false,"pf_sss_unavailable" end
     values=impl.normalize(values)
-    local lines = {"settings_version=6"}
+    local lines = {"settings_version=11"}
     for _, item in ipairs(schema) do lines[#lines+1] = item.key .. "=" .. tostring(values[item.key]) end
     local target,temp,previous = impl.path(),impl.path(".tmp"),impl.path(".previous")
     local file = io.open(temp,"wb")

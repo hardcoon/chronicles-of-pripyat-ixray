@@ -256,33 +256,7 @@ function impl.reconcile_tool()
 		return state.nondeveloper_checks >= settings.nondeveloper_stability_checks
 	end
 
-	state.nondeveloper_checks = 0
-	if #ids > 0 then
-		local client_item = actor:object(settings.tool_section)
-		local keep_id = client_item and client_item:id() or ids[1]
-		local removed = impl.release_ids(sim, ids, keep_id)
-		state.pending_id = nil
-		if removed > 0 then
-			impl.report(string.format("Removed %d duplicate point logger item(s)", removed), true)
-		end
-		return true
-	end
-
-	if state.pending_id and sim:object(state.pending_id, true) then return false end
-	state.pending_id = nil
-	local ini = system_ini()
-	if not ini or not ini:section_exist(settings.tool_section) then
-		impl.report("Point-logger item section is unavailable; fully restart xrEngine.exe", true)
-		return true
-	end
-	local server_item = sim:create(settings.tool_section, vector(), 0, 0, actor:id())
-	if not server_item then
-		impl.report("Failed to issue the universal point logger", true)
-		return false
-	end
-	state.pending_id = server_item.id
-	impl.report("Universal point logger issued to Developer inventory", true)
-	return false
+	return pf_dev_loadout.request()
 end
 
 function impl.update()
@@ -292,10 +266,8 @@ function impl.update()
 		state.developer = developer
 		state.reconcile_complete = false
 	end
-	-- A regular game stops polling after the fail-closed removal checks. In
-	-- Developer mode inventory must remain under reconciliation because its
-	-- startup preparation and F9 can replace the inventory after the first pass.
-	if state.reconcile_complete and not developer then return end
+	-- Issuance is persistent and one-shot. A dropped tool stays dropped.
+	if state.reconcile_complete then return end
 	local now = time_global()
 	if now < state.next_reconcile then return end
 	state.next_reconcile = now + settings.reconcile_interval_ms
