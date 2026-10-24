@@ -48,6 +48,7 @@ local function start(item_id)
         source_item_id=item_id,source_section=ITEM,bounds=model_bounds(),
         visual="dynamics\\box\\box_wood_01.ogf",
         initial_distance=2,
+        on_copy=function(excluded) return pf_hf_furniture.prepare_copy(OBJECT,excluded) end,
         on_confirm=create_object,on_cancel=function() pending[item_id]=nil end})
     if not ok then
         pending[item_id]=nil

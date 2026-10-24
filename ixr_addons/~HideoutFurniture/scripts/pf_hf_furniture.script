@@ -185,6 +185,31 @@ function create_placed(pose,item_id,world_section)
     return object.id
 end
 
+function prepare_copy(section,excluded_item_id)
+    local entry=definition(section)
+    if not entry or not entry.item or not db.actor or not db.actor:alive() then return nil,"pf_rt_copy_no_item" end
+    local item_id
+    db.actor:iterate_inventory(function(_,item)
+        if item_id or item:id()==excluded_item_id or pending[item:id()] or item:section()~=entry.item then return end
+        local source=simulator_object(item:id())
+        if source and tonumber(source.parent_id)==db.actor:id() and source:section_name()==entry.item then
+            item_id=item:id()
+        end
+    end,db.actor)
+    if not item_id then return nil,"pf_rt_copy_no_item" end
+    pending[item_id]=true
+    return {source_item_id=item_id,source_section=entry.item,
+        on_confirm=function(pose,source_id)
+            local id,err
+            if entry.kind=="workbench" then id,err=pf_hf_workbench.create_placed(pose,source_id)
+            elseif section=="pf_hf_test_crate" then id,err=pf_hf_test_crate.create_object(pose,source_id)
+            else id,err=create_placed(pose,source_id,section) end
+            if id then pending[item_id]=nil end
+            return id,err
+        end,
+        on_cancel=function() pending[item_id]=nil end}
+end
+
 function place_item(item,variant)
     if not item or not db.actor or pf_runtime_editor.is_active() then return false end
     local entry=catalog.by_item[item:section()]
@@ -204,6 +229,7 @@ function place_item(item,variant)
         local ok=pf_runtime_editor.begin({section=entry.object,title=entry.title,
             source_item_id=id,source_section=entry.item,bounds=bounds(entry),visual=entry.visual,
             base_rotation=entry.base_rotation,preview_source=entry.preview_source,initial_distance=2,
+            on_copy=function(excluded) return prepare_copy(entry.object,excluded) end,
             on_confirm=function(pose,source_id) return create_placed(pose,source_id,entry.object) end,
             on_cancel=function() pending[id]=nil end})
         if not ok then pending[id]=nil end
@@ -282,6 +308,7 @@ function edit_placed(id,opening_key)
             preview_source=entry.preview_source,opening_key=opening_key,
             orientation_mode=entry.kind=="workbench" and "local_minus_z_front" or nil,
             initial_pose={position=vector():set(client:position()),rotation=client:get_editor_rotation()},
+            on_copy=function(excluded) return prepare_copy(section,excluded) end,
             on_confirm=function(pose) return apply_edit(pose,id,section) end})
         if not ok then notify("pf_hf_edit_failed") end
     end,function() pending[id]=nil end)

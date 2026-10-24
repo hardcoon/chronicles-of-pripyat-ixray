@@ -16,6 +16,7 @@ local KEY_ADVANCED=DIK_keys.DIK_2
 local KEY_PREVIEW=DIK_keys.DIK_3
 local KEY_DISPLAY=DIK_keys.DIK_Q
 local KEY_AXIS=DIK_keys.DIK_R
+local KEY_COPY=DIK_keys.DIK_X
 local AXIS_LABELS={"pf_rt_axis_vertical","pf_rt_axis_side","pf_rt_axis_side_z"}
 local KEY_ALIGN=DIK_keys.DIK_CAPITAL or DIK_keys.DIK_CAPSLOCK
 local KEY_COLLISION=DIK_keys.DIK_TAB
@@ -59,7 +60,7 @@ end
 local function configured_keys(overrides)
     local result={place=bound_key(key_bindings.kUSE,DIK_keys.DIK_F),move=DIK_keys.MOUSE_1,rotate=DIK_keys.MOUSE_2,
         height=DIK_keys.DIK_LSHIFT,fine=DIK_keys.DIK_LCONTROL,snap=DIK_keys.DIK_LMENU,
-        collision=KEY_COLLISION,align=KEY_ALIGN,simple=KEY_SIMPLE,advanced=KEY_ADVANCED,preview=KEY_PREVIEW,display=KEY_DISPLAY,rotation_axis=KEY_AXIS,cancel=DIK_keys.DIK_ESCAPE}
+        collision=KEY_COLLISION,align=KEY_ALIGN,simple=KEY_SIMPLE,advanced=KEY_ADVANCED,preview=KEY_PREVIEW,display=KEY_DISPLAY,rotation_axis=KEY_AXIS,copy=KEY_COPY,cancel=DIK_keys.DIK_ESCAPE}
     local defaults={};for name,key in pairs(result) do defaults[name]=key end
     local uses_binding=true
     local ini=type(system_ini)=="function" and system_ini() or nil
@@ -95,7 +96,7 @@ function control_labels()
         key_pickup=key_label(interaction.pickup),key_edit=key_label(interaction.edit),
         key_align=key_label(keys.align),key_simple=key_label(keys.simple),key_mode=key_label(keys.advanced),
         key_preview=key_label(keys.preview),key_escape=key_label(keys.cancel),
-        key_display=key_label(keys.display),key_axis=key_label(keys.rotation_axis),
+        key_display=key_label(keys.display),key_axis=key_label(keys.rotation_axis),key_copy=key_label(keys.copy),
         display_mode=game.translate_string("pf_rt_display_"..(session and session.display_mode or default_display)),
         rotation_axis=game.translate_string(AXIS_LABELS[session and session.rotation_axis or 1]),
         key_lmb=key_label(keys.move),key_rmb=key_label(keys.rotate),
@@ -132,6 +133,14 @@ local function source_exists(s)
         (not s.spec.source_section or item:section_name()==s.spec.source_section)
 end
 
+local function restore_source(s)
+    if s.source_visible==nil then return end
+    local object=s.spec.source_object_id and level.object_by_id(s.spec.source_object_id)
+    if object and object:section()==s.spec.section then
+        pcall(function() object:set_render_visible(s.source_visible) end)
+    end
+    s.source_visible=nil
+end
 local function cleanup(reason,confirmed)
     local old=session
     if not old then return false end
@@ -140,12 +149,7 @@ local function cleanup(reason,confirmed)
     if old.controls then pcall(function() old.controls:HideDialog() end) end
     if old.hud then pcall(level.remove_dialog_to_render,old.hud) end
     if old.prefix then pcall(debug_render.clear_owner,old.prefix) end
-    if old.source_visible~=nil then
-        local object=level.object_by_id(old.spec.source_object_id)
-        if object and object:section()==old.spec.section then
-            pcall(function() object:set_render_visible(old.source_visible) end)
-        end
-    end
+    restore_source(old)
     if db.actor and db.actor:id()==old.actor_id and old.saved_slot then
         pcall(function() db.actor:activate_slot(old.saved_slot) end)
     end
@@ -360,9 +364,7 @@ local function update_pose(s,confirming)
     return valid
 end
 
-function confirm()
-    local s=session
-    if not s or s.confirming then return false end
+local function place_current(s)
     if not source_exists(s) then cancel("source_lost");return false end
     if not update_pose(s,true) then
         notify(s.error or "pf_rt_no_surface")
@@ -378,12 +380,22 @@ function confirm()
         if s.hud then s.hud:refresh(s) end
         return false
     end
-    local placed_position=geometry.copy(s.pose.position)
-    cleanup("confirmed",true)
+    return true,id
+end
+local function play_placement(position)
     pcall(function()
         placement_sound=placement_sound or sound_object("interface\\place_object")
-        placement_sound:play_no_feedback(db.actor,sound_object.s3d,0,placed_position,1)
+        placement_sound:play_no_feedback(db.actor,sound_object.s3d,0,position,1)
     end)
+end
+function confirm()
+    local s=session
+    if not s or s.confirming then return false end
+    local ok,id=place_current(s)
+    if not ok then return false end
+    local placed_position=geometry.copy(s.pose.position)
+    cleanup("confirmed",true)
+    play_placement(placed_position)
     return true,id
 end
 
@@ -558,6 +570,53 @@ local function open_controls(s)
     s.controls:ShowDialog(true)
 end
 
+function copy()
+    local s=session
+    if not s or s.state~="ADV_CTRL" or s.confirming or type(s.spec.on_copy)~="function" then return false end
+    if not source_exists(s) then cancel("source_lost");return false end
+    -- Reserve a different inventory item before committing the current preview.
+    -- The adapter owns payment; a missing spare must not place or move anything.
+    local ok,next_spec,err=pcall(s.spec.on_copy,s.spec.source_item_id)
+    if not ok or type(next_spec)~="table" then
+        notify(ok and err or "pf_rt_copy_failed")
+        if not ok then report("copy preparation failed: %s",tostring(next_spec)) end
+        return false
+    end
+    if not next_spec.source_item_id or next_spec.source_item_id==s.spec.source_item_id or
+        type(next_spec.on_confirm)~="function" or
+        not source_exists({actor_id=s.actor_id,spec=next_spec}) then
+        if next_spec.on_cancel then pcall(next_spec.on_cancel,"source_lost") end
+        notify("pf_rt_copy_no_item");return false
+    end
+    finish_direct_drag(s)
+    if s.controller then s.controller:Update() end
+    local placed,id=place_current(s)
+    if not placed then
+        if next_spec.on_cancel then pcall(next_spec.on_cancel,"copy_failed") end
+        return false
+    end
+    local position=geometry.copy(s.pose.position)
+    restore_source(s)
+    -- Continue in the same session/frame: no camera reset or Euler conversion.
+    -- Only the inventory source and transactional callbacks change.
+    local own={}
+    for key,value in pairs(s.spec) do own[key]=value end
+    own.source_object_id=nil
+    own.initial_pose=nil
+    own.source_item_id=next_spec.source_item_id
+    own.source_section=next_spec.source_section
+    own.on_confirm=next_spec.on_confirm
+    own.on_cancel=next_spec.on_cancel
+    s.spec=own
+    s.fixed_frame=s.pose_frame
+    capture_drag_frame(s)
+    if s.controller then s.controller:Reset();read_modifiers(s.controller);s.controller.init=true end
+    update_pose(s,false)
+    play_placement(position)
+    report("copy continued: placed=%s item=%s",tostring(id),tostring(own.source_item_id))
+    return true,id
+end
+
 function handle_input(event,key,action,dx,dy)
     local s=session
     if not s then return false end
@@ -588,6 +647,10 @@ function handle_input(event,key,action,dx,dy)
         return s.controls_shown or false
     end
     if event==4 then return s.controls_shown or false end
+    if key==s.keys.copy then
+        if event==0 and s.state=="ADV_CTRL" then copy() end
+        return true -- Never repeat on hold or leak X to game input in other modes.
+    end
     if key==s.keys.display or key==s.keys.rotation_axis then
         if event==0 then
             if key==s.keys.display then
@@ -702,7 +765,8 @@ function begin(spec)
     end
     if not db.actor or not alife() then return false,"actor_missing" end
     if type(spec)~="table" or type(spec.section)~="string" or spec.section=="" or
-        type(spec.on_confirm)~="function" or (spec.on_cancel and type(spec.on_cancel)~="function") then return false,"bad_spec" end
+        type(spec.on_confirm)~="function" or (spec.on_cancel and type(spec.on_cancel)~="function") or
+        (spec.on_copy and type(spec.on_copy)~="function") then return false,"bad_spec" end
     local b=spec.bounds
     if not b or not geometry.finite(b.min) or not geometry.finite(b.max) or
         b.max.x<=b.min.x or b.max.y<=b.min.y or b.max.z<=b.min.z then return false,"bad_bounds" end

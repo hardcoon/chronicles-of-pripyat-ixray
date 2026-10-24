@@ -120,6 +120,7 @@ local function perform_placement(item_id)
 		visual="dynamics\\placeable\\pf_hf_portable_workbench.ogf",
 		initial_distance=PLACEMENT_DISTANCE,
 		orientation_mode="local_minus_z_front",
+		on_copy=function(excluded) return pf_hf_furniture.prepare_copy(SECTION,excluded) end,
 		on_confirm=create_placed,on_cancel=function() runtime.placing[item_id]=nil end})
 	if not ok then
 		runtime.placing[item_id]=nil
