@@ -81,7 +81,7 @@ local function error_text(code, detail)
     local id = ERROR_TEXT[tostring(code or "")]
     if id then return translated(id) end
     detail = tostring(detail or "")
-    if detail ~= "" then return pf_irc_text_codec.to_ui(detail) end
+    if detail ~= "" then return pf_irc_text_codec.to_ui_literal(detail) end
     return translated("pf_irc_error_connection")
 end
 
@@ -213,7 +213,7 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
     end
     self.time:SetText(has_sender and (show_header and (message.time or "") or "") or (message.time or ""))
     local nick_text = show_header and (message.nick .. ":") or ""
-    self.nick:SetText(pf_irc_text_codec.to_ui(nick_text))
+    self.nick:SetText(pf_irc_text_codec.to_ui_literal(nick_text))
     local body_x = self.body:GetWndPos().x
     local nick_x = self.nick:GetWndPos().x
     local header_y = show_header and math.max(0, tonumber(group_gap) or 0) or 0
@@ -231,9 +231,11 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
     self.body:SetWndPos(vector2():set(body_x, body_y))
     self.body:SetWndSize(vector2():set(body_width, 20))
     local raw_text = tostring(message.text or "")
+    -- Preserve complete numeric/default colors in message bodies. Escape bad
+    -- tags before native forced parsing; nickname fields remain fully literal.
     local needs_icons = pf_irc_emoji.plain_text(raw_text) ~= raw_text
     -- Do not send unsupported Unicode to the engine font, even for one frame.
-    local native_text = pf_irc_text_codec.to_ui(raw_text):gsub("\r\n", "\n"):
+    local native_text = pf_irc_text_codec.to_ui(pf_irc_text_codec.escape_markup(raw_text, true)):gsub("\r\n", "\n"):
         gsub("\r", "\n"):gsub("\n", "\\n")
     self.body:SetText(needs_icons and "" or native_text)
     self.body:AdjustHeightToText()
@@ -266,7 +268,7 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
         local icon_width = (emoji_width or 14) * icon_height / (emoji_height or 14)
         self.rich_renderer = pf_irc_emoji_view.create(self.rich_body, GetFontLetterica16Russian(),
             icon_width, icon_height, line_height)
-        body_height = self.rich_renderer:render(raw_text, body_width, color, { center = is_system })
+        body_height = self.rich_renderer:render(raw_text, body_width, color, { center = is_system, allow_colors = true })
         self.rich_body:SetWndSize(vector2():set(body_width, body_height))
         self:SetWndSize(vector2():set(row_width, body_y + body_height))
     end
@@ -333,7 +335,7 @@ function pf_irc_dialog_row:ApplyConversation(conversation)
         self.unread:GetWndPos().x - self.title:GetWndPos().x - 2) or self.title_width
     self.title:SetWndSize(vector2():set(math.max(1, title_width), 21))
     self.active = conversation.active == true
-    self.title:SetText(pf_irc_text_codec.to_ui(title))
+    self.title:SetText(pf_irc_text_codec.to_ui_literal(title))
     self.unread:SetText(unread > 0 and tostring(math.min(99, unread)) or "")
     self.unread:SetTextColor(GetARGB(255, 225, 165, 70))
     if conversation.public then
@@ -343,7 +345,7 @@ function pf_irc_dialog_row:ApplyConversation(conversation)
         -- Match the participant list's stable colour for this nickname.
         self.title:SetTextColor(nick_color(conversation.nick))
     end
-    self.preview:SetText(pf_irc_text_codec.to_ui(
+    self.preview:SetText(pf_irc_text_codec.to_ui_literal(
         pf_irc_emoji.plain_text(conversation.last_message)))
     self.preview:SetTextColor(unread > 0 and GetARGB(255, 215, 218, 212) or
         GetARGB(255, 165, 172, 170))
@@ -412,7 +414,7 @@ function pf_irc_user_row:ApplyUser(user)
     self.muted = user.muted == true
 
     local prefix = tostring(user.prefix or "")
-    self.nick:SetText(pf_irc_text_codec.to_ui(prefix .. self.user_nick))
+    self.nick:SetText(pf_irc_text_codec.to_ui_literal(prefix .. self.user_nick))
     local presence_color = GetARGB(255, 74, 186, 94)
     if user.presence == "away" then presence_color = GetARGB(255, 215, 155, 65)
     elseif user.presence == "offline" then presence_color = GetARGB(255, 205, 65, 55) end
@@ -469,7 +471,7 @@ function pf_irc_profile_item:__init(profile_name, text_width) super(27)
     text:SetWndPos(vector2():set(8, 0))
     text:SetWndSize(vector2():set(text_width - 12, 27))
     text:SetFont(GetFontLetterica16Russian())
-    text:SetText(pf_irc_text_codec.to_ui(self.profile_name))
+    text:SetText(pf_irc_text_codec.to_ui_literal(self.profile_name))
     self:SetTextColor(GetARGB(255, 195, 198, 192))
     text:SetEllipsis(true)
 end
@@ -1547,10 +1549,10 @@ function pf_irc_chat_tab:RefreshChat(state)
     else self.status_value:SetTextColor(GetARGB(255, 225, 175, 65)) end
     local shown_nick = state.effective_nick ~= "" and state.effective_nick or state.requested_nick
     self.actual_nick:SetText(translated("pf_irc_actual_nick") .. ": " ..
-        pf_irc_text_codec.to_ui(shown_nick or ""))
+        pf_irc_text_codec.to_ui_literal(shown_nick or ""))
     self.topic:SetText((state.topic and state.topic ~= "") and
         (translated("pf_irc_topic") .. ": " ..
-            pf_irc_text_codec.to_ui(pf_irc_emoji.plain_text(state.topic))) or "")
+            pf_irc_text_codec.to_ui_literal(pf_irc_emoji.plain_text(state.topic))) or "")
     -- A state revision can rebuild the rows while the player is browsing the
     -- lower part of either side list. Preserve both native scroll positions so
     -- selecting a dialog or receiving an IRC update does not jump to the top.
@@ -1770,7 +1772,7 @@ end
 function pf_irc_chat_tab:ShowPdaConfirmation(text, action)
     self:HideRightButtonHint()
     self.pending_confirmation_action = action
-    self.pda_confirmation_message:SetText(text or "")
+    self.pda_confirmation_message:SetText(pf_irc_text_codec.escape_markup(text))
     self.pda_confirmation_shade:Show(true)
     self.pda_confirmation_shade:Enable(true)
     self.pda_confirmation_popup:Show(true)

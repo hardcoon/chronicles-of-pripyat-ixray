@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+  <dialog id="pf_irc_npc_talk">
+    <precondition>pf_irc_npcs.allowed</precondition>
+    <phrase_list>
+      <phrase id="0"><text>pf_irc_npc_hello</text><next>1</next><next>3</next><next>13</next><next>11</next><next>9</next></phrase>
+      <phrase id="1"><text>pf_irc_npc_familiar</text><precondition>pf_irc_npcs.can_introduce</precondition><action>pf_irc_npcs.introduce</action><next>2</next></phrase>
+      <phrase id="2"><text>pf_irc_npc_mistaken</text><next>3</next><next>13</next><next>11</next><next>9</next></phrase>
+      <phrase id="3"><text>pf_irc_npc_work</text><precondition>pf_irc_npcs.can_offer</precondition><next>4</next></phrase>
+      <phrase id="4"><text/><script_text>pf_irc_npcs.offer_text</script_text><next>5</next><next>9</next></phrase>
+      <phrase id="5"><text>pf_irc_npc_accept</text><action>pf_irc_npcs.accept</action><action>dialogs.break_dialog</action><is_final>1</is_final></phrase>
+      <phrase id="11"><text>pf_irc_npc_deliver</text><precondition>pf_irc_npcs.can_deliver</precondition><action>pf_irc_npcs.deliver</action><next>12</next></phrase>
+      <phrase id="12"><text/><script_text>pf_irc_npcs.answer_text</script_text><next>9</next></phrase>
+      <phrase id="13"><text>pf_irc_npc_insult</text><next>14</next></phrase>
+      <phrase id="14"><text>pf_irc_npc_insult_reply</text><action>pf_irc_npcs.provoke</action><next>15</next><next>16</next></phrase>
+      <phrase id="15"><text>pf_irc_npc_threat</text><action>pf_irc_npcs.insult</action><is_final>1</is_final></phrase>
+      <phrase id="16"><text>pf_irc_npc_apology</text><action>pf_irc_npcs.apologize</action><action>dialogs.break_dialog</action><is_final>1</is_final></phrase>
+      <phrase id="9"><text>pf_irc_npc_bye</text><action>dialogs.break_dialog</action><is_final>1</is_final></phrase>
+    </phrase_list>
+  </dialog>
+</game_dialogs>

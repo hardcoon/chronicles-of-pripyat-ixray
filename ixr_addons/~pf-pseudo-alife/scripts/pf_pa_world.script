@@ -316,7 +316,7 @@ end
 
 -- Explicit F1 members use the same route/order functions, outside automatic quotas.
 function impl.manual_kind(section)
-    if not section:match("^pf_f1_npc_") and not section:match("^pf_f1_m_") then return end
+    if not section:match("^pf_f1_npc_") and not section:match("^pf_f1_m_") and not section:match("^pf_irc_npc_") then return end
     local ini = system_ini()
     if not ini:line_exist(section, "pf_pa_manual_kind") then return end
     local kind = ini:r_string(section, "pf_pa_manual_kind")
@@ -329,6 +329,8 @@ function impl.register_manual(server, kind, previous, community)
     local key = impl.manual_key(server)
     local record = previous and impl.identity(previous, server) and previous or impl.make_record(server, kind)
     record.manual, record.last_tick, record.online = true, rt.root.clock, server.online
+    record.irc = server:section_name():match("^pf_irc_npc_") ~= nil
+    if record.irc then record.nick = record.nick or server:character_name() end
     record.command, record.activity, record.progress, record.progress_at = nil, nil, nil, nil
     record.route_requested_at, record.quest_controlled = nil, nil
     record.rest_until = math.min(record.rest_until or rt.root.clock, rt.root.clock)
@@ -420,6 +422,82 @@ function spawn_manual(request)
         return nil, "pf_f1_status_create_failed"
     end
     return server
+end
+
+-- IRC residents use the roaming controller but never occupy automatic slots.
+-- This registry belongs to the save, rather than the shared IRC statistics log.
+function irc_ready()
+    return rt.initialized == true and not rt.failed
+end
+function irc_records()
+    return rt.root and rt.root.irc or {}
+end
+function irc_alive(record)
+    local server = record and alife() and alife():object(record.id)
+    return record ~= nil and impl.identity(record, server) and server:alive() or false
+end
+function irc_nick_valid(nick)
+    -- Deliberately use the same conservative ASCII/30-byte envelope as our
+    -- IRC client's own nickname entry. A remote server's NICKLEN is not a
+    -- guarantee of what may arrive, nor a native NPC/UI safety check.
+    if type(nick) ~= "string" or #nick == 0 or #nick > 30 then return false end
+    if not nick:match("^[A-Za-z%[%]\\`_^{|}][A-Za-z0-9%-%[%]\\`_^{|}]*$") then return false end
+    -- Backslash-n is legal IRC text but CUILines interprets it as a newline.
+    if nick:find("\\n", 1, true) then return false end
+    -- TranslateName and several native widgets treat a name as a string-table
+    -- key. Reject a collision instead of giving an NPC translated UI markup or
+    -- a potentially huge description. Never repair/truncate an unsafe name.
+    if not game or type(game.translate_string) ~= "function" then return false end
+    local ok, literal = pcall(game.translate_string, nick)
+    return ok and literal == nick
+end
+function spawn_irc(identity, nick, rank, irc_nick)
+    if not irc_ready() or not db.actor or not db.actor:alive() then return nil, "not_ready" end
+    if not rt.overrides or rt.overrides.irc_npcs ~= true then return nil, "disabled" end
+    if type(identity) ~= "string" or not identity:match("^install:%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
+        return nil, "identity"
+    end
+    if identity:lower() == "install:00000000-0000-0000-0000-000000000000" then return nil, "identity" end
+    if not irc_nick_valid(nick) or (irc_nick ~= nil and irc_nick ~= nick) then return nil, "nick" end
+    if type(rank) ~= "number" or rank ~= rank or rank < 0 or rank > 9007199254740991 or rank ~= math.floor(rank) then
+        return nil, "rank"
+    end
+    identity = identity:lower()
+    local previous = rt.root.irc[identity]
+    if irc_alive(previous) then return nil, "alive" end
+    -- Set for every resident alive at load and every successful spawn. Neither
+    -- IRC reconnects nor toggling the setting can refill a death in this session.
+    if rt.irc_used[identity] then return nil, "next_load" end
+    local tier = rank <= 500 and "novice" or rank <= 1500 and "stalker" or rank <= 2000 and "veteran" or "master"
+    local section = "pf_irc_npc_" .. tier
+    if not system_ini():section_exist(section) then return nil, "section" end
+    local actor_position = db.actor:position()
+    local p, lv, gv = impl.candidate(actor_position)
+    local safe = math.max(rt.cfg.safe_distance, (rt.overrides.switch_distance or 150) * 1.1 + 20)
+    if not p or impl.distance2(p, actor_position) < safe * safe then return nil, "placement" end
+    local server = alife():create(section, p, lv, gv)
+    if not server then return nil, "create" end
+    local ok, failure = pcall(function()
+        assert(server.group_id == 65535 and server:community() == "stalker", "IRC resident faction/squad mismatch")
+        if tier == "master" then
+            assert(server:set_visual("actors\\stalker_neutral\\stalker_neutral_4") == true, "IRC exoskeleton rejected")
+        end
+        server:set_character_name(nick)
+        assert(server:character_name() == nick, "IRC nickname was not preserved by the engine")
+        impl.register_manual(server, "s", nil, "stalker")
+    end)
+    if not ok then
+        rt.root.manual[impl.manual_key(server)] = nil
+        rt.manual_dirty = true
+        alife():release(server, true)
+        impl.log("IRC spawn rolled back: " .. tostring(failure))
+        return nil, "create"
+    end
+    local record = {id = server.id, name = server:name(), section = section, nick = nick,
+        identity = identity, rank = rank, tier = tier, life = previous and (previous.life or 1) + 1 or 1}
+    rt.root.irc[identity], rt.irc_used[identity] = record, true
+    impl.log("IRC resident spawned: " .. identity .. " / " .. nick .. " / " .. tier)
+    return record
 end
 
 function impl.group(record)
@@ -716,6 +794,10 @@ function impl.init(now)
     rt.root = rt.pending or {version = VERSION, seed = 426100100, clock = 0, slots = {}}
     rt.pending = nil
     rt.root.manual = rt.root.manual or {}
+    rt.root.irc, rt.irc_used = rt.root.irc or {}, {}
+    for identity, record in pairs(rt.root.irc) do
+        if irc_alive(record) then rt.irc_used[identity] = true end
+    end
     rt.manual_revision, rt.manual_dirty = 0, true
     assert(rt.root.version == VERSION and type(rt.root.slots) == "table", "unsupported population save version")
     rt.root.clock = rt.root.clock or 0
@@ -784,9 +866,11 @@ function impl.candidate(actor_position)
     if not level.valid_vertex_id(lv) or lv == anchor.lv then return nil end
     local p = level.vertex_position(lv)
     if impl.distance2(p, actor_position) < rt.cfg.safe_distance ^ 2 then return nil end
-    for _, record in pairs(rt.root.slots) do
-        local server = alife():object(record.id)
-        if impl.identity(record, server) and impl.distance2(p, server.position) < rt.cfg.spacing ^ 2 then return nil end
+    for _, records in ipairs({rt.root.slots, rt.root.manual}) do
+        for _, record in pairs(records) do
+            local server = alife():object(record.id)
+            if impl.identity(record, server) and impl.distance2(p, server.position) < rt.cfg.spacing ^ 2 then return nil end
+        end
     end
     local cell = impl.cross_cell(lv)
     if not cell or not game_graph():accessible(cell.gv) then return nil end
@@ -1420,7 +1504,7 @@ function impl.process(key, actor_position, records)
     end
     local elapsed = math.max(0, rt.root.clock - (record.last_tick or rt.root.clock))
     record.last_tick = rt.root.clock
-    if rt.root.draining or (not server:alive() and not impl.target_enabled(key)) then
+    if (rt.root.draining and not record.irc) or (not server:alive() and not impl.target_enabled(key)) then
         if not server:alive() then impl.corpse_loot(record, server) end
         if impl.release_owned(record, server, actor_position) then rt.root.slots[key] = nil; rt.plan_dirty = true end
         return
@@ -1609,7 +1693,8 @@ function debug_objects()
         local server = alife():object(record.id)
         if impl.identity(record, server) and server:alive() then
             result[#result + 1] = {id = record.id, kind = record.kind, section = record.section,
-                group = key, faction = record.faction, species = record.species, count = 1, online = server.online == true}
+                group = key, faction = record.faction, species = record.species, count = 1, online = server.online == true,
+                irc = record.irc, nick = record.nick}
         end
     end
     for _, object in ipairs(result) do object.count = counts[object.group] or 1 end

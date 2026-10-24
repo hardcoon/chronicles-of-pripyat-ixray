@@ -48,7 +48,7 @@ function renderer:measure(text)
     if text == "" then return 0 end
     local cached = self.measure_cache[text]
     if cached then return cached end
-    self.measure_widget:SetText(pf_irc_text_codec.to_ui(text))
+    self.measure_widget:SetText(pf_irc_text_codec.to_ui_literal(text))
     self.measure_widget:AdjustWidthToText()
     local width = math.max(0, self.measure_widget:GetWidth())
     -- Bound caches per renderer. Input contents can change for hours, whereas
@@ -62,23 +62,26 @@ function renderer:measure(text)
     return width
 end
 
-local function make_units(text)
+local function make_units(text, color)
     local units = {}
-    for _, token in ipairs(pf_irc_emoji.tokenize(text)) do
+    local runs = color ~= nil and pf_irc_text_codec.color_runs(text, color) or {{text=text}}
+    for _, run in ipairs(runs) do
+    for _, token in ipairs(pf_irc_emoji.tokenize(run.text)) do
         if token.emoji then
-            units[#units + 1] = { emoji = token.emoji }
+            units[#units + 1] = { emoji = token.emoji, color = run.color }
         elseif token.raw and token.text ~= token.raw and token.units == 1 then
             -- An unsupported emoji sequence is one editing unit, even though
             -- its safe native-font fallback is several printable characters.
-            units[#units + 1] = { text = token.text }
+            units[#units + 1] = { text = token.text, color = run.color }
         else
             local offsets, count = pf_irc_emoji.offsets(token.text or "")
             for index = 1, count do
                 units[#units + 1] = {
-                    text = token.text:sub(offsets[index], offsets[index + 1] - 1)
+                    text = token.text:sub(offsets[index], offsets[index + 1] - 1), color = run.color
                 }
             end
         end
+    end
     end
     return units
 end
@@ -92,7 +95,7 @@ end
 function renderer:added_width(line, unit)
     if unit.emoji then return unit.width or self.icon_width end
     local last = line.items[#line.items]
-    if last and not last.emoji then
+    if last and not last.emoji and last.color == unit.color then
         return self:measure(last.text .. unit.text) - last.width
     end
     return self:measure(unit.text)
@@ -101,13 +104,14 @@ end
 function renderer:add_unit(line, unit)
     local extra = self:added_width(line, unit)
     local last = line.items[#line.items]
-    if not unit.emoji and last and not last.emoji then
+    if not unit.emoji and last and not last.emoji and last.color == unit.color then
         last.text = last.text .. unit.text
         last.width = last.width + extra
     else
         line.items[#line.items + 1] = {
             text = unit.text,
             emoji = unit.emoji,
+            color = unit.color,
             width = extra
         }
     end
@@ -192,7 +196,7 @@ function renderer:multiline(units, width)
             lines[#lines + 1] = line
             index = index + 1
         elseif unit_space(unit) then
-            local space = { text = unit.text == "\t" and "    " or " " }
+            local space = { text = unit.text == "\t" and "    " or " ", color = unit.color }
             if #line.items > 0 and line.width + self:added_width(line, space) <= width then
                 self:add_unit(line, space)
             end
@@ -283,8 +287,8 @@ function renderer:draw_layout(lines, width, color, centered, single_line)
             else
                 text_count = text_count + 1
                 local widget = self:get_text(text_count)
-                widget:SetText(pf_irc_text_codec.to_ui(item.text))
-                widget:SetTextColor(color)
+                widget:SetText(pf_irc_text_codec.to_ui_literal(item.text))
+                widget:SetTextColor(item.color or color)
                 widget:SetWndPos(vector2():set(x, y))
                 widget:SetWndSize(vector2():set(item.width, row_height))
                 widget:Show(true)
@@ -307,14 +311,16 @@ function renderer:render(raw_text, width, color, options)
     local center = options.center == true
     local single = options.single_line == true
     local selected = options.select_all == true
+    local allow_colors = options.allow_colors == true and not single
     if self.last_text == raw_text and self.last_width == width and
         self.last_color == color and self.last_center == center and
         self.last_single == single and self.last_caret == options.caret and
-        self.last_selected == selected then return self.height end
+        self.last_selected == selected and self.last_allow_colors == allow_colors then return self.height end
     self.last_text, self.last_width, self.last_color = raw_text, width, color
     self.last_center, self.last_single, self.last_caret = center, single, options.caret
     self.last_selected = selected
-    local units = make_units(raw_text)
+    self.last_allow_colors = allow_colors
+    local units = make_units(raw_text, allow_colors and color or nil)
     -- Leave a subpixel margin for fractional font metrics at the right edge.
     local content_width = math.max(0, width - 0.5)
     local lines

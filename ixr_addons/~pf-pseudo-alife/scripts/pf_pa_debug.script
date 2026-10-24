@@ -36,6 +36,10 @@ function refresh(objects)
         local hint = game.translate_string("pf_pa_debug_" .. (object.online and "online" or "offline"))
             .. " / " .. game.translate_string("pf_pa_debug_" .. name)
             .. " / " .. game.translate_string("pf_pa_debug_count") .. ": " .. tostring(object.count or 1)
+        if object.irc then
+            hint = "IRC: " .. tostring(object.nick or object.section) .. " / "
+                .. game.translate_string("pf_pa_debug_" .. (object.online and "online" or "offline"))
+        end
         if level.map_has_object_spot(object.id, spot) == 0 then
             level.map_add_object_spot(object.id, spot, hint)
         elseif state.hints[object.id] ~= hint then

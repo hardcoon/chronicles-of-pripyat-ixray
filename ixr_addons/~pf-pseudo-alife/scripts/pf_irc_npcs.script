@@ -1,0 +1,99 @@
+-- Independent IRC population facade. The world leaf owns saved residents and
+-- navigation; the jobs leaf owns dialogue and the lifetime of fetch tasks.
+local registered = false
+local st = {next_update = 0, cursor = 1, rows = {}}
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", on_load)
+    RegisterScriptCallback("save_state", on_save_state)
+    RegisterScriptCallback("load_state", on_load_state)
+    registered = true
+end
+
+function on_load()
+    st.next_update, st.cursor, st.rows, st.revision, st.rewards = 0, 1, {}, nil, nil
+    pf_irc_npc_jobs.reset()
+end
+function on_save_state(data) pf_irc_npc_jobs.save(data) end
+function on_load_state(data) pf_irc_npc_jobs.load(data) end
+
+-- Console: run_string pf_irc_npcs.mark(true) / mark(false).
+-- Same mechanism as the existing A-Life DEBUG checkbox, including offline
+-- residents and their frozen nicknames. No independent marker toggle exists.
+function mark(enabled)
+    local shown = pf_pa_debug.set_enabled(enabled)
+    if shown then pf_pa_debug.refresh(pf_pa_world.debug_objects()) end
+    return shown
+end
+
+function update()
+    local now = time_global()
+    if now < st.next_update or not db.actor or not alife() then return end
+    st.next_update = now + 1000
+    if not pf_pa_world.irc_ready() then return end
+    if not st.rewards then
+        local natural, seen = {}, {}
+        for _, family in ipairs({"psi", "electric", "chemical", "gravitational", "thermal"}) do
+            for class = 1, 4 do
+                for _, section in ipairs(lz_nlc_art_spawn_config.family_pool(family, class).sections) do
+                    if not seen[section] then natural[#natural + 1], seen[section] = section, true end
+                end
+            end
+        end
+        -- Natural classes I-IV are distinct from technical af_rank and from
+        -- the cooking registry's tiers: 2 = modificat, 4 = hypermodificat.
+        pf_irc_npc_jobs.configure_rewards({stalker = natural,
+            veteran = lz_nlc_anomaly_registry.artifacts_for_tier(2),
+            master = lz_nlc_anomaly_registry.artifacts_for_tier(4)})
+        st.rewards = true
+    end
+    pf_irc_npc_jobs.update()
+    if pf_pa_options.get().irc_npcs ~= true then st.rows = {}; st.revision = nil; return end
+    if not getFS():exist("$game_scripts$", "pf_irc_chat.script") then return end
+    local status = pf_irc_chat.get_state()
+    if not status.authorized or not status.any_channel_ready then
+        st.rows, st.revision = {}, nil
+        return
+    end
+    local revision = pf_pda_player_stats.revision()
+    if revision ~= st.revision then
+        -- Only currently connected peers with real CP2 statistics. Cached
+        -- offline entries, our own card and data-less IRC clients never spawn.
+        st.rows = pf_pda_player_stats.get_rows({online_only = true})
+        st.revision = revision
+        st.cursor = #st.rows > 0 and ((st.cursor - 1) % #st.rows + 1) or 1
+    end
+    for _ = 1, math.min(16, #st.rows) do
+        local row = st.rows[st.cursor]
+        st.cursor = st.cursor % #st.rows + 1
+        if not row.own and pf_player_stats_cache.has_copid(row.identity)
+            and (row.presence == "online" or row.presence == "away") and row.rank ~= nil then
+            local record, reason = pf_pa_world.spawn_irc(row.identity, row.nick, row.rank, row.irc_nick)
+            if record then
+                break -- At most one creation per second, spread across the map.
+            end
+            if reason == "placement" or reason == "create" then break end
+        end
+    end
+end
+
+function allowed(...) return pf_irc_npc_jobs.allowed(...) end
+function can_introduce(...) return pf_irc_npc_jobs.can_introduce(...) end
+function introduce(...) return pf_irc_npc_jobs.introduce(...) end
+function can_offer(...) return pf_irc_npc_jobs.can_offer(...) end
+function active(...) return pf_irc_npc_jobs.active(...) end
+function can_deliver(...) return pf_irc_npc_jobs.can_deliver(...) end
+function accept(...) return pf_irc_npc_jobs.accept(...) end
+function deliver(...) return pf_irc_npc_jobs.deliver(...) end
+function answer_text(...) return pf_irc_npc_jobs.answer_text(...) end
+function offer_text(...) return pf_irc_npc_jobs.offer_text(...) end
+function waiting_text(...) return pf_irc_npc_jobs.waiting_text(...) end
+function insult(...) return pf_irc_npc_jobs.insult(...) end
+function provoke(...) return pf_irc_npc_jobs.provoke(...) end
+function apologize(...) return pf_irc_npc_jobs.apologize(...) end
+function reaction(...) return pf_irc_npc_jobs.reaction(...) end
+function configure_npc(...) return pf_irc_npc_jobs.configure_npc(...) end
+
+on_game_start()

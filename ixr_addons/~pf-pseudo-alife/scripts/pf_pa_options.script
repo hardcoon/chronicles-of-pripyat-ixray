@@ -3,6 +3,7 @@ local impl = {}
 local st = {revision = 0}
 local schema = {
     {key="enabled", kind="check", default=false, side="global"},
+    {key="irc_npcs", kind="check", default=true, side="global"},
     {key="debug_map", kind="check", default=false, side="global"},
     {key="switch_distance", kind="track", default=150, min=50, max=1500, side="global"},
     {key="respawn_hours", kind="float", default=72, side="global"},

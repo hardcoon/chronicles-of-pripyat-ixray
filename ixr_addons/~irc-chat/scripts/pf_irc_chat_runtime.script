@@ -298,10 +298,10 @@ local function notify_chat_message(source, nick, text, private_priority, convers
     end
     if show_notification then
         pcall(function()
-            local title = trim(source)
-            local body = "%c[255,210,165,85]" .. trim(nick) ..
+            local title = pf_irc_text_codec.escape_markup(trim(source))
+            local body = "%c[255,210,165,85]" .. pf_irc_text_codec.escape_markup(trim(nick)) ..
                 ":%c[255,228,215,200] " ..
-                pf_irc_emoji.plain_text(text)
+                pf_irc_text_codec.escape_markup(pf_irc_emoji.plain_text(text), true)
             local icon = private_priority and "pf_irc_private_notification" or
                 "pf_irc_message_notification"
             db.actor:give_game_news(pf_irc_text_codec.to_ui(title),

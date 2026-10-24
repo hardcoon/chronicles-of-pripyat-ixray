@@ -1,0 +1,466 @@
+-- One fetch job per actual NPC life. COPID and IRC presence do not participate
+-- in eligibility, delivery or payment. The facade owns all engine callbacks.
+local KEY = "pf_irc_npc_jobs_v1"
+local PSTOR = "pf_irc_npc_job"
+local impl = {}
+local st = {pending = nil}
+local rules = {novice = {count = 2, money = 1200}, stalker = {count = 5, money = 3000},
+    veteran = {count = 10, money = 6000}, master = {count = 30, money = 18000}}
+
+function impl.trace(format, ...)
+    local message = string.format(format, ...)
+    printf("%s", message)
+    if not getFS then return end
+    local path = getFS():update_path("$app_data_root$", "logs\\pf_irc_npcs.log")
+    local file = io.open(path, "ab")
+    if file then file:write(tostring(time_global()), " ", message, "\r\n"); file:close() end
+end
+
+function configure_rewards(pools)
+    st.pools = {}
+    for tier, pool in pairs(pools) do
+        local result, seen = {}, {}
+        for _, section in ipairs(pool) do
+            if not seen[section] and system_ini():section_exist(section) then
+                result[#result + 1], seen[section] = section, true
+            end
+        end
+        table.sort(result)
+        st.pools[tier] = result
+    end
+end
+
+function impl.init()
+    if st.root then return end
+    st.root = st.pending or {version = 1, serial = 0, jobs = {}}
+    st.root.hostiles = st.root.hostiles or {}
+    st.pending, st.runtime, st.keys, st.cursor = nil, {}, nil, 1
+    alife_storage_manager.get_state()[KEY] = st.root
+end
+function reset()
+    st = {pending = st.pending}
+end
+function load(data)
+    st = {pending = data and data[KEY]}
+end
+function save(data)
+    if st.root then data[KEY] = st.root
+    elseif st.pending then data[KEY] = st.pending end
+end
+
+function impl.npc(first, second)
+    for _, object in pairs({first, second}) do
+        local kind = type(object)
+        if (kind == "userdata" or kind == "table") and object:section():match("^pf_irc_npc_") then return object end
+    end
+end
+function allowed(first, second)
+    local npc = impl.npc(first, second)
+    return npc ~= nil and db.actor ~= nil and db.actor:alive() and npc:alive()
+        and db.storage[npc:id()] ~= nil and npc:relation(db.actor) ~= game_object.enemy
+end
+function can_introduce(first, second)
+    return allowed(first, second) and not xr_logic.pstor_retrieve(impl.npc(first, second), "pf_irc_npc_introduced", false)
+end
+function introduce(first, second)
+    if not can_introduce(first, second) then return false end
+    xr_logic.pstor_store(impl.npc(first, second), "pf_irc_npc_introduced", true)
+    return true
+end
+function impl.personal_enemy(from, to)
+    -- ForceSetGoodwill cancels community bonuses only. Native enemy selection
+    -- also adds rank/reputation, so a red mark in the opposite direction is
+    -- insufficient. Cancel the remaining bonus using the real native total.
+    local threshold = system_ini():r_s32("game_relations", "attitude_neutal_threshold")
+    from:force_set_goodwill(0, to)
+    from:force_set_goodwill(threshold - 1000 - from:general_goodwill(to), to)
+end
+function impl.hostile(npc)
+    -- Native ATTACK/KILL distribute personal goodwill to the victim's native
+    -- group, and sympathy distributes a second penalty to its community.
+    -- Keep the stalker community but isolate this individual in a singleton
+    -- native group. Reserve teams 56..63 and encode the 16-bit object ID within
+    -- the native limits: team < 64, squad < 256, group < 32.
+    local id = npc:id()
+    npc:change_team(56 + math.floor(id / 8192), math.floor(id / 32) % 256, id % 32)
+    npc:set_sympathy(0)
+    impl.personal_enemy(npc, db.actor)
+    impl.personal_enemy(db.actor, npc)
+end
+function impl.combat_memory(npc, immediate)
+    npc:enable_vision(true)
+    npc:register_in_combat()
+    npc:disable_talk()
+    if immediate or npc:see(db.actor) then
+        npc:make_object_visible_somewhen(db.actor)
+        npc:enable_memory_object(db.actor, true)
+    end
+end
+function impl.release_pose(npc)
+    local storage = db.storage[npc:id()]
+    local manager = storage and storage.state_mgr
+    if not manager then return end
+    -- Match the stock reset_animation handoff. Leaving target_state="threat"
+    -- or a locked talk animation blocks state_mgr_idle_combat, which is a
+    -- prerequisite of the native combat planner even with a selected enemy.
+    npc:clear_animations()
+    manager.animation:set_state(nil, true)
+    manager.animation:set_control()
+    manager.animstate:set_state(nil, true)
+    manager.animstate:set_control()
+    manager:set_state("idle", nil, nil, nil, {fast_set = true})
+    for _ = 1, 7 do manager:update() end
+end
+function impl.pose(npc, state)
+    local storage = db.storage[npc:id()]
+    if storage and storage.state_mgr then
+        state_mgr.set_state(npc, state, nil, nil, {look_object = db.actor}, {fast_set = true})
+    end
+end
+function impl.ready_weapon(npc)
+    impl.pose(npc, "threat")
+    npc:set_mental_state(anim.danger)
+    npc:set_sight(db.actor, true, true)
+    local weapon = npc:best_weapon()
+    if weapon then npc:set_item(object.aim1, weapon) end
+end
+function impl.end_provoke(npc, calm)
+    local storage = db.storage[npc:id()]
+    if storage and storage.pf_irc_npc_provoked then
+        if storage.meet then storage.meet.close_anim = storage.pf_irc_npc_provoke_anim end
+        storage.pf_irc_npc_provoke_anim, storage.pf_irc_npc_provoked = nil, nil
+        if calm and npc:alive() then impl.pose(npc, "guard_na") end
+    end
+    if st.provoked and st.provoked.id == npc:id() and st.provoked.name == npc:name() then st.provoked = nil end
+end
+function provoke(first, second)
+    if not allowed(first, second) then return false end
+    local npc = impl.npc(first, second)
+    local storage = db.storage[npc:id()]
+    -- The first rude line is still a conversation. Keep the job and relations;
+    -- the NPC draws its weapon but the player can de-escalate with an apology.
+    if not storage.pf_irc_npc_provoked then
+        if storage.meet then
+            storage.pf_irc_npc_provoke_anim = storage.meet.close_anim
+            storage.meet.close_anim = xr_logic.parse_condlist(npc, "pf_irc_npcs", "close_anim", "threat")
+        end
+        storage.pf_irc_npc_provoked = true
+    end
+    st.provoked = {id = npc:id(), name = npc:name()}
+    impl.ready_weapon(npc)
+    return true
+end
+function apologize(first, second)
+    if not allowed(first, second) then return false end
+    impl.end_provoke(impl.npc(first, second), true)
+    return true
+end
+function reaction(npc)
+    local storage = db.storage[npc:id()]
+    if not storage or not db.actor or not db.actor:alive() or not npc:alive() then return false end
+    if npc:best_enemy() then
+        storage.pf_irc_npc_aggression_until = nil
+        return false
+    end
+    if not storage.pf_irc_npc_provoked and time_global() >= (storage.pf_irc_npc_aggression_until or 0) then
+        storage.pf_irc_npc_aggression_until = nil
+        return false
+    end
+    -- Only the warning is a scripted threat pose. After the actual threat,
+    -- preserve the idle handoff required by native combat, not a peaceful pose.
+    impl.pose(npc, storage.pf_irc_npc_provoked and "threat" or "idle")
+    return true
+end
+function impl.start_combat(npc)
+    local storage = db.storage[npc:id()]
+    if storage then
+        storage.pf_pa_command = nil
+        storage.pf_irc_npc_aggression_until = time_global() + 3000
+        storage.pf_irc_npc_check_at = time_global() + 1000
+        if storage.meet then
+            storage.meet.meet_on_talking = false
+            if storage.meet.meet_manager then
+                storage.meet.meet_manager.current_distance = nil
+                storage.meet.meet_manager.use = "false"
+            end
+        end
+    end
+    if npc:is_talking() then npc:stop_talk() end
+    impl.release_pose(npc)
+    impl.combat_memory(npc, true)
+    npc:set_mental_state(anim.danger)
+    npc:set_sight(db.actor, true, true)
+    local weapon = npc:best_weapon()
+    if weapon then npc:set_item(object.aim1, weapon) end
+end
+function configure_npc(npc)
+    if not impl.npc(npc) then return end
+    local storage = db.storage[npc:id()]
+    if not storage then return end
+    local meet = storage.meet
+    if meet and type(meet.meet_on_talking) == "table" then
+        meet.meet_on_talking = xr_logic.pick_section_from_condlist(db.actor, npc, meet.meet_on_talking) == "true"
+    end
+    if storage.wounded then
+        storage.wounded.enable_talk = true
+        storage.wounded.help_dialog, storage.wounded.help_start_dialog = "pf_irc_npc_talk", "pf_irc_npc_talk"
+    end
+    npc:set_start_dialog("pf_irc_npc_talk")
+    npc:disable_trade()
+    local tier = impl.tier(npc)
+    if st.pools then impl.reward(npc, tier, st.pools[tier]) end
+    if db.actor and npc:alive() and xr_logic.pstor_retrieve(npc, "pf_irc_npc_hostile", false) then
+        impl.hostile(npc)
+        impl.combat_memory(npc, false)
+    end
+end
+function impl.value(npc)
+    return npc and xr_logic.pstor_retrieve(npc, PSTOR, "") or ""
+end
+function impl.tier(npc)
+    return npc and npc:section():match("^pf_irc_npc_(%a+)$")
+end
+function impl.rule(npc)
+    return rules[impl.tier(npc)]
+end
+function impl.reward(npc, tier, pool)
+    if tier == "novice" or not pool or #pool == 0 then return end
+    local cached = xr_logic.pstor_retrieve(npc, "pf_irc_npc_reward", "")
+    if cached ~= "" and system_ini():section_exist(cached) then return cached end
+    -- Private, stable draw for this actual NPC life. Saving before acceptance
+    -- or delivery cannot reroll it, even before the pstor cache first exists.
+    -- Nickname, task serial and global math.random do not participate.
+    local seed = 4261024
+    local key = npc:name() .. ":" .. npc:id() .. ":" .. npc:section()
+    for i = 1, #key do seed = (seed * 31 + string.byte(key, i)) % 2147483647 end
+    seed = math.max(1, seed) * 16807 % 2147483647
+    local reward = pool[seed % #pool + 1]
+    xr_logic.pstor_store(npc, "pf_irc_npc_reward", reward)
+    return reward
+end
+function impl.job(npc)
+    if not npc then return end
+    impl.init()
+    local id = xr_logic.pstor_retrieve(npc, PSTOR .. "_task", "")
+    local job = st.root.jobs[id]
+    if job and job.id == npc:id() and job.name == npc:name() and job.section == npc:section() then return job end
+end
+function can_offer(first, second)
+    if not allowed(first, second) then return false end
+    local npc = impl.npc(first, second)
+    local tier = impl.tier(npc)
+    local pool = st.pools and st.pools[tier]
+    return rules[tier] ~= nil and (tier == "novice" or (pool ~= nil and #pool > 0)) and impl.value(npc) == ""
+end
+function active(first, second)
+    return allowed(first, second) and impl.value(impl.npc(first, second)) == "active"
+end
+function impl.items(count)
+    local items = {}
+    if db.actor then
+        db.actor:iterate_inventory(function(_, item)
+            if #items < count and item:section() == "pf_stash_pda_novice" then items[#items + 1] = item end
+        end, nil)
+    end
+    return items
+end
+function can_deliver(first, second)
+    if not active(first, second) then return false end
+    local job = impl.job(impl.npc(first, second))
+    local count = job and (job.count or 5)
+    return count ~= nil and #impl.items(count) == count
+end
+
+function impl.ensure_task(job)
+    local native = db.actor:get_task(job.task_id, true)
+    local title = string.format(game.translate_string("pf_irc_npc_job_title"), job.nick)
+    local description = string.format(game.translate_string("pf_irc_npc_job_descr"), job.nick, job.count or 5)
+    if native then
+        -- The task text is serialized by the engine. Refresh an existing task
+        -- once after load without accepting it again or rerolling its reward.
+        native:set_title(title)
+        native:set_description(description)
+        return
+    end
+    native = CGameTask()
+    native:set_id(job.task_id)
+    native:set_type(task.additional)
+    native:set_priority(1)
+    native:set_icon_name("ui_inGame2_Put_v_pripyat")
+    native:set_title(title)
+    native:set_description(description)
+    native:set_map_location("secondary_task_location")
+    native:set_map_object_id(job.id)
+    db.actor:give_task(native, 0, false, 0)
+end
+function impl.finish(job, outcome)
+    local native = db.actor:get_task(job.task_id, true)
+    if native then
+        db.actor:set_task_state(outcome, job.task_id)
+        -- bind_stalker deliberately omits failure news; stock CGeneralTask
+        -- sends it from deactivate_task. These dynamic tasks need the same call.
+        if outcome == task.fail then news_manager.send_task(db.actor, "fail", native) end
+    end
+    st.root.jobs[job.task_id], st.runtime[job.task_id], st.keys = nil, nil, nil
+end
+function insult(first, second)
+    if not allowed(first, second) then return false end
+    impl.init()
+    local npc = impl.npc(first, second)
+    impl.end_provoke(npc, false)
+    local job = impl.job(npc)
+    xr_logic.pstor_store(npc, "pf_irc_npc_hostile", true)
+    st.root.hostiles[tostring(npc:id())] = {id = npc:id(), name = npc:name(), section = npc:section()}
+    st.hostile_keys = nil
+    impl.hostile(npc)
+    impl.start_combat(npc)
+    if job then impl.finish(job, task.fail) end
+    impl.trace("[PF_IRC_NPC] personal enemy id=%s npc_attitude=%s actor_attitude=%s vision=%s",
+        tostring(npc:id()), tostring(npc:general_goodwill(db.actor)), tostring(db.actor:general_goodwill(npc)), tostring(npc:vision_enabled()))
+    return true
+end
+function accept(first, second)
+    if not can_offer(first, second) then return false end
+    impl.init()
+    local npc = impl.npc(first, second)
+    local tier, rule = impl.tier(npc), impl.rule(npc)
+    st.root.serial = st.root.serial + 1
+    local id = "pf_irc_npc_fetch_" .. npc:id() .. "_" .. st.root.serial
+    local pool = st.pools and st.pools[tier]
+    local job = {task_id = id, id = npc:id(), name = npc:name(), section = npc:section(), nick = npc:character_name(),
+        tier = tier, count = rule.count, money = rule.money, reward = impl.reward(npc, tier, pool)}
+    st.root.jobs[id], st.keys = job, nil
+    xr_logic.pstor_store(npc, PSTOR, "active")
+    xr_logic.pstor_store(npc, PSTOR .. "_task", id)
+    impl.ensure_task(job)
+    return true
+end
+function deliver(first, second)
+    if not can_deliver(first, second) then return false end
+    impl.init()
+    local npc = impl.npc(first, second)
+    local job = impl.job(npc)
+    if not job then return false end
+    local items = impl.items(job.count or 5)
+    if #items ~= (job.count or 5) then return false end
+    local servers = {}
+    for _, item in ipairs(items) do
+        local server = alife():object(item:id())
+        if not server or server.parent_id ~= db.actor:id() then return false end
+        servers[#servers + 1] = server
+    end
+    -- Latch before invoking inventory/money callbacks: repeated or reentrant
+    -- dialogue actions cannot take another batch or issue a second reward.
+    xr_logic.pstor_store(npc, PSTOR, "paying")
+    if job.reward then
+        local actor = db.actor
+        local reward = alife():create(job.reward, actor:position(), actor:level_vertex_id(), actor:game_vertex_id(), actor:id())
+        if not reward then
+            xr_logic.pstor_store(npc, PSTOR, "active")
+            return false -- Keep all PDAs and the saved reward, allowing a retry.
+        end
+    end
+    -- Consume handed-in PDAs instead of storing them on a future lootable corpse.
+    -- Every server object was checked before generating the saved reward.
+    for _, server in ipairs(servers) do alife():release(server, true) end
+    news_manager.relocate_item(db.actor, "out", "pf_stash_pda_novice", #servers)
+    dialogs.relocate_money_to_actor(first, second, job.money or 3000)
+    if job.reward and news_manager and news_manager.relocate_item then news_manager.relocate_item(db.actor, "in", job.reward) end
+    xr_logic.pstor_store(npc, PSTOR, "done")
+    impl.finish(job, task.completed)
+    return true
+end
+function offer_text(speaker)
+    local npc = impl.npc(speaker)
+    local rule = impl.rule(npc)
+    if not rule then return game.translate_string("pf_irc_npc_bye") end
+    return string.format(game.translate_string("pf_irc_npc_offer"), rule.count)
+end
+function waiting_text(speaker)
+    local npc = impl.npc(speaker)
+    local job, rule = impl.job(npc), impl.rule(npc)
+    local count = job and job.count or rule and rule.count or 5
+    return string.format(game.translate_string("pf_irc_npc_waiting"), count)
+end
+function answer_text(speaker)
+    local npc = impl.npc(speaker)
+    local key = impl.value(npc) == "done" and "pf_irc_npc_paid" or "pf_irc_npc_payment_unavailable"
+    return game.translate_string(key)
+end
+function update()
+    if not db.actor or not alife() then return end
+    impl.init()
+    if st.provoked then
+        local ref = st.provoked
+        local npc = level.object_by_id(ref.id)
+        if not npc or npc:name() ~= ref.name or not npc:alive() then st.provoked = nil
+        elseif not npc:is_talking() then impl.end_provoke(npc, true) end
+    end
+    if not st.hostile_keys then
+        st.hostile_keys, st.hostile_cursor = {}, 1
+        for id in pairs(st.root.hostiles) do st.hostile_keys[#st.hostile_keys + 1] = id end
+    end
+    for _ = 1, math.min(16, #st.hostile_keys) do
+        local key = st.hostile_keys[st.hostile_cursor]
+        st.hostile_cursor = st.hostile_cursor % #st.hostile_keys + 1
+        local ref = st.root.hostiles[key]
+        local server = ref and alife():object(ref.id)
+        if not server or server:name() ~= ref.name or server:section_name() ~= ref.section or not server:alive() then
+            st.root.hostiles[key], st.hostile_keys = nil, nil
+            break
+        end
+        local npc = server.online and level.object_by_id(ref.id)
+        local storage = npc and db.storage[ref.id]
+        if storage and storage.pf_irc_hostility_applied ~= ref.name then
+            xr_logic.pstor_store(npc, "pf_irc_npc_hostile", true)
+            impl.hostile(npc)
+            impl.release_pose(npc)
+            impl.combat_memory(npc, false)
+            storage.pf_irc_hostility_applied = ref.name
+            storage.pf_irc_npc_check_at = time_global() + 1000
+        elseif storage and npc:relation(db.actor) ~= game_object.enemy then
+            -- Native hit goodwill is clamped to personal_goodwill_limits and
+            -- can undo the rank/reputation compensation. Keep this saved duel
+            -- hostile without touching anyone else's personal/faction goodwill.
+            impl.personal_enemy(npc, db.actor)
+            impl.personal_enemy(db.actor, npc)
+            impl.combat_memory(npc, false)
+        end
+        if storage and storage.pf_irc_npc_check_at and time_global() >= storage.pf_irc_npc_check_at then
+            storage.pf_irc_npc_check_at = nil
+            local enemy = npc:best_enemy()
+            local weapon = npc:best_weapon()
+            local planner = npc:motivation_action_manager()
+            impl.trace("[PF_IRC_NPC] combat id=%s enemy=%s attitude=%s vision=%s sees_actor=%s state=%s filter_target=%s action=%s weapon=%s unstrapped=%s",
+                tostring(npc:id()), tostring(enemy and enemy:id()), tostring(npc:general_goodwill(db.actor)),
+                tostring(npc:vision_enabled()), tostring(npc:see(db.actor)),
+                tostring(storage.state_mgr and storage.state_mgr.target_state), tostring(storage.enemy_id),
+                tostring(planner:initialized() and planner:current_action_id()), tostring(weapon and weapon:section()),
+                tostring(npc:weapon_unstrapped()))
+        end
+    end
+    if not st.keys then
+        st.keys, st.cursor = {}, 1
+        for id in pairs(st.root.jobs) do st.keys[#st.keys + 1] = id end
+        table.sort(st.keys)
+    end
+    for _ = 1, math.min(16, #st.keys) do
+        local id = st.keys[st.cursor]
+        st.cursor = st.cursor % #st.keys + 1
+        local job = st.root.jobs[id]
+        local server = job and alife():object(job.id)
+        local npc = server and server.online and level.object_by_id(job.id)
+        local hostile = job and st.root.hostiles[tostring(job.id)]
+        if job and (not server or server:name() ~= job.name or server:section_name() ~= job.section or not server:alive()) then
+            impl.finish(job, task.fail)
+            break
+        elseif job and ((hostile and hostile.name == job.name and hostile.section == job.section)
+            or (npc and npc:name() == job.name and npc:relation(db.actor) == game_object.enemy)) then
+            impl.finish(job, task.fail)
+            break
+        elseif job and not st.runtime[id] then
+            impl.ensure_task(job)
+            st.runtime[id] = true
+        end
+    end
+end

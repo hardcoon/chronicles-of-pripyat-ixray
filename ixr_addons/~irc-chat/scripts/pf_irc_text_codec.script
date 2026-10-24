@@ -91,6 +91,53 @@ function to_ui(value)
     end
     return table.concat(result)
 end
+-- CUITextWnd/CUIStatic force ParseText(true) on resize, even in simple mode.
+-- Native coloring cannot be disabled through the installed Lua API. Keep the
+-- wire/history/CoPID name intact and escape only text entering native widgets.
+local function parse_color(tag, base_color)
+    if tag == "default" then return base_color or -1 end
+    local a, r, g, b = tag:match("^%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*$")
+    if not a or #a > 3 or #r > 3 or #g > 3 or #b > 3 then return nil end
+    a, r, g, b = tonumber(a), tonumber(r), tonumber(g), tonumber(b)
+    if a > 255 or r > 255 or g > 255 or b > 255 then return nil end
+    return a * 16777216 + r * 65536 + g * 256 + b
+end
+function escape_markup(value, allow_colors)
+    local text, result, cursor = tostring(value or ""), {}, 1
+    while true do
+        local first = text:find("%c[", cursor, true)
+        if not first then result[#result + 1] = text:sub(cursor); break end
+        result[#result + 1] = text:sub(cursor, first - 1)
+        local last = text:find("]", first + 3, true)
+        if allow_colors and last and parse_color(text:sub(first + 3, last - 1)) then
+            result[#result + 1] = text:sub(first, last)
+            cursor = last + 1
+        else
+            result[#result + 1] = "% c["
+            cursor = first + 3
+        end
+    end
+    return table.concat(result)
+end
+function to_ui_literal(value)
+    return to_ui(escape_markup(value))
+end
+-- Rich emoji messages apply validated colors to separate plain-text widgets;
+-- native body/news controls can retain those same validated tags directly.
+function color_runs(value, base_color)
+    local text, runs = escape_markup(value, true), {}
+    local cursor, color = 1, base_color
+    while true do
+        local first, last, tag = text:find("%%c%[(.-)%]", cursor)
+        if not first then
+            if cursor <= #text then runs[#runs + 1] = {text=text:sub(cursor), color=color} end
+            break
+        end
+        if first > cursor then runs[#runs + 1] = {text=text:sub(cursor, first - 1), color=color} end
+        color, cursor = parse_color(tag, base_color), last + 1
+    end
+    return runs
+end
 function from_ui(value)
     local text, result = tostring(value or ""), {}
     for index = 1, #text do

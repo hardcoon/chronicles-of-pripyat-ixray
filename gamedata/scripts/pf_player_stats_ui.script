@@ -312,7 +312,7 @@ function pf_player_stats_row:__init(xml, record, position) super()
     dot:SetTextureColor(colors[record.presence] or colors.offline)
     local nick = xml:InitTextWnd("player:nick", self)
     nick:SetEllipsis(true)
-    nick:SetText(record.nick)
+    nick:SetText(pf_irc_text_codec.escape_markup(record.nick))
     local rank = xml:InitTextWnd("player:rank", self)
     rank:SetText(record.rank and string.format(game.translate_string("pf_pda_player_stats_rank"),
         record.rank) or game.translate_string("pf_pda_player_stats_rank_unknown"))
