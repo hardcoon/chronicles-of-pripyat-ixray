@@ -173,6 +173,9 @@ function I.grant(entry,d,box,tool)
 end
 function I.step()
     local d=I.data();local box=I.object(d.chest_id,C.box)
+    -- Only an explicit pending notes request may recover a missing chest.
+    -- Issued supplies/tools keep their original counters.
+    if not box and d.document_queue then box=I.create_box(d) end
     if not box then return end -- Destroying the issued chest never refills it.
     local cfg=I.config()
     local started=os.clock()
@@ -211,20 +214,34 @@ function request()
     return true
 end
 function add_documents(sections)
-    if not I.allowed() then return false end
-    local d=I.data()
-    if not d.settled or not I.object(d.chest_id,C.box) then return false end
-    -- Explicit QA action, still addressed to the same box. The persisted queue
-    -- and ledger make F9/repeated callbacks safe without inventory polling.
+    if not db.actor or not alife() or not I.allowed() then return false end
+    local d=I.data();local owned={}
+    db.actor:iterate_inventory(function(_,item) owned[item:section()]=true end,db.actor)
+    local box=I.object(d.chest_id,C.box)
+    if box then
+        for _,id in ipairs(I.children(box)) do
+            local item=I.object(id)
+            if item then owned[item:section_name()]=true end
+        end
+    end
+    -- Manual QA restores missing physical notes, even if an older issuance was
+    -- consumed/lost. Scan only the actor and shared chest, on explicit use.
+    -- The persisted queue accepts early clicks and resumes after a load.
     d.document_queue=d.document_queue or {}
     for _,section in ipairs(sections) do
-        if not d.documents[section] then d.document_queue[section]=true end
+        if owned[section] then d.document_queue[section]=nil
+        elseif system_ini():section_exist(section) then d.document_queue[section]=true end
     end
-    return true
+    local count=0
+    for _ in pairs(d.document_queue) do count=count+1 end
+    if count==0 then d.document_queue=nil end
+    return true,count
 end
 function I.documents()
-    local d=I.data();local box=I.object(d.chest_id,C.box)
-    if not box or not d.document_queue then return end
+    local d=I.data()
+    if not d.document_queue or not next(d.document_queue) then d.document_queue=nil;return end
+    local box=I.object(d.chest_id,C.box) or I.create_box(d)
+    if not box then return end
     local n=0
     for section in pairs(d.document_queue) do
         if system_ini():section_exist(section) then

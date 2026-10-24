@@ -81,12 +81,20 @@
 	</center_caption>
 
 	<down_background x="28" y="245" width="969" height="463" stretch="1">
-		<texture>ui_inGame2_pda_buttons_background</texture>
-		<auto_frameline x="6" y="15" width="958" height="23" vertical="0">
-			<texture>ui_inGame2_pda_ranking_center_caption</texture>
-		</auto_frameline>
-
-	</down_background>
+        <texture>ui_inGame2_pda_buttons_background</texture>
+        <auto_frameline x="14" y="17" width="940" height="23" vertical="0">
+            <texture>ui_inGame2_pda_ranking_center_caption</texture>
+        </auto_frameline>
+        <auto_framewindow x="206" y="49" width="748" height="401">
+            <texture>ui_inGame2_pda_ranking_icon_over</texture>
+        </auto_framewindow>
+        <auto_frameline x="198" y="17" width="1" height="433" vertical="1">
+            <texture a="115">ui_inGame2_pda_line_vertical</texture>
+        </auto_frameline>
+        <auto_frameline x="567" y="49" width="1" height="401" vertical="1">
+            <texture a="100">ui_inGame2_pda_line_vertical</texture>
+        </auto_frameline>
+    </down_background>
 
     <achievements_background x="42" y="294" width="176" height="401">
         <texture>ui_inGame2_pda_ranking_icon_over</texture>
@@ -110,4 +118,219 @@
             </text>
         </hint_wnd>
     </achievements_itm>
+
+    <panel x="234" y="262" width="748" height="23" stretch="1">
+        <window_name>pf_player_stats_native_controls</window_name>
+        <online_only x="8" y="0" width="165" height="23">
+            <texture>pf_player_stats_settings_hit</texture>
+            <icon x="0" y="1.5" width="15" height="20" stretch="1">
+                <texture>pf_player_stats_check_e</texture>
+            </icon>
+            <caption x="20" y="0" width="145" height="23">
+                <text font="letterica16" vert_align="c" r="200" g="200" b="200">pf_pda_player_stats_online_only</text>
+            </caption>
+        </online_only>
+        <show_empty x="190" y="0" width="185" height="23">
+            <texture>pf_player_stats_settings_hit</texture>
+            <icon x="0" y="1.5" width="15" height="20" stretch="1">
+                <texture>pf_player_stats_check_e</texture>
+            </icon>
+            <caption x="20" y="0" width="165" height="23">
+                <text font="letterica16" vert_align="c" r="200" g="200" b="200">pf_pda_player_stats_show_empty</text>
+            </caption>
+        </show_empty>
+        <settings x="395" y="0" width="110" height="23">
+            <texture>pf_player_stats_settings_hit</texture>
+            <icon x="0" y="0" width="16" height="22" stretch="1">
+                <texture>pf_player_stats_gear_e</texture>
+            </icon>
+            <caption x="21" y="0" width="100" height="23">
+                <text font="letterica16" vert_align="c" r="200" g="200" b="200">pf_pda_player_stats_sorting</text>
+            </caption>
+        </settings>
+        <count x="8" y="0" width="156" height="23">
+            <text align="l" vert_align="c" font="letterica16" r="150" g="150" b="150" />
+        </count>
+    </panel>
+    <players_empty x="234" y="325" width="722" height="32">
+        <text align="c" font="letterica16" r="150" g="150" b="150">pf_pda_player_stats_empty</text>
+    </players_empty>
+    <players x="234" y="294" width="748" height="401" always_show_scroll="0" left_ident="0" right_ident="0" top_indent="0" bottom_indent="0" vert_interval="4" />
+    <settings_popup x="613" y="293" width="361" height="258" stretch="1">
+        <texture a="245" r="14" g="19" b="19">ui\ui_noise</texture>
+        <auto_frameline x="0" y="0" width="361" height="1" vertical="0">
+            <texture a="165">ui_pf_irc_line_horizontal</texture>
+        </auto_frameline>
+        <auto_frameline x="0" y="257" width="361" height="1" vertical="0">
+            <texture a="165">ui_pf_irc_line_horizontal</texture>
+        </auto_frameline>
+        <auto_frameline x="0" y="1" width="1" height="256" vertical="1">
+            <texture a="165">ui_pf_irc_line_vertical</texture>
+        </auto_frameline>
+        <auto_frameline x="360" y="1" width="1" height="256" vertical="1">
+            <texture a="165">ui_pf_irc_line_vertical</texture>
+        </auto_frameline>
+        <title x="15" y="8" width="331" height="24">
+            <text font="letterica16" align="c" vert_align="c" color="ui_5">pf_pda_player_stats_settings</text>
+        </title>
+        <label_sort_field x="12" y="43" width="110" height="24">
+            <text font="letterica16" align="r" vert_align="c">pf_pda_sort_label_sort_field</text>
+        </label_sort_field>
+        <label_sort_order x="12" y="79" width="110" height="24">
+            <text font="letterica16" align="r" vert_align="c">pf_pda_sort_label_sort_order</text>
+        </label_sort_order>
+        <label_status_order x="12" y="115" width="110" height="24">
+            <text font="letterica16" align="r" vert_align="c">pf_pda_sort_label_status_order</text>
+        </label_status_order>
+        <error x="15" y="193" width="331" height="21">
+            <text font="letterica16" align="c" r="225" g="105" b="75" />
+        </error>
+        <apply x="15" y="220" width="160" height="29" stretch="1">
+            <texture>pf_player_stats_button</texture>
+            <caption x="0" y="0" width="160" height="29">
+                <text font="letterica16" align="c" vert_align="c">pf_pda_sort_apply</text>
+            </caption>
+        </apply>
+        <cancel x="186" y="220" width="160" height="29" stretch="1">
+            <texture>pf_player_stats_button</texture>
+            <caption x="0" y="0" width="160" height="29">
+                <text font="letterica16" align="c" vert_align="c">pf_pda_sort_cancel</text>
+            </caption>
+        </cancel>
+        <sort_field x="132" y="43" width="211" height="24" stretch="1">
+            <texture>pf_player_stats_field</texture>
+            <caption x="7" y="0" width="183" height="24">
+                <text font="letterica16" vert_align="c" />
+            </caption>
+            <arrow x="194" y="6" width="10" height="12" stretch="1">
+                <texture>pf_player_stats_arrow</texture>
+            </arrow>
+        </sort_field>
+        <sort_field_list x="132" y="67" width="211" height="144" stretch="1">
+            <texture>pf_player_stats_popup</texture>
+            <entry_1 x="1" y="0" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_1>
+            <entry_2 x="1" y="24" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_2>
+            <entry_3 x="1" y="48" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_3>
+            <entry_4 x="1" y="72" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_4>
+            <entry_5 x="1" y="96" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_5>
+            <entry_6 x="1" y="120" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_6>
+        </sort_field_list>
+        <sort_order x="132" y="79" width="211" height="24" stretch="1">
+            <texture>pf_player_stats_field</texture>
+            <caption x="7" y="0" width="183" height="24">
+                <text font="letterica16" vert_align="c" />
+            </caption>
+            <arrow x="194" y="6" width="10" height="12" stretch="1">
+                <texture>pf_player_stats_arrow</texture>
+            </arrow>
+        </sort_order>
+        <sort_order_list x="132" y="103" width="211" height="48" stretch="1">
+            <texture>pf_player_stats_popup</texture>
+            <entry_1 x="1" y="0" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_1>
+            <entry_2 x="1" y="24" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_2>
+        </sort_order_list>
+        <status_order x="132" y="115" width="211" height="24" stretch="1">
+            <texture>pf_player_stats_field</texture>
+            <caption x="7" y="0" width="183" height="24">
+                <text font="letterica16" vert_align="c" />
+            </caption>
+            <arrow x="194" y="6" width="10" height="12" stretch="1">
+                <texture>pf_player_stats_arrow</texture>
+            </arrow>
+        </status_order>
+        <status_order_list x="132" y="139" width="211" height="72" stretch="1">
+            <texture>pf_player_stats_popup</texture>
+            <entry_1 x="1" y="0" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_1>
+            <entry_2 x="1" y="24" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_2>
+            <entry_3 x="1" y="48" width="209" height="24" stretch="1">
+                <texture>pf_player_stats_choice</texture>
+                <caption x="7" y="0" width="195" height="24">
+                    <text font="letterica16" vert_align="c" />
+                </caption>
+            </entry_3>
+        </status_order_list>
+    </settings_popup>
+    <player_pair x="0" y="0" width="722" height="66" />
+    <player x="0" y="0" width="356" height="66">
+        <avatar x="6" y="9" width="36" height="48" stretch="1">
+            <texture>pf_player_avatar</texture>
+        </avatar>
+        <presence_outline x="34.7500" y="47.0000" width="10.5000" height="14.0000" stretch="1">
+            <texture>pf_player_stats_presence_outline</texture>
+        </presence_outline>
+        <presence x="35.8750" y="48.5000" width="8.2500" height="11.0000" stretch="1">
+            <texture>pf_player_stats_presence</texture>
+        </presence>
+        <nick x="78" y="6" width="167" height="18">
+            <text font="letterica16" r="220" g="220" b="220" />
+        </nick>
+        <rank x="250" y="6" width="100" height="18">
+            <text align="r" font="letterica16" r="220" g="220" b="220" />
+        </rank>
+        <kills x="51" y="24" width="299" height="18">
+            <text font="letterica16" r="220" g="220" b="220" />
+        </kills>
+        <found x="51" y="42" width="299" height="18">
+            <text font="letterica16" r="220" g="220" b="220" />
+        </found>
+        <position_frame x="51" y="5" width="22" height="18" stretch="1">
+            <texture>pf_player_stats_position_frame</texture>
+        </position_frame>
+        <position x="51" y="5" width="22" height="18">
+            <text font="letterica16" vert_align="c" align="c" r="165" g="171" b="163" />
+        </position>
+        <auto_frameline x="0" y="65" width="356" height="1" vertical="0">
+            <texture a="100">ui_inGame2_pda_line_horizontal</texture>
+        </auto_frameline>
+    </player>
 </w>

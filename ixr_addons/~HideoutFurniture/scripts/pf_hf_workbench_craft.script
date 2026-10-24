@@ -2,12 +2,26 @@
 -- its recipes and its transaction rules can be moved as one addon.
 local core = lz_nm_core
 
+local ANOMALOUS_MATERIALS = {
+	itm_repairkit_tier_1 = 1,
+	itm_repairkit_tier_2 = 1,
+	itm_repairkit_tier_soft = 1,
+	itm_repairkit_tier_3 = 1,
+	itm_field_upgrade_kit_blue = 1,
+	itm_field_upgrade_kit_red = 1,
+	itm_field_upgrade_kit_yellow = 1,
+	itm_field_upgrade_kit_green = 1
+}
+
 local MATERIAL_ORDER = {
 	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
 	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_electronics", "pf_hf_dampers",
 	"pf_hf_oil", "lz_nm_metal_part", "jup_b200_tech_materials_wire",
 	"jup_b200_tech_materials_textolite", "jup_b200_tech_materials_transistor",
-	"jup_b200_tech_materials_capacitor", "lz_ph_reflash_module"
+	"jup_b200_tech_materials_capacitor", "lz_ph_reflash_module",
+	"itm_repairkit_tier_1", "itm_repairkit_tier_2", "itm_repairkit_tier_soft",
+	"itm_repairkit_tier_3", "itm_field_upgrade_kit_blue", "itm_field_upgrade_kit_red",
+	"itm_field_upgrade_kit_yellow", "itm_field_upgrade_kit_green"
 }
 
 local EFFECT_BY_OUTPUT = {
@@ -28,8 +42,8 @@ local EFFECT_BY_OUTPUT = {
 
 -- The first eight outputs cover every ordinary field upgrade module. Six are
 -- the modules assembled by Azot; the reload and caliber kits complete the
--- standard set. The remaining recipes assemble armor components, top-tier
--- hacking software and field devices.
+-- standard set. Combining all eight and one Absolute assembles either anomalous
+-- module. The remaining recipes assemble armor components and field devices.
 local RECIPES = {
 	{
 		output = "itm_repairkit_tier_1",
@@ -105,6 +119,18 @@ local RECIPES = {
 		}
 	},
 	{
+		output = "itm_field_upgrade_kit_anomalous_nozzle",
+		materials = ANOMALOUS_MATERIALS,
+		unlock_info = "lz_nm_encyclopedia_anomalous_upgrades_found",
+		absolute = 1
+	},
+	{
+		output = "itm_field_upgrade_kit_anomalous_barrel",
+		materials = ANOMALOUS_MATERIALS,
+		unlock_info = "lz_nm_encyclopedia_anomalous_upgrades_found",
+		absolute = 1
+	},
+	{
 		output = "lz_nm_armor_pouch",
 		materials = {
 			pf_hf_fabric = 8,
@@ -164,8 +190,19 @@ for _, recipe in ipairs(RECIPES) do
 	RECIPE_BY_OUTPUT[recipe.output] = recipe
 end
 
+local function inventory_order()
+	local order = {}
+	for _, section in ipairs(MATERIAL_ORDER) do order[#order + 1] = section end
+	-- Use the cooking registry's explicit tier-five list; suffixes and price
+	-- do not identify an Absolute. Resolve lazily after modules are loaded.
+	for _, section in ipairs(lz_nlc_anomaly_registry.absolute_artifacts()) do
+		order[#order + 1] = section
+	end
+	return order
+end
+
 local function inventory_materials(bench_id)
-	return pf_hf_workbench_materials.collect(MATERIAL_ORDER, bench_id)
+	return pf_hf_workbench_materials.collect(inventory_order(), bench_id)
 end
 
 local function enough(recipe, counts)
@@ -186,10 +223,10 @@ local function recipe_category(recipe)
 end
 
 function recipes(category)
-	if not category or category == "all" then return RECIPES end
 	local filtered = {}
 	for _, entry in ipairs(RECIPES) do
-		if recipe_category(entry) == category then
+		if is_unlocked(entry.output) and
+			(not category or category == "all" or recipe_category(entry) == category) then
 			filtered[#filtered + 1] = entry
 		end
 	end
@@ -200,6 +237,15 @@ function recipe(output)
 	return RECIPE_BY_OUTPUT[output]
 end
 
+function is_unlocked(output)
+	local selected = recipe(output)
+	if not selected then return false end
+	-- This is the same permanent info portion used by the shared encyclopedia
+	-- article. Reading the article or using/selling a kit never clears it.
+	return not selected.unlock_info or
+		(db.actor ~= nil and db.actor:has_info(selected.unlock_info))
+end
+
 function material_order()
 	return MATERIAL_ORDER
 end
@@ -208,10 +254,45 @@ function material_counts(bench_id)
 	return inventory_materials(bench_id)
 end
 
+function absolute_options(counts)
+	local options = {}
+	for _, section in ipairs(lz_nlc_anomaly_registry.absolute_artifacts()) do
+		if (counts[section] or 0) > 0 then options[#options + 1] = section end
+	end
+	return options
+end
+
+function choose_absolute(counts, preferred)
+	local options = absolute_options(counts)
+	for _, section in ipairs(options) do
+		if section == preferred then return section end
+	end
+	return options[1]
+end
+
+function ingredient_rows(output, counts, absolute_section)
+	local selected, rows = recipe(output), {}
+	if not selected then return rows end
+	for _, section in ipairs(MATERIAL_ORDER) do
+		local amount = selected.materials[section]
+		if amount then
+			rows[#rows + 1] = { section = section, required = amount, owned = counts[section] or 0 }
+		end
+	end
+	if selected.absolute then
+		local owned = 0
+		for _, section in ipairs(absolute_options(counts)) do owned = owned + counts[section] end
+		rows[#rows + 1] = { section = absolute_section or
+			lz_nlc_anomaly_registry.absolute_artifacts()[1],
+			label = "pf_hf_craft_any_absolute", required = selected.absolute, owned = owned }
+	end
+	return rows
+end
+
 function item_label(section)
 	local ini = core.get_sysini()
 	if ini:section_exist(section) and ini:line_exist(section, "inv_name") then
-		return game.translate_string(ini:r_string(section, "inv_name"))
+		return core.text_for_utf8(game.translate_string(ini:r_string(section, "inv_name")))
 	end
 	return section
 end
@@ -219,7 +300,7 @@ end
 function item_description(section)
 	local ini = core.get_sysini()
 	if ini:section_exist(section) and ini:line_exist(section, "description") then
-		return game.translate_string(ini:r_string(section, "description"))
+		return core.text_for_utf8(game.translate_string(ini:r_string(section, "description")))
 	end
 	return ""
 end
@@ -229,16 +310,34 @@ function item_effect(section)
 	return text_id and game.translate_string(text_id) or ""
 end
 
-function can_craft(output, bench_id, counts)
+function can_craft(output, bench_id, counts, absolute_section)
+	if not is_unlocked(output) then return false end
 	local selected = recipe(output)
 	counts = counts or inventory_materials(bench_id)
-	return enough(selected, counts)
+	if not enough(selected, counts) then return false end
+	if not selected.absolute then return true end
+	local section = absolute_section or choose_absolute(counts)
+	return section ~= nil and lz_nlc_anomaly_registry.is_absolute(section) and
+		(counts[section] or 0) >= selected.absolute
 end
 
-function craft(output, bench_id)
+function craft(output, bench_id, absolute_section)
 	local selected = recipe(output)
 	if not selected or not db.actor then return false, "pf_hf_craft_failed" end
-	local plan = pf_hf_workbench_materials.prepare(selected.materials, MATERIAL_ORDER, bench_id)
+	if not is_unlocked(output) then return false, "pf_hf_craft_recipe_locked" end
+	local needed = {}
+	for section, amount in pairs(selected.materials) do needed[section] = amount end
+	if selected.absolute then
+		local counts = inventory_materials(bench_id)
+		-- An explicit choice must still exist. Never replace a missing selected
+		-- Absolute with another valuable artifact when the action is committed.
+		if not can_craft(output, bench_id, counts, absolute_section) then
+			return false, "pf_hf_need_materials"
+		end
+		local section = absolute_section or choose_absolute(counts)
+		needed[section] = (needed[section] or 0) + selected.absolute
+	end
+	local plan = pf_hf_workbench_materials.prepare(needed, inventory_order(), bench_id)
 	if not plan then
 		return false, "pf_hf_need_materials"
 	end

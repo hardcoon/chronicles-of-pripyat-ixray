@@ -1,6 +1,251 @@
 -- Native ranking page remains in charge of achievements and the top metrics.
 local state = {}
 local generation = 0
+local filter_keys = { "online_only", "show_empty" }
+local filters = nil
+local sort_options = nil
+local reload_detaching_until = 0
+
+local function reload_pending()
+    if reload_detaching_until == 0 then return false end
+    if time_global() < reload_detaching_until then return true end
+    -- A rejected quickload may never send on_game_load. Let a later visible
+    -- page rebuild after the short teardown grace period in that case.
+    reload_detaching_until = 0
+    return false
+end
+
+local function filters_path()
+    return getFS():update_path("$app_data_root$", "pf_player_stats_filters.cfg")
+end
+
+local function load_filters()
+    if filters then return end
+    filters = { show_empty = false, online_only = false }
+    sort_options = pf_pda_player_stats.sorting_options()
+    for _, option in ipairs(sort_options) do filters[option.key] = option.default end
+    local file = io.open(filters_path(), "r")
+    if not file then return end
+    local content = file:read(256) or ""
+    file:close()
+    local version = content:match("^PF_STATS_FILTERS_([23])\n")
+    if not version then return end
+    for _, key in ipairs(filter_keys) do
+        local value = content:match("\n" .. key .. "=([01])\n")
+        if value then filters[key] = value == "1" end
+    end
+    if version == "3" then
+        for _, option in ipairs(sort_options) do
+            local value = content:match("\n" .. option.key .. "=([%w_]+)\n")
+            for _, allowed in ipairs(option.values) do
+                if value == allowed then filters[option.key] = value end
+            end
+        end
+    end
+end
+
+local function sync_filters()
+    for _, key in ipairs(filter_keys) do state.checks[key]:SetCheck(filters[key]) end
+end
+
+local function save_filters(selected)
+    local lines = { "PF_STATS_FILTERS_3" }
+    for _, key in ipairs(filter_keys) do
+        lines[#lines + 1] = key .. "=" .. (selected[key] and "1" or "0")
+    end
+    for _, option in ipairs(sort_options) do
+        lines[#lines + 1] = option.key .. "=" .. selected[option.key]
+    end
+    local file = io.open(filters_path(), "w")
+    local written = file and file:write(table.concat(lines, "\n") .. "\n")
+    local closed = file and file:close()
+    if not written or not closed then
+        printf("! pf_player_stats_ui: unable to save profile filters")
+        sync_filters()
+        return false
+    end
+    filters = selected
+    sync_filters()
+    return true
+end
+
+local function capture_filters()
+    if state.filters_needs_sync then
+        load_filters()
+        sync_filters()
+        state.settings:SetCheck(false)
+        state.filters_needs_sync = nil
+        return true
+    end
+    local changed = false
+    for _, key in ipairs(filter_keys) do
+        if state.checks[key]:GetCheck() ~= filters[key] then changed = true end
+    end
+    if not changed then return false end
+    local selected = {}
+    for key, value in pairs(filters) do selected[key] = value end
+    for _, key in ipairs(filter_keys) do selected[key] = state.checks[key]:GetCheck() == true end
+    return save_filters(selected)
+end
+
+local function clear_sort_lists()
+    for _, option in ipairs(sort_options) do state.sort_controls[option.key]:ClearList() end
+end
+
+-- Local dropdowns share the PDA atlas. Native combobox skins are global and
+-- cannot be changed for this popup without restyling unrelated game windows.
+local function make_sort_control(key)
+    local path = "settings_popup:" .. key
+    local xml, parent = state.xml, state.popup
+    local control = { items = {}, choices = {}, selected = -1, list_open = false }
+    control.field = xml:InitCheck(path, parent)
+    control.caption = xml:InitTextWnd(path .. ":caption", control.field)
+    xml:InitStatic(path .. ":arrow", control.field):Enable(false)
+    control.caption:Enable(false)
+    function control:SetOpen(shown)
+        self.list_open = shown
+        self.field:SetCheck(shown)
+        if self.list then self.list:Show(shown); self.list:Enable(shown) end
+    end
+    function control:InitList(length)
+        self.list = xml:InitStatic(path .. "_list", parent)
+        for index = 1, length do
+            local entry_path = path .. "_list:entry_" .. index
+            local button = xml:InitCheck(entry_path, self.list)
+            local caption = xml:InitTextWnd(entry_path .. ":caption", button)
+            caption:Enable(false)
+            self.choices[index] = { button = button, caption = caption }
+        end
+        self:SetOpen(false)
+    end
+    function control:ClearList()
+        self.items, self.selected = {}, -1
+        self:SetOpen(false)
+    end
+    function control:AddItem(text, id)
+        self.items[#self.items + 1] = { text = text, id = id }
+        self.choices[#self.items].caption:SetText(text)
+    end
+    function control:SetCurrentIdx(index)
+        self.selected = index
+        local item = self.items[index + 1]
+        self.caption:SetText(item and item.text or "")
+        for row, choice in ipairs(self.choices) do choice.button:SetCheck(row == index + 1) end
+    end
+    function control:GetCurrentIdx() return self.selected end
+    function control:SetText(text) self.caption:SetText(text) end
+    function control:Poll()
+        local shown = self.field:GetCheck()
+        if shown ~= self.list_open then
+            if shown then
+                for _, other in pairs(state.sort_controls) do
+                    if other ~= self then other:SetOpen(false) end
+                end
+            end
+            self:SetOpen(shown)
+        end
+        if not self.list_open then return end
+        for index, choice in ipairs(self.choices) do
+            if choice.button:GetCheck() ~= (self.selected == index - 1) then
+                self:SetCurrentIdx(index - 1)
+                self:SetOpen(false)
+                return
+            end
+        end
+    end
+    return control
+end
+
+local function align_toolbar()
+    local right = state.panel:GetWidth() - 8
+    for _, key in ipairs({ "settings", "show_empty", "online_only" }) do
+        local label = state.labels[key]
+        label:AdjustWidthToText()
+        local control = key == "settings" and state.settings or state.checks[key]
+        -- Each native checkbox owns the complete icon-and-caption hit area.
+        -- Disabled children keep the visual size independent of that area.
+        local icon = key == "settings" and state.settings_icon or state.check_icons[key]
+        local caption_x = icon:GetWidth() + 5
+        control:SetWidth(caption_x + label:GetWidth() + (key == "settings" and 3 or 0))
+        right = right - control:GetWidth()
+        control:SetWndPos(vector2():set(right, 0))
+        label:SetWndPos(vector2():set(caption_x, 0))
+        if key ~= "settings" then
+            icon:SetWndPos(vector2():set(0, (state.panel:GetHeight() - icon:GetHeight()) / 2))
+        end
+        right = right - 12
+    end
+end
+
+local function populate_sort_lists()
+    for _, option in ipairs(sort_options) do
+        local control = state.sort_controls[option.key]
+        control:ClearList()
+        for index, value in ipairs(option.values) do
+            control:AddItem(game.translate_string("pf_pda_sort_" .. value), index)
+        end
+        for index, value in ipairs(option.values) do
+            if filters[option.key] == value then
+                control:SetCurrentIdx(index - 1)
+                -- SetCurrentIdx selects the list row but does not update the
+                -- collapsed native caption. Keep both views in sync explicitly.
+                control:SetText(game.translate_string("pf_pda_sort_" .. value))
+            end
+        end
+    end
+    state.sort_error:SetText("")
+end
+
+local function update_settings()
+    local shown = state.settings:GetCheck()
+    local changed = false
+    if shown and not state.popup_open then populate_sort_lists() end
+    if shown then
+        for _, option in ipairs(sort_options) do state.sort_controls[option.key]:Poll() end
+    end
+    if shown and state.close:GetCheck() then shown = false end
+    if shown and state.apply:GetCheck() then
+        local selected = {}
+        for key, value in pairs(filters) do selected[key] = value end
+        for _, option in ipairs(sort_options) do
+            local index = state.sort_controls[option.key]:GetCurrentIdx() + 1
+            selected[option.key] = option.values[index] or option.default
+        end
+        if save_filters(selected) then
+            changed, shown = true, false
+        else
+            state.sort_error:SetText(game.translate_string("pf_pda_sort_save_error"))
+        end
+    end
+    state.apply:SetCheck(false)
+    state.close:SetCheck(false)
+    if not shown and state.popup_open then clear_sort_lists() end
+    state.settings:SetCheck(shown)
+    local style = shown and "t" or (state.settings:IsCursorOverWindow() and "h" or "e")
+    if state.settings_style ~= style then
+        state.settings_icon:InitTexture("pf_player_stats_gear_" .. style)
+        state.labels.settings:SetTextColor(shown and GetARGB(255, 218, 191, 142) or
+            (style == "h" and GetARGB(255, 230, 230, 220) or GetARGB(255, 200, 200, 200)))
+        state.settings_style = style
+    end
+    state.popup_open = shown
+    state.popup:Show(shown)
+    state.popup:Enable(shown)
+    state.view:Enable(not shown)
+    for _, key in ipairs(filter_keys) do
+        local control = state.checks[key]
+        control:Enable(not shown)
+        local hovered = not shown and control:IsCursorOverWindow()
+        local style = control:GetCheck() and "t" or (hovered and "h" or "e")
+        local appearance = style .. (hovered and "_hover" or "")
+        if state.check_styles[key] ~= appearance then
+            state.check_icons[key]:InitTexture("pf_player_stats_check_" .. style)
+            state.labels[key]:SetTextColor(hovered and GetARGB(255, 230, 230, 220) or GetARGB(255, 200, 200, 200))
+            state.check_styles[key] = appearance
+        end
+    end
+    return changed
+end
 
 local function utf8_prefix(text, limit)
     local next_byte = text:byte(limit + 1)
@@ -55,10 +300,12 @@ end
 
 class "pf_player_stats_row" (CUIScriptWnd)
 
-function pf_player_stats_row:__init(xml, record) super()
+function pf_player_stats_row:__init(xml, record, position) super()
     xml:InitWindow("player", 0, self)
-    xml:InitFrame("player:frame", self)
     xml:InitStatic("player:avatar", self)
+    xml:InitStatic("player:position_frame", self)
+    xml:InitTextWnd("player:position", self):SetText(tostring(position))
+    xml:InitStatic("player:presence_outline", self)
     local dot = xml:InitStatic("player:presence", self)
     local colors = { online = GetARGB(255, 74, 186, 94),
         away = GetARGB(255, 215, 155, 65), offline = GetARGB(255, 205, 65, 55) }
@@ -79,7 +326,7 @@ function pf_player_stats_row:__init(xml, record) super()
     self:Enable(true)
 end
 
-local function refresh_rows(parent)
+local function refresh_rows(parent, reset_scroll)
     -- Check only the freshly obtained native parent. The cached scroll view
     -- can already be destroyed after vid_restart/ui_reload, without a load.
     -- A string cookie also avoids CUIWindow's unsupported userdata equality.
@@ -88,14 +335,65 @@ local function refresh_rows(parent)
         generation = generation + 1
         state = { xml = CScriptXmlInit(),
             owner_name = "pf_player_stats_ranking_" .. generation }
-        state.xml:ParseFile("pf_player_stats.xml")
+        state.xml:ParseFile("pda_ranking.xml")
+        load_filters()
+        state.controls = {}
+        -- The native ranking XML owns all geometry and separators.
+        -- This untextured group only lays out the header text and checks.
+        state.panel = state.xml:InitStatic("panel", parent)
+        state.controls[#state.controls + 1] = state.panel
+        state.count = state.xml:InitTextWnd("panel:count", state.panel)
+        state.checks = {}
+        state.check_icons = {}
+        state.check_styles = {}
+        state.labels = {}
+        for _, key in ipairs(filter_keys) do
+            local path = "panel:" .. key
+            state.checks[key] = state.xml:InitCheck(path, state.panel)
+            state.check_icons[key] = state.xml:InitStatic(path .. ":icon", state.checks[key])
+            state.check_icons[key]:Enable(false)
+            state.labels[key] = state.xml:InitTextWnd(path .. ":caption", state.checks[key])
+            state.labels[key]:Enable(false)
+        end
+        state.settings = state.xml:InitCheck("panel:settings", state.panel)
+        state.settings_icon = state.xml:InitStatic("panel:settings:icon", state.settings)
+        state.settings_icon:Enable(false)
+        state.labels.settings = state.xml:InitTextWnd("panel:settings:caption", state.settings)
+        state.labels.settings:Enable(false)
+        align_toolbar()
+        state.settings:SetCheck(false)
+        sync_filters()
+        state.empty = state.xml:InitTextWnd("players_empty", parent)
+        state.controls[#state.controls + 1] = state.empty
         state.view = state.xml:InitScrollView("players", parent)
+        state.controls[#state.controls + 1] = state.view
+        state.popup = state.xml:InitStatic("settings_popup", parent)
+        state.controls[#state.controls + 1] = state.popup
+        state.xml:InitTextWnd("settings_popup:title", state.popup)
+        state.sort_controls = {}
+        for _, option in ipairs(sort_options) do
+            state.xml:InitTextWnd("settings_popup:label_" .. option.key, state.popup)
+        end
+        state.sort_error = state.xml:InitTextWnd("settings_popup:error", state.popup)
+        state.apply = state.xml:InitCheck("settings_popup:apply", state.popup)
+        state.xml:InitTextWnd("settings_popup:apply:caption", state.apply)
+        state.close = state.xml:InitCheck("settings_popup:cancel", state.popup)
+        state.xml:InitTextWnd("settings_popup:cancel:caption", state.close)
+        state.apply:SetCheck(false)
+        state.close:SetCheck(false)
+        for _, option in ipairs(sort_options) do state.sort_controls[option.key] = make_sort_control(option.key) end
+        -- Append all lists last so expanded options draw and receive clicks
+        -- above the other fields; only one list can be open at a time.
+        for _, option in ipairs(sort_options) do state.sort_controls[option.key]:InitList(#option.values) end
+        update_settings()
         -- Mark this page only; the PDA root's name belongs to the map filter.
         parent:SetWindowName(state.owner_name)
     end
-    local position = state.view:GetCurrentScrollPos()
+    local position = reset_scroll and 0 or state.view:GetCurrentScrollPos()
     clear_rows(true)
-    local records = pf_pda_player_stats.get_rows()
+    local records = pf_pda_player_stats.get_rows(filters)
+    state.count:SetText(string.format(game.translate_string("pf_pda_player_stats_count"), #records))
+    state.empty:Show(#records == 0)
     for index = 1, #records, 2 do
         local pair = {window = CUIScriptWnd(), cards = {}}
         state.xml:InitWindow("player_pair", 0, pair.window)
@@ -105,7 +403,7 @@ local function refresh_rows(parent)
         for column = 0, 1 do
             local record = records[index + column]
             if record then
-                local card = pf_player_stats_row(state.xml, record)
+                local card = pf_player_stats_row(state.xml, record, index + column)
                 card:SetAutoDelete(false)
                 card:SetWndPos(vector2():set(column == 0 and 0 or
                     pair.window:GetWidth() - card:GetWidth(), 0))
@@ -123,11 +421,13 @@ local function refresh_rows(parent)
 end
 
 function attach()
+    if reload_pending() then return end
     local pda = ActorMenu.get_pda_menu()
     local parent = pda and pda:GetActiveDialog()
     if not parent then return end
     -- Called before the engine updates GetActiveSection() to eptRanking.
-    refresh_rows(parent)
+    local changed = state.view and parent:WindowName() == state.owner_name and capture_filters()
+    refresh_rows(parent, changed)
 end
 
 function refresh()
@@ -136,29 +436,68 @@ function refresh()
 end
 
 function pulse()
+    if reload_pending() then return end
     local pda = ActorMenu.get_pda_menu()
-    if not pda or not pda:IsShown() or pda:GetActiveSection() ~= "eptRanking" then return end
+    if not pda or pda:GetActiveSection() ~= "eptRanking" then return end
     local parent = pda:GetActiveDialog()
     -- Owner validation must precede the revision shortcut: recreated UI needs
     -- fresh cards even when no player data changed during the graphics reset.
-    if parent and (not state.view or parent:WindowName() ~= state.owner_name or
-        state.revision ~= pf_pda_player_stats.revision()) then refresh_rows(parent) end
+    if not parent then return end
+    if not pda:IsShown() then
+        if state.view and parent:WindowName() == state.owner_name then
+            state.settings:SetCheck(false)
+            update_settings()
+        end
+        return
+    end
+    if not state.view or parent:WindowName() ~= state.owner_name then
+        refresh_rows(parent)
+        return
+    end
+    local changed = capture_filters()
+    changed = update_settings() or changed
+    if changed or state.revision ~= pf_pda_player_stats.revision() then refresh_rows(parent, changed) end
 end
 
 function on_game_load()
-    -- Parent-owned C++ controls are destroyed with the ranking window. Never
-    -- dereference previous-level userdata during load/net_destroy.
-    state = {}
+    -- A load can reuse or destroy the native page. Keep borrowed handles only
+    -- for validation against its live owner; never dereference them here.
+    -- Reused controls must restore preferences before a reset looks like a click.
+    state.revision = nil
+    state.filters_needs_sync = true
+    filters = nil
+    reload_detaching_until = 0
 end
 
 function before_game_reload()
-    -- Dispose Lua-derived rows while their VM is still alive. The native
-    -- scroll view may already be gone, so validate its live parent first.
+    if not state.view then return true end
+    -- F9 can recreate Lua while the native Ranking page survives. Remove every
+    -- parent-owned control, not just its rows, before releasing this VM.
+    -- Obtain the live Ranking parent even when another PDA tab is selected.
+    -- Suppress attach/pulse while the temporary native tab switch invokes them.
+    reload_detaching_until = time_global() + 1000
     local pda = ActorMenu.get_pda_menu()
-    local parent = pda and pda:GetActiveDialog()
-    clear_rows(parent and parent:WindowName() == state.owner_name)
-    -- Keep the owner cookie until load completes; an unsuccessful quickload
-    -- must refresh the existing list rather than attach a duplicate view.
-    state.revision = nil
-    return true
+    if not pda then clear_rows(false); state = {}; return true end
+    local section = pda:GetActiveSection()
+    local switched = section ~= "eptRanking"
+    local ok, message = pcall(function()
+        if switched then pda:SetActiveSubdialog("eptRanking") end
+        local parent = pda:GetActiveDialog()
+        local current = parent and parent:WindowName() == state.owner_name
+        if current then
+            capture_filters()
+            clear_sort_lists()
+            clear_rows(true)
+            for _, control in ipairs(state.controls) do parent:DetachChild(control) end
+        else
+            clear_rows(false)
+        end
+        state = {}
+    end)
+    if switched and section ~= "" then
+        local restored = pcall(function() pda:SetActiveSubdialog(section) end)
+        ok = restored and ok
+    end
+    if not ok then printf("! pf_player_stats_ui: unable to detach ranking controls: %s", tostring(message)) end
+    return ok
 end

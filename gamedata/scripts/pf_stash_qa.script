@@ -583,12 +583,23 @@ function use_story_document_tool(item)
 end
 
 function use_lore_notes_tool(_item)
-	local mechanics = rawget(_G, "lz_new_mechanics")
-	if not mechanics or not mechanics.debug_spawn_lore_test_stash then
-		report("Lore-notes QA API is unavailable")
+	if not is_developer_mode() then
+		report(game.translate_string("pf_lore_notes_tool_developer_only"))
 		return false
 	end
-	mechanics.debug_spawn_lore_test_stash()
+	local mechanics = rawget(_G, "lz_new_mechanics")
+	if not mechanics or type(mechanics.debug_spawn_lore_test_stash) ~= "function" then
+		report(game.translate_string("pf_lore_notes_tool_failed"))
+		return false
+	end
+	local ok, count = mechanics.debug_spawn_lore_test_stash()
+	if not ok then
+		report(game.translate_string("pf_lore_notes_tool_failed"))
+	elseif count and count > 0 then
+		report(string.format(game.translate_string("pf_lore_notes_tool_queued"), count))
+	else
+		report(game.translate_string("pf_lore_notes_tool_present"))
+	end
 	return false
 end
 
@@ -677,12 +688,7 @@ function on_inventory_eat(actor, item)
 		pf_story_documents.debug_give_next(item)
 	elseif section == QA_LORE_NOTES_TOOL_SECTION then
 		restore_qa_tool_uses(item)
-		local mechanics = rawget(_G, "lz_new_mechanics")
-		if mechanics and mechanics.debug_spawn_lore_test_stash then
-			mechanics.debug_spawn_lore_test_stash()
-		else
-			report("Lore-notes QA API is unavailable")
-		end
+		use_lore_notes_tool(item)
 	elseif section == QA_ORDER_POINT_TOOL_SECTION then
 		restore_qa_tool_uses(item)
 		use_order_point_capture_tool(item)

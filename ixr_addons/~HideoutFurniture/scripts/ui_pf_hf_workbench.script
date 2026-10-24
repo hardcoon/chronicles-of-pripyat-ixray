@@ -85,7 +85,7 @@ end
 local function craft_description(section)
 	local description = section_description(section):gsub("\\n", "\n")
 	-- Inventory descriptions may contain installation instructions and complete
-	-- parameter tables. The craft column has seven material rows, so it shows
+	-- parameter tables. The craft column has nine material rows, so it shows
 	-- the first descriptive sentence and leaves the full text to the inventory.
 	local paragraph = description:match("^(.-)\n%s*\n") or description
 	return paragraph:match("^(.-[%.%!%?])") or paragraph
@@ -367,7 +367,7 @@ function pf_hf_workbench_dialog:InitControls()
 	self.upgrade_material_counts = {}
 	self.upgrade_material_icons = {}
 	self.upgrade_material_backgrounds = {}
-	for index = 1, 7 do
+	for index = 1, 9 do
 		local suffix = string.format("%02d", index)
 		self.upgrade_material_backgrounds[index] = xml:InitStatic(
 			"main:right:upgrade_material_bg_" .. suffix, self.right)
@@ -377,8 +377,15 @@ function pf_hf_workbench_dialog:InitControls()
 			"main:right:upgrade_material_count_" .. suffix, self.right)
 		self.upgrade_material_icons[index] = xml:InitStatic(
 			"main:right:upgrade_material_icon_" .. suffix, self.right)
-		self.upgrade_material_lines[index]:SetEllipsis(true)
+		-- Native ellipsis clips UTF-8 by byte and can split a Cyrillic letter.
+		-- Use the word-wrapping path inside the existing 32-unit material row.
+		self.upgrade_material_lines[index]:SetEllipsis(false)
+		self.upgrade_material_lines[index]:SetTextComplexMode(true)
 	end
+	self.craft_absolute_choice = xml:Init3tButton("main:right:craft_absolute_choice", self.right)
+	self:Register(self.craft_absolute_choice, "craft_absolute_choice")
+	self:AddCallback("craft_absolute_choice", ui_events.BUTTON_CLICKED,
+		self.OnCraftAbsoluteChoice, self)
 	-- A normal button-based popup follows the workbench atlas and remains below
 	-- the engine cursor. Native combo boxes render their list in a late overlay.
 	self.craft_filter_button_bg = xml:InitStatic(
@@ -494,6 +501,7 @@ function pf_hf_workbench_dialog:Open(bench_id)
 	self.craft_filter_id = "all"
 	self.craft_filter_open = false
 	self.craft_filter_button:SetText(tr(CRAFT_FILTERS[1].text))
+	self.craft_absolute_section = nil
 	self.list_scroll_reset = true
 	self.selected_id = nil
 	self.selected_upgrade_id = nil
@@ -846,10 +854,12 @@ function pf_hf_workbench_dialog:Refresh()
 	self.tree_panel:Show(self.tab == "upgrade")
 	local details_visible = self.tab == "upgrade" or self.tab == "craft"
 	self.upgrade_name:Show(details_visible)
+	self.upgrade_name:SetTextColor(GetARGB(255, 233, 228, 212))
 	self.upgrade_description:Show(details_visible and not disassemble)
 	self.upgrade_effect:Show(details_visible)
 	self.upgrade_state:Show(details_visible and not disassemble)
 	self.upgrade_cost_title:Show(details_visible)
+	self.craft_absolute_choice:Show(false)
 	for index, line in ipairs(self.upgrade_material_lines) do
 		local visible = (self.tab == "upgrade" and self.selected_id ~= nil) or
 			(creating and self.selected_recipe ~= nil)
@@ -1004,10 +1014,17 @@ end
 function pf_hf_workbench_dialog:RefreshCraft(recipe)
 	local output = recipe and recipe.output or nil
 	local counts = pf_hf_workbench_craft.material_counts(self.bench_id)
-	local available = output and pf_hf_workbench_craft.can_craft(output, self.bench_id, counts) or false
+	local absolute_section = recipe and recipe.absolute and
+		pf_hf_workbench_craft.choose_absolute(counts, self.craft_absolute_section) or nil
+	self.craft_absolute_section = absolute_section
+	local available = output and pf_hf_workbench_craft.can_craft(
+		output, self.bench_id, counts, absolute_section) or false
 	self.upgrade_name:SetText(output and
 		pf_hf_workbench_craft.item_label(output) or tr("pf_hf_no_selection"))
-	self.upgrade_description:SetText(output and craft_description(output) or "")
+	local anomalous = recipe and recipe.absolute ~= nil
+	self.upgrade_name:SetTextColor(anomalous and GetARGB(255, 200, 175, 225) or
+		GetARGB(255, 233, 228, 212))
+	self.upgrade_description:SetText(output and not anomalous and craft_description(output) or "")
 	self.upgrade_effect:SetText(output and pf_hf_workbench_craft.item_effect(output) or "")
 	self.upgrade_state:SetText(output and tr(available and
 		"pf_hf_craft_state_available" or "pf_hf_craft_state_materials") or "")
@@ -1016,14 +1033,13 @@ function pf_hf_workbench_dialog:RefreshCraft(recipe)
 	self.upgrade_cost_title:SetText(output and tr("pf_hf_upgrade_cost_title") or "")
 
 	local line_index = 1
-	for _, material in ipairs(pf_hf_workbench_craft.material_order()) do
-		local required = recipe and recipe.materials[material]
-		if required and line_index <= #self.upgrade_material_lines then
-			local owned = counts[material] or 0
+	for _, ingredient in ipairs(pf_hf_workbench_craft.ingredient_rows(output, counts, absolute_section)) do
+		local material, required, owned = ingredient.section, ingredient.required, ingredient.owned
+		if line_index <= #self.upgrade_material_lines then
 			local color = owned >= required and GetARGB(255, 207, 223, 194) or
 				GetARGB(255, 231, 121, 104)
 			self.upgrade_material_lines[line_index]:SetText(
-				pf_hf_workbench_craft.item_label(material))
+				ingredient.label and tr(ingredient.label) or pf_hf_workbench_craft.item_label(material))
 			self.upgrade_material_lines[line_index]:SetTextColor(color)
 			self.upgrade_material_counts[line_index]:SetText(string.format("%d/%d",
 				owned, required))
@@ -1041,10 +1057,28 @@ function pf_hf_workbench_dialog:RefreshCraft(recipe)
 		self.upgrade_material_icons[index]:Show(false)
 		self.upgrade_material_backgrounds[index]:Show(false)
 	end
+	self.craft_absolute_choice:Show(absolute_section ~= nil)
+	self.craft_absolute_choice:Enable(absolute_section ~= nil and self.inventory_refresh == nil)
+	self.craft_absolute_choice:SetText(absolute_section and
+		(pf_hf_workbench_craft.item_label(absolute_section) .. " >") or "")
 	self.upgrade_action:SetText(tr("pf_hf_craft_action"))
 	self.upgrade_action:Show(output ~= nil)
 	self.action_background:Show(output ~= nil)
 	self.upgrade_action:Enable(available and self.inventory_refresh == nil)
+end
+
+function pf_hf_workbench_dialog:OnCraftAbsoluteChoice()
+	if self.tab ~= "craft" or self:IsDisassemble() or self.inventory_refresh then return end
+	local recipe = pf_hf_workbench_craft.recipe(self.selected_recipe)
+	if not recipe or not recipe.absolute then return end
+	local counts = pf_hf_workbench_craft.material_counts(self.bench_id)
+	local options = pf_hf_workbench_craft.absolute_options(counts)
+	local next_index = 1
+	for index, section in ipairs(options) do
+		if section == self.craft_absolute_section then next_index = index % #options + 1 break end
+	end
+	self.craft_absolute_section = options[next_index]
+	self:RefreshCraft(recipe)
 end
 
 function pf_hf_workbench_dialog:RefreshUpgrade(item)
@@ -1368,7 +1402,8 @@ function pf_hf_workbench_dialog:OnCraft()
 	if self.inventory_refresh then return end
 	if self:IsDisassemble() then self:OnDisassemble() return end
 	if self.tab ~= "craft" or not self.selected_recipe then return end
-	local ok, message_id, consumed = pf_hf_workbench_craft.craft(self.selected_recipe, self.bench_id)
+	local ok, message_id, consumed = pf_hf_workbench_craft.craft(
+		self.selected_recipe, self.bench_id, self.craft_absolute_section)
 	self:QueueInventoryRefresh(ok, message_id, consumed)
 	self:Refresh()
 	self:SetTransactionStatus(ok, message_id)

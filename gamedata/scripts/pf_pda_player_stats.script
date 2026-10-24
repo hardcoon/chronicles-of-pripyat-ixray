@@ -1,6 +1,21 @@
 -- Local counters and persistent IRC observations for the PDA player cards.
 local tiers = { "green", "cyan", "purple", "orange", "red" }
 local tier_weights = { 1, 2, 3, 5, 10 }
+local sort_indices = { mutants = 1, stalkers = 2, days = 3, stashes = 4, artifacts = 5 }
+local sort_options = {
+    { key = "sort_field", default = "rank", values = { "rank", "mutants", "stalkers", "days", "artifacts", "stashes" } },
+    { key = "sort_order", default = "desc", values = { "desc", "asc" } },
+    { key = "status_order", default = "any", values = { "any", "online_first", "offline_first" } }
+}
+
+function sorting_options() return sort_options end
+
+local function sort_value(record, field)
+    local index = sort_indices[field]
+    if not index then return record.rank end
+    local values = record.values
+    return values and not values.no_data and tonumber(values[index]) or nil
+end
 
 local function trim(value)
     return tostring(value or ""):match("^%s*(.-)%s*$")
@@ -75,7 +90,8 @@ function card_lines(values)
         string.format(game.translate_string("pf_pda_player_stats_card_found"), values[5], values[4])
 end
 
-function get_rows()
+function get_rows(filters)
+    filters = filters or {}
     local irc = rawget(_G, "pf_irc_chat")
     local status = irc and irc.get_state() or {}
     local profile = irc and irc.get_active_profile() or {}
@@ -102,14 +118,36 @@ function get_rows()
             identity = own_id, values = values, rank = rank(values),
             presence = connected and (status.presence or "away") or "offline" }
     end
-    table.sort(result, function(a, b)
-        local a_off, b_off = a.presence == "offline", b.presence == "offline"
-        if a_off ~= b_off then return not a_off end
-        if (a.rank or -1) ~= (b.rank or -1) then return (a.rank or -1) > (b.rank or -1) end
+    local visible = {}
+    for _, record in ipairs(result) do
+        local has_data = record.values and not record.values.no_data
+        local connected = record.presence == "online" or record.presence == "away"
+        if (filters.show_empty == true or has_data) and
+            (not filters.online_only or connected) then
+            visible[#visible + 1] = record
+        end
+    end
+    table.sort(visible, function(a, b)
+        if filters.status_order == "online_first" or filters.status_order == "offline_first" then
+            local a_on = a.presence == "online" or a.presence == "away"
+            local b_on = b.presence == "online" or b.presence == "away"
+            if a_on ~= b_on then
+                if filters.status_order == "online_first" then return a_on end
+                return not a_on
+            end
+        end
+        local a_value, b_value = sort_value(a, filters.sort_field), sort_value(b, filters.sort_field)
+        -- Missing counters always stay last within their status group, even
+        -- for ascending order. Real zeroes remain valid sortable data.
+        if (a_value == nil) ~= (b_value == nil) then return a_value ~= nil end
+        if a_value ~= b_value then
+            if filters.sort_order == "asc" then return a_value < b_value end
+            return a_value > b_value
+        end
         if a.sort_nick ~= b.sort_nick then return a.sort_nick < b.sort_nick end
         return a.identity < b.identity
     end)
-    return result
+    return visible
 end
 
 function bind_self(nick)
