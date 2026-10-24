@@ -472,7 +472,7 @@ function spawn_irc(identity, nick, rank, irc_nick)
     local section = "pf_irc_npc_" .. tier
     if not system_ini():section_exist(section) then return nil, "section" end
     local actor_position = db.actor:position()
-    local p, lv, gv = impl.candidate(actor_position)
+    local p, lv, gv = impl.irc_candidate(actor_position)
     local safe = math.max(rt.cfg.safe_distance, (rt.overrides.switch_distance or 150) * 1.1 + 20)
     if not p or impl.distance2(p, actor_position) < safe * safe then return nil, "placement" end
     local server = alife():create(section, p, lv, gv)
@@ -621,6 +621,11 @@ function impl.open_navigation()
     ai_file:close()
     assert(ai_header and #ai_header == 56 and impl.u32(ai_header, 5) == g.mesh_count
         and string.sub(ai_header, 41, 56) == g.level_guid, "AI mesh/cross table mismatch")
+    -- Cross-table distance is shortest-path hop count * mesh cell size.
+    -- Unreachable islands can retain a valid graph ID but u32(-1) hops.
+    local cell_size = impl.f32(ai_header, 9)
+    assert(cell_size > 0, "invalid AI mesh cell size")
+    g.mesh_path_limit = g.mesh_count * cell_size
     rt.graph = g
     for id = 0, g.count - 1 do
         local v = g.vertices[id]
@@ -651,6 +656,21 @@ end
 function impl.random(limit)
     rt.root.seed = rt.root.seed * 16807 % 2147483647
     return math.floor(rt.root.seed / 2147483647 * limit) + 1
+end
+function impl.init_spawn_random(now)
+    -- Placement is a private live-session stream, not a saved sequence of
+    -- first spawn points. Keep saved population/AI state and global RNG intact.
+    local modulus = 2147483646
+    impl.spawn_nonce = (impl.spawn_nonce or 0) % modulus + 1
+    local wall = os and os.time and os.time() or 0
+    local cpu = os and os.clock and math.floor(os.clock() * 1000000) or 0
+    local tick = math.floor(tonumber(now) or 0)
+    rt.spawn_seed = (wall % modulus + cpu % modulus * 17
+        + tick % modulus * 1009 + impl.spawn_nonce * 104729) % modulus + 1
+end
+function impl.spawn_random(limit)
+    rt.spawn_seed = rt.spawn_seed * 16807 % 2147483647
+    return math.floor(rt.spawn_seed / 2147483647 * limit) + 1
 end
 function impl.distance2(a, b)
     local x, y, z = a.x - b.x, a.y - b.y, a.z - b.z
@@ -819,6 +839,7 @@ function impl.init(now)
         local j = impl.random(i)
         rt.graph.order[i], rt.graph.order[j] = rt.graph.order[j], rt.graph.order[i]
     end
+    impl.init_spawn_random(now)
     impl.population_plan()
     rt.groups = {}
     for _, g in ipairs(rt.root.population.groups) do rt.groups[g.id] = g end
@@ -876,6 +897,69 @@ function impl.candidate(actor_position)
     if not cell or not game_graph():accessible(cell.gv) then return nil end
     local grounded = impl.grounded(lv)
     if grounded then return grounded, lv, cell.gv end
+end
+
+function impl.irc_sample(actor_position, areas)
+    local g = rt.graph
+    -- Sample the whole walkable mesh, not a fixed queue of graph anchors or
+    -- their local rings. Cross-table reads stay bounded to one six-byte cell.
+    local lv = impl.spawn_random(g.mesh_count) - 1
+    if not level.valid_vertex_id(lv) then return nil end
+    local p = level.vertex_position(lv)
+    if not impl.irc_inside(p, areas) then return nil end
+    local cell = impl.cross_cell(lv)
+    if not cell or cell.distance > g.mesh_path_limit or not game_graph():accessible(cell.gv) then return nil end
+    if impl.distance2(p, actor_position) < rt.cfg.safe_distance ^ 2 then return nil end
+    for _, records in ipairs({rt.root.slots, rt.root.manual}) do
+        for _, record in pairs(records) do
+            local server = alife():object(record.id)
+            if impl.identity(record, server) and impl.distance2(p, server.position) < rt.cfg.spacing ^ 2 then return nil end
+        end
+    end
+    local grounded = impl.grounded(lv)
+    if grounded then return grounded, lv, cell.gv end
+end
+
+function impl.irc_areas()
+    if rt.irc_areas ~= nil then return rt.irc_areas or nil end
+    rt.irc_areas = false
+    local ini, section, areas = system_ini(), "pf_irc_npc_spawn_areas", {}
+    if not ini:section_exist(section) then return nil end
+    for _, name in ipairs({"city", "yanov"}) do
+        if not ini:line_exist(section, name) then return nil end
+        local values = {}
+        for token in ini:r_string(section, name):gmatch("[^,]+") do
+            local value = tonumber(token)
+            if not value or value ~= value or math.abs(value) > 100000 then return nil end
+            values[#values + 1] = value
+        end
+        if #values < 6 or #values % 2 ~= 0 then return nil end
+        areas[#areas + 1] = values
+    end
+    rt.irc_areas = areas
+    return areas
+end
+function impl.irc_inside(position, areas)
+    for _, polygon in ipairs(areas) do
+        local inside, last = false, #polygon - 1
+        for first = 1, #polygon, 2 do
+            local ax, az, bx, bz = polygon[first], polygon[first + 1], polygon[last], polygon[last + 1]
+            if (az > position.z) ~= (bz > position.z)
+                and position.x < (bx - ax) * (position.z - az) / (bz - az) + ax then inside = not inside end
+            last = first
+        end
+        if inside then return true end
+    end
+    return false
+end
+function impl.irc_candidate(actor_position)
+    local areas = impl.irc_areas()
+    if not areas then return nil end
+    -- Bounded retries through mesh cells; no fixed spawn coordinates or scan.
+    for attempt = 1, 16 do
+        local p, lv, gv = impl.irc_sample(actor_position, areas)
+        if p then return p, lv, gv end
+    end
 end
 
 function impl.target_enabled(key)
