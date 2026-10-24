@@ -1,9 +1,16 @@
 -- Sleep Timelapse port settings. Native camera/input ownership: COP-ENG-185.
 -- Missing preference means enabled; never overwrite an existing user choice.
-local state = {enabled = nil}
+local state = {enabled = nil, cover_reference = false}
 
 local function path()
     return getFS():update_path("$app_data_root$", "pf_sleep_timelapse.setting")
+end
+
+local function release_cover_reference(discard)
+    if not state.cover_reference then return end
+    local cover = rawget(_G, "lz_nm_surge_cover")
+    if cover then cover.end_sleep_reference(discard) end
+    state.cover_reference = false
 end
 
 function is_enabled()
@@ -34,22 +41,35 @@ function set_enabled(enabled)
     end
     state.enabled = enabled
     local runtime = rawget(_G,"pf_sleep_runtime")
-    if not enabled and runtime then runtime.finish(false) end
+    if not enabled then
+        if runtime then runtime.finish(false) end
+        release_cover_reference(false)
+    end
     return true
 end
 
 function begin(hours)
     if not is_enabled() then return false end
-    return pf_sleep_runtime.begin(hours)
+    if not pf_sleep_runtime.begin(hours) then return false end
+    -- No render update has run yet: cam_pos still holds the ordinary eye point.
+    -- The facade coordinates both systems; the camera runtime stays independent.
+    if getFS():exist("$game_scripts$", "lz_nm_surge_cover.script") then
+        state.cover_reference = lz_nm_surge_cover.begin_sleep_reference()
+    end
+    return true
 end
 
 local function reset()
     local runtime=rawget(_G,"pf_sleep_runtime")
     if runtime then runtime.finish(false) end
+    release_cover_reference(true)
 end
 local function update()
     local runtime=rawget(_G,"pf_sleep_runtime")
     if runtime then runtime.update() end
+    if state.cover_reference and (not runtime or not runtime.is_active()) then
+        release_cover_reference(false)
+    end
 end
 local registered=false
 function on_game_start()

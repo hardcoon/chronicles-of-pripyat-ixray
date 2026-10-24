@@ -17,6 +17,7 @@ local scan_ready = false
 local dynamic_safe = false
 local loss_started_at = nil
 local movement_anchor = nil
+local sleep_reference = nil
 local pending = nil
 local hud_window = nil
 local overall_safe_last = nil
@@ -105,6 +106,43 @@ end
 
 local function copy_position(position)
 	return vector():set(position)
+end
+
+function begin_sleep_reference()
+	if not db.actor then return false end
+	sleep_reference = {
+		actor_id = db.actor:id(),
+		offset = copy_position(device().cam_pos):sub(db.actor:position())
+	}
+	return true
+end
+
+function end_sleep_reference(discard)
+	if discard then
+		sleep_reference = nil
+	elseif sleep_reference and not sleep_reference.release_frame then
+		-- clear() removes the effector before Device.cam_pos is updated. Keep the
+		-- actor reference through the following rendered frame, including aborts.
+		sleep_reference.release_frame = device().frame
+	end
+end
+
+local function scan_position()
+	if sleep_reference then
+		if not db.actor or db.actor:id() ~= sleep_reference.actor_id then
+			sleep_reference = nil
+		else
+			if not sleep_reference.release_frame and not level.pf_sleep_camera_active() then
+				end_sleep_reference(false)
+			end
+			local released = sleep_reference.release_frame
+			if not released or device().frame <= released + 1 then
+				return copy_position(db.actor:position()):add(sleep_reference.offset)
+			end
+			sleep_reference = nil
+		end
+	end
+	return copy_position(device().cam_pos)
 end
 
 local function clear_scan(keep_dynamic_state)
@@ -315,6 +353,7 @@ function reset()
 end
 
 function on_actor_net_destroy()
+	end_sleep_reference(true)
 	local had_hud = hud_window ~= nil
 	local hud_removed = reset()
 	if had_hud and not hud_removed then
@@ -340,7 +379,9 @@ function update(now)
 	end
 	surge_was_active = true
 
-	local camera_position = copy_position(device().cam_pos)
+	-- Only the ray origin changes during sleep; all shelter tests remain live.
+	-- start_search/reset must preserve this reference if a surge begins in sleep.
+	local camera_position = scan_position()
 	if not movement_anchor then
 		movement_anchor = copy_position(camera_position)
 	elseif movement_anchor:distance_to(camera_position) > load_config().movement_reset_distance then
