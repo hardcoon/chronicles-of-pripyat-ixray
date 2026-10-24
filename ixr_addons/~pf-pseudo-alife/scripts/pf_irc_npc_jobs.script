@@ -15,6 +15,11 @@ function impl.trace(format, ...)
     local file = io.open(path, "ab")
     if file then file:write(tostring(time_global()), " ", message, "\r\n"); file:close() end
 end
+function impl.call(label, callback, ...)
+    local ok, result = pcall(callback, ...)
+    if not ok then impl.trace("[PF_IRC_NPC] %s: %s", label, tostring(result)) end
+    return ok
+end
 
 function configure_rewards(pools)
     st.pools = {}
@@ -34,7 +39,7 @@ function impl.init()
     if st.root then return end
     st.root = st.pending or {version = 1, serial = 0, jobs = {}}
     st.root.hostiles = st.root.hostiles or {}
-    st.pending, st.runtime, st.keys, st.cursor = nil, {}, nil, 1
+    st.pending, st.runtime, st.finishing, st.keys, st.cursor = nil, {}, {}, nil, 1
     alife_storage_manager.get_state()[KEY] = st.root
 end
 function reset()
@@ -209,6 +214,7 @@ function configure_npc(npc)
     npc:disable_trade()
     local tier = impl.tier(npc)
     if st.pools then impl.reward(npc, tier, st.pools[tier]) end
+    if db.actor then impl.recover_task(npc) end
     if db.actor and npc:alive() and xr_logic.pstor_retrieve(npc, "pf_irc_npc_hostile", false) then
         impl.hostile(npc)
         impl.combat_memory(npc, false)
@@ -273,6 +279,11 @@ end
 
 function impl.ensure_task(job)
     local native = db.actor:get_task(job.task_id, true)
+    if not native and db.actor:get_task(job.task_id, false) then
+        -- A stale sidecar must not turn an archived native task into new work.
+        st.root.jobs[job.task_id], st.runtime[job.task_id], st.keys = nil, nil, nil
+        return false
+    end
     local title = string.format(game.translate_string("pf_irc_npc_job_title"), job.nick)
     local description = string.format(game.translate_string("pf_irc_npc_job_descr"), job.nick, job.count or 5)
     if native then
@@ -280,7 +291,7 @@ function impl.ensure_task(job)
         -- once after load without accepting it again or rerolling its reward.
         native:set_title(title)
         native:set_description(description)
-        return
+        return true
     end
     native = CGameTask()
     native:set_id(job.task_id)
@@ -292,16 +303,39 @@ function impl.ensure_task(job)
     native:set_map_location("secondary_task_location")
     native:set_map_object_id(job.id)
     db.actor:give_task(native, 0, false, 0)
+    return true
 end
 function impl.finish(job, outcome)
+    -- Persist the intended terminal state before callbacks can reenter or fail.
+    -- A pending finalization may be retried, but can never recreate the task.
+    job.outcome = job.outcome or (outcome == task.completed and "completed" or "fail")
+    outcome = job.outcome == "completed" and task.completed or task.fail
+    if st.finishing[job.task_id] then return false end
+    st.finishing[job.task_id] = true
     local native = db.actor:get_task(job.task_id, true)
     if native then
-        db.actor:set_task_state(outcome, job.task_id)
-        -- bind_stalker deliberately omits failure news; stock CGeneralTask
-        -- sends it from deactivate_task. These dynamic tasks need the same call.
-        if outcome == task.fail then news_manager.send_task(db.actor, "fail", native) end
+        impl.call("finish " .. job.task_id, db.actor.set_task_state, db.actor, outcome, job.task_id)
     end
+    st.finishing[job.task_id] = nil
+    if db.actor:get_task(job.task_id, true) then return false end
     st.root.jobs[job.task_id], st.runtime[job.task_id], st.keys = nil, nil, nil
+    -- bind_stalker omits failure news. Notify only after native finalization,
+    -- with the record already removed so a failed message cannot repeat it.
+    if native and outcome == task.fail then
+        impl.call("failed task news", news_manager.send_task, db.actor, "fail", native)
+    end
+    return true
+end
+function impl.recover_task(npc)
+    if impl.value(npc) ~= "done" then return end
+    local id = xr_logic.pstor_retrieve(npc, PSTOR .. "_task", "")
+    if not id:match("^pf_irc_npc_fetch_" .. npc:id() .. "_%d+$") or not db.actor:get_task(id, true) then return end
+    impl.init()
+    local job = st.root.jobs[id]
+    if job and (job.id ~= npc:id() or job.name ~= npc:name() or job.section ~= npc:section()) then return end
+    job = job or {task_id = id, id = npc:id(), name = npc:name(), section = npc:section()}
+    st.root.jobs[id], st.keys = job, nil
+    impl.finish(job, task.completed)
 end
 function insult(first, second)
     if not allowed(first, second) then return false end
@@ -363,11 +397,16 @@ function deliver(first, second)
     -- Consume handed-in PDAs instead of storing them on a future lootable corpse.
     -- Every server object was checked before generating the saved reward.
     for _, server in ipairs(servers) do alife():release(server, true) end
-    news_manager.relocate_item(db.actor, "out", "pf_stash_pda_novice", #servers)
-    dialogs.relocate_money_to_actor(first, second, job.money or 3000)
-    if job.reward and news_manager and news_manager.relocate_item then news_manager.relocate_item(db.actor, "in", job.reward) end
+    local amount = job.money or 3000
+    db.actor:give_money(amount)
     xr_logic.pstor_store(npc, PSTOR, "done")
     impl.finish(job, task.completed)
+    -- The stock money helper mixes payment, statistics and UI. Commit payment
+    -- once, then isolate its normal bookkeeping/messages from quest state.
+    impl.call("PDA loss news", news_manager.relocate_item, db.actor, "out", "pf_stash_pda_novice", #servers)
+    impl.call("money statistics", game_stats.money_quest_update, amount)
+    impl.call("money news", news_manager.relocate_money, db.actor, "in", amount)
+    if job.reward then impl.call("artifact news", news_manager.relocate_item, db.actor, "in", job.reward) end
     return true
 end
 function offer_text(speaker)
@@ -451,7 +490,10 @@ function update()
         local server = job and alife():object(job.id)
         local npc = server and server.online and level.object_by_id(job.id)
         local hostile = job and st.root.hostiles[tostring(job.id)]
-        if job and (not server or server:name() ~= job.name or server:section_name() ~= job.section or not server:alive()) then
+        if job and (job.outcome or (npc and impl.value(npc) == "done")) then
+            impl.finish(job, task.completed)
+            break
+        elseif job and (not server or server:name() ~= job.name or server:section_name() ~= job.section or not server:alive()) then
             impl.finish(job, task.fail)
             break
         elseif job and ((hostile and hostile.name == job.name and hostile.section == job.section)
@@ -459,8 +501,7 @@ function update()
             impl.finish(job, task.fail)
             break
         elseif job and not st.runtime[id] then
-            impl.ensure_task(job)
-            st.runtime[id] = true
+            if impl.ensure_task(job) then st.runtime[id] = true else break end
         end
     end
 end
