@@ -110,6 +110,57 @@ end
 function rows()
     return schema
 end
+-- Shipped reset profile, independent of the user's saved edits and world state.
+function population_defaults()
+    local ini, values = system_ini(), {}
+    for _, item in ipairs(schema) do
+        if item.side ~= "global" then
+            values[item.key] = item.default
+            if ini:line_exist("pf_pa_menu_defaults",item.key) then
+                values[item.key] = ini:r_float("pf_pa_menu_defaults",item.key)
+            end
+            if item.key == "humans" then values[item.key] = ini:r_float("pf_pseudo_alife","stalkers") end
+            if item.key == "mutants" then values[item.key] = ini:r_float("pf_pseudo_alife","mutants") end
+        end
+    end
+    return values
+end
+function population_preset(side, position)
+    local factors = {0.5,1,2,3,4}
+    local factor = factors[position]
+    if not factor or (side ~= "human" and side ~= "mutant") then return end
+    local base, values = population_defaults(), {}
+    local groups, factions, order = 0, 0, {}
+    for _, item in ipairs(schema) do
+        if item.side == side then
+            local raw = base[item.key] * (item.key == "mutant_group_max" and 1 or factor)
+            values[item.key] = math.max(item.min,math.min(item.max,math.floor(raw)))
+            if item.key:match("^human_size_") then groups = groups + values[item.key] end
+            if item.key:match("^faction_") and item.key ~= "faction_ecolog" then
+                factions = factions + values[item.key]
+                order[#order+1] = {key=item.key,remainder=raw-math.floor(raw),index=#order+1,max=item.max}
+            end
+        end
+    end
+    -- Half-size rounding must keep the faction and squad totals equal.
+    table.sort(order,function(a,b)
+        if a.remainder == b.remainder then return a.index < b.index end
+        return a.remainder > b.remainder
+    end)
+    while factions ~= groups do
+        local changed = false
+        for _, item in ipairs(order) do
+            if factions < groups and values[item.key] < item.max then
+                values[item.key], factions, changed = values[item.key]+1, factions+1, true
+            elseif factions > groups and values[item.key] > 0 then
+                values[item.key], factions, changed = values[item.key]-1, factions-1, true
+            end
+            if factions == groups then break end
+        end
+        if not changed then break end
+    end
+    return values
+end
 function get()
     impl.init()
     local values = impl.copy(st.values)

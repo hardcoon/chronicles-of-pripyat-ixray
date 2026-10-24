@@ -88,6 +88,13 @@ function options_dialog:InitControls()
     self.dialog:AttachChild(self.dlg_alife)
     xml:InitWindow("tab_size", 0, self.dlg_alife)
     self.dlg_alife:Show(false)
+    self:Register(self.dlg_alife.reset,"btn_alife_defaults")
+    for _, section in ipairs(self.dlg_alife.sections) do
+        self:Register(section.button,"alife_category_"..section.id)
+    end
+    for side, track in pairs(self.dlg_alife.presets) do
+        self:Register(track,"alife_preset_"..side)
+    end
     local menu_xml = alife_xml
     if getFS():exist("$game_scripts$", "pf_sss_ui.script") then
         local sss_xml = CScriptXmlInit()
@@ -156,7 +163,7 @@ function options_dialog:SetCurrentValues()
 	self.dlg_gameplay:SetSpawnDiscoverableVehiclesValue()
 	self.dlg_gameplay:SetDeveloperAccessValue()
 
-    self.dlg_alife:SetValues(pf_pa_options.get())
+    self.dlg_alife:SetValues(pf_pa_options.get(),pf_pa_options.population_defaults())
     if self.dlg_sss then self.dlg_sss:SetValues(pf_sss_settings.get()) end
 	self:UpdateDependControls()
 end
@@ -182,6 +189,22 @@ function options_dialog:UpdateDependControls()
 end
 
 function options_dialog:InitCallBacks()
+    for _, section in ipairs(self.dlg_alife.sections) do
+        local id = section.id
+        self:AddCallback("alife_category_"..id,ui_events.BUTTON_CLICKED,function()
+            self.dlg_alife:ToggleSection(id)
+        end,self)
+    end
+    for side in pairs(self.dlg_alife.presets) do
+        local id = side
+        self:AddCallback("alife_preset_"..id,ui_events.TRACK_VALUE_CHANGED,function()
+            if self.dlg_alife.setting_presets then return end
+            local position = self.dlg_alife.presets[id]:GetIValue()
+            local values = pf_pa_options.population_preset(id,position)
+            if values then self.dlg_alife:SetPopulation(values,id,position) end
+        end,self)
+    end
+    self:AddCallback("btn_alife_defaults",ui_events.BUTTON_CLICKED,self.OnAlifeDefaults,self)
     if self.dlg_sss then
         for _,section in ipairs(self.dlg_sss.sections) do
             local id=section.id
@@ -262,6 +285,13 @@ function options_dialog:OnSSSPuddles()
         self.message_box:ShowDialog(true)
     end
     self.dlg_sss:UpdateEnabled()
+end
+
+function options_dialog:OnAlifeDefaults()
+    self.dlg_alife:SetPopulation(pf_pa_options.population_defaults())
+    self.dlg_alife.setting_presets = true
+    for _, track in pairs(self.dlg_alife.presets) do track:SetIValue(2) end
+    self.dlg_alife.setting_presets = false
 end
 
 function options_dialog:OnSSSDefaults()

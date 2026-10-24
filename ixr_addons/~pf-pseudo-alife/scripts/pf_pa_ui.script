@@ -3,54 +3,107 @@ class "panel" (CUIWindow)
 function panel:__init() super()
     self.controls = {}
     self.headings, self.counter_cache = {}, {}
+    self.sections, self.section_by_id = {}, {}
+    self.presets = {}
+    self.preset_captions, self.preset_values, self.preset_positions, self.preset_labels = {}, {}, {}, {}
 end
 function panel:__finalize() end
 function panel:InitControls(xml, rows)
     self:SetAutoDelete(true)
     self.rows = rows
     self.scroll = xml:InitScrollView("scroll", self)
-    local columns = {human={}, mutant={}}
-    for _, side in ipairs({"human","mutant"}) do
-        xml:InitStatic("title_" .. side, self)
+    for _, side in ipairs({"global","human","mutant"}) do
+        local section = {id=side,button=xml:Init3tButton("category",nil),rows={},expanded=false}
+        self.sections[#self.sections+1] = section
+        self.section_by_id[side] = section
+        if side ~= "global" then
+            local row = xml:InitStatic("row",nil)
+            self.preset_captions[side] = xml:InitStatic("preset_caption",row)
+            local track = xml:InitTrackBar("preset",row)
+            track:SetOptIBounds(1,5)
+            self.presets[side] = track
+            section.rows[#section.rows+1] = row
+        end
     end
     for _, item in ipairs(rows) do
-        if item.side == "global" then
-            local caption = xml:InitStatic("caption_" .. item.key, self)
-            if item.key == "debug_map" then self.debug_caption = caption end
-            if item.kind == "check" then self.controls[item.key] = xml:InitCheck("check_" .. item.key, self)
-            elseif item.kind == "track" then
-                self.controls[item.key] = xml:InitTrackBar("track_" .. item.key, self)
-                self.controls[item.key]:SetOptIBounds(item.min, item.max)
-            else self.controls[item.key] = xml:InitEditBox("edit_" .. item.key, self) end
-        else
-            local column = columns[item.side]
-            if item.heading then column[#column+1] = {heading=item.heading} end
-            column[#column+1] = item
-            if item.key == "humans" then column[#column+1] = false end
+        local section = self.section_by_id[item.side]
+        if item.heading then
+            local heading_row = xml:InitStatic("row",nil)
+            self.headings[item.heading] = xml:InitStatic("heading",heading_row)
+            section.rows[#section.rows+1] = heading_row
         end
-    end
-    -- Each scroll item owns both cells, so their vertical movement is shared.
-    for index=1,math.max(#columns.human,#columns.mutant) do
         local row = xml:InitStatic("row",nil)
-        for _, side in ipairs({"human","mutant"}) do
-            local item = columns[side][index]
-            if item then
-                local cell = xml:InitStatic(side .. "_cell",row)
-                if item.key then
-                    xml:InitStatic("caption",cell):TextControl():SetTextST("pf_pa_opt_" .. item.key)
-                    self.controls[item.key] = xml:InitEditBox(item.kind == "float" and "hours" or "integer",cell)
-                else
-                    self.headings[item.heading] = xml:InitStatic("heading",cell)
-                    self.headings[item.heading]:TextControl():SetTextST("pf_pa_opt_" .. item.heading)
-                end
-            end
+        section.rows[#section.rows+1] = row
+        if item.side == "global" then
+            xml:InitStatic("caption_" .. item.key, row)
+            if item.key == "debug_map" then self.debug_row = row end
+            if item.kind == "check" then self.controls[item.key] = xml:InitCheck("check_" .. item.key, row)
+            elseif item.kind == "track" then
+                self.controls[item.key] = xml:InitTrackBar("track_" .. item.key, row)
+                self.controls[item.key]:SetOptIBounds(item.min, item.max)
+            else self.controls[item.key] = xml:InitEditBox("edit_" .. item.key, row) end
+        else
+            xml:InitStatic("caption",row):TextControl():SetTextST("pf_pa_opt_" .. item.key)
+            self.controls[item.key] = xml:InitEditBox("integer",row)
         end
-        self.scroll:AddWindow(row,true);row:SetAutoDelete(false)
     end
     local row = xml:InitStatic("footer_row",nil)
     xml:InitStatic("footer_note",row):TextControl():SetTextST("pf_pa_opt_note_enabled")
-    self.scroll:AddWindow(row,true);row:SetAutoDelete(false)
+    local general = self.section_by_id.global.rows
+    general[#general+1] = row
+    self.reset = xml:Init3tButton("reset",self)
     self:RefreshDeveloperAccess()
+end
+
+function panel:RebuildSections()
+    local position = self.scroll:GetCurrentScrollPos()
+    self.scroll:Clear()
+    for _, section in ipairs(self.sections) do
+        section.button:SetText((section.expanded and "[ - ] " or "[ + ] ") .. game.translate_string("pf_pa_opt_group_" .. section.id))
+        self.scroll:AddWindow(section.button,true);section.button:SetAutoDelete(false)
+        for _, row in ipairs(section.rows) do
+            local visible = section.expanded and (not rawequal(row,self.debug_row) or self.debug_available)
+            row:Show(visible)
+            if visible then self.scroll:AddWindow(row,true);row:SetAutoDelete(false) end
+        end
+    end
+    self.scroll:SetScrollPos(position)
+end
+
+function panel:ToggleSection(id)
+    local section = self.section_by_id[id]
+    if not section then return end
+    section.expanded = not section.expanded
+    self:RebuildSections()
+end
+
+-- Only population drafts change: globals (including unfinished text) remain intact.
+function panel:SetPopulation(values, side, position)
+    for _, item in ipairs(self.rows) do
+        if item.side ~= "global" and (not side or item.side == side) then
+            self.controls[item.key]:SetText(tostring(values[item.key]))
+        end
+    end
+    for id in pairs(self.presets) do
+        if not side or id == side then
+            self.preset_values[id], self.preset_positions[id] = values, position or 2
+        end
+    end
+    self:RefreshCounters(true)
+end
+
+function panel:RefreshPresetLabels(values)
+    for side, caption in pairs(self.preset_captions) do
+        local expected, manual = self.preset_values[side], false
+        for _, item in ipairs(self.rows) do
+            if item.side == side and (not expected or values[item.key] ~= expected[item.key]) then manual = true;break end
+        end
+        local key = manual and "manual" or "preset_" .. (self.preset_positions[side] or 2)
+        if self.preset_labels[side] ~= key then
+            self.preset_labels[side] = key
+            caption:TextControl():SetTextST("pf_pa_opt_" .. key)
+        end
+    end
 end
 
 -- Use the same applied settings flag as the main-menu F1 spawner.
@@ -60,13 +113,12 @@ function panel:RefreshDeveloperAccess()
     if pf_stash_qa and type(pf_stash_qa.is_developer_access_enabled) == "function" then
         ok, enabled = pcall(pf_stash_qa.is_developer_access_enabled)
     end
-    local visible = ok and enabled == true
-    self.debug_caption:Show(visible)
-    self.controls.debug_map:Show(visible)
-    self.controls.debug_map:Enable(visible)
+    self.debug_available = ok and enabled == true
+    self.controls.debug_map:Enable(self.debug_available)
+    self:RebuildSections()
 end
 
-function panel:SetValues(values)
+function panel:SetValues(values, defaults)
     self.factor = values._factor
     for _, item in ipairs(self.rows) do
         local control,value = self.controls[item.key],values[item.key]
@@ -76,6 +128,12 @@ function panel:SetValues(values)
             control:SetText((string.format("%.6f",value):gsub("0+$",""):gsub("%.$","")))
         else control:SetText(tostring(value)) end
     end
+    self.setting_presets = true
+    for side, track in pairs(self.presets) do
+        track:SetIValue(2)
+        self.preset_values[side], self.preset_positions[side] = defaults, 2
+    end
+    self.setting_presets = false
     self:RefreshDeveloperAccess()
     self:RefreshCounters(true)
 end
@@ -83,6 +141,7 @@ end
 -- Draft counts only: no world/ALife calls, and no changes to the entered values.
 function panel:Counts()
     local values = self:GetValues()
+    self:RefreshPresetLabels(values)
     local counts = {sizes=0,factions=0,humans=0,mutant_groups=0,mutant_min=0,mutant_max=0,
         human_limit=values.humans,mutant_limit=values.mutants}
     local sizes_ok,factions_ok,mutants_ok = true,true,values.mutant_group_max ~= nil
