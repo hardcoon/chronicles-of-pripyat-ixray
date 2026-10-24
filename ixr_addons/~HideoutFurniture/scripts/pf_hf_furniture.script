@@ -43,7 +43,7 @@ end
 function in_interaction_range(object)
     local entry=object and definition(object:section())
     if not entry or not db.actor then return false end
-    if entry.kind=="campfire" then
+    if entry.kind=="campfire" or entry.sliding then
         -- Large log/brick rings are used at their visible surface, not at the
         -- distant floor pivot in the middle of the model.
         local aimed,distance=level.get_target_obj(),level.get_target_dist()
@@ -232,6 +232,11 @@ local function apply_edit(pose,id,section)
     if not edit_empty(client,entry) then notify("pf_hf_edit_not_empty");return nil,"not_empty" end
     if not pose or not pf_runtime_editor_geometry.finite(pose.position) or
         not pf_runtime_editor_geometry.finite(pose.rotation) then return nil,"invalid_pose" end
+    if entry.sliding then
+        local result,err=pf_hf_sliding_door.reposition(pose,id)
+        if result then pending[id]=nil end
+        return result,err
+    end
     if type(client.set_editor_transform)~="function" or
         not client:set_editor_transform(pose.position,pose.rotation) then return nil,"transform_failed" end
     -- Only empty auxiliary storage/effects may be rebuilt. Furniture identity,
@@ -354,7 +359,10 @@ function interact(id)
     if entry.kind=="bed" then ui_sleep_dialog.sleep();return true end
     if entry.kind=="fan" then local own=state(id);own.is_on=not own.is_on;return true end
     if entry.kind=="stove" then return false end
-    if entry.kind=="door" then return pf_hf_doors.use(object,db.actor) end
+    if entry.kind=="door" then
+        if entry.sliding then return pf_hf_sliding_door.use(object,db.actor) end
+        return pf_hf_doors.use(object,db.actor)
+    end
     if entry.kind=="stash" then return object:use(db.actor) end
     if entry.kind=="light" then
         local own=state(id)

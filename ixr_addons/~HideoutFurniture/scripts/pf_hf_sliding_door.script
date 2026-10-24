@@ -1,0 +1,130 @@
+-- The original OGF's four motions loop. Keep its blend stopped and advance
+-- the authored pose each actor frame; animated_object drives matching collision.
+local active,moving={},{}
+local registered=false
+
+local function initialize(binder)
+    if binder.ready then return true end
+    local object=binder.object
+    local physics=object:get_physics_object()
+    local entry=pf_hf_furniture.definition(object:section())
+    local own=pf_hf_furniture.state(object:id())
+    if not physics or not entry or not entry.sliding or not own then return false end
+    own.door_closed=own.door_closed~=false
+    local time=tonumber(own.door_time)
+    if not time or time~=time then time=own.door_closed and 0 or entry.open_time end
+    own.door_time=math.max(0,math.min(entry.open_time,time))
+    physics:stop_anim()
+    physics:anim_time_set(own.door_time)
+    binder.physics,binder.entry,binder.ready=physics,entry,true
+    binder.last_tick=time_global()
+    local target=own.door_closed and 0 or entry.open_time
+    if math.abs(own.door_time-target)>.00001 then moving[object:id()]=binder end
+    pf_hf_furniture.apply_tip(object)
+    return true
+end
+
+function use(object,actor)
+    local binder=object and active[object:id()]
+    if not binder or not db.actor or not actor or actor:id()~=db.actor:id() or
+        not pf_hf_furniture.in_interaction_range(object) or not initialize(binder) then return false end
+    local own=pf_hf_furniture.state(object:id())
+    if not own then return false end
+    own.door_closed=not own.door_closed
+    binder.last_tick=time_global()
+    moving[object:id()]=binder
+    pf_hf_furniture.apply_tip(object)
+    return true
+end
+
+function advance()
+    local now=time_global()
+    -- Only moving doors are visited. Idle furniture adds no per-frame work.
+    for id,binder in pairs(moving) do
+        local own=pf_hf_furniture.state(id)
+        if not own or active[id]~=binder then moving[id]=nil
+        else
+            -- Match the engine's 66ms animation step cap, including resume.
+            local delta=math.max(0,math.min(.066,(now-binder.last_tick)/1000))*(binder.entry.animation_speed or 1)
+            binder.last_tick=now
+            local target=own.door_closed and 0 or binder.entry.open_time
+            own.door_time=own.door_closed and math.max(0,own.door_time-delta) or
+                math.min(target,own.door_time+delta)
+            binder.physics:anim_time_set(own.door_time)
+            if own.door_time==target then moving[id]=nil end
+        end
+    end
+end
+
+function reposition(pose,id)
+    -- The native shell animator stores its spawn transform. Recreate this new
+    -- piece on edit so its collision cannot return to the old anchor.
+    local sim=alife()
+    local old=sim and sim:object(id,true)
+    local client=level.object_by_id(id)
+    local entry=client and pf_hf_furniture.definition(client:section())
+    if not old or not client or not entry or not entry.sliding or
+        tonumber(old.parent_id)~=65535 then return nil,"source_lost" end
+    local own=pf_hf_furniture.state(id)
+    local replacement
+    local ok,err=pcall(function()
+        replacement=sim:create(entry.object,pose.position,pose.level_vertex_id,pose.game_vertex_id)
+        assert(replacement,"create_failed")
+        replacement:use_ai_locations(false)
+        replacement.position=vector():set(pose.position)
+        replacement.angle=vector():set(pose.rotation)
+        replacement.m_level_vertex_id=pose.level_vertex_id
+        replacement.m_game_vertex_id=pose.game_vertex_id
+        local target=pf_hf_furniture.state(replacement.id)
+        assert(target,"state_failed")
+        if own then
+            target.door_closed=own.door_closed
+            target.door_time=own.door_time
+            target.condition=own.condition
+        end
+        sim:release(old,true)
+    end)
+    if not ok then
+        if replacement then
+            pf_hf_furniture.forget(replacement.id)
+            pcall(function() sim:release(replacement,true) end)
+        end
+        return nil,tostring(err)
+    end
+    moving[id]=nil
+    pf_hf_furniture.forget(id)
+    return replacement.id
+end
+
+function init(object) object:bind_object(pf_hfd_sliding_door(object)) end
+class "pf_hfd_sliding_door" (object_binder)
+function pf_hfd_sliding_door:__init(object) super(object)
+    active[object:id()]=self
+end
+function pf_hfd_sliding_door:net_spawn(server)
+    if not object_binder.net_spawn(self,server) then return false end
+    self.object:set_callback(callback.use_object,self.use_callback,self)
+    return true
+end
+function pf_hfd_sliding_door:use_callback(object,who)
+    return use(self.object,who)
+end
+function pf_hfd_sliding_door:update(delta)
+    object_binder.update(self,delta)
+    initialize(self)
+    pf_hf_visuals.update(self)
+end
+function pf_hfd_sliding_door:net_destroy()
+    local id=self.object:id()
+    if active[id]==self then active[id]=nil;moving[id]=nil end
+    self.object:set_callback(callback.use_object,nil)
+    object_binder.net_destroy(self)
+end
+function pf_hfd_sliding_door:net_save_relevant() return true end
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("update",advance)
+    registered=true
+end
+on_game_start()

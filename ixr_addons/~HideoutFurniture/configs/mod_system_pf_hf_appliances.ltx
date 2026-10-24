@@ -1,0 +1,79 @@
+; Two original game models. No OGF/OMF/model DDS copies.
+
+[pf_hfa_primus_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfa_primus_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = new_item\primus.ogf
+inv_name = pf_hfa_primus_name
+inv_name_short = pf_hfa_primus_name
+description = pf_hfa_primus_desc
+inv_weight = 1
+cost = 500
+can_trade = true
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_appliances
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 0
+inv_scale = 4
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfa_sliding_door_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfa_sliding_door_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = dynamics\box\box_metall_01.ogf
+inv_name = pf_hfa_sliding_door_name
+inv_name_short = pf_hfa_sliding_door_name
+description = pf_hfa_sliding_door_desc
+inv_weight = 5
+cost = 1000
+can_trade = true
+quest_item = false
+use_condition = false
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+icons_texture = ui\ui_pf_hf_appliances
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 2
+inv_grid_y = 0
+inv_scale = 4
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfa_sliding_door]:physic_object
+visual = dynamics\door\door_slide_140x250_01.ogf
+script_binding = pf_hf_sliding_door.init
+inv_weight = 5
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+physics_config_on_load = true
+startup_animation = open
+custom_data = scripts\pf_hfa_sliding_door.ltx
+
+![inventory_sort_registry]
+pf_hfa_primus_item = furniture
+pf_hfa_sliding_door_item = furniture
+
+; Ordinary gas-lamp lifecycle with the original primus OGF.
+[pf_hfa_primus]:physic_object
+class = SO_HLAMP
+visual = new_item\primus.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+fixed_bones =
