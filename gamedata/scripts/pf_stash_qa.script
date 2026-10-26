@@ -30,7 +30,6 @@ local QA_ORDER_POINT_TOOL_SECTION = "pf_order_point_tool"
 local QA_DOOR_SPAWN_TOOL_SECTION = "pf_door_spawn_tool"
 local DEVELOPER_MODE_PSTOR = "pf_developer_mode"
 local DEVELOPER_ENVIRONMENT_READY_PSTOR = "pf_developer_environment_ready"
-local DEVELOPER_CLEAR_WEATHER = "default_clear"
 local DEVELOPER_START_HOUR = 10
 local DEVELOPER_ACCESS_SETTING_FILE = "pf_developer_access.setting"
 local DEVELOPER_ACHIEVEMENT_PSTOR = "pf_developer_achievement_gained"
@@ -231,17 +230,6 @@ function is_developer_mode()
 		xr_logic.pstor_retrieve(db.actor, DEVELOPER_MODE_PSTOR, false) == true
 end
 
-local function enforce_developer_clear_weather()
-	if not is_developer_mode() then return false end
-	if level.is_wfx_playing and level.stop_weather_fx and level.is_wfx_playing() then
-		level.stop_weather_fx()
-	end
-	if level.get_weather() ~= DEVELOPER_CLEAR_WEATHER then
-		level.set_weather(DEVELOPER_CLEAR_WEATHER, true)
-	end
-	return true
-end
-
 local function prepare_developer_environment(hud_silent)
 	if not db.actor or not is_developer_mode() then return false end
 	local already_ready = xr_logic.pstor_retrieve(
@@ -260,9 +248,8 @@ local function prepare_developer_environment(hud_silent)
 			if surge then surge.time_forwarded = true end
 		end
 		xr_logic.pstor_store(db.actor, DEVELOPER_ENVIRONMENT_READY_PSTOR, true)
-		report("Developer environment prepared: 10:00, clear weather locked", hud_silent)
+		report("Developer environment prepared: 10:00", hud_silent)
 	end
-	enforce_developer_clear_weather()
 	return true
 end
 
@@ -707,7 +694,6 @@ local function qa_actor_on_update()
 	if not db.actor then return end
 	process_new_game_mode_request()
 	check_developer_achievement()
-	enforce_developer_clear_weather()
 	if qa_tools_checked then return end
 	if time_global() < qa_tools_check_due then return end
 	qa_tools_checked = ensure_stash_qa_tools(true)

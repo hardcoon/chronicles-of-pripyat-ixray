@@ -17,6 +17,33 @@ local function night_hours()
     return hour>=1 and hour<6
 end
 
+local function close_interaction(npc)
+    if not npc then return true end
+    local menu=ActorMenu.get_actor_menu()
+    if npc:is_talking() then
+        npc:disable_trade()
+        npc:disable_talk()
+        -- The current level NPC owns this conversation. Never dereference
+        -- the menu's cached partner: a normal inventory can retain a dead one.
+        if menu and menu:IsShown() then menu:HideDialog() end
+        -- Close the native talk window while the NPC and stock are alive.
+        -- Overlays may need another update before the talk window is exposed.
+        local dialog=level.main_input_receiver()
+        if dialog then
+            dialog:HideDialog()
+        else
+            db.actor:stop_talk()
+            npc:stop_talk()
+        end
+        return false
+    end
+    -- Mode 1 is ordinary inventory and does not own the NPC's stock. For an
+    -- interaction window with no talk flag, wait for its normal close instead
+    -- of guessing its owner through an unsafe cached native pointer.
+    if menu and menu:IsShown() and menu:GetMenuMode()~=1 then return false end
+    return true
+end
+
 local function cleanup(keep_id)
     local sim=alife()
     local children,roots={},{}
@@ -38,18 +65,20 @@ local function cleanup(keep_id)
         local server=sim:object(id)
         if server then sim:release(server,true) end
     end
+    local complete=true
     for _,id in ipairs(roots)do
         local npc=level.object_by_id(id)
-        if npc and npc:is_talking() then
-            db.actor:stop_talk()
-            npc:stop_talk()
+        if close_interaction(npc) then
+            pf_nocturne_trade.forget(id)
+            level.map_remove_object_spot(id,SPOT)
+            level.map_remove_object_spot(id,"ui_pda2_trader_location")
+            release_tree(id)
+        else
+            complete=false
         end
-        pf_nocturne_trade.forget(id)
-        level.map_remove_object_spot(id,SPOT)
-        level.map_remove_object_spot(id,"ui_pda2_trader_location")
-        release_tree(id)
     end
-    alife_storage_manager.get_state().pf_nocturne_check=nil
+    if complete then alife_storage_manager.get_state().pf_nocturne_check=nil end
+    return complete
 end
 
 local function clear_current()
@@ -82,19 +111,25 @@ function update()
     if not db.actor or not alife() or time_global()<next_update then return end
     next_update=time_global()+500
     if not night_hours() or level.name()~="pripyat_full" then
-        if not initialized or storage().npc_id then cleanup(nil);clear_current() end
+        if not initialized or storage().npc_id then
+            if not cleanup(nil) then return end
+            clear_current()
+        end
         initialized=true
         return
     end
     local plan=pf_nocturne_trade.appearance()
     if not plan then
-        if not initialized or active_id then cleanup(nil);clear_current() end
+        if not initialized or active_id then
+            if not cleanup(nil) then return end
+            clear_current()
+        end
         initialized=true
         return
     end
     local server=saved_server(plan)
     if not initialized or not server then
-        cleanup(server and server.id or nil)
+        if not cleanup(server and server.id or nil) then return end
         if not server then
             clear_current()
             local point=plan.point

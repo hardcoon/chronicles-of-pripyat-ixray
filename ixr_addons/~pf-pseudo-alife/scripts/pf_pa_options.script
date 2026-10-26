@@ -8,6 +8,9 @@ local schema = {
     {key="debug_map", kind="check", default=false, side="global"},
     {key="switch_distance", kind="track", default=150, min=50, max=1500, side="global"},
     {key="respawn_hours", kind="float", default=72, side="global"},
+    {key="corpse_limit", kind="track", default=15, min=0, max=200, side="cleaner"},
+    {key="corpse_distance", kind="track", default=70, min=10, max=500, side="cleaner"},
+    {key="corpse_delay", kind="track", default=40, min=5, max=600, side="cleaner"},
     {key="humans", default=40, min=0, max=999, side="human"},
     {key="human_size_1", default=8, min=0, max=999, side="human", heading="sizes"},
     {key="human_size_2", default=5, min=0, max=499, side="human"},
@@ -94,6 +97,10 @@ function impl.init()
                 if item.key == "switch_distance" and candidate[item.key] and candidate[item.key] > item.max then
                     candidate[item.key] = item.max
                 end
+                -- Preserve older profiles when the cleanup delay minimum rises.
+                if item.key == "corpse_delay" and candidate[item.key] and candidate[item.key] < item.min then
+                    candidate[item.key] = item.min
+                end
             end
         end
         candidate.respawn_seconds = tonumber(saved.respawn_seconds) or candidate.respawn_seconds
@@ -115,7 +122,7 @@ end
 function population_defaults()
     local ini, values = system_ini(), {}
     for _, item in ipairs(schema) do
-        if item.side ~= "global" then
+        if item.side == "human" or item.side == "mutant" then
             values[item.key] = item.default
             if ini:line_exist("pf_pa_menu_defaults",item.key) then
                 values[item.key] = ini:r_float("pf_pa_menu_defaults",item.key)
@@ -123,6 +130,14 @@ function population_defaults()
             if item.key == "humans" then values[item.key] = ini:r_float("pf_pseudo_alife","stalkers") end
             if item.key == "mutants" then values[item.key] = ini:r_float("pf_pseudo_alife","mutants") end
         end
+    end
+    return values
+end
+-- Shared cleanup settings are separate from all population presets.
+function cleaner_defaults()
+    local values = {}
+    for _, item in ipairs(schema) do
+        if item.side == "cleaner" then values[item.key] = item.default end
     end
     return values
 end

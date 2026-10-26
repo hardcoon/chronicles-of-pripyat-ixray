@@ -127,6 +127,7 @@ function sleep_dialog:OnButtonSleep()
 	if getFS():exist("$game_scripts$", "pf_sleep_timelapse.script") and
 		pf_sleep_timelapse.begin(self.time_track:GetIValue()) then return end
 
+	lz_nm_world.begin_sleep_autosave()
 	xr_effects.disable_ui(db.actor, nil)
 	level.add_cam_effector("camera_effects\\sleep.anm", 10, false, "ui_sleep_dialog.dream_callback")
 	level.add_pp_effector("sleep_fade.ppe", 11, false)
@@ -176,6 +177,7 @@ function dream_callback2()
 	db.actor:give_info_portion("tutorial_sleep")
 	disable_info("actor_is_sleeping")
 	disable_info("sleep_active")
+	lz_nm_world.finish_sleep_autosave(true)
 end
 
 function sleep(on_confirm)

@@ -12,15 +12,6 @@ function opt_gameplay:InitControls(x, y, xml, handler)
     self:SetAutoDelete(true)
     self.scroll_v = xml:InitScrollView("main_dialog:scroll_v", self)
 
-    if getFS():exist("$game_scripts$", "pf_sleep_timelapse.script") then
-        local sleep_row = xml:InitStatic("video_adv:templ_item", nil)
-        local sleep_label = xml:InitStatic("tab_gameplay:cap_developer_access", sleep_row)
-        sleep_label:TextControl():SetTextST("pf_sleep_timelapse_option")
-        self.check_sleep_timelapse = xml:InitCheck("tab_gameplay:check_developer_access", sleep_row)
-        self.scroll_v:AddWindow(sleep_row, true)
-        sleep_row:SetAutoDelete(false)
-    end
-
     local _st
     local addControl = function(control)
         self.scroll_v:AddWindow(control, true)
@@ -35,24 +26,11 @@ function opt_gameplay:InitControls(x, y, xml, handler)
         addControl(_st)
     end
 
-    if getFS():exist("$game_scripts$", "pf_city_horrors_settings.script") then
-        _st = xml:InitStatic("video_adv:templ_item", nil)
-        local caption = xml:InitStatic("tab_gameplay:cap_disable_green_stash_spawning", _st)
-        caption:TextControl():SetTextST("pf_city_horrors_option")
-        self.check_city_horrors = xml:InitCheck("tab_gameplay:check_disable_green_stash_spawning", _st)
-        addControl(_st)
-    end
-
     addStandard("cap_lang", "list_lang", "combo")
     addStandard("cap_bobbing_factor", "track_bobbing_factor", "track")
     addStandard("cap_hit_slowmo", "check_hit_slowmo", "check")
     addStandard("cap_wpn_aim_toggle", "check_wpn_aim_toggle", "check")
 
-    _st = xml:InitStatic("video_adv:templ_item", nil)
-    _st:SetHeight(64)
-    xml:InitStatic("tab_gameplay:cap_shift_transfer", _st)
-    xml:InitCheck("tab_gameplay:check_shift_transfer", _st)
-    addControl(_st)
     addStandard("cap_check_crosshair", "check_crosshair", "check")
     addStandard("cap_check_dyn_crosshair", "check_dyn_crosshair", "check")
     addStandard("cap_check_show_weapon", "check_show_weapon", "check")
@@ -76,77 +54,7 @@ function opt_gameplay:InitControls(x, y, xml, handler)
         self.OnDeveloperAccessClicked, self)
     addControl(_st)
 
-    _st = xml:InitStatic("video_adv:templ_item", nil)
-    local chat_caption = xml:InitStatic("tab_gameplay:cap_developer_access", _st)
-    chat_caption:TextControl():SetText(pf_irc_text_codec.to_ui(
-        game.translate_string("pf_irc_enabled_option")))
-    self.check_game_chat = xml:InitCheck("tab_gameplay:check_developer_access", _st)
-    addControl(_st)
 
-    _st = xml:InitStatic("video_adv:templ_item", nil)
-    xml:InitStatic("tab_gameplay:cap_disable_green_stash_spawning", _st)
-    self.check_disable_green_stash_spawning = xml:InitCheck(
-        "tab_gameplay:check_disable_green_stash_spawning", _st
-    )
-    addControl(_st)
-
-    _st = xml:InitStatic("video_adv:templ_item", nil)
-    xml:InitStatic("tab_gameplay:cap_spawn_discoverable_vehicles", _st)
-    self.check_spawn_discoverable_vehicles = xml:InitCheck(
-        "tab_gameplay:check_spawn_discoverable_vehicles", _st
-    )
-    addControl(_st)
-end
-
-function opt_gameplay:SetCityHorrorsValue()
-    if not self.check_city_horrors then return end
-    self.city_horrors_backup = pf_city_horrors_settings.is_enabled()
-    self.check_city_horrors:SetCheck(self.city_horrors_backup)
-end
-
-function opt_gameplay:SaveCityHorrorsValue()
-    if not self.check_city_horrors then return true end
-    local enabled = self.check_city_horrors:GetCheck() == true
-    if enabled == self.city_horrors_backup then return true end
-    if not pf_city_horrors_settings.set_enabled(enabled) then return false end
-    self.city_horrors_backup = enabled
-    return true
-end
-
-function opt_gameplay:SetDisableGreenStashSpawningValue()
-    self.disable_green_stash_spawning_backup =
-        pf_stash_settings.is_green_stash_spawning_disabled() == true
-    self.check_disable_green_stash_spawning:SetCheck(
-        self.disable_green_stash_spawning_backup
-    )
-end
-
-function opt_gameplay:SaveDisableGreenStashSpawningValue()
-    local disabled = self.check_disable_green_stash_spawning:GetCheck() == true
-    if disabled == self.disable_green_stash_spawning_backup then return true end
-    if not pf_stash_settings.set_green_stash_spawning_disabled(disabled) then
-        return false
-    end
-    self.disable_green_stash_spawning_backup = disabled
-    return true
-end
-
-function opt_gameplay:SetSpawnDiscoverableVehiclesValue()
-    self.spawn_discoverable_vehicles_backup =
-        pf_vehicle_settings.is_discoverable_vehicle_spawning_enabled() == true
-    self.check_spawn_discoverable_vehicles:SetCheck(
-        self.spawn_discoverable_vehicles_backup
-    )
-end
-
-function opt_gameplay:SaveSpawnDiscoverableVehiclesValue()
-    local enabled = self.check_spawn_discoverable_vehicles:GetCheck() == true
-    if enabled == self.spawn_discoverable_vehicles_backup then return true end
-    if not pf_vehicle_settings.set_discoverable_vehicle_spawning_enabled(enabled) then
-        return false
-    end
-    self.spawn_discoverable_vehicles_backup = enabled
-    return true
 end
 
 function opt_gameplay:OnDeveloperAccessClicked()
@@ -161,9 +69,6 @@ function opt_gameplay:SetDeveloperAccessValue()
         pf_stash_qa.is_developer_access_enabled() == true or false
     self.check_developer_access:SetCheck(self.developer_access_backup)
 
-    self.game_chat_backup = pf_irc_chat and pf_irc_chat.is_enabled and
-        pf_irc_chat.is_enabled() == true or false
-    self.check_game_chat:SetCheck(self.game_chat_backup)
 end
 
 function opt_gameplay:SaveDeveloperAccessValue()
@@ -175,14 +80,7 @@ function opt_gameplay:SaveDeveloperAccessValue()
         if developer_saved then self.developer_access_backup = developer_enabled end
     end
 
-    local chat_enabled = self.check_game_chat:GetCheck() == true
-    local chat_saved = true
-    if chat_enabled ~= self.game_chat_backup then
-        chat_saved = pf_irc_chat and pf_irc_chat.set_enabled and
-            pf_irc_chat.set_enabled(chat_enabled) == true or false
-        if chat_saved then self.game_chat_backup = chat_enabled end
-    end
-    return developer_saved and chat_saved
+    return developer_saved
 end
 
 function opt_gameplay:SetDisableMinimapValue()
@@ -195,20 +93,5 @@ function opt_gameplay:SaveDisableMinimapValue()
     if disabled == self.disable_minimap_backup then return true end
     if not pf_minimap_settings.set_disabled(disabled) then return false end
     self.disable_minimap_backup = disabled
-    return true
-end
-
-function opt_gameplay:SetSleepTimelapseValue()
-    if not self.check_sleep_timelapse then return end
-    self.sleep_timelapse_backup = pf_sleep_timelapse.is_enabled()
-    self.check_sleep_timelapse:SetCheck(self.sleep_timelapse_backup)
-end
-
-function opt_gameplay:SaveSleepTimelapseValue()
-    if not self.check_sleep_timelapse then return true end
-    local enabled = self.check_sleep_timelapse:GetCheck() == true
-    if enabled == self.sleep_timelapse_backup then return true end
-    if not pf_sleep_timelapse.set_enabled(enabled) then return false end
-    self.sleep_timelapse_backup = enabled
     return true
 end

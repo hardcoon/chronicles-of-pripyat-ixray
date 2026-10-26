@@ -3,7 +3,7 @@
 local state = {
 	pending_backpack_boxes = {},
 	pending_backpack_deploy = nil,
-	sleep_was_active = false,
+	sleep_autosave = nil,
 	strange_stew_faint_due = nil,
 	strange_stew_phase = nil,
 	strange_stew_phase_due = nil,
@@ -638,7 +638,7 @@ function reset_and_migrate_on_load()
 	state.strange_consumable_encounter = nil
 	state.strange_consumable_fallback = nil
 	state.pending_backpack_deploy = nil
-	state.sleep_was_active = db.actor ~= nil and db.actor:has_info("actor_is_sleeping")
+	cancel_sleep_autosave()
 	if db.actor and not db.actor:has_info("lz_ghost_city_first_article_notified") and
 		impl.has_lore_encyclopedia_article(lore_test_stash_items) then
 		db.actor:give_info_portion("lz_ghost_city_first_article_notified")
@@ -660,12 +660,65 @@ function on_game_load()
 	schedule_start_stash_on_load()
 end
 
-function update_sleep()
-	local sleep_is_active = db.actor:has_info("actor_is_sleeping")
-	if state.sleep_was_active and not sleep_is_active then
-		xr_effects.scenario_autosave(db.actor, nil, {"st_save_lz_after_sleep"})
+-- Only an explicit successful wake-up can arm this transient request.
+-- Both sleep controllers use this leaf; the mechanics facade remains its sole updater.
+function cancel_sleep_autosave()
+	state.sleep_autosave = nil
+end
+
+function impl.sleep_autosave_actor(request)
+	local actor = db.actor
+	if not actor or actor:id() ~= request.actor_id or not actor:alive()
+		or actor:death_time() ~= 0 or actor.bleeding > 0 or actor.radiation > 0
+		or actor.health < request.health - 0.0005 then
+		return nil
 	end
-	state.sleep_was_active = sleep_is_active
+	request.health = actor.health
+	return actor
+end
+
+function begin_sleep_autosave()
+	cancel_sleep_autosave()
+	local actor = db.actor
+	if not actor or not actor:alive() or actor:death_time() ~= 0 then return end
+	state.sleep_autosave = {actor_id = actor:id(), health = actor.health}
+end
+
+function finish_sleep_autosave(success)
+	local request = state.sleep_autosave
+	if not request then return end
+	local actor = impl.sleep_autosave_actor(request)
+	if success ~= true or not actor or actor:has_info("actor_is_sleeping") then
+		cancel_sleep_autosave()
+		return
+	end
+	-- Let death/hit packets and the restored camera finish before issuing save.
+	-- Check every update during this grace period, including death_time while
+	-- health can still be positive in KillEntity -> GE_DIE.
+	request.finished_frame = device().frame
+	request.due = time_global() + 1000
+end
+
+function update_sleep()
+	local request = state.sleep_autosave
+	if not request then return end
+	local actor = impl.sleep_autosave_actor(request)
+	if not actor then
+		cancel_sleep_autosave()
+		return
+	end
+	if not request.due then return end
+	if actor:has_info("actor_is_sleeping") or actor:has_info("sleep_active") then
+		cancel_sleep_autosave()
+		return
+	end
+	if time_global() < request.due or device().frame <= request.finished_frame + 1 then return end
+	local simulator = alife()
+	local server_actor = simulator and simulator:object(request.actor_id)
+	cancel_sleep_autosave() -- Consume before the console can re-enter a save callback.
+	if server_actor and server_actor:alive() then
+		xr_effects.scenario_autosave(actor, nil, {"st_save_lz_after_sleep"})
+	end
 end
 
 function update_cleanup()

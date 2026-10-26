@@ -189,6 +189,11 @@ local COMPONENT_PROFILES = {
 		profile = "crafted_anomaly_scanner", craft_output = "pf_anomaly_scanner",
 		workbench_category = "detectors", return_fraction = 0.5
 	},
+	pf_anomaly_scanner_m2 = {
+		profile = "crafted_anomaly_scanner_m2", craft_output = "pf_anomaly_scanner_m2",
+		workbench_category = "detectors", return_fraction = 0.5,
+		flatten_inputs = { pf_anomaly_scanner = true }
+	},
 	lz_nm_combat_boots = {
 		profile = "component_boots",
 		workbench_category = "armor",
@@ -298,13 +303,22 @@ local function component_definition(target)
 	local recipe = pf_hf_workbench_craft.recipe(definition.craft_output)
 	if not recipe or not recipe.materials then return nil end
 
-	local materials, sections = {}, {}
+	local materials, sections, totals = {}, {}, {}
+	for section, count in pairs(recipe.materials) do
+		if definition.flatten_inputs and definition.flatten_inputs[section] then
+			local input = pf_hf_workbench_craft.recipe(section)
+			if not input or not input.materials then return nil end
+			for material, amount in pairs(input.materials) do
+				totals[material] = (totals[material] or 0) + amount * count
+			end
+		else totals[section] = (totals[section] or 0) + count end
+	end
 	-- Read every ingredient, including technical parts and future recipe
 	-- additions; a UI/basic-material whitelist would silently lose resources.
-	for section in pairs(recipe.materials) do sections[#sections + 1] = section end
+	for section in pairs(totals) do sections[#sections + 1] = section end
 	table.sort(sections)
 	for _, section in ipairs(sections) do
-		local amount = math.floor((recipe.materials[section] or 0) *
+		local amount = math.floor((totals[section] or 0) *
 			definition.return_fraction)
 		if amount > 0 then materials[#materials + 1] = { section, amount } end
 	end

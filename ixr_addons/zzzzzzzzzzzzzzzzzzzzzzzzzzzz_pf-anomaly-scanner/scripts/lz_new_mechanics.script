@@ -332,6 +332,7 @@ function beacon_on_game_load()
 			lz_nlc_art_spawn.field_presence_snapshot())
 		pf_proc_group_markers.set_scanner_indications(colors, true)
 		pf_proc_group_markers.restore_discovered_groups(scanner_groups)
+		impl.scanner_details()
 	end
 	return result
 end
@@ -473,55 +474,108 @@ end
 
 
 -- Anomaly scanner facade: sibling subsystems exchange values, never calls.
+function impl.scanner_details()
+	pf_proc_group_markers.set_scanner_details(pf_anomaly_scanner.tier_snapshot(),
+		lz_nlc_art_spawn.field_artifact_snapshot())
+end
+
 function impl.scanner_events(events)
 	local colors = pf_anomaly_scanner.on_field_events(events)
-	if colors then pf_proc_group_markers.set_scanner_indications(colors) end
+	if colors then
+		pf_proc_group_markers.set_scanner_indications(colors)
+		impl.scanner_details()
+	end
 end
 
 function impl.scanner_confirm(id)
 	if id then
 		state.scanner_dialog = state.scanner_dialog or pf_anomaly_scanner_ui.create(
-			destroy_anomaly_scanner_confirmed)
-		state.scanner_dialog:Open(id)
+			destroy_anomaly_scanner_confirmed, replace_anomaly_scanner_confirmed)
+		state.scanner_dialog:Open(id, pf_anomaly_scanner.placed_tier(id))
 	end
 end
 
 function place_anomaly_scanner(item)
-	if state.scanner_pending or not item or item:section() ~= "pf_anomaly_scanner"
+	if state.scanner_pending or not item or not pf_anomaly_scanner.item_tier(item:section())
 		or not lz_nm_core.require_actor_owned_item(item) then return false end
+	if state.scanner_dialog and state.scanner_dialog:IsShown() then return false end
 	local context = pf_anomaly_scanner.placement_context()
 	local group_id = context and pf_proc_group_markers.placement_group(
 		context.actor_position, context.position) or nil
-	local allowed, reason = pf_anomaly_scanner.can_place(group_id)
-	if not allowed then lz_nm_core.message(reason); return false end
-	state.scanner_pending = { id = item:id(), due = time_global() + 150 }
+	local allowed, reason, replacement = pf_anomaly_scanner.can_place(group_id,
+		pf_anomaly_scanner.item_tier(item:section()))
+	if not allowed and not replacement then lz_nm_core.message(reason); return false end
+	local item_name = alife():object(item:id(), true):name()
+	if replacement then
+		replacement.item_id = item:id()
+		replacement.item_name = item_name
+	end
+	state.scanner_pending = { id = item:id(), item_name = item_name, group_id = group_id,
+		replacement = replacement, ask_replacement = replacement ~= nil, due = time_global() + 150 }
 	return false
+end
+
+function replace_anomaly_scanner_confirmed(request)
+	if state.scanner_pending or not request then return false end
+	state.scanner_pending = { id = request.item_id, item_name = request.item_name,
+		group_id = request.group_id, replacement = request, due = time_global() + 150 }
+	return true
 end
 
 function impl.complete_scanner_placement()
 	local pending = state.scanner_pending
 	state.scanner_pending = nil
 	local item = level.object_by_id(pending.id)
-	if not item or not lz_nm_core.require_actor_owned_item(item) then return end
+	local object = item and alife():object(pending.id, true)
+	if not object or object:name() ~= pending.item_name then
+		lz_nm_core.message("pf_scanner_placement_changed"); return
+	end
+	if not lz_nm_core.require_actor_owned_item(item) then return end
 	local context = pf_anomaly_scanner.placement_context()
 	local group_id = context and pf_proc_group_markers.placement_group(
 		context.actor_position, context.position) or nil
-	local placed, colors = pf_anomaly_scanner.place(item, group_id, context)
+	if group_id ~= pending.group_id then
+		lz_nm_core.message("pf_scanner_placement_changed"); return
+	end
+	if pending.ask_replacement then
+		local allowed, reason = pf_anomaly_scanner.can_place(group_id,
+			pf_anomaly_scanner.item_tier(item:section()), pending.replacement)
+		if not allowed then lz_nm_core.message(reason); return end
+		state.scanner_dialog = state.scanner_dialog or pf_anomaly_scanner_ui.create(
+			destroy_anomaly_scanner_confirmed, replace_anomaly_scanner_confirmed)
+		state.scanner_dialog:OpenReplacement(pending.replacement)
+		return
+	end
+	local placed, colors = pf_anomaly_scanner.place(item, group_id, context, pending.replacement)
 	if placed then
 		pf_proc_group_markers.reveal_group(group_id)
 		pf_proc_group_markers.set_scanner_indications(colors)
+		impl.scanner_details()
 	end
 end
 
 function destroy_anomaly_scanner_confirmed(id)
 	local removed, colors = pf_anomaly_scanner.destroy_confirmed(id)
-	if removed then pf_proc_group_markers.set_scanner_indications(colors) end
+	if removed then
+		pf_proc_group_markers.set_scanner_indications(colors)
+		impl.scanner_details()
+	end
 	return removed
 end
 
 class "pf_anomaly_scanner_binder" (object_binder)
 function pf_anomaly_scanner_binder:__init(object) super(object)
 	self.object:set_tip_text(game.translate_string("pf_scanner_world_use"))
+end
+function pf_anomaly_scanner_binder:net_spawn(data)
+	if self.object:section() == "pf_anomaly_scanner_world_m2" then
+		-- Saved placements retain their old visual. Refresh it before the native
+		-- physic object creates its collision model and skeleton from this mesh.
+		local visual = "dynamics\\equipments\\quest\\pf_scanner_m2"
+		data:set_visual(visual)
+		self.object:set_visual_name(visual)
+	end
+	return object_binder.net_spawn(self, data)
 end
 function pf_anomaly_scanner_binder:net_destroy()
 	pf_anomaly_scanner.on_client_destroy(self.object:id())

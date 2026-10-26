@@ -1,0 +1,135 @@
+-- Nocturne's Eye: a worn reward senses its creator and nearby purple stashes.
+-- A white HUD layer changes opacity; no renderer/console preferences are written.
+local STATIC = "pf_nocturne_eye_pulse"
+local SECTION = "pf_nocturne_eye"
+local NOCTURNE_RANGE, STASH_RANGE = 200, 30
+local PEAK_ALPHA = 10 -- 10/255, approximately four percent white.
+local RISE_MS, FALL_MS, SECOND_MS = 250, 550, 1050
+local registered, enabled = false, true
+local created, target_id, target_kind, next_check, next_pair, pair_started, last_started = false, nil, nil, 0, 0, nil, nil
+local interval = 6000
+
+local function clear_overlay()
+    if created and db.actor then
+        local hud = get_hud()
+        if hud and hud:GetCustomStatic(STATIC) then hud:RemoveCustomStatic(STATIC) end
+    end
+    created = false
+end
+
+local function reset()
+    clear_overlay()
+    target_id, target_kind, next_check, next_pair, pair_started, last_started = nil, nil, 0, 0, nil, nil
+end
+
+local function paint(alpha)
+    local hud = get_hud()
+    if not hud then return end
+    local static = hud:GetCustomStatic(STATIC)
+    if not static then
+        if alpha <= 0 then return end
+        static = hud:AddCustomStatic(STATIC, true)
+    end
+    created = true
+    local wnd = static:wnd()
+    wnd:SetTextureColor(GetARGB(alpha, 255, 255, 255))
+    wnd:Show(alpha > 0)
+end
+
+local function envelope(elapsed)
+    if elapsed < 0 or elapsed >= RISE_MS + FALL_MS then return 0 end
+    local t = elapsed < RISE_MS and elapsed / RISE_MS or
+        1 - (elapsed - RISE_MS) / FALL_MS
+    return t * t * (3 - 2 * t)
+end
+
+local function check_target(now)
+    local equipped = false
+    db.actor:iterate_inventory(function(_, item)
+        if not equipped and item:section() == SECTION and db.actor:is_on_belt(item) then
+            equipped = true
+        end
+    end, db.actor)
+    if not equipped then
+        reset()
+        next_check = now + 250
+        return
+    end
+    local actor_position = db.actor:position()
+    local server = pf_nocturne_night.active_npc()
+    local distance_sqr = server and actor_position:distance_to_sqr(server.position)
+    local id, kind, ratio
+    if distance_sqr and distance_sqr <= NOCTURNE_RANGE * NOCTURNE_RANGE then
+        id, kind, ratio = server.id, "nocturne", math.sqrt(distance_sqr) / NOCTURNE_RANGE
+    end
+    local stash_id, stash_distance_sqr = pf_dynamic_stashes.nearest_nocturne_eye_stash(actor_position, STASH_RANGE)
+    local stash_ratio = stash_id and math.sqrt(stash_distance_sqr) / STASH_RANGE
+    -- One source at a time. Relative proximity compares the two different
+    -- ranges fairly; an equal ratio gives the creator's double pulse priority.
+    if stash_ratio and (not ratio or stash_ratio < ratio) then
+        id, kind, ratio = stash_id, "stash", stash_ratio
+    end
+    if not id then
+        reset()
+        next_check = now + 250
+        return
+    end
+    -- Ten distance bands, 20 m for the creator and 3 m for purple stashes.
+    -- Each closer band shortens the preceding interval by ten percent. The
+    -- closest band is still long enough to finish both complete light pulses.
+    local step = math.min(9, math.floor(math.max(0, 1 - ratio) * 10 + 0.0000001))
+    interval = math.floor(6000 * math.pow(0.9, step) + 0.5)
+    if target_id ~= id or target_kind ~= kind then
+        target_id, target_kind, pair_started, last_started, next_pair = id, kind, nil, nil, now
+    elseif last_started then
+        next_pair = last_started + interval
+    end
+    next_check = now + 250
+end
+
+function update()
+    local actor = db.actor
+    local hour = actor and level.get_time_hours()
+    if not enabled or not actor or not actor:alive() or level.name() ~= "pripyat_full" or
+        hour < 1 or hour >= 6 or device():is_paused() or actor:is_talking() or
+        level.main_input_receiver() ~= nil then
+        reset()
+        return
+    end
+    local now = time_global()
+    if now >= next_check then check_target(now) end
+    if not target_id then return end
+    local duration = RISE_MS + FALL_MS + (target_kind == "nocturne" and SECOND_MS or 0)
+    if pair_started and now - pair_started >= duration then
+        pair_started = nil
+    end
+    if not pair_started and now >= next_pair then
+        pair_started = now
+        last_started = now
+        next_pair = now + interval
+    end
+    local alpha = 0
+    if pair_started then
+        local elapsed = now - pair_started
+        local light = envelope(elapsed)
+        if target_kind == "nocturne" then light = math.max(light, envelope(elapsed - SECOND_MS)) end
+        alpha = math.floor(PEAK_ALPHA * light + 0.5)
+    end
+    paint(alpha)
+end
+
+-- Session-only test switch: run_string pf_nocturne_eye.set_enabled(false)
+function set_enabled(value)
+    enabled = value == true
+    reset()
+end
+
+function on_game_start()
+    if registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("load", reset)
+    RegisterScriptCallback("net_destroy", reset)
+    registered = true
+end
+
+on_game_start()

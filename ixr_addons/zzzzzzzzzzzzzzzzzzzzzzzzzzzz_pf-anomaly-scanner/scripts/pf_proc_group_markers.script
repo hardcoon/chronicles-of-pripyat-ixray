@@ -72,6 +72,7 @@ local entries_by_id = {}
 local previous_actor_position = nil
 local recovery = { last_raw = nil, next_read = 0, pending = {} }
 local scanner_indications = {}
+local scanner_details = { tiers = {}, targets = {} }
 
 local function gate_open()
 	return db.actor ~= nil
@@ -114,10 +115,12 @@ local function apply_scanner_tint(entry)
 	local color = fcolor():set(255, 255, 255, 255)
 	if mode == "green" then color:set(0, 255, 0, 255)
 	elseif mode == "gold" then color:set(188, 138, 53, 255) end
+	local compound = scanner_details.tiers[entry.group_id] ~= nil
+	if compound then color:set(0, 0, 0, 0) end
 	local manager = level.map_manager()
 	if not manager then return end
 	manager:MapLocationsForEach(SPOT_TYPE, entry.id, function(location)
-		location:HighlightSpot(mode == "green" or mode == "gold", color)
+		location:HighlightSpot(compound or mode == "green" or mode == "gold", color)
 		return false
 	end)
 end
@@ -129,6 +132,80 @@ function set_scanner_indications(colors, replace)
 		scanner_indications[group_id] = mode
 		local entry = entries_by_id[group_id]
 		if ready and entry and discovered[group_id] then apply_scanner_tint(entry) end
+	end
+end
+
+local function auxiliary_visibility(id, kind, visible)
+	local manager = level.map_manager()
+	if not manager then return end
+	manager:MapLocationsForEach(kind, id, function(location)
+		if visible and not location:SpotEnabled() then location:EnableSpot()
+		elseif not visible and location:SpotEnabled() then location:DisableSpot() end
+		return false
+	end)
+end
+
+local function scanner_visibility(entry)
+	local visible = false
+	local manager = level.map_manager()
+	if manager then
+		manager:MapLocationsForEach(SPOT_TYPE, entry.id, function(location)
+			visible = visible or location:SpotEnabled()
+			return false
+		end)
+	end
+	if entry.scanner_kind then auxiliary_visibility(entry.id, entry.scanner_kind, visible) end
+	if entry.scanner_artifact then
+		auxiliary_visibility(entry.scanner_artifact.id, "pf_scanner_artifact", visible)
+	end
+end
+
+local function sync_scanner_details(entry)
+	local tier = discovered[entry.group_id] and scanner_details.tiers[entry.group_id]
+	local mode = scanner_indications[entry.group_id]
+	local kind = tier and ("pf_scanner_m" .. tier ..
+		(mode == "green" and "_green" or (tier == 1 and mode == "gold" and "_gold" or "")))
+	if entry.scanner_kind and entry.scanner_kind ~= kind then
+		level.map_remove_object_spot(entry.id, entry.scanner_kind)
+	end
+	entry.scanner_kind = kind
+	if kind and level.map_has_object_spot(entry.id, kind) == 0 then
+		-- Original zone circle and badge are one image; the native spot owns the
+		-- filter, position and hint, with its own texture transparent while equipped.
+		local title = entry.hint_text or game.translate_string(entry.hint)
+		-- Put the line break before the color reset: a leading break in an
+		-- empty colored subline is skipped by the native text renderer.
+		title = title:gsub("%%c%[default%]$", "")
+		level.map_add_object_spot(entry.id, kind,
+			title .. "\\n%c[default]" ..
+			game.translate_string("pf_scanner_m" .. tier .. "_installed"))
+	end
+	local target = tier == 2 and scanner_details.targets[entry.group_id] or nil
+	local previous = entry.scanner_artifact
+	if previous and (not target or target.id ~= previous.id or target.name ~= previous.name) then
+		level.map_remove_object_spot(previous.id, "pf_scanner_artifact")
+		entry.scanner_artifact = nil
+	end
+	if target then
+		if level.map_has_object_spot(target.id, "pf_scanner_artifact") == 0 then
+			-- An object spot follows native client coordinates online and ALife offline.
+			level.map_add_object_spot(target.id, "pf_scanner_artifact",
+				game.translate_string("pf_scanner_artifact_hint"))
+		end
+		entry.scanner_artifact = { id = target.id, name = target.name }
+	end
+	scanner_visibility(entry)
+end
+
+-- Complete snapshots arrive through the facade on load, installation, removal
+-- and natural population events. No second ALife search or artifact timer.
+function set_scanner_details(tiers, targets)
+	scanner_details.tiers = tiers or {}
+	scanner_details.targets = targets or {}
+	if not ready or not gate_open() then return end
+	for _, entry in ipairs(entries) do
+		if discovered[entry.group_id] then apply_scanner_tint(entry) end
+		sync_scanner_details(entry)
 	end
 end
 
@@ -144,6 +221,7 @@ local function set_marker(entry, visible)
 		level.map_remove_object_spot(entry.id, SPOT_TYPE)
 	end
 	if visible then apply_scanner_tint(entry) end
+	sync_scanner_details(entry)
 end
 
 local function synchronize_discovered(initial)
@@ -306,6 +384,11 @@ function update(now)
 		synchronize_discovered(false)
 		recovery.next_read = now + DISCOVERY_SYNC_MS
 	end
+	-- Mirror the existing Locations filter in the discovery owner's 200 ms pass.
+	-- Artifact movement itself is handled by the engine's object map locations.
+	for _, entry in ipairs(entries) do
+		if scanner_details.tiers[entry.group_id] then scanner_visibility(entry) end
+	end
 	local actor_position = copy_position(db.actor:position())
 	local from = previous_actor_position or actor_position
 	for _, entry in ipairs(entries) do
@@ -324,6 +407,8 @@ function reset()
 		entry.id = nil
 		entry.center = nil
 		entry.hint_text = nil
+		entry.scanner_artifact = nil
+		entry.scanner_kind = nil
 	end
 	ready = false
 	next_action = 0
@@ -332,4 +417,5 @@ function reset()
 	previous_actor_position = nil
 	recovery = { last_raw = nil, next_read = 0, pending = {} }
 	scanner_indications = {}
+	scanner_details = { tiers = {}, targets = {} }
 end

@@ -16,6 +16,16 @@ quest_item = false
 use1_text = pf_scanner_install
 use1_functor = lz_new_mechanics.place_anomaly_scanner
 
+[pf_anomaly_scanner_m2]:pf_anomaly_scanner
+$spawn = "devices\pf_anomaly_scanner_m2"
+visual = dynamics\equipments\quest\pf_scanner_m2.ogf
+icons_texture = ui\pf_scanner_m2_icons
+inv_name = pf_scanner_m2_name
+inv_name_short = pf_scanner_m2_name
+description = pf_scanner_m2_desc
+; Nocturne's x3 sell multiplier gives the agreed retail price of 6000.
+cost = 2000
+
 [pf_anomaly_scanner_world]:physic_object
 $spawn = "dynamic_objects\pf_anomaly_scanner_world"
 visual = dynamics\equipments\quest\scanner_artefact.ogf
@@ -23,5 +33,10 @@ startup_animation = idle
 fixed_bones = link
 script_binding = lz_new_mechanics.bind_anomaly_scanner
 
+[pf_anomaly_scanner_world_m2]:pf_anomaly_scanner_world
+$spawn = "dynamic_objects\pf_anomaly_scanner_world_m2"
+visual = dynamics\equipments\quest\pf_scanner_m2.ogf
+
 ![inventory_sort_registry]
 pf_anomaly_scanner = electronics
+pf_anomaly_scanner_m2 = electronics

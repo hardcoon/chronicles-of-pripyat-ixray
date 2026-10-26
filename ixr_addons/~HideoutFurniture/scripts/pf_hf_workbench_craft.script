@@ -14,6 +14,7 @@ local ANOMALOUS_MATERIALS = {
 }
 
 local MATERIAL_ORDER = {
+	"pf_anomaly_scanner",
 	"pf_hf_fabric", "pf_hf_straps", "pf_hf_rubber", "pf_hf_plastic",
 	"pf_hf_scrap", "pf_hf_ceramic", "pf_hf_electronics", "pf_hf_dampers",
 	"pf_hf_oil", "lz_nm_metal_part", "jup_b200_tech_materials_wire",
@@ -37,7 +38,8 @@ local EFFECT_BY_OUTPUT = {
 	lz_nm_rubber_padding = "pf_hf_craft_effect_lead_insert",
 	pda_hack_usb_3 = "pf_hf_craft_effect_usb_3",
 	lz_nm_radio_beacon = "pf_hf_craft_effect_radio_beacon",
-	pf_anomaly_scanner = "pf_hf_craft_effect_anomaly_scanner"
+	pf_anomaly_scanner = "pf_hf_craft_effect_anomaly_scanner",
+	pf_anomaly_scanner_m2 = "pf_hf_craft_effect_anomaly_scanner_m2"
 }
 
 -- The first eight outputs cover every ordinary field upgrade module. Six are
@@ -181,6 +183,20 @@ local RECIPES = {
 			jup_b200_tech_materials_capacitor = 5,
 			pf_hf_plastic = 6,
 			pf_hf_ceramic = 4
+		}
+	},
+	{
+		output = "pf_anomaly_scanner_m2",
+		materials = {
+			pf_anomaly_scanner = 1,
+			pf_hf_electronics = 20,
+			jup_b200_tech_materials_wire = 10,
+			jup_b200_tech_materials_textolite = 10,
+			jup_b200_tech_materials_transistor = 12,
+			jup_b200_tech_materials_capacitor = 12,
+			pf_hf_plastic = 10,
+			pf_hf_ceramic = 6,
+			pf_hf_scrap = 10
 		}
 	}
 }

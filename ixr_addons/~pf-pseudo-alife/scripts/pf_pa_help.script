@@ -5,8 +5,10 @@ local last = {}
 function impl.npc(first, second)
     for _, object in pairs({first, second}) do
         local kind = type(object)
-        if (kind == "userdata" or kind == "table")
-            and object:section():match("^pf_pa_s_[a-z]*_?%d+$") then return object end
+        if kind == "userdata" or kind == "table" then
+            local section = object:section()
+            if section:match("^pf_pa_s_[a-z]*_?%d+$") or section:match("^pf_irc_npc_") then return object end
+        end
     end
 end
 
@@ -84,6 +86,13 @@ function give_medkit(first, second)
     local reward = prepare(npc)
     if not reward then impl.reply(npc,"pf_pa_help_unavailable");return false end
     dialogs.transfer_medkit(db.actor, npc)
+    -- Stock transfer sets personal friendship. IRC residents must also reach
+    -- the native friend threshold when rank/reputation/faction bonuses are negative.
+    if npc:section():match("^pf_irc_npc_") and npc:relation(db.actor) ~= game_object.friend then
+        local threshold = system_ini():r_s32("game_relations", "attitude_friend_threshold")
+        npc:force_set_goodwill(0, db.actor)
+        npc:force_set_goodwill(threshold - npc:general_goodwill(db.actor), db.actor)
+    end
     xr_logic.pstor_store(npc, "pf_pa_medkit_treated", true)
     return claim_reward(first, second)
 end

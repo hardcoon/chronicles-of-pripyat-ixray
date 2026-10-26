@@ -491,6 +491,21 @@ function irc_nick_valid(nick)
     local ok, literal = pcall(game.translate_string, nick)
     return ok and literal == nick
 end
+-- IRC scores are fictional tiers, separate from native combat rank. Only these
+-- four sections opt in; ordinary/F1 NPCs and the global rank tables are untouched.
+-- Also repairs saved IRC corpses during the existing once-per-load reconciliation.
+function sync_irc_rank(server)
+    if not server then return false end
+    local section = server:section_name()
+    local tier = section:match("^pf_irc_npc_(%a+)$")
+    if tier ~= "novice" and tier ~= "stalker" and tier ~= "veteran" and tier ~= "master" then return false end
+    local rank = system_ini():r_s32(section, "pf_irc_native_rank")
+    if server:rank() ~= rank then server:set_rank(rank) end
+    local npc = level.object_by_id(server.id)
+    if npc and npc:character_rank() ~= rank then npc:set_character_rank(rank) end
+    return true
+end
+
 function spawn_irc(identity, nick, rank, irc_nick)
     if not irc_ready() or not db.actor or not db.actor:alive() then return nil, "not_ready" end
     if not rt.overrides or rt.overrides.irc_npcs ~= true then return nil, "disabled" end
@@ -525,6 +540,7 @@ function spawn_irc(identity, nick, rank, irc_nick)
         if tier == "master" then
             assert(server:set_visual("actors\\stalker_neutral\\stalker_neutral_4") == true, "IRC exoskeleton rejected")
         end
+        sync_irc_rank(server)
         native_name = server:character_name()
         if native_name == "" then native_name = nil end
         server:set_character_name(nick)
@@ -809,6 +825,7 @@ function impl.reconcile()
     local found, manual_found = {}, {}
     -- One pass per load; never done in the hot update path.
     for _, server in alife():objects() do
+        sync_irc_rank(server)
         local manual_kind = impl.manual_kind(server:section_name())
         if manual_kind and server:alive() then
             local manual_key = impl.manual_key(server)

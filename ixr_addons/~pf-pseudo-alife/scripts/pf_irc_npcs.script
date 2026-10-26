@@ -3,6 +3,15 @@
 local registered = false
 local st = {next_update = 0, cursor = 1, rows = {}}
 
+local function update_corpse_tip()
+    if not db.actor then return end
+    local npc = level.get_target_obj()
+    if npc and npc:section():match("^pf_irc_npc_") and not npc:alive() then
+        -- Native interaction hint only; searching and dragging stay unchanged.
+        npc:set_tip_text("pf_irc_npc_unconscious")
+    end
+end
+
 function on_game_start()
     if registered then return end
     RegisterScriptCallback("update", update)
@@ -30,6 +39,8 @@ function mark(enabled)
 end
 
 function update()
+    -- Also covers saved corpses and disabled/disconnected IRC spawning.
+    update_corpse_tip()
     local now = time_global()
     if now < st.next_update or not db.actor or not alife() then return end
     st.next_update = now + 1000
@@ -83,6 +94,13 @@ function update()
             if reason == "limit" or reason == "placement" or reason == "create" then break end
         end
     end
+end
+
+function hello_text(speaker)
+    if xr_wounded.is_wounded(speaker) or pf_pa_help.owed(speaker) then
+        return pf_pa_help.hello_text(speaker)
+    end
+    return game.translate_string("pf_irc_npc_hello")
 end
 
 function allowed(...) return pf_irc_npc_jobs.allowed(...) end

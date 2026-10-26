@@ -36,6 +36,23 @@ function field_presence_snapshot()
 	return result
 end
 
+-- Only the population owner's natural slots can be tracked. An artifact in
+-- any inventory (actor, NPC or container) must never retain a scanner marker.
+function field_artifact_snapshot()
+	local data = alife_storage_manager.get_state()[settings.storage_key]
+	local result = {}
+	for key, entry in pairs(data and data.slots or {}) do
+		local id = tonumber(entry.id)
+		local object = id and alife():object(id, true)
+		if object and object:section_name() == entry.section
+			and config.artifact_class(entry.section)
+			and tonumber(object.parent_id) == NO_PARENT_ID then
+			result[tonumber(key)] = { id = id, name = object:name() }
+		end
+	end
+	return result
+end
+
 local function report(format, ...)
 	local ok, message = pcall(string.format, format, ...)
 	message = ok and message or tostring(format)

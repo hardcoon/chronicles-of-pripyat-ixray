@@ -11,7 +11,7 @@ function supports(section)
     local class=ini:line_exist(section,"class") and ini:r_string(section,"class") or ""
     return class:sub(1,3)=="WP_" or class=="E_STLK" or class=="E_HLMET" or
         class:sub(1,4)=="DET_" or class=="S_DETECT" or
-        section=="pf_anomaly_scanner" or section=="lz_nm_radio_beacon" or
+        section=="pf_anomaly_scanner" or section=="pf_anomaly_scanner_m2" or section=="lz_nm_radio_beacon" or
         section=="lz_nm_armor_pouch"
 end
 
@@ -65,7 +65,7 @@ function select(state,section,item_id)
         local class=ini:line_exist(section,"class") and ini:r_string(section,"class") or ""
         local weapon=class:sub(1,3)=="WP_"
         local device=class:sub(1,4)=="DET_" or class=="S_DETECT" or
-            section=="pf_anomaly_scanner" or section=="lz_nm_radio_beacon"
+            section=="pf_anomaly_scanner" or section=="pf_anomaly_scanner_m2" or section=="lz_nm_radio_beacon"
         local pouch=section=="lz_nm_armor_pouch"
         state.zoom=VIEW.zoom*((class=="E_HLMET" or class:sub(1,4)=="DET_" or
             class=="S_DETECT") and .8 or 1)

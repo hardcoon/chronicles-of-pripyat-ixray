@@ -48,6 +48,12 @@ function options_dialog:InitControls()
 	self.dialog:AttachChild		(self.dlg_gameplay)
 	xml:InitWindow				("tab_size", 0, self.dlg_gameplay)
 
+    self.dlg_mod_options = ui_mm_opt_mod.opt_mod()
+    self.dlg_mod_options:InitControls(0, 0, xml, self)
+    self.dlg_mod_options:Show(false)
+    self.dialog:AttachChild(self.dlg_mod_options)
+    xml:InitWindow("tab_size", 0, self.dlg_mod_options)
+
 	self.dlg_controls			= ui_mm_opt_controls.opt_controls()
 	self.dlg_controls:InitControls(0,0, xml, self)
 	self.dlg_controls:Show		(false)
@@ -157,11 +163,8 @@ function options_dialog:SetCurrentValues()
 	opt:SaveBackupValues("key_binding")
 
 	self.dlg_sound:SetMusicPackValue(pf_copyright_music.get_pack())
-	self.dlg_gameplay:SetSleepTimelapseValue()
-	self.dlg_gameplay:SetCityHorrorsValue()
+	self.dlg_mod_options:SetValues()
 	self.dlg_gameplay:SetDisableMinimapValue()
-	self.dlg_gameplay:SetDisableGreenStashSpawningValue()
-	self.dlg_gameplay:SetSpawnDiscoverableVehiclesValue()
 	self.dlg_gameplay:SetDeveloperAccessValue()
 
     self.dlg_alife:SetValues(pf_pa_options.get(),pf_pa_options.population_defaults())
@@ -290,6 +293,7 @@ end
 
 function options_dialog:OnAlifeDefaults()
     self.dlg_alife:SetPopulation(pf_pa_options.population_defaults())
+    self.dlg_alife:SetCleanerDefaults(pf_pa_options.cleaner_defaults())
     self.dlg_alife.setting_presets = true
     for _, track in pairs(self.dlg_alife.presets) do track:SetIValue(2) end
     self.dlg_alife.setting_presets = false
@@ -357,6 +361,7 @@ function options_dialog:OnBtnCancel()
 	opt:UndoGroup			("mm_opt_video")
 	opt:UndoGroup			("mm_opt_video_adv")
 	opt:UndoGroup			("mm_opt_sound")
+    opt:UndoGroup("mm_opt_gameplay")
 	opt:OptionsPostAccept	()
 
 	self.owner:ShowDialog(true)
@@ -370,6 +375,7 @@ function options_dialog:OnTabChange()
 	self.dlg_video:Show		(false)
 	self.dlg_sound:Show		(false)
 	self.dlg_gameplay:Show	(false)
+    self.dlg_mod_options:Show(false)
 	self.dlg_controls:Show	(false)
 	self.dlg_video_adv:Show	(false)
 	self.btn_advanced_footer:Show(false)
@@ -384,6 +390,8 @@ function options_dialog:OnTabChange()
 		self.dlg_sound:Show(true)
 	elseif ids == "gameplay" then
 		self.dlg_gameplay:Show(true)
+    elseif ids == "mod_options" then
+        self.dlg_mod_options:Show(true)
     elseif ids == "sss" and self.dlg_sss then
         self.dlg_sss:Show(true)
     elseif ids == "alife" then
@@ -485,6 +493,7 @@ function options_dialog:OnBtn_CancelDownload()
 end
 
 function options_dialog:OnApplyChanges()
+    local previous = pf_pa_options.get()
     local saved, why = pf_pa_options.save(self.dlg_alife:GetValues())
     if not saved then
         self.message_box:InitMessageBox("message_box_ok")
@@ -492,24 +501,23 @@ function options_dialog:OnApplyChanges()
         self.message_box:ShowDialog(true)
         return
     end
+    local applied = pf_pa_options.get()
+    if db.actor and alife() and (previous.corpse_limit ~= applied.corpse_limit
+        or previous.corpse_distance ~= applied.corpse_distance
+        or previous.corpse_delay ~= applied.corpse_delay) then
+        -- One pass on this explicit event; no recurring update is scheduled.
+        release_body_manager.get_release_body_manager():try_to_release()
+    end
     self.timer = nil
     _G.b_discard_settings_shown = false
 	pf_copyright_music.set_pack(self.dlg_sound:GetMusicPackValue())
-	if not self.dlg_gameplay:SaveSleepTimelapseValue() then
-		self.message_box:InitMessageBox("message_box_ok")
-		self.message_box:SetText("pf_sleep_timelapse_save_failed")
-		self.message_box:ShowDialog(true)
-		return
-	end
-	if not self.dlg_gameplay:SaveCityHorrorsValue() then
-		self.message_box:InitMessageBox("message_box_ok")
-		self.message_box:SetText(game.translate_string("pf_city_horrors_save_failed"))
-		self.message_box:ShowDialog(true)
-		return
-	end
-	self.dlg_gameplay:SaveDisableMinimapValue()
-	self.dlg_gameplay:SaveDisableGreenStashSpawningValue()
-	self.dlg_gameplay:SaveSpawnDiscoverableVehiclesValue()
+    if not self.dlg_mod_options:SaveValues() then
+        self.message_box:InitMessageBox("message_box_ok")
+        self.message_box:SetText(game.translate_string("pf_mod_opt_save_failed"))
+        self.message_box:ShowDialog(true)
+        return
+    end
+    self.dlg_gameplay:SaveDisableMinimapValue()
 	local developer_access_saved = self.dlg_gameplay:SaveDeveloperAccessValue()
 	if developer_access_saved and self.owner.RefreshNewGameMenu then
 		self.owner:RefreshNewGameMenu()

@@ -51,8 +51,8 @@ function install()
         local layout=CScriptXmlInit();layout:ParseFile("ui_mm_opt.xml")
         layout:InitWindow("tab_size",0,self.dlg_interiors)
         self.dlg_interiors:Show(false)
-        -- The seventh sidebar button is appended directly below SSS.
-        self.tab:SetHeight(math.max(self.tab:GetHeight(),286))
+        -- The interior button follows SSS, below the new mod-options row.
+        self.tab:SetHeight(math.max(self.tab:GetHeight(),328))
         self:Register(self.dlg_interiors.manage,"interiors_manage")
         self:Register(self.dlg_interiors.forum,"interiors_forum")
         self:Register(self.dlg_interiors.global_lights,"interiors_global_lights")

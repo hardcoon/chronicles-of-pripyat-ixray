@@ -1,9 +1,97 @@
 -- Temporary memorial NPCs. This facade owns the lifetime, actor callbacks,
 -- binder and three random poses through the stock remark/state_mgr scheme.
 -- The catalogue stays in LTX/XML. Only an actor progress counter is saved.
-local C={prefix="pf_past_ghost_",duration=60000,radius=10,min_radius=5,count=3,tick=250,front_cos=0.573576436,progress="pf_past_cursor_v2",camera="pf_camera_q"}
+local C={prefix="pf_past_ghost_",duration=60000,radius=10,min_radius=5,count=3,tick=250,front_cos=0.573576436,progress="pf_past_cursor_v2",camera="pf_camera_q",
+    fade_out=120,fade_hold=300,fade_in=180,fade_limit=2000,sound="pf_camera\\zenit_e"}
 local S={records={},planned={},remove={},deadline=0,next_tick=0,sweep=true,registered=false}
 local I={}
+
+-- Render-only overlay: no input receiver, pause, time factor or saved state.
+-- UI updates animate every frame even when the actor binder runs less often.
+class "pf_past_camera_fade" (CUIScriptWnd)
+function pf_past_camera_fade:__init() super()
+    self:SetWndRect(Frect():set(0,0,1024,768))
+    local xml=CScriptXmlInit()
+    xml:ParseFile("pf_camera_fade.xml")
+    self.shade=xml:InitStatic("shade",self)
+    self.shade:SetTextureColor(GetARGB(0,255,255,255))
+end
+function pf_past_camera_fade:Update()
+    CUIScriptWnd.Update(self)
+    local transition=S.transition
+    if not transition then return end
+    local elapsed=time_global()-transition.since
+    local alpha=255
+    if transition.phase=="out" then
+        alpha=math.floor(255*math.min(1,elapsed/C.fade_out))
+    elseif transition.phase=="in" then
+        alpha=math.floor(255*math.max(0,1-elapsed/C.fade_in))
+    end
+    self.shade:SetTextureColor(GetARGB(alpha,255,255,255))
+    if alpha==255 and not transition.cover_frame then
+        transition.cover_frame=device().frame
+    elseif alpha==0 and transition.phase=="in" and not transition.clear_frame then
+        transition.clear_frame=device().frame
+    end
+end
+
+function I.clear_transition()
+    if S.overlay then
+        level.remove_dialog_to_render(S.overlay)
+        S.overlay:Show(false)
+    end
+    S.transition=nil
+end
+
+function I.transition(kind,manual,plan)
+    if S.transition then return false end
+    S.transition={kind=kind,manual=manual,plan=plan,phase="queued"}
+    return true
+end
+
+function I.update_transition(now)
+    local transition=S.transition
+    if not transition then return end
+    if transition.phase=="queued" then
+        -- The use callback has returned; closing inventory is safe here.
+        if transition.manual then
+            local hud=get_hud()
+            if hud then hud:HideActorMenu() end
+            S.shutter=S.shutter or sound_object(C.sound)
+            S.shutter:stop()
+            S.shutter:play(db.actor,0,sound_object.s2d)
+        end
+        S.overlay=S.overlay or pf_past_camera_fade()
+        S.overlay.shade:SetTextureColor(GetARGB(0,255,255,255))
+        -- RemoveDialogToRender disables the native window; reuse must enable it.
+        S.overlay:Enable(true)
+        level.add_dialog_to_render(S.overlay)
+        transition.phase="out";transition.since=now
+    elseif transition.phase=="out" and transition.cover_frame and
+        device().frame>transition.cover_frame then
+        -- At least one fully black frame was rendered before any world change.
+        transition.phase="hold";transition.since=now
+        if transition.kind=="spawn" then
+            I.spawn_scene(transition.plan)
+            transition.plan=nil
+        else
+            I.finish()
+        end
+    elseif transition.phase=="hold" and now-transition.since>=C.fade_hold then
+        local ready=next(S.remove)==nil
+        if transition.kind=="spawn" then
+            for id,record in pairs(S.records) do
+                if not record.ready or not record.posed or not level.object_by_id(id) then ready=false end
+            end
+        end
+        if ready or now-transition.since>=C.fade_limit then
+            transition.phase="in";transition.since=now
+        end
+    elseif transition.phase=="in" and transition.clear_frame and
+        device().frame>transition.clear_frame then
+        I.clear_transition()
+    end
+end
 
 function I.is_ghost(object)
     return object and string.sub(object:section(),1,#C.prefix)==C.prefix
@@ -101,6 +189,9 @@ function I.finish()
 end
 
 function I.reset()
+    I.clear_transition()
+    S.overlay=nil
+    if S.shutter then S.shutter:stop();S.shutter=nil end
     I.close_talk()
     S.records={};S.planned={};S.remove={};S.deadline=0;S.remove_after=nil
     S.anchor=nil;S.next_tick=0;S.sweep=true;S.cameras=nil
@@ -264,19 +355,29 @@ function I.pose(object,record)
         state_mgr.set_state(object,record.pose,nil,nil,{look_position=record.center})
         record.face_center=false;record.face_retry=now+1000
     end
+    record.posed=true
 end
 
 function I.update()
     if not db or not db.actor or not alife() then return end
-    if not S.sweep and not S.cameras and S.deadline==0 and next(S.remove)==nil then return end
+    if not S.sweep and not S.cameras and not S.transition and S.deadline==0 and next(S.remove)==nil then return end
     local now=time_global()
     if S.sweep then I.purge_saved() end
     if S.cameras then
         for _,id in ipairs(S.cameras) do I.migrate_camera(id) end
         S.cameras=nil
     end
-    if S.deadline>0 and (now>=S.deadline or not db.actor:alive()
-        or db.actor:position():distance_to(S.anchor)>45) then I.finish() end
+    if not db.actor:alive() then
+        I.clear_transition()
+        if S.shutter then S.shutter:stop() end
+        if S.deadline>0 then I.finish() end
+    else
+        if S.deadline>0 and not S.transition and
+            (now>=S.deadline or db.actor:position():distance_to(S.anchor)>45) then
+            I.transition("finish",false)
+        end
+        I.update_transition(now)
+    end
     if next(S.remove)~=nil then
         local pending={};for id in pairs(S.remove) do pending[#pending+1]=id end
         for _,id in ipairs(pending) do I.release(id) end
@@ -302,14 +403,12 @@ function use(item)
     if section~="pf_camera" and section~=C.camera then return false end
     local parent=item:parent()
     if not parent or parent:id()~=db.actor:id() then return false end
+    if S.transition then return false end
     -- Import native animation tables only after the game world is fully ready.
     I.register_pose_states()
     if S.sweep then I.purge_saved() end
     if S.deadline>0 then
-        I.finish()
-        local pending={};for id in pairs(S.remove) do pending[#pending+1]=id end
-        for _,id in ipairs(pending) do I.release(id) end
-        return true
+        return I.transition("finish",true)
     end
     local pending={};for id in pairs(S.remove) do pending[#pending+1]=id end
     for _,id in ipairs(pending) do I.release(id) end
@@ -325,6 +424,11 @@ function use(item)
         news_manager.send_tip(db.actor,"pf_past_no_space",nil,nil,nil,nil)
         return false
     end
+    return I.transition("spawn",true,{people=people,cursor=cursor,points=points})
+end
+
+function I.spawn_scene(plan)
+    local people,cursor,points=plan.people,plan.cursor,plan.points
     S.anchor=vector():set(db.actor:position())
     S.deadline=time_global()+C.duration;S.next_tick=0
     local count=math.min(#points,#people-cursor)

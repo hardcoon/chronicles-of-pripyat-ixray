@@ -98,9 +98,18 @@ end
 
 function is_active() return state.active end
 
+-- A one-shot result belongs to this runtime session, never to the save stream.
+-- The facade forwards it to the existing world autosave owner.
+function take_result()
+    local result = state.result
+    state.result = nil
+    return result
+end
+
 function finish(success)
     if not state.active then return end
     state.active = false
+    state.result = false
     -- Independent cleanup steps: a dead HUD/ALife session must not leave accelerated time/input.
     pcall(level.pf_sleep_camera_clear)
     pcall(level.set_global_time_factor,state.original_factor)
@@ -121,7 +130,11 @@ function finish(success)
     pcall(level.enable_input)
     state.ray = nil
     state.phase = nil
-    if success and db.actor and db.actor:alive() then
+    state.result = success == true and db.actor ~= nil
+        and db.actor:id() == state.actor_id and db.actor:alive()
+        and db.actor:death_time() == 0 and not db.actor:has_info("actor_is_sleeping")
+        and not level.pf_sleep_camera_active()
+    if state.result then
         local ok, sound = pcall(sound_object,"timelapse_alarm")
         if ok and sound then sound:play_no_feedback(db.actor,0,0,db.actor:position(),1,1) end
     end
@@ -129,6 +142,7 @@ end
 
 function begin(hours)
     if state.active or not db.actor or not db.actor:alive() or not level.pf_sleep_camera_set then return false end
+    state.result = nil
     if level_weathers.bLevelUnderground then return false end
     hours=tonumber(hours)
     if not hours or hours<1 or hours>24 then return false end
@@ -153,6 +167,7 @@ function begin(hours)
     state.acceleration=.01
     state.target_factor=math.max(state.original_factor,math.min(700,hours*50)*.7)
     state.health=db.actor.health
+    state.actor_id=db.actor:id()
     state.active=true
     local started,why=pcall(function()
         state.overlay=sleep_overlay()

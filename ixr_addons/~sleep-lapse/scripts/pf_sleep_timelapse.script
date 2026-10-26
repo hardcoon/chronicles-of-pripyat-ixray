@@ -13,6 +13,11 @@ local function release_cover_reference(discard)
     state.cover_reference = false
 end
 
+local function forward_sleep_result(runtime)
+    local result = runtime.take_result()
+    if result ~= nil then lz_nm_world.finish_sleep_autosave(result) end
+end
+
 function is_enabled()
     if state.enabled ~= nil then return state.enabled end
     local file = io.open(path(), "r")
@@ -42,7 +47,10 @@ function set_enabled(enabled)
     state.enabled = enabled
     local runtime = rawget(_G,"pf_sleep_runtime")
     if not enabled then
-        if runtime then runtime.finish(false) end
+        if runtime then
+            runtime.finish(false)
+            forward_sleep_result(runtime)
+        end
         release_cover_reference(false)
     end
     return true
@@ -50,7 +58,11 @@ end
 
 function begin(hours)
     if not is_enabled() then return false end
-    if not pf_sleep_runtime.begin(hours) then return false end
+    if not pf_sleep_runtime.begin(hours) then
+        pf_sleep_runtime.take_result() -- A failed start falls back to ordinary sleep.
+        return false
+    end
+    lz_nm_world.begin_sleep_autosave()
     -- No render update has run yet: cam_pos still holds the ordinary eye point.
     -- The facade coordinates both systems; the camera runtime stays independent.
     if getFS():exist("$game_scripts$", "lz_nm_surge_cover.script") then
@@ -61,12 +73,20 @@ end
 
 local function reset()
     local runtime=rawget(_G,"pf_sleep_runtime")
-    if runtime then runtime.finish(false) end
+    if runtime then
+        runtime.finish(false)
+        runtime.take_result()
+    end
+    local world = rawget(_G,"lz_nm_world")
+    if world then world.cancel_sleep_autosave() end
     release_cover_reference(true)
 end
 local function update()
     local runtime=rawget(_G,"pf_sleep_runtime")
-    if runtime then runtime.update() end
+    if runtime then
+        runtime.update()
+        forward_sleep_result(runtime)
+    end
     if state.cover_reference and (not runtime or not runtime.is_active()) then
         release_cover_reference(false)
     end

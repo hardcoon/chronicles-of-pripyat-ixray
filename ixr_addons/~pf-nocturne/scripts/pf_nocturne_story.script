@@ -1,0 +1,76 @@
+-- Two optional, one-time conversations after Sergey's arrival at Yanov.
+-- No journal task: archive discovery flags and encyclopedia entries stay intact.
+local GIFT_SECTION = "pf_nocturne_eye"
+
+local function has(info)
+    return db.actor ~= nil and db.actor:has_info(info)
+end
+
+local function story_finished()
+    return has("pf_story_brother_recollection_finished") and
+        has("pf_story_brother_outfit_delivered") and has("pf_story_brother_at_yanov")
+end
+
+function can_discuss_archive()
+    return story_finished() and not has("pf_nocturne_archive_discussed")
+end
+
+local function archive_items()
+    if not db.actor then return nil end
+    local items = {}
+    db.actor:iterate_inventory(function(_, item)
+        local index = pf_story_documents.document_index(item:section())
+        if index and (not items[index] or item:id() < items[index]:id()) then
+            items[index] = item
+        end
+    end, db.actor)
+    local index = 1
+    while pf_story_documents.document_section(index) do
+        if not items[index] then return nil end
+        index = index + 1
+    end
+    return items
+end
+
+function can_deliver_archive()
+    return story_finished() and has("pf_nocturne_archive_discussed") and
+        not has("pf_nocturne_archive_delivered") and archive_items() ~= nil
+end
+
+local function partner(first, second)
+    return pf_nocturne.is_nocturne(first) and first or
+        pf_nocturne.is_nocturne(second) and second or nil
+end
+
+local function give_gift()
+    if has("pf_nocturne_eye_received") then return true end
+    local gift = alife():create(GIFT_SECTION, db.actor:position(),
+        db.actor:level_vertex_id(), db.actor:game_vertex_id(), db.actor:id())
+    if not gift then return false end
+    db.actor:give_info_portion("pf_nocturne_eye_received")
+    news_manager.relocate_item(db.actor, "in", GIFT_SECTION, 1)
+    return true
+end
+
+function gift_reply_text()
+    return game.translate_string(has("pf_nocturne_eye_received") and
+        "pf_nocturne_archive_thanks" or "pf_nocturne_gift_failed")
+end
+
+function deliver_archive(first, second)
+    if not can_deliver_archive() then return false end
+    local npc = partner(first, second)
+    if not npc then return false end
+    local items = archive_items()
+    local servers = {}
+    for index, item in ipairs(items) do
+        servers[index] = alife():object(item:id())
+        if not servers[index] then return false end
+    end
+    if not give_gift() then return false end
+    -- Remove one copy of every record. Putting them on a trader would let the
+    -- archive leak into his shop; keep the unrelated inventory and extra copies.
+    for _, server in ipairs(servers) do alife():release(server, true) end
+    db.actor:give_info_portion("pf_nocturne_archive_delivered")
+    return true
+end

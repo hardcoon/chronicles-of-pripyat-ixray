@@ -1,15 +1,16 @@
 -- Passive dialog. It has no frame callback; the facade supplies the action.
 class "pf_scanner_destroy_dialog" (CUIScriptWnd)
 
-function pf_scanner_destroy_dialog:__init(confirm) super()
+function pf_scanner_destroy_dialog:__init(confirm, replace_confirm) super()
 	self.confirm = confirm
+	self.replace_confirm = replace_confirm
 	local xml = CScriptXmlInit()
 	xml:ParseFile("pf_anomaly_scanner.xml")
 	xml:InitWindow("destroy_dialog", 0, self)
 	local form = xml:InitStatic("destroy_dialog:form", self)
-	xml:InitTextWnd("destroy_dialog:form:question", form)
-	xml:InitTextWnd("destroy_dialog:form:name", form)
-	xml:InitTextWnd("destroy_dialog:form:warning", form)
+	self.question = xml:InitTextWnd("destroy_dialog:form:question", form)
+	self.name = xml:InitTextWnd("destroy_dialog:form:name", form)
+	self.warning = xml:InitTextWnd("destroy_dialog:form:warning", form)
 	local yes = xml:Init3tButton("destroy_dialog:form:confirm_button", form)
 	local no = xml:Init3tButton("destroy_dialog:form:cancel_button", form)
 	self:Register(yes, "scanner_destroy_yes")
@@ -22,19 +23,35 @@ end
 function pf_scanner_destroy_dialog:__finalize()
 end
 
-function pf_scanner_destroy_dialog:Open(id)
+function pf_scanner_destroy_dialog:Open(id, tier)
 	self.scanner_id = id
+	self.replacement = nil
+	self.question:SetText(game.translate_string("pf_scanner_destroy_question"))
+	self.name:SetText(game.translate_string(tier == 2 and "pf_scanner_m2_name" or "pf_scanner_name"))
+	self.warning:SetText(game.translate_string("pf_scanner_destroy_warning"))
+	self:ShowDialog(true)
+end
+
+function pf_scanner_destroy_dialog:OpenReplacement(request)
+	self.scanner_id = nil
+	self.replacement = request
+	self.question:SetText(game.translate_string("pf_scanner_replace_question"))
+	self.name:SetText(game.translate_string("pf_scanner_replace_name"))
+	self.warning:SetText(game.translate_string("pf_scanner_replace_warning"))
 	self:ShowDialog(true)
 end
 
 function pf_scanner_destroy_dialog:Confirm()
 	local id = self.scanner_id
+	local replacement = self.replacement
 	self:Cancel()
-	if id then self.confirm(id) end
+	if replacement then self.replace_confirm(replacement)
+	elseif id then self.confirm(id) end
 end
 
 function pf_scanner_destroy_dialog:Cancel()
 	self.scanner_id = nil
+	self.replacement = nil
 	self:HideDialog()
 end
 
@@ -47,6 +64,6 @@ function pf_scanner_destroy_dialog:OnKeyboard(dik, action)
 	return true
 end
 
-function create(confirm)
-	return pf_scanner_destroy_dialog(confirm)
+function create(confirm, replace_confirm)
+	return pf_scanner_destroy_dialog(confirm, replace_confirm)
 end

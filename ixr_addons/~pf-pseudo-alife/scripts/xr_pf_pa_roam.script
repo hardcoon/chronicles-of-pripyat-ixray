@@ -92,6 +92,8 @@ function pf_pa_roam_action:execute()
     end
 end
 function pf_pa_roam_action:death_callback()
+    -- Keep the IRC corpse label tied to its fictional tier after combat too.
+    pf_pa_world.sync_irc_rank(alife():object(self.object:id()))
     -- CEntityAlive calls this before CAI_Stalker::Die removes active-weapon ammo.
     -- SetActiveSlot is synchronous; activate_slot only requests an animation.
     local owner = self.object:cast_InventoryOwner()

@@ -1550,6 +1550,14 @@ function impl.update_helmet_animation()
 	end
 
 	if state.pending_helmet_animation and not db.actor:is_hud_animator_active() then
+		-- A modal HUD animator hides the current dialog. Keep NPC interaction
+		-- intact and play the queued transition only after talk/trade/upgrade ends.
+		if db.actor:is_talking() then return end
+		local menu = ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+		if menu and menu:IsShown() then
+			local mode = menu:GetMenuMode()
+			if mode == 2 or mode == 3 then return end
+		end
 		local section = state.pending_helmet_animation
 		state.pending_helmet_animation = state.pending_helmet_animation_next
 		state.pending_helmet_animation_next = nil

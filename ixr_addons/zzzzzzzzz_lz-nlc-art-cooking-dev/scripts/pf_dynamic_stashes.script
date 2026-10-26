@@ -1134,6 +1134,28 @@ function impl.nearest_retrievable_slot(actor_position)
 	return nearest_slot
 end
 
+-- Read-only reward integration. Only real purple boxes with remaining loot
+-- respond; reservations, emptied/reused IDs and other tiers stay silent.
+function nearest_nocturne_eye_stash(actor_position, radius)
+    if not SYSTEM_ENABLED or not searched_existing or not actor_position or
+        level.name() ~= LEVEL_NAME then return nil end
+    radius = math.min(30, math.max(0, tonumber(radius) or 30))
+    local nearest, distance_sqr = nil, radius * radius + 1
+    for _, slot in ipairs(slots) do
+        if slot.tier == "purple" and slot.id and slot.state and not slot.state.depleted then
+            local position = impl.detector_slot_position(slot)
+            local distance = position and actor_position:distance_to_sqr(position)
+            if distance and distance <= radius * radius and distance < distance_sqr then
+                local box = alife():object(slot.id, true)
+                if box and impl.has_items(box) then
+                    nearest, distance_sqr = slot, distance
+                end
+            end
+        end
+    end
+    return nearest and nearest.id or nil, nearest and distance_sqr or nil
+end
+
 function impl.update_active_metal_detector(now)
 	local detector = db.actor:active_detector()
 	local detector_data = detector and active_metal_detectors[detector:section()] or nil

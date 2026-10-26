@@ -5,6 +5,8 @@
             <phrase id="0">
                 <text>pf_nocturne_greeting</text>
                 <next>1</next>
+                <next>101</next>
+                <next>201</next>
                 <next>9</next>
             </phrase>
             <phrase id="1">
@@ -24,6 +26,40 @@
                 <next>9</next>
             </phrase>
             <phrase id="9"><text>pf_nocturne_reply</text><action>dialogs.break_dialog</action></phrase>
+            <phrase id="101">
+                <precondition>pf_nocturne_story.can_discuss_archive</precondition>
+                <text>pf_nocturne_archive_01</text>
+                <next>102</next>
+            </phrase>
+            <phrase id="102"><text>pf_nocturne_archive_02</text><next>103</next></phrase>
+            <phrase id="103"><text>pf_nocturne_archive_03</text><next>104</next></phrase>
+            <phrase id="104"><text>pf_nocturne_archive_04</text><next>105</next></phrase>
+            <phrase id="105"><text>pf_nocturne_archive_05</text><next>106</next></phrase>
+            <phrase id="106"><text>pf_nocturne_archive_06</text><next>107</next></phrase>
+            <phrase id="107"><text>pf_nocturne_archive_07</text><next>108</next></phrase>
+            <phrase id="108"><text>pf_nocturne_archive_08</text><next>109</next></phrase>
+            <phrase id="109"><text>pf_nocturne_archive_09</text><next>110</next></phrase>
+            <phrase id="110"><text>pf_nocturne_archive_10</text><next>111</next></phrase>
+            <phrase id="111">
+                <text>pf_nocturne_archive_11</text>
+                <give_info>pf_nocturne_archive_discussed</give_info>
+                <action>dialogs.break_dialog</action>
+                <is_final>1</is_final>
+            </phrase>
+            <phrase id="201">
+                <precondition>pf_nocturne_story.can_deliver_archive</precondition>
+                <text>pf_nocturne_archive_deliver</text>
+                <action>pf_nocturne_story.deliver_archive</action>
+                <next>202</next>
+            </phrase>
+            <phrase id="202">
+                <text />
+                <script_text>pf_nocturne_story.gift_reply_text</script_text>
+                <next>1</next>
+                <next>101</next>
+                <next>201</next>
+                <next>9</next>
+            </phrase>
         </phrase_list>
     </dialog>
 </game_dialogs>

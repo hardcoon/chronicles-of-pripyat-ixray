@@ -12,11 +12,11 @@ function panel:InitControls(xml, rows)
     self:SetAutoDelete(true)
     self.rows = rows
     self.scroll = xml:InitScrollView("scroll", self)
-    for _, side in ipairs({"global","human","mutant"}) do
+    for _, side in ipairs({"global","human","mutant","cleaner"}) do
         local section = {id=side,button=xml:Init3tButton("category",nil),rows={},expanded=false}
         self.sections[#self.sections+1] = section
         self.section_by_id[side] = section
-        if side ~= "global" then
+        if side == "human" or side == "mutant" then
             local row = xml:InitStatic("row",nil)
             self.preset_captions[side] = xml:InitStatic("preset_caption",row)
             local track = xml:InitTrackBar("preset",row)
@@ -25,6 +25,9 @@ function panel:InitControls(xml, rows)
             section.rows[#section.rows+1] = row
         end
     end
+    local cleaner_note = xml:InitStatic("cleaner_note_row",nil)
+    xml:InitStatic("cleaner_note",cleaner_note)
+    self.section_by_id.cleaner.rows[1] = cleaner_note
     for _, item in ipairs(rows) do
         local section = self.section_by_id[item.side]
         if item.heading then
@@ -34,7 +37,7 @@ function panel:InitControls(xml, rows)
         end
         local row = xml:InitStatic("row",nil)
         section.rows[#section.rows+1] = row
-        if item.side == "global" then
+        if item.side == "global" or item.side == "cleaner" then
             xml:InitStatic("caption_" .. item.key, row)
             if item.key == "debug_map" then self.debug_row = row end
             if item.kind == "check" then self.controls[item.key] = xml:InitCheck("check_" .. item.key, row)
@@ -80,7 +83,7 @@ end
 -- Only population drafts change: globals (including unfinished text) remain intact.
 function panel:SetPopulation(values, side, position)
     for _, item in ipairs(self.rows) do
-        if item.side ~= "global" and (not side or item.side == side) then
+        if (item.side == "human" or item.side == "mutant") and (not side or item.side == side) then
             self.controls[item.key]:SetText(tostring(values[item.key]))
         end
     end
@@ -90,6 +93,12 @@ function panel:SetPopulation(values, side, position)
         end
     end
     self:RefreshCounters(true)
+end
+
+function panel:SetCleanerDefaults(values)
+    for _, item in ipairs(self.rows) do
+        if item.side == "cleaner" then self.controls[item.key]:SetIValue(values[item.key]) end
+    end
 end
 
 function panel:RefreshPresetLabels(values)

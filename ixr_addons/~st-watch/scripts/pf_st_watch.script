@@ -23,6 +23,12 @@ local function available(actor,for_editor)
     if not for_editor and not inspecting and (actor:is_inventory_disabled() or actor:is_pda_disabled()) then return false end
     if actor:get_attached_vehicle() then return false end
     if actor:is_talking() then return false end
+    if not for_editor then
+        -- Custom dialogs (including the workbench) are outside ActorMenu.
+        -- A modal watch animator would hide them without their close cleanup.
+        local hud=get_hud()
+        if hud and hud:TopInputReceiver() then return false end
+    end
     if ActorMenu and not for_editor then
         local inventory=ActorMenu.get_actor_menu()
         local pda=ActorMenu.get_pda_menu()

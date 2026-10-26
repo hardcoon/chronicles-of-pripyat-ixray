@@ -1,0 +1,69 @@
+-- Menu placement is separate from the existing client preference storage.
+class "opt_mod" (CUIWindow)
+
+function opt_mod:__init() super()
+end
+
+function opt_mod:__finalize()
+end
+
+function opt_mod:InitControls(x, y, xml, handler)
+    self:SetWndPos(vector2():set(x, y))
+    self:SetWndSize(vector2():set(466, 406))
+    self:SetAutoDelete(true)
+    self.scroll_v = xml:InitScrollView("main_dialog:scroll_v", self)
+    self.preferences = {}
+
+    local layout = CScriptXmlInit()
+    layout:ParseFile("pf_mod_options.xml")
+    local addRow = function(label, check_path, getter, setter)
+        local row = layout:InitStatic(check_path == "check_shift_transfer" and "row_long" or "row", nil)
+        local caption = layout:InitStatic(check_path == "check_shift_transfer" and "caption_long" or "caption", row)
+        caption:TextControl():SetTextST(label)
+        local control = layout:InitCheck(check_path, row)
+        self.scroll_v:AddWindow(row, true)
+        row:SetAutoDelete(false)
+        if getter then
+            self.preferences[#self.preferences + 1] = {control=control, get=getter, set=setter}
+        end
+    end
+
+    if getFS():exist("$game_scripts$", "pf_sleep_timelapse.script") then
+        addRow("pf_mod_opt_sleep_timelapse", "check", pf_sleep_timelapse.is_enabled,
+            pf_sleep_timelapse.set_enabled)
+    end
+    if getFS():exist("$game_scripts$", "pf_city_horrors_settings.script") then
+        addRow("pf_mod_opt_city_horrors", "check", pf_city_horrors_settings.is_enabled,
+            pf_city_horrors_settings.set_enabled)
+    end
+    -- Keep the same console entry and COptionsManager group used in the old page.
+    addRow("pf_mod_opt_shift_transfer", "check_shift_transfer")
+    if getFS():exist("$game_scripts$", "pf_irc_chat.script") then
+        addRow("pf_mod_opt_game_chat", "check", pf_irc_chat.is_enabled, pf_irc_chat.set_enabled)
+    end
+    addRow("pf_mod_opt_disable_green_stashes", "check", pf_stash_settings.is_green_stash_spawning_disabled,
+        pf_stash_settings.set_green_stash_spawning_disabled)
+    addRow("pf_mod_opt_spawn_vehicles", "check", pf_vehicle_settings.is_discoverable_vehicle_spawning_enabled,
+        pf_vehicle_settings.set_discoverable_vehicle_spawning_enabled)
+    if get_console():get_string("r4_bodycam") ~= nil then
+        addRow("pf_mod_opt_bodycam", "check_bodycam")
+    end
+end
+
+function opt_mod:SetValues()
+    for _, preference in ipairs(self.preferences) do
+        preference.backup = preference.get() == true
+        preference.control:SetCheck(preference.backup)
+    end
+end
+
+function opt_mod:SaveValues()
+    for _, preference in ipairs(self.preferences) do
+        local value = preference.control:GetCheck() == true
+        if value ~= preference.backup then
+            if not preference.set(value) then return false end
+            preference.backup = value
+        end
+    end
+    return true
+end
