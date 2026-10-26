@@ -17,6 +17,7 @@ local protected_resident_sections = {
 	pf_yanov_nitro = true,
 	pf_yanov_trapper = true,
 	pf_yanov_nimble = true,
+	pf_story_brother_yanov = true,
 	pf_yanov_savka = true,
 	pf_yanov_freedom_sleeper = true,
 	pf_yanov_freedom_guard = true,
@@ -46,6 +47,12 @@ local smarts_by_no_assault_zones = {
 
 function is_enemy(obj, enemy, st, not_check_sim)
 	if not obj:alive() then
+		return false
+	end
+
+	-- Memorial apparitions ignore combat in both directions, including after hits.
+	if string.sub(obj:section(),1,14)=="pf_past_ghost_" or
+		(enemy and string.sub(enemy:section(),1,14)=="pf_past_ghost_") then
 		return false
 	end
 

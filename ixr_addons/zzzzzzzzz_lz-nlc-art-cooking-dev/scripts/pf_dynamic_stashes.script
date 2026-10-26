@@ -132,7 +132,7 @@ local tier_data = {
 	cyan = { marker = "pf_stash_cyan", discovery_distance_sqr = 5 * 5, hint_required = false, provision_chance = 50, hydration_chance = 44 },
 	purple = { marker = "pf_stash_purple", discovery_distance_sqr = 3 * 3, hint_required = false, provision_chance = 70, hydration_chance = 57 },
 	orange = { marker = "pf_stash_orange", hint_required = true, provision_chance = 100 },
-	red = { marker = "pf_stash_red", hint_required = true, provision_chance = 100 }
+	red = { marker = "pf_stash_red", hint_required = true, provision_chance = 100 },
 }
 local puzzle_reward_tiers = { green = true, cyan = true, purple = true, orange = true, red = true }
 
@@ -208,7 +208,7 @@ function impl.tier_for_index(index)
 	return nil
 end
 
-local legacy_marker_types = { "treasure" }
+local legacy_marker_types = { "treasure", "pf_stash_pink", "pf_stash_pink_eye" }
 
 local interior_models = {
 	"pf_stash_backpack",
@@ -1208,6 +1208,8 @@ function impl.release_object(id)
 	if object then
 		local photos = rawget(_G, "pf_photo_cards_distribution")
 		if photos and photos.before_container_release then photos.before_container_release(object) end
+		local notes = rawget(_G, "pf_photographer_notes")
+		if notes and notes.before_container_release then notes.before_container_release(object) end
 		alife():release(object, true)
 	end
 end
@@ -1574,6 +1576,19 @@ function impl.get_persistent_state()
 		state.loot_seed = impl.deterministic_pda_roll(
 			first, last, state.red_unique_detector_stage or 0, "pf_stash_world_seed_v1")
 	end
+	-- Load-only compatibility: retire the old colour without deleting its
+	-- container, contents or slot ID. Green retains the old 10-metre spacing.
+	for _, old in pairs(state.slots) do
+		if type(old) == "table" and (old.tier == "pink" or old.photographer_reward) then
+			old.tier = "green"
+			old.photographer_reward = nil
+			old.photographer_marker_legacy = true
+		end
+	end
+	state.photographer_reward_slot = nil
+	state.searched_counts.green = (tonumber(state.searched_counts.green) or 0) +
+		math.max(0, tonumber(state.searched_counts.pink) or 0)
+	state.searched_counts.pink = nil
 	impl.migrate_attachment_manifests(state)
 	persistent_state = state
 	impl.clear_legacy_pstor()
@@ -1862,6 +1877,10 @@ function impl.find_existing_objects()
 					object.position = vector():set(
 						object_point.position[1], object_point.position[2], object_point.position[3])
 					slot.id = object.id
+					if slot.state.photographer_marker_legacy then
+						impl.remove_all_markers(slot.id)
+						slot.state.photographer_marker_legacy = nil
+					end
 					slot.spawned_at = 0
 					slot.conditions_applied = false
 					slot.loot_materialized = slot.state.defer_loot ~= true
@@ -3589,16 +3608,25 @@ end
 -- Photo lifetime reservations belong to the optional photo addon; the
 -- manager retains ownership of per-rotation searches and physical containers.
 function impl.ensure_photo_card(slot, box)
+	local notes = rawget(_G, "pf_photographer_notes")
+	if notes and notes.materialize then notes.materialize(slot, box, impl.spawn_item) end
 	local photos = rawget(_G, "pf_photo_cards_distribution")
 	return photos and photos.materialize and photos.materialize(slot, box, impl.spawn_item) or false
 end
 
 function impl.photo_card_pending(slot)
+	local notes = rawget(_G, "pf_photographer_notes")
+	if notes and notes.pending and notes.pending(slot) then return true end
 	local photos = rawget(_G, "pf_photo_cards_distribution")
 	return photos and photos.pending and photos.pending(slot) or false
 end
 
 function impl.try_spawn_photo_card(slot)
+	local notes = rawget(_G, "pf_photographer_notes")
+	if notes and notes.search and slot then
+		local box = slot.id and alife():object(slot.id, true) or nil
+		notes.search(slot, impl.slot_deterministic_percent(slot, "pf_photographer_roll_v1"), box, impl.spawn_item)
+	end
 	local photos = rawget(_G, "pf_photo_cards_distribution")
 	if not photos or not photos.search then return false end
 	local box = slot and slot.id and alife():object(slot.id, true) or nil
@@ -3752,19 +3780,30 @@ end
 
 function impl.story_document_pending()
 	for _, candidate in ipairs(slots) do
-		if candidate.state and candidate.state.story_doc then return true end
+		local index = candidate.state and candidate.state.story_doc
+		local info = index and pf_story_documents.document_info(index)
+		if info and not db.actor:has_info(info) then return true end
 	end
 	return false
 end
 
+function impl.story_roll_is_checked(slot, index)
+	-- Existing saves have only the first chapter's boolean. Give chapter two
+	-- its own single opportunity without rerolling a cache on every visit.
+	return slot.state.story_roll_checked and
+		(index < 13 or slot.state.story_roll_chapter == 2)
+end
+
 function impl.try_assign_random_story_document(slot)
-	if not slot or slot.state.story_roll_checked then return false end
+	if not slot or not slot.state then return false end
+	local next_index = pf_story_documents.next_random_document_index()
+	if not next_index or impl.story_roll_is_checked(slot, next_index) then return false end
 	slot.state.story_roll_checked = true
+	slot.state.story_roll_chapter = next_index >= 13 and 2 or 1
 	-- Green caches are too common, while red caches have a deliberately closed
 	-- reward table. Family evidence can appear only in cyan through orange tiers.
 	if not story_document_tiers[slot.tier] then return false end
-	local next_index = pf_story_documents.next_document_index()
-	if next_index < 1 or next_index > 10 or impl.story_document_pending() then return false end
+	if impl.story_document_pending() then return false end
 	if impl.slot_deterministic_percent(slot, "pf_stash_story_document_v1") >
 		STORY_DOCUMENT_ROLL_CHANCE then return false end
 	slot.state.story_doc = next_index
@@ -4487,6 +4526,9 @@ function impl.lore_hint_note_section(slot)
 	if index and not impl.pripyat_city_note_found(index) then
 		return impl.pripyat_city_note_section(index)
 	end
+	local notes = rawget(_G, "pf_photographer_notes")
+	local section = notes and notes.hint_section and notes.hint_section(slot)
+	if section then return section, "photographer" end
 	return nil
 end
 
@@ -4536,6 +4578,28 @@ function impl.select_unsearched_lore_hint_slot(coordinate_id)
 	return nil
 end
 
+-- The photographer shares the sheet without a prerequisite on the 80 lore
+-- articles. Its strict next-page reservation remains owned by the leaf module.
+function impl.select_unsearched_photographer_hint_slot()
+	local notes = rawget(_G, "pf_photographer_notes")
+	local index = notes and notes.hint_index and notes.hint_index()
+	if not index or not notes.reserve_hint then return nil end
+	local position = db.actor:position()
+	for _, tier in ipairs({ "cyan", "purple", "orange", "red" }) do
+		local selected, nearest = nil, math.huge
+		for _, slot in ipairs(slots) do
+			if slot.tier == tier and slot.point and slot.state and not slot.state.depleted and
+				not slot.state.hint_checked and not slot.state.photographer_roll_checked and
+				not slot.state.photographer_note and not slot.state.lore_hint_given then
+				local distance = impl.position_distance_sqr(position, slot.point)
+				if distance < nearest then selected, nearest = slot, distance end
+			end
+		end
+		if selected then return selected, "photographer_note", index, "photographer" end
+	end
+	return nil
+end
+
 function impl.select_lore_hint_slot(coordinate_id)
 	local actor_position = db.actor:position()
 	for _, tier in ipairs({ "green", "cyan", "purple", "orange", "red" }) do
@@ -4551,15 +4615,36 @@ function impl.select_lore_hint_slot(coordinate_id)
 				end
 			end
 		end
-		if selected then return selected, nil, nil, "lore" end
+		if selected then
+			local _, kind = impl.lore_hint_note_section(selected)
+			return selected, nil, nil, kind or "lore"
+		end
 		-- A higher tier must wait until the lower tier's remaining notes are taken.
 		-- Revisiting this reservation repairs its marker without charging another sheet.
-		if previous then return previous, nil, nil, "lore" end
+		if previous then
+			local _, kind = impl.lore_hint_note_section(previous)
+			return previous, nil, nil, kind or "lore"
+		end
 	end
 	local selected, note_field, note_index = impl.select_unsearched_lore_hint_slot(coordinate_id)
-	if selected then return selected, note_field, note_index, "lore" end
-	if not impl.lore_collection_complete() then return nil end
-	return impl.select_story_hint_slot()
+	local kind = selected and "lore" or nil
+	if not selected and impl.lore_collection_complete() then
+		selected, note_field, note_index, kind = impl.select_story_hint_slot()
+		-- An already assigned story page precedes any new reservation.
+		if selected and not note_field then return selected, nil, nil, kind end
+	end
+	local photo, photo_field, photo_index, photo_kind = impl.select_unsearched_photographer_hint_slot()
+	if photo then
+		if not selected then return photo, photo_field, photo_index, photo_kind end
+		-- A saved sheet ID chooses between the ordinary path and photographer;
+		-- neither global RNG nor the ordinary 70/20/10 tier roll is changed.
+		local saved = impl.get_persistent_state()
+		if impl.deterministic_pda_roll(saved.loot_seed, coordinate_id or 0,
+			"pf_stash_lore_hint_chain_v1") % 2 == 0 then
+			return photo, photo_field, photo_index, photo_kind
+		end
+	end
+	return selected, note_field, note_index, kind
 end
 
 function impl.lore_collection_complete()
@@ -4591,8 +4676,9 @@ end
 function impl.select_story_hint_slot()
 	if not pf_story_documents or not pf_story_documents.next_document_index then return nil end
 	local next_index = tonumber(pf_story_documents.next_document_index())
-	if not next_index or next_index < 1 or next_index > 12 then return nil end
-	local tiers = next_index >= 11 and { "cyan" } or { "cyan", "purple", "orange" }
+	if not next_index or next_index < 1 or next_index > 22 then return nil end
+	local tiers = (next_index == 11 or next_index == 12) and
+		{ "cyan" } or { "cyan", "purple", "orange" }
 	local actor_position = db.actor:position()
 	for _, tier in ipairs(tiers) do
 		local selected, selected_distance = nil, math.huge
@@ -4609,7 +4695,7 @@ function impl.select_story_hint_slot()
 		local selected, selected_distance = nil, math.huge
 		for _, slot in ipairs(slots) do
 			if slot.tier == tier and slot.point and slot.state and not slot.state.depleted and
-				not slot.state.discovered and not slot.state.story_roll_checked and
+				not slot.state.discovered and not impl.story_roll_is_checked(slot, next_index) and
 				not slot.state.story_doc then
 				local distance = impl.position_distance_sqr(actor_position, slot.point)
 				if distance < selected_distance then selected, selected_distance = slot, distance end
@@ -4628,7 +4714,12 @@ function grant_lore_note_hint(coordinate_id)
 	impl.find_existing_objects()
 	local slot, note_field, note_index, target_kind = impl.select_lore_hint_slot(coordinate_id)
 	if not slot then return false, "no_notes" end
-	if note_field then
+	if note_field and target_kind == "photographer" then
+		local notes = rawget(_G, "pf_photographer_notes")
+		if not notes or not notes.reserve_hint or not notes.reserve_hint(slot, note_index) then
+			return false, "pending", slot
+		end
+	elseif note_field then
 		-- Reserve before materialization, including failed/pending attempts. A
 		-- reload or ordinary search must restore this note, never choose another.
 		slot.state[note_field] = note_index
@@ -5482,6 +5573,8 @@ function on_actor_item_take(item, previous_owner_id)
 		-- managed loot, but taking an arbitrary item never reveals coordinates.
 		pf_dynamic_corpses.on_actor_item_take(item, previous_owner_id)
 	end
+	local notes = rawget(_G, "pf_photographer_notes")
+	if notes and notes.taken then notes.taken(slot, item) end
 end
 
 function on_take_item_from_box(box, item)
@@ -5628,12 +5721,15 @@ function impl.rotate_slot(slot)
 	slot.ordinary_detector_spawn_error = nil
 	slot.state.ambush_checked = nil
 	slot.state.story_roll_checked = nil
+	slot.state.story_roll_chapter = nil
 	slot.state.story_doc = nil
 	slot.state.ghost_city_note = nil
 	slot.state.pripyat_city_note = nil
 	slot.state.ghost_city_roll_checked = nil
 	slot.state.photo_roll_checked = nil
 	slot.state.photo_card_index = nil
+	slot.state.photographer_roll_checked = nil
+	slot.state.photographer_note = nil
 	slot.state.usb_roll_checked = nil
 	slot.state.usb_reserved_level = nil
 	slot.state.usb_roll = nil
@@ -5716,6 +5812,8 @@ function update()
 	impl.update_vertex_search()
 	if now < next_check then return end
 	next_check = now + CHECK_INTERVAL_MS
+	local notes = rawget(_G, "pf_photographer_notes")
+	if notes and notes.reconcile_reward then notes.reconcile_reward(impl.spawn_item) end
 	local hacking = rawget(_G, "lz_pda_hacking")
 	if hacking and hacking.scan_actor_usb_inventory then
 		hacking.scan_actor_usb_inventory()

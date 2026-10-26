@@ -26,6 +26,28 @@ target = nil
 condlist_0 = {+pf_story_doc_12_found} complete
 condlist_1 = {+pf_story_preacher_dead -pf_story_doc_12_found} fail
 
+[pf_story_brother_followup]
+icon = ui_inGame2_Put_v_pripyat
+prior = 119
+storyline = true
+title = {+pf_story_brother_documents_found} pf_story_brother_show_title, {+pf_story_brother_search_started} pf_story_brother_search_title, pf_story_brother_talk_title
+descr = {+pf_story_brother_documents_found} pf_story_brother_show_descr, {+pf_story_brother_search_started} pf_story_brother_search_descr, pf_story_brother_talk_descr
+target_functor = pf_story_brother_target
+target = nil
+condlist_0 = {+pf_story_brother_recollection_finished} complete
+condlist_1 = {+pf_story_preacher_dead} fail
+
+[pf_story_brother_outfit]
+icon = ui_inGame2_Put_v_pripyat
+prior = 119
+storyline = true
+title = pf_story_brother_outfit_title
+descr = pf_story_brother_outfit_descr
+target_functor = pf_story_brother_target
+target = nil
+condlist_0 = {+pf_story_brother_outfit_delivered} complete
+condlist_1 = {+pf_story_preacher_dead} fail
+
 [pf_bunker_access]
 icon = ui_inGame2_Put_v_pripyat
 prior = 121

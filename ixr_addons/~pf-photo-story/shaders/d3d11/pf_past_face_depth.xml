@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shader>
+  <element_nd_0 vs="deffer_model" ps="pf_past_depth" fog="false" zread="true" zwrite="true">
+    <!-- Priority 2 maps to forward bucket 1; unsorted draws precede alpha draws. -->
+    <sort count="2" status="false" />
+    <blend status="false" src="one" dest="zero" />
+    <color r="false" g="false" b="false" a="false" />
+    <cull_mode mode="ccw" />
+    <stencil status="false" cmp="always" mask="255" wmask="0" fail="keep" pass="keep" zfail="keep" />
+  </element_nd_0>
+  <element_nd_1 vs="deffer_model" ps="pf_past_depth" fog="false" zread="true" zwrite="true">
+    <!-- Priority 2 maps to forward bucket 1; unsorted draws precede alpha draws. -->
+    <sort count="2" status="false" />
+    <blend status="false" src="one" dest="zero" />
+    <color r="false" g="false" b="false" a="false" />
+    <cull_mode mode="ccw" />
+    <stencil status="false" cmp="always" mask="255" wmask="0" fail="keep" pass="keep" zfail="keep" />
+  </element_nd_1>
+</shader>

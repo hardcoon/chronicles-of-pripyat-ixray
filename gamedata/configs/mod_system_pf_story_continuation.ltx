@@ -1,0 +1,95 @@
+; Chapter two: items, archive flags and the brother's staged follow-up.
+; The original twelve-document finale stays independent of the new quest.
+
+![info_portions]
+>files = info_pf_story_continuation
+
+![dialogs]
+>files = dialogs_pf_story_continuation
+
+![profiles]
+>files = npc_profile_pf_story_brother
+>specific_characters_files = character_desc_pf_story_brother
+
+[pf_story_brother_yanov]:stalker
+$spawn = "respawn\pf_story_brother_yanov"
+character_profile = pf_story_brother_yanov_profile
+script_binding = bind_stalker.init
+custom_data = scripts\pripyat_full\pf_story_brother_yanov.ltx
+immunities_sect = pf_bunker_immortal_immunities
+can_select_items = off
+; Same counter footprint as Hawaiian, without overlap with his position.
+ph_box0_size = 0.15, 0.9, 0.15
+ph_box1_size = 0.15, 0.6, 0.15
+
+![inventory_sort_registry]
+pf_story_document_13 = quest_items
+pf_story_document_14 = quest_items
+pf_story_document_15 = quest_items
+pf_story_document_16 = quest_items
+pf_story_document_17 = quest_items
+pf_story_document_18 = quest_items
+pf_story_document_19 = quest_items
+pf_story_document_20 = quest_items
+pf_story_document_21 = quest_items
+pf_story_document_22 = quest_items
+
+[pf_story_document_13]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_document_case_2.ogf
+inv_name = pf_story_document_13_name
+inv_name_short = pf_story_document_13_name
+description = pf_story_document_13_descr
+
+[pf_story_document_14]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_paper_2.ogf
+inv_name = pf_story_document_14_name
+inv_name_short = pf_story_document_14_name
+description = pf_story_document_14_descr
+
+[pf_story_document_15]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_paper_1.ogf
+inv_name = pf_story_document_15_name
+inv_name_short = pf_story_document_15_name
+description = pf_story_document_15_descr
+
+[pf_story_document_16]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_document_case_2.ogf
+inv_name = pf_story_document_16_name
+inv_name_short = pf_story_document_16_name
+description = pf_story_document_16_descr
+
+[pf_story_document_17]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_paper_2.ogf
+inv_name = pf_story_document_17_name
+inv_name_short = pf_story_document_17_name
+description = pf_story_document_17_descr
+
+[pf_story_document_18]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_letter_1.ogf
+inv_name = pf_story_document_18_name
+inv_name_short = pf_story_document_18_name
+description = pf_story_document_18_descr
+
+[pf_story_document_19]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_paper_1.ogf
+inv_name = pf_story_document_19_name
+inv_name_short = pf_story_document_19_name
+description = pf_story_document_19_descr
+
+[pf_story_document_20]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_document_case_2.ogf
+inv_name = pf_story_document_20_name
+inv_name_short = pf_story_document_20_name
+description = pf_story_document_20_descr
+
+[pf_story_document_21]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_writing_book_1.ogf
+inv_name = pf_story_document_21_name
+inv_name_short = pf_story_document_21_name
+description = pf_story_document_21_descr
+
+[pf_story_document_22]:pf_story_document_base
+visual = dynamics\equipments\quest\notes_writing_book_2.ogf
+inv_name = pf_story_document_22_name
+inv_name_short = pf_story_document_22_name
+description = pf_story_document_22_descr

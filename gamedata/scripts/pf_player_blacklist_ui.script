@@ -1,0 +1,125 @@
+-- Native child overlay: no global dialog holder, input capture or callbacks.
+-- The statistics owner supplies records and commits transfer requests.
+local impl = {}
+
+class "pf_player_blacklist_item" (CUIListBoxItem)
+function pf_player_blacklist_item:__init(record, width) super(28)
+    local status_x = math.floor(width * 0.4)
+    local text = self:GetTextItem()
+    text:SetWndPos(vector2():set(9, 0))
+    text:SetWndSize(vector2():set(status_x - 18, 28))
+    text:SetFont(GetFontLetterica16Russian())
+    text:SetText(pf_irc_text_codec.escape_markup(record.nick))
+    text:SetEllipsis(true)
+    self:SetTextColor(GetARGB(255, 205, 205, 195))
+    local rank = self:AddTextField(record.rank and string.format("%.0f", record.rank) or "-", 120)
+    rank:SetWndPos(vector2():set(width - 132, 0))
+    rank:SetWndSize(vector2():set(110, 28))
+    rank:SetTextAlignment(2)
+    rank:SetFont(GetFontLetterica16Russian())
+    rank:SetTextColor(GetARGB(255, 195, 195, 185))
+    rank:SetEllipsis(true)
+    -- AWAY is a connected IRC peer too; missing cached presence is offline.
+    local online = record.presence == "online" or record.presence == "away"
+    local status = self:AddTextField(game.translate_string(online and
+        "pf_pda_blacklist_online" or "pf_pda_blacklist_offline"), 100)
+    status:SetWndPos(vector2():set(status_x, 0))
+    status:SetWndSize(vector2():set(100, 28))
+    status:SetTextAlignment(0)
+    status:SetFont(GetFontLetterica16Russian())
+    status:SetTextColor(online and GetARGB(255, 74, 186, 94) or GetARGB(255, 205, 65, 55))
+    status:SetEllipsis(true)
+end
+function pf_player_blacklist_item:__finalize() end
+
+function impl.selected(self, side)
+    local index = self.lists[side]:GetSelectedIndex()
+    return self.rows[side][index + 1]
+end
+
+function impl.fill(self, side, records)
+    local list = self.lists[side]
+    local previous = impl.selected(self, side)
+    local selected = previous and previous.identity
+    local scroll = list:GetCurrentScrollPos()
+    list:RemoveAll()
+    self.rows[side] = records
+    local next_index = -1
+    for index, record in ipairs(records) do
+        list:AddExistingItem(pf_player_blacklist_item(record, list:GetWidth() - 5))
+        if record.identity == selected then next_index = index - 1 end
+    end
+    if next_index < 0 and #records > 0 then next_index = 0 end
+    if next_index >= 0 then list:SetSelectedIndex(next_index) end
+    list:SetScrollPos(scroll)
+    self.empty[side]:Show(#records == 0)
+    self.buttons[side == "available" and "block" or "restore"]:Enable(#records > 0)
+end
+
+function create(xml, parent)
+    local self = {open = false, lists = {}, rows = {available = {}, blocked = {}},
+        empty = {}, buttons = {}}
+    -- CUIWindow handles its own OnMouseDown BEFORE dispatching to children.
+    -- Keep the consuming check behind a non-consuming sibling container;
+    -- otherwise the background eats clicks meant for list rows and buttons.
+    self.blocker = xml:InitCheck("blacklist_popup", parent)
+    self.window = xml:InitStatic("blacklist_popup", parent)
+    xml:InitStatic("blacklist_popup:background", self.window):Enable(false)
+    for _, key in ipairs({"title", "available_title", "blocked_title", "nick_heading", "status_heading", "rank_heading",
+        "blocked_nick_heading", "blocked_status_heading", "blocked_rank_heading", "hint"}) do
+        xml:InitTextWnd("blacklist_popup:" .. key, self.window):Enable(false)
+    end
+    self.error = xml:InitTextWnd("blacklist_popup:error", self.window)
+    self.error:Enable(false)
+    for _, side in ipairs({"available", "blocked"}) do
+        self.lists[side] = xml:InitListBox("blacklist_popup:" .. side, self.window)
+        self.empty[side] = xml:InitTextWnd("blacklist_popup:" .. side .. "_empty", self.window)
+        self.empty[side]:Enable(false)
+    end
+    for _, action in ipairs({"block", "restore", "close"}) do
+        local path = "blacklist_popup:" .. action
+        self.buttons[action] = xml:InitCheck(path, self.window)
+        if action == "close" then xml:InitTextWnd(path .. ":caption", self.buttons[action]):Enable(false)
+        else xml:InitStatic(path .. ":icon", self.buttons[action]):Enable(false) end
+        self.buttons[action]:SetCheck(false)
+    end
+    function self:set_open(shown)
+        self.open = shown == true
+        self.blocker:Show(self.open)
+        self.blocker:Enable(self.open)
+        self.window:Show(self.open)
+        self.window:Enable(self.open)
+        if self.open then self.error:SetText("") end
+    end
+    function self:refresh(available, blocked)
+        impl.fill(self, "available", available)
+        impl.fill(self, "blocked", blocked)
+    end
+    function self:poll()
+        if not self.open then return nil end
+        if self.buttons.close:GetCheck() then
+            self.buttons.close:SetCheck(false)
+            return {action = "close"}
+        end
+        for _, action in ipairs({"block", "restore"}) do
+            local button = self.buttons[action]
+            if button:GetCheck() then
+                button:SetCheck(false)
+                local side = action == "block" and "available" or "blocked"
+                local record = impl.selected(self, side)
+                if record then return {action = action, identity = record.identity,
+                    nick = record.irc_nick or record.nick} end
+            end
+        end
+    end
+    function self:show_error(message)
+        self.error:SetText(message and game.translate_string(message) or "")
+    end
+    function self:clear()
+        self:set_open(false)
+        for _, side in ipairs({"available", "blocked"}) do self.lists[side]:RemoveAll() end
+        self.rows = {available = {}, blocked = {}}
+    end
+    self:set_open(false)
+    return self
+end

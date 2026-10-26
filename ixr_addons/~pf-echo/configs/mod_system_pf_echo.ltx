@@ -1,0 +1,30 @@
+; Test settings. Game clock: [00:00, 05:00). Intervals are real milliseconds.
+[pf_echo_lights]
+enabled = true
+level = pripyat_full
+start_hour = 0
+end_hour = 5
+controller_interval_ms = 1000
+spawn_min_distance = 25
+spawn_max_distance = 100
+approach_min_distance = 0.25
+close_distance = 10
+retreat_factor = 1.20
+duration_min_ms = 20000
+duration_max_ms = 60000
+point_cooldown_ms = 60000
+chance_percent = 100
+light_range = 6
+light_red = 1.0
+light_green = 0.72
+light_blue = 0.40
+debug_log = true
+
+; Do not inherit physic_object: its visual/cform fields request a model.
+; Omitting visual entirely also avoids CSE_Visual::set_visual(nullptr).
+; "root" is a setter placeholder; no bones are resolved without a visual.
+[pf_echo_light]
+class = SO_HLAMP
+script_binding = pf_echo_light_binder.bind
+remove_time = 0
+damage_immune = true

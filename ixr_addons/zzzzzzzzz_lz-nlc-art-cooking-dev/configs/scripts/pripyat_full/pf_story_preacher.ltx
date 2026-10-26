@@ -13,6 +13,7 @@ on_info = {+pf_story_preacher_attacked} remark@hostile
 
 [remark@campfire_prayer]
 anim = pf_story_sergey_sit_fixed
+invulnerable = {+pf_story_brother_task_given} true, false
 meet = no_meet
 gather_items_enabled = false
 help_wounded_enabled = false
@@ -29,6 +30,7 @@ use_camp = false
 
 [remark@hostile]
 anim = threat
+invulnerable = {+pf_story_brother_task_given} true, false
 target = story | actor
 meet = no_meet
 gather_items_enabled = false
@@ -37,6 +39,7 @@ corpse_detection_enabled = false
 
 [remark@entrance_dialog]
 anim = pf_story_sergey_sit_fixed
+invulnerable = {+pf_story_brother_task_given} true, false
 meet = meet@spare
 gather_items_enabled = false
 help_wounded_enabled = false
@@ -67,6 +70,7 @@ abuse = false
 
 [remark@entrance_idle]
 anim = pf_story_sergey_sit_fixed
+invulnerable = {+pf_story_brother_task_given} true, false
 meet = no_meet
 gather_items_enabled = false
 help_wounded_enabled = false
@@ -74,6 +78,27 @@ corpse_detection_enabled = false
 combat_ignore_cond = true
 combat_ignore_keep_when_attacked = true
 use_camp = false
+
+[remark@continuation_dialog]:remark@entrance_idle
+meet = meet@continuation
+
+[remark@brother_ground_idle]:remark@entrance_idle
+anim = pf_story_sergey_floor_fixed
+
+[remark@brother_ground_dialog]:remark@continuation_dialog
+anim = pf_story_sergey_floor_fixed
+
+[remark@brother_outfit_dialog]:remark@brother_ground_idle
+meet = meet@brother_outfit
+
+[meet@brother_outfit]:meet@spare
+use = {+pf_story_brother_outfit_task_given -pf_story_brother_outfit_delivered} true, false
+meet_dialog = pf_story_brother_outfit_dialog
+allow_break = true
+
+[meet@continuation]:meet@spare
+use = {+pf_story_brother_recollection_finished} false, {+pf_story_brother_documents_found} true, {+pf_story_brother_task_given -pf_story_brother_search_started} true, false
+meet_dialog = pf_story_brother_followup_dialog
 
 [death@preacher]
 on_info = %+pf_story_preacher_dead =stop_sound%

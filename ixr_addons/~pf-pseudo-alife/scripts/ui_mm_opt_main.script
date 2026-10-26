@@ -158,6 +158,7 @@ function options_dialog:SetCurrentValues()
 
 	self.dlg_sound:SetMusicPackValue(pf_copyright_music.get_pack())
 	self.dlg_gameplay:SetSleepTimelapseValue()
+	self.dlg_gameplay:SetCityHorrorsValue()
 	self.dlg_gameplay:SetDisableMinimapValue()
 	self.dlg_gameplay:SetDisableGreenStashSpawningValue()
 	self.dlg_gameplay:SetSpawnDiscoverableVehiclesValue()
@@ -497,6 +498,12 @@ function options_dialog:OnApplyChanges()
 	if not self.dlg_gameplay:SaveSleepTimelapseValue() then
 		self.message_box:InitMessageBox("message_box_ok")
 		self.message_box:SetText("pf_sleep_timelapse_save_failed")
+		self.message_box:ShowDialog(true)
+		return
+	end
+	if not self.dlg_gameplay:SaveCityHorrorsValue() then
+		self.message_box:InitMessageBox("message_box_ok")
+		self.message_box:SetText(game.translate_string("pf_city_horrors_save_failed"))
 		self.message_box:ShowDialog(true)
 		return
 	end

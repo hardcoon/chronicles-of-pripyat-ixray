@@ -1,0 +1,251 @@
+-- Chapter two, "Another's Will": saved game-time delay, one staged task,
+-- Sergey conversations and the existing sequential document roulette.
+local TASK_ID = "pf_story_brother_followup"
+local OUTFIT_TASK_ID = "pf_story_brother_outfit"
+local STATE_KEY = "pf_story_continuation_v1"
+local WAIT_SECONDS = 24 * 60 * 60
+local next_check = 0
+local registered = false
+local last_phase = nil
+local completion_save_pending = false
+
+local function has(info)
+	return db.actor ~= nil and db.actor:has_info(info)
+end
+
+local function brother_available()
+	return pf_story_encounter.preacher_life_state() == "alive"
+end
+
+local function saved_state()
+	local root = alife_storage_manager.get_state()
+	if type(root[STATE_KEY]) ~= "table" then root[STATE_KEY] = {} end
+	return root[STATE_KEY]
+end
+
+local function game_seconds()
+	return math.max(0, tonumber(game.get_game_time():diffSec(level.get_start_time())) or 0)
+end
+
+local function trace_phase(phase, message)
+	if last_phase == phase then return end
+	last_phase = phase
+	printf("[PF BROTHER] %s", message)
+	if type(getFS) ~= "function" then return end
+	local file = io.open(getFS():update_path("$logs$", "pf_story_continuation.log"), "a")
+	if file then
+		file:write(string.format("game_seconds=%.0f phase=%s %s\n", game_seconds(), phase, message))
+		file:close()
+	end
+end
+
+local function prepare_state()
+	local state = saved_state()
+	if state.timer_version ~= 2 then
+		-- Only a save already past document twelve when this policy is first
+		-- installed can use the missing-reunion compatibility path. A fresh
+		-- playthrough still has to finish the original conversation.
+		state.legacy_reunion = not has("pf_story_preacher_reunion_finished") and
+			has("pf_story_doc_12_found") and has("pf_story_path_continues_achievement_gained")
+		state.timer_version = 2
+	end
+	return state
+end
+
+local function all_documents_found()
+	for index = 13, 22 do
+		if not has(string.format("pf_story_doc_%02d_found", index)) then return false end
+	end
+	return true
+end
+
+local function update_document_stage()
+	if has("pf_story_brother_search_started") and
+		not has("pf_story_brother_documents_found") and all_documents_found() then
+		db.actor:give_info_portion("pf_story_brother_documents_found")
+	end
+end
+
+function search_active()
+	return has("pf_story_brother_search_started") and
+		not has("pf_story_brother_documents_found") and
+		not has("pf_story_brother_documents_shown") and
+		not has("pf_story_preacher_dead") and brother_available()
+end
+
+function can_begin_conversation()
+	return has("pf_story_brother_task_given") and
+		not has("pf_story_brother_search_started") and
+		not has("pf_story_preacher_dead") and brother_available()
+end
+
+function can_show_documents()
+	return has("pf_story_brother_search_started") and
+		has("pf_story_brother_documents_found") and
+		not has("pf_story_brother_recollection_finished") and
+		not has("pf_story_preacher_dead") and brother_available()
+end
+
+function can_talk_story()
+	return can_begin_conversation() or can_show_documents()
+end
+
+function can_talk()
+	return can_talk_story() or pf_story_brother_outfit.waiting_for_outfit()
+end
+
+-- Every save follows the same 24-hour delay. A fresh reunion records its
+-- exact time; an eligible old save starts the clock on its first actor update.
+function on_reunion_finished()
+	if not db.actor then return end
+	local state = prepare_state()
+	if not has("pf_story_brother_task_given") then
+		state.reunion_time = game_seconds()
+		trace_phase("waiting", "24-hour wait started after reunion")
+	end
+end
+
+function task_target()
+	if not can_talk() then return nil end
+	return pf_story_encounter.preacher_object_id()
+end
+
+function begin_search()
+	if not can_begin_conversation() then return end
+	if not has("pf_story_preacher_reunion_finished") then
+		-- Repair the old completion flags only once the player really talks
+		-- to Sergey; never manufacture a reunion just by loading a save.
+		pf_story_encounter.on_preacher_reunion_finished(nil, true)
+	end
+	db.actor:give_info_portion("pf_story_brother_search_started")
+	update_document_stage()
+	trace_phase("search", "Brother conversation finished; document search enabled")
+	xr_effects.scenario_autosave(db.actor, nil, {"st_save_pf_story_brother_search"})
+end
+
+function on_document_found()
+	if not db.actor then return end
+	update_document_stage()
+end
+
+local function ensure_outfit_task()
+	if not has("pf_story_brother_recollection_finished") or
+		has("pf_story_preacher_dead") or has("pf_story_brother_outfit_delivered") then return end
+	local manager = task_manager.get_task_manager()
+	if not manager then return end
+	local descriptor = manager.task_info[OUTFIT_TASK_ID]
+	if not descriptor and manager.restore_task then descriptor = manager:restore_task(OUTFIT_TASK_ID) end
+	if not has("pf_story_brother_outfit_task_given") then
+		db.actor:give_info_portion("pf_story_brother_outfit_task_given")
+	end
+	if not descriptor then manager:give_task(OUTFIT_TASK_ID) end
+end
+
+function begin_recollection()
+	if not can_show_documents() then return false end
+	-- Only Sergey changes pose. The actor stays in the current native dialog.
+	return pf_story_encounter.on_brother_recollection_started()
+end
+
+function show_documents()
+	if not can_show_documents() then return end
+	-- Sergey returns the archive. Commit only the final phrase, never the
+	-- invitation; interrupted talks remain replayable.
+	if not has("pf_story_brother_documents_shown") then
+		db.actor:give_info_portion("pf_story_brother_documents_shown")
+	end
+	db.actor:give_info_portion("pf_story_brother_recollection_finished")
+	ensure_outfit_task()
+	completion_save_pending = true
+end
+
+function update()
+	if not db.actor then return end
+	pf_story_brother_outfit.update()
+	if completion_save_pending and not db.actor:is_talking() then
+		completion_save_pending = false
+		xr_effects.scenario_autosave(db.actor, nil, {"st_save_pf_story_brother_documents_shown"})
+	end
+	local now = time_global()
+	if now < next_check then return end
+	next_check = now + 1000
+	local state = prepare_state()
+	if has("pf_story_brother_task_given") then
+		pf_story_encounter.protect_preacher_for_followup()
+	end
+	if has("pf_story_preacher_dead") then
+		trace_phase("closed", "Brother unavailable or follow-up completed")
+		return
+	end
+	if has("pf_story_brother_recollection_finished") then
+		ensure_outfit_task()
+		if has("pf_story_brother_at_yanov") then
+			trace_phase("yanov", "Brother is a Yanov resident in the donated outfit")
+		elseif has("pf_story_brother_left_pripyat") then
+			trace_phase("travelling", "Brother is travelling to Yanov")
+		elseif has("pf_story_brother_outfit_delivered") then
+			trace_phase("departure", "Outfit handed over; brother will leave when the actor moves away")
+		else
+			trace_phase("outfit", "Brother remembers Anton; find ordinary stalker clothing")
+		end
+		return
+	end
+	-- Saves completed with the former two-line placeholder may replay the new
+	-- conversation, without recreating their already completed journal task.
+	if has("pf_story_brother_documents_shown") then return end
+	local legacy_reunion = state.legacy_reunion and has("pf_story_doc_12_found") and
+		has("pf_story_path_continues_achievement_gained")
+	if not has("pf_story_preacher_reunion_finished") and not legacy_reunion then
+		trace_phase("before_reunion", "Waiting for original reunion conversation")
+		return
+	end
+	local life_state = pf_story_encounter.preacher_life_state()
+	if life_state ~= "alive" then
+		trace_phase("brother_" .. life_state, "Brother follow-up blocked: " .. life_state)
+		return
+	end
+
+	update_document_stage()
+	if not has("pf_story_brother_task_given") then
+		local started = tonumber(state.reunion_time)
+		if started == nil then
+			started = game_seconds()
+			state.reunion_time = started
+		end
+		local elapsed = math.max(0, game_seconds() - started)
+		if elapsed < WAIT_SECONDS then
+			trace_phase("waiting", string.format(
+				"24-hour wait active; remaining=%.0f seconds legacy_reunion=%s",
+				WAIT_SECONDS - elapsed, tostring(legacy_reunion == true)))
+			return
+		end
+	end
+
+	local manager = task_manager.get_task_manager()
+	if not manager then return end
+	local descriptor = manager.task_info[TASK_ID]
+	if not descriptor and manager.restore_task then descriptor = manager:restore_task(TASK_ID) end
+	if not has("pf_story_brother_task_given") then
+		db.actor:give_info_portion("pf_story_brother_task_given")
+	end
+	-- Protect him in the same update as the task grant, before its constructor.
+	pf_story_encounter.protect_preacher_for_followup()
+	-- The task constructor evaluates its target immediately.
+	if not descriptor then manager:give_task(TASK_ID) end
+	trace_phase("task_active", "Brother follow-up task is active")
+end
+
+function reset()
+	pf_story_brother_outfit.reset()
+	completion_save_pending = false
+	next_check = 0
+	last_phase = nil
+end
+
+function on_game_start()
+	if registered then return end
+	RegisterScriptCallback("load", reset)
+	registered = true
+end
+
+on_game_start()

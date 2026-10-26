@@ -330,7 +330,11 @@ function impl.register_manual(server, kind, previous, community)
     local record = previous and impl.identity(previous, server) and previous or impl.make_record(server, kind)
     record.manual, record.last_tick, record.online = true, rt.root.clock, server.online
     record.irc = server:section_name():match("^pf_irc_npc_") ~= nil
-    if record.irc then record.nick = record.nick or server:character_name() end
+    if record.irc then
+        record.nick = record.nick or server:character_name()
+        rt.irc_live = rt.irc_live or {}
+        rt.irc_live[record.id] = record
+    end
     record.command, record.activity, record.progress, record.progress_at = nil, nil, nil, nil
     record.route_requested_at, record.quest_controlled = nil, nil
     record.rest_until = math.min(record.rest_until or rt.root.clock, rt.root.clock)
@@ -436,6 +440,42 @@ function irc_alive(record)
     local server = record and alife() and alife():object(record.id)
     return record ~= nil and impl.identity(record, server) and server:alive() or false
 end
+-- The IRC facade supplies the shared local blacklist on revision changes.
+-- Renaming preserves object IDs, inventories and active NPC jobs.
+function configure_irc_blacklist(identities)
+    rt.irc_blocked = identities or {}
+    if not rt.root then return end
+    for identity, record in pairs(rt.root.irc or {}) do
+        local blocked = rt.irc_blocked[identity] == true
+        if blocked ~= (record.blacklisted == true) then
+            record.original_nick = record.original_nick or record.nick
+            record.blacklisted = blocked
+            record.nick = blocked and (record.native_name or game.translate_string("pf_pda_blacklist_npc_name")) or
+                record.original_nick
+            local server = alife():object(record.id)
+            if impl.identity(record, server) then
+                server:set_character_name(record.nick)
+                local manual = rt.root.manual[impl.manual_key(server)]
+                if manual then manual.nick = record.nick end
+                rt.manual_revision, rt.manual_dirty = (rt.manual_revision or 0) + 1, true
+            end
+        end
+    end
+end
+
+
+-- Session-only index: reconciliation includes existing offline residents too.
+-- Never scan the historical install-ID registry or delete NPCs to meet a cap.
+function impl.irc_limit_reached()
+    local count, limit = 0, rt.overrides.irc_npc_limit or 50
+    for id, record in pairs(rt.irc_live) do
+        if irc_alive(record) then
+            count = count + 1
+            if count >= limit then return true end
+        else rt.irc_live[id] = nil end
+    end
+    return false
+end
 function irc_nick_valid(nick)
     -- Deliberately use the same conservative ASCII/30-byte envelope as our
     -- IRC client's own nickname entry. A remote server's NICKLEN is not a
@@ -463,6 +503,7 @@ function spawn_irc(identity, nick, rank, irc_nick)
         return nil, "rank"
     end
     identity = identity:lower()
+    if rt.irc_blocked and rt.irc_blocked[identity] then return nil, "blocked" end
     local previous = rt.root.irc[identity]
     if irc_alive(previous) then return nil, "alive" end
     -- Set for every resident alive at load and every successful spawn. Neither
@@ -471,30 +512,36 @@ function spawn_irc(identity, nick, rank, irc_nick)
     local tier = rank <= 500 and "novice" or rank <= 1500 and "stalker" or rank <= 2000 and "veteran" or "master"
     local section = "pf_irc_npc_" .. tier
     if not system_ini():section_exist(section) then return nil, "section" end
+    if impl.irc_limit_reached() then return nil, "limit" end
     local actor_position = db.actor:position()
     local p, lv, gv = impl.irc_candidate(actor_position)
     local safe = math.max(rt.cfg.safe_distance, (rt.overrides.switch_distance or 150) * 1.1 + 20)
     if not p or impl.distance2(p, actor_position) < safe * safe then return nil, "placement" end
     local server = alife():create(section, p, lv, gv)
     if not server then return nil, "create" end
+    local native_name
     local ok, failure = pcall(function()
         assert(server.group_id == 65535 and server:community() == "stalker", "IRC resident faction/squad mismatch")
         if tier == "master" then
             assert(server:set_visual("actors\\stalker_neutral\\stalker_neutral_4") == true, "IRC exoskeleton rejected")
         end
+        native_name = server:character_name()
+        if native_name == "" then native_name = nil end
         server:set_character_name(nick)
         assert(server:character_name() == nick, "IRC nickname was not preserved by the engine")
         impl.register_manual(server, "s", nil, "stalker")
     end)
     if not ok then
         rt.root.manual[impl.manual_key(server)] = nil
+        rt.irc_live[server.id] = nil
         rt.manual_dirty = true
         alife():release(server, true)
         impl.log("IRC spawn rolled back: " .. tostring(failure))
         return nil, "create"
     end
     local record = {id = server.id, name = server:name(), section = section, nick = nick,
-        identity = identity, rank = rank, tier = tier, life = previous and (previous.life or 1) + 1 or 1}
+        identity = identity, rank = rank, tier = tier, native_name = native_name,
+        life = previous and (previous.life or 1) + 1 or 1}
     rt.root.irc[identity], rt.irc_used[identity] = record, true
     impl.log("IRC resident spawned: " .. identity .. " / " .. nick .. " / " .. tier)
     return record
@@ -814,9 +861,11 @@ function impl.init(now)
     rt.root = rt.pending or {version = VERSION, seed = 426100100, clock = 0, slots = {}}
     rt.pending = nil
     rt.root.manual = rt.root.manual or {}
-    rt.root.irc, rt.irc_used = rt.root.irc or {}, {}
+    rt.root.irc, rt.irc_used, rt.irc_live = rt.root.irc or {}, {}, {}
     for identity, record in pairs(rt.root.irc) do
-        if irc_alive(record) then rt.irc_used[identity] = true end
+        if irc_alive(record) then
+            rt.irc_used[identity], rt.irc_live[record.id] = true, record
+        end
     end
     rt.manual_revision, rt.manual_dirty = 0, true
     assert(rt.root.version == VERSION and type(rt.root.slots) == "table", "unsupported population save version")
@@ -1702,7 +1751,8 @@ function reset()
     -- load_state runs before actor load in CALifeStorageManager::load.
     -- Preserve that pending sidecar; if absent, reconstruct from actual owned objects.
     local pending = rt.pending
-    rt = {pending = pending, overrides = rt.overrides, desired = rt.desired, activities_enabled = rt.activities_enabled}
+    rt = {pending = pending, overrides = rt.overrides, desired = rt.desired,
+        activities_enabled = rt.activities_enabled, irc_blocked = rt.irc_blocked}
 end
 function load(data)
     rt.pending = data and data[KEY] or nil

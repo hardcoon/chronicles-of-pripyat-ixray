@@ -1,0 +1,257 @@
+; Ten selected map props. Original game textures; no effect or sleep/music functionality.
+
+[pf_hfg_locker_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_locker_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\locker.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_locker_name
+inv_name_short = pf_hfg_locker_name
+description = pf_hfg_locker_desc
+inv_weight = 1
+cost = 600
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 4
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_locker]:physic_object
+visual = pf_hf_map\locker.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfg_open_cabinet_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_open_cabinet_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\open_cabinet.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_open_cabinet_name
+inv_name_short = pf_hfg_open_cabinet_name
+description = pf_hfg_open_cabinet_desc
+inv_weight = 1
+cost = 400
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_open_cabinet]:physic_object
+visual = pf_hf_map\open_cabinet.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfg_piano_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_piano_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\piano.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_piano_name
+inv_name_short = pf_hfg_piano_name
+description = pf_hfg_piano_desc
+inv_weight = 1
+cost = 1000
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 8
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_piano]:physic_object
+visual = pf_hf_map\piano.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfg_bathtub_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_bathtub_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\bathtub.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_bathtub_name
+inv_name_short = pf_hfg_bathtub_name
+description = pf_hfg_bathtub_desc
+inv_weight = 1
+cost = 400
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 2
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_bathtub]:physic_object
+visual = pf_hf_map\bathtub.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfg_fridge_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_fridge_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\fridge.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_fridge_name
+inv_name_short = pf_hfg_fridge_name
+description = pf_hfg_fridge_desc
+inv_weight = 5
+cost = 1000
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 2
+inv_grid_y = 2
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_fridge]:inventory_box
+visual = pf_hf_map\fridge.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 5
+startup_animation =
+fixed_bones = link
+; capacity = 150
+radius = 1
+
+[pf_hfg_bunk_bed_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_bunk_bed_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\bunk_bed.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_bunk_bed_name
+inv_name_short = pf_hfg_bunk_bed_name
+description = pf_hfg_bunk_bed_desc
+inv_weight = 3
+cost = 1000
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 4
+inv_grid_y = 2
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_bunk_bed]:physic_object
+visual = pf_hf_map\bunk_bed.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 3
+startup_animation =
+fixed_bones = link
+
+[pf_hfg_soda_machine_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_soda_machine_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\soda_machine.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_soda_machine_name
+inv_name_short = pf_hfg_soda_machine_name
+description = pf_hfg_soda_machine_desc
+inv_weight = 5
+cost = 800
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 2
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_soda_machine]:physic_object
+visual = pf_hf_map\soda_machine.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 5
+startup_animation =
+fixed_bones = link
+
+![inventory_sort_registry]
+pf_hfg_locker_item = furniture
+pf_hfg_open_cabinet_item = furniture
+pf_hfg_piano_item = furniture
+pf_hfg_bathtub_item = furniture
+pf_hfg_fridge_item = furniture
+pf_hfg_bunk_bed_item = furniture
+pf_hfg_soda_machine_item = furniture

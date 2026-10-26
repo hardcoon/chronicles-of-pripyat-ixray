@@ -1,0 +1,111 @@
+; Final selected props. Original game textures; radio uses the common media lifecycle.
+
+[pf_hfg_wide_deck_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_wide_deck_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\wide_deck.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_wide_deck_name
+inv_name_short = pf_hfg_wide_deck_name
+description = pf_hfg_wide_deck_desc
+inv_weight = 0.2
+cost = 500
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map3
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 4
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_wide_deck]:physic_object
+visual = pf_hf_map\wide_deck.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.2
+startup_animation =
+fixed_bones = link
+
+[pf_hfg_reel_radio_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_reel_radio_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\reel_radio.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_reel_radio_name
+inv_name_short = pf_hfg_reel_radio_name
+description = pf_hfg_reel_radio_desc
+inv_weight = 1
+cost = 700
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map3
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_reel_radio]:physic_object
+visual = pf_hf_map\reel_radio.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfg_green_crates_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfg_green_crates_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_map\green_crates.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfg_green_crates_name
+inv_name_short = pf_hfg_green_crates_name
+description = pf_hfg_green_crates_desc
+inv_weight = 1
+cost = 400
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_map3
+inv_grid_width = 2
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 2
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfg_green_crates]:physic_object
+visual = pf_hf_map\green_crates.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+![inventory_sort_registry]
+pf_hfg_wide_deck_item = furniture
+pf_hfg_reel_radio_item = furniture
+pf_hfg_green_crates_item = furniture

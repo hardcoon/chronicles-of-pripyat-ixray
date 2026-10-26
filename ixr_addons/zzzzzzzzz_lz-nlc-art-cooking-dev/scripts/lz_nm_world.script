@@ -480,6 +480,11 @@ function actor_on_lore_item_take(item)
 	if not db.actor or not item then return end
 	local server_item = alife():object(item:id(), true)
 	local section = server_item and server_item:section_name() or item:section()
+	local story_index = pf_story_documents.document_index(section)
+	if story_index and story_index >= 13 then
+		pf_story_documents.on_document_taken(item)
+		return
+	end
 	local info = lore_encyclopedia_unlocks[section]
 	if not info or db.actor:has_info(info) then return end
 	db.actor:give_info_portion(info)

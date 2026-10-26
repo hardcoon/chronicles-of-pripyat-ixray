@@ -74,6 +74,7 @@ local function capture_filters()
         load_filters()
         sync_filters()
         state.settings:SetCheck(false)
+        state.blacklist_button:SetCheck(false)
         state.filters_needs_sync = nil
         return true
     end
@@ -158,6 +159,9 @@ end
 
 local function align_toolbar()
     local right = state.panel:GetWidth() - 8
+    state.blacklist_button:SetWndPos(vector2():set(right - state.blacklist_button:GetWidth(), 0))
+    state.blacklist_icon:SetWndPos(vector2():set(3, (state.panel:GetHeight() - state.blacklist_icon:GetHeight()) / 2))
+    right = right - state.blacklist_button:GetWidth() - 12
     for _, key in ipairs({ "settings", "show_empty", "online_only" }) do
         local label = state.labels[key]
         label:AdjustWidthToText()
@@ -246,6 +250,66 @@ local function update_settings()
     end
     return changed
 end
+
+local function refresh_blacklist()
+    local available, blocked, current = {}, {}, {}
+    for _, record in ipairs(pf_pda_player_stats.get_rows({show_empty = true, include_blocked = true})) do
+        if not record.own then
+            current[record.identity] = record
+            if not pf_player_stats_cache.is_blocked(record.identity) then available[#available + 1] = record end
+        end
+    end
+    for _, record in ipairs(pf_player_stats_cache.blocked_records()) do
+        blocked[#blocked + 1] = current[record.identity] or {identity = record.identity,
+            nick = pf_irc_text_codec.to_ui(record.nick), irc_nick = record.nick, presence = "offline"}
+    end
+    table.sort(blocked, function(a, b)
+        if a.nick:lower() ~= b.nick:lower() then return a.nick:lower() < b.nick:lower() end
+        return a.identity < b.identity
+    end)
+    state.blacklist_manager:refresh(available, blocked)
+    state.blacklist_manager.revision = pf_pda_player_stats.revision()
+end
+
+local function update_blacklist(parent)
+    local shown, changed = state.blacklist_button:GetCheck(), false
+    if shown and state.popup_open then
+        state.settings:SetCheck(false)
+        update_settings()
+    end
+    if shown and not state.blacklist_manager then
+        state.blacklist_manager = pf_player_blacklist_ui.create(state.xml, parent)
+        state.controls[#state.controls + 1] = state.blacklist_manager.blocker
+        state.controls[#state.controls + 1] = state.blacklist_manager.window
+    end
+    local manager = state.blacklist_manager
+    if manager then
+        if shown ~= manager.open then manager:set_open(shown) end
+        if shown and manager.revision ~= pf_pda_player_stats.revision() then refresh_blacklist() end
+        local request = shown and manager:poll()
+        if request then
+            if request.action == "close" then shown = false; manager:set_open(false)
+            else
+                local ok, reason = pf_player_stats_cache.set_blocked(request.identity, request.nick,
+                    request.action == "block")
+                manager:show_error(not ok and reason or nil)
+                if ok then changed = true; refresh_blacklist() end
+            end
+        end
+    end
+    state.blacklist_button:SetCheck(shown)
+    state.blacklist_button:Enable(not state.popup_open)
+    local style = shown and "t" or (state.blacklist_button:IsCursorOverWindow() and "h" or "e")
+    if state.blacklist_style ~= style then
+        state.blacklist_icon:InitTexture("pf_player_blacklist_icon_" .. style)
+        state.blacklist_style = style
+    end
+    state.settings:Enable(not shown)
+    state.view:Enable(not shown and not state.popup_open)
+    for _, key in ipairs(filter_keys) do state.checks[key]:Enable(not shown and not state.popup_open) end
+    return changed
+end
+
 
 local function utf8_prefix(text, limit)
     local next_byte = text:byte(limit + 1)
@@ -360,6 +424,10 @@ local function refresh_rows(parent, reset_scroll)
         state.settings_icon:Enable(false)
         state.labels.settings = state.xml:InitTextWnd("panel:settings:caption", state.settings)
         state.labels.settings:Enable(false)
+        state.blacklist_button = state.xml:InitCheck("panel:blacklist", state.panel)
+        state.blacklist_icon = state.xml:InitStatic("panel:blacklist:icon", state.blacklist_button)
+        state.blacklist_icon:Enable(false)
+        state.blacklist_button:SetCheck(false)
         align_toolbar()
         state.settings:SetCheck(false)
         sync_filters()
@@ -386,6 +454,7 @@ local function refresh_rows(parent, reset_scroll)
         -- above the other fields; only one list can be open at a time.
         for _, option in ipairs(sort_options) do state.sort_controls[option.key]:InitList(#option.values) end
         update_settings()
+        update_blacklist(parent)
         -- Mark this page only; the PDA root's name belongs to the map filter.
         parent:SetWindowName(state.owner_name)
     end
@@ -446,7 +515,9 @@ function pulse()
     if not pda:IsShown() then
         if state.view and parent:WindowName() == state.owner_name then
             state.settings:SetCheck(false)
+            state.blacklist_button:SetCheck(false)
             update_settings()
+            update_blacklist(parent)
         end
         return
     end
@@ -456,6 +527,7 @@ function pulse()
     end
     local changed = capture_filters()
     changed = update_settings() or changed
+    changed = update_blacklist(parent) or changed
     if changed or state.revision ~= pf_pda_player_stats.revision() then refresh_rows(parent, changed) end
 end
 
@@ -487,6 +559,7 @@ function before_game_reload()
         if current then
             capture_filters()
             clear_sort_lists()
+            if state.blacklist_manager then state.blacklist_manager:clear() end
             clear_rows(true)
             for _, control in ipairs(state.controls) do parent:DetachChild(control) end
         else

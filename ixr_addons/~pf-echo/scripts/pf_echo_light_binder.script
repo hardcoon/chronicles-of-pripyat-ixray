@@ -1,0 +1,12 @@
+-- Restored lamps announce themselves so the controller can remove orphaned
+-- save objects without enumerating the world's ALife population.
+function bind(object) object:bind_object(echo_light_binder(object)) end
+
+class "echo_light_binder" (object_binder)
+function echo_light_binder:__init(object) super(object) end
+
+function echo_light_binder:net_spawn(server)
+    if not object_binder.net_spawn(self, server) then return false end
+    pf_echo_lights.on_light_online(self.object:id())
+    return true
+end

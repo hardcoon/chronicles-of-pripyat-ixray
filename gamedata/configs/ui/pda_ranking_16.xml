@@ -148,6 +148,12 @@
                 <text font="letterica16" vert_align="c" r="200" g="200" b="200">pf_pda_player_stats_sorting</text>
             </caption>
         </settings>
+        <blacklist x="0" y="0" width="22" height="23" stretch="1">
+            <texture>pf_player_blacklist_hit</texture>
+            <icon x="3" y="1.5" width="16" height="20" stretch="1">
+                <texture>pf_player_blacklist_icon_e</texture>
+            </icon>
+        </blacklist>
         <count x="8" y="0" width="156" height="23">
             <text align="l" vert_align="c" font="letterica16" r="150" g="150" b="150" />
         </count>
@@ -300,6 +306,114 @@
             </entry_3>
         </status_order_list>
     </settings_popup>
+    <blacklist_popup x="28" y="85" width="969" height="623" stretch="1">
+        <texture>pf_player_blacklist_hit</texture>
+        <background x="0" y="0" width="969" height="623" stretch="1">
+            <texture a="252" r="14" g="19" b="19">ui\ui_noise</texture>
+            <auto_frameline x="0" y="0" width="969" height="1" vertical="0">
+                <texture a="130">ui_inGame2_pda_line_horizontal</texture>
+            </auto_frameline>
+            <auto_frameline x="0" y="622" width="969" height="1" vertical="0">
+                <texture a="130">ui_inGame2_pda_line_horizontal</texture>
+            </auto_frameline>
+            <auto_frameline x="0" y="1" width="1" height="621" vertical="1">
+                <texture a="130">ui_inGame2_pda_line_vertical</texture>
+            </auto_frameline>
+            <auto_frameline x="968" y="1" width="1" height="621" vertical="1">
+                <texture a="130">ui_inGame2_pda_line_vertical</texture>
+            </auto_frameline>
+            <auto_frameline x="18" y="42" width="933" height="1" vertical="0">
+                <texture a="130">ui_inGame2_pda_line_horizontal</texture>
+            </auto_frameline>
+            <auto_frameline x="18" y="80" width="436" height="1" vertical="0">
+                <texture a="130">ui_inGame2_pda_line_horizontal</texture>
+            </auto_frameline>
+            <auto_frameline x="18" y="535" width="436" height="1" vertical="0">
+                <texture a="130">ui_inGame2_pda_line_horizontal</texture>
+            </auto_frameline>
+            <auto_frameline x="18" y="80" width="1" height="456" vertical="1">
+                <texture a="130">ui_inGame2_pda_line_vertical</texture>
+            </auto_frameline>
+            <auto_frameline x="454" y="80" width="1" height="456" vertical="1">
+                <texture a="130">ui_inGame2_pda_line_vertical</texture>
+            </auto_frameline>
+            <auto_frameline x="515" y="80" width="436" height="1" vertical="0">
+                <texture a="130">ui_inGame2_pda_line_horizontal</texture>
+            </auto_frameline>
+            <auto_frameline x="515" y="535" width="436" height="1" vertical="0">
+                <texture a="130">ui_inGame2_pda_line_horizontal</texture>
+            </auto_frameline>
+            <auto_frameline x="515" y="80" width="1" height="456" vertical="1">
+                <texture a="130">ui_inGame2_pda_line_vertical</texture>
+            </auto_frameline>
+            <auto_frameline x="951" y="80" width="1" height="456" vertical="1">
+                <texture a="130">ui_inGame2_pda_line_vertical</texture>
+            </auto_frameline>
+        </background>
+        <title x="18" y="9" width="933" height="27">
+            <text font="letterica16" align="l" vert_align="c" r="200" g="200" b="190">pf_pda_blacklist_title</text>
+        </title>
+        <available_title x="24" y="48" width="424" height="25">
+            <text font="letterica16" align="l" vert_align="c" r="200" g="200" b="190">pf_pda_blacklist_available</text>
+        </available_title>
+        <blocked_title x="521" y="48" width="424" height="25">
+            <text font="letterica16" align="l" vert_align="c" r="200" g="200" b="190">pf_pda_blacklist_blocked</text>
+        </blocked_title>
+        <nick_heading x="29" y="83" width="152" height="24">
+            <text font="letterica16" align="l" vert_align="c" r="155" g="160" b="150">pf_pda_blacklist_nick</text>
+        </nick_heading>
+        <rank_heading x="315" y="83" width="110" height="24">
+            <text font="letterica16" align="r" vert_align="c" r="155" g="160" b="150">pf_pda_blacklist_rank</text>
+        </rank_heading>
+        <available x="20" y="111" width="432" height="420" item_height="28" can_select="1" always_show_scroll="0" scroll_profile="pf_irc_compact_dark_v3">
+            <font font="letterica16" r="205" g="205" b="195" />
+        </available>
+        <available_empty x="30" y="126" width="412" height="26">
+            <text font="letterica16" align="c" vert_align="c" r="150" g="155" b="145">pf_pda_blacklist_available_empty</text>
+        </available_empty>
+        <blocked x="517" y="111" width="432" height="420" item_height="28" can_select="1" always_show_scroll="0" scroll_profile="pf_irc_compact_dark_v3">
+            <font font="letterica16" r="205" g="205" b="195" />
+        </blocked>
+        <blocked_empty x="527" y="126" width="412" height="26">
+            <text font="letterica16" align="c" vert_align="c" r="150" g="155" b="145">pf_pda_blacklist_blocked_empty</text>
+        </blocked_empty>
+        <block x="467.5" y="225" width="34" height="36" stretch="1">
+            <texture>pf_player_stats_button</texture>
+            <icon x="6" y="6" width="22" height="24" stretch="1">
+                <texture>pf_player_blacklist_block_e</texture>
+            </icon>
+        </block>
+        <restore x="467.5" y="275" width="34" height="36" stretch="1">
+            <texture>pf_player_stats_button</texture>
+            <icon x="6" y="6" width="22" height="24" stretch="1">
+                <texture>pf_player_blacklist_restore_e</texture>
+            </icon>
+        </restore>
+        <hint x="18" y="574" width="774" height="32">
+            <text font="letterica16" align="l" vert_align="c" r="165" g="170" b="160">pf_pda_blacklist_hint</text>
+        </hint>
+        <error x="18" y="539" width="933" height="27">
+            <text font="letterica16" align="l" vert_align="c" r="220" g="110" b="85" />
+        </error>
+        <close x="805" y="578" width="146" height="29" stretch="1">
+            <texture>pf_player_stats_button</texture>
+            <caption x="0" y="0" width="146" height="29">
+                <text font="letterica16" align="c" vert_align="c" r="200" g="200" b="190">pf_pda_blacklist_close</text>
+            </caption>
+        </close>
+        <status_heading x="190" y="83" width="100" height="24">
+            <text font="letterica16" align="l" vert_align="c" r="155" g="160" b="150">pf_pda_blacklist_status</text>
+        </status_heading>
+        <blocked_nick_heading x="526" y="83" width="152" height="24">
+            <text font="letterica16" align="l" vert_align="c" r="155" g="160" b="150">pf_pda_blacklist_nick</text>
+        </blocked_nick_heading>
+        <blocked_status_heading x="687" y="83" width="100" height="24">
+            <text font="letterica16" align="l" vert_align="c" r="155" g="160" b="150">pf_pda_blacklist_status</text>
+        </blocked_status_heading>
+        <blocked_rank_heading x="812" y="83" width="110" height="24">
+            <text font="letterica16" align="r" vert_align="c" r="155" g="160" b="150">pf_pda_blacklist_rank</text>
+        </blocked_rank_heading>
+    </blacklist_popup>
     <player_pair x="0" y="0" width="722" height="66" />
     <player x="0" y="0" width="356" height="66">
         <avatar x="6" y="9" width="36" height="48" stretch="1">

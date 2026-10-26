@@ -39,6 +39,7 @@ function impl.init()
     if st.root then return end
     st.root = st.pending or {version = 1, serial = 0, jobs = {}}
     st.root.hostiles = st.root.hostiles or {}
+    st.root.closed = st.root.closed or {}
     st.pending, st.runtime, st.finishing, st.keys, st.cursor = nil, {}, {}, nil, 1
     alife_storage_manager.get_state()[KEY] = st.root
 end
@@ -221,7 +222,52 @@ function configure_npc(npc)
     end
 end
 function impl.value(npc)
-    return npc and xr_logic.pstor_retrieve(npc, PSTOR, "") or ""
+    if not npc then return "" end
+    local value = xr_logic.pstor_retrieve(npc, PSTOR, "")
+    local root = st.root or st.pending
+    local closed = root and root.closed and root.closed[tostring(npc:id())]
+    if impl.same_life(closed, npc) then
+        value = closed.state
+        xr_logic.pstor_store(npc, PSTOR .. "_task", closed.task_id)
+    else
+        local job = impl.job(npc)
+        if job then
+            -- PSTOR belongs to the online binder, not to the NPC's whole life.
+            -- Reattach the saved job after an ordinary offline/online switch.
+            xr_logic.pstor_store(npc, PSTOR .. "_task", job.task_id)
+            if job.reward then xr_logic.pstor_store(npc, "pf_irc_npc_reward", job.reward) end
+            if job.outcome then value = job.outcome == "completed" and "done" or "failed"
+            elseif value == "" then value = "active" end
+        end
+        if value == "done" or value == "failed" then
+            impl.close({id = npc:id(), name = npc:name(), section = npc:section(),
+                task_id = xr_logic.pstor_retrieve(npc, PSTOR .. "_task", "")}, value)
+        end
+    end
+    if value ~= "" then xr_logic.pstor_store(npc, PSTOR, value) end
+    return value
+end
+function impl.same_life(record, npc)
+    return record and record.id == npc:id() and record.name == npc:name() and record.section == npc:section()
+end
+function impl.close(job, value)
+    -- Keep the one-job-per-life latch outside PSTOR even after the live job is
+    -- removed. A reused object ID must not inherit another NPC life's state.
+    local key = tostring(job.id)
+    local server = alife():object(job.id)
+    if server and (server:name() ~= job.name or server:section_name() ~= job.section) then return end
+    -- Dialogue configuration may run between load_state and actor load/reset.
+    -- Update the pending sidecar without consuming it before that reset.
+    local root = st.root or st.pending
+    if not root then
+        root = {version = 1, serial = 0, jobs = {}}
+        st.pending = root
+    end
+    root.closed = root.closed or {}
+    local previous = root.closed[key]
+    if previous and previous.name == job.name and previous.section == job.section and previous.state == "done" then return end
+    root.closed[key] = {id = job.id, name = job.name, section = job.section,
+        task_id = job.task_id, state = value}
 end
 function impl.tier(npc)
     return npc and npc:section():match("^pf_irc_npc_(%a+)$")
@@ -246,10 +292,22 @@ function impl.reward(npc, tier, pool)
 end
 function impl.job(npc)
     if not npc then return end
-    impl.init()
+    local root = st.root or st.pending
+    if not root then return end
     local id = xr_logic.pstor_retrieve(npc, PSTOR .. "_task", "")
-    local job = st.root.jobs[id]
-    if job and job.id == npc:id() and job.name == npc:name() and job.section == npc:section() then return job end
+    local job = root.jobs[id]
+    if impl.same_life(job, npc) then return job end
+    -- Legacy saves already have the accepted job in the sidecar, even when
+    -- its online PSTOR pointer has been lost. Prefer the first acceptance if
+    -- an affected save contains duplicates; never roll a replacement reward.
+    local first
+    for _, candidate in pairs(root.jobs) do
+        if impl.same_life(candidate, npc) and (not first
+            or tonumber(candidate.task_id:match("_(%d+)$")) < tonumber(first.task_id:match("_(%d+)$"))) then
+            first = candidate
+        end
+    end
+    return first
 end
 function can_offer(first, second)
     if not allowed(first, second) then return false end
@@ -281,6 +339,7 @@ function impl.ensure_task(job)
     local native = db.actor:get_task(job.task_id, true)
     if not native and db.actor:get_task(job.task_id, false) then
         -- A stale sidecar must not turn an archived native task into new work.
+        impl.close(job, "closed")
         st.root.jobs[job.task_id], st.runtime[job.task_id], st.keys = nil, nil, nil
         return false
     end
@@ -310,6 +369,7 @@ function impl.finish(job, outcome)
     -- A pending finalization may be retried, but can never recreate the task.
     job.outcome = job.outcome or (outcome == task.completed and "completed" or "fail")
     outcome = job.outcome == "completed" and task.completed or task.fail
+    impl.close(job, job.outcome == "completed" and "done" or "failed")
     if st.finishing[job.task_id] then return false end
     st.finishing[job.task_id] = true
     local native = db.actor:get_task(job.task_id, true)

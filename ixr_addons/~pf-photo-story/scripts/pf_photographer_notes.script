@@ -1,0 +1,338 @@
+-- Ordered story notes. The last note and camera share the same container.
+-- No container allocation, callbacks, timers or calls into the stash facade.
+local C={key="pf_photographer_notes_v1",count=8,chance=25,camera="pf_camera_q",
+    tiers={cyan=true,purple=true,orange=true,red=true}}
+local I={}
+
+function I.data(create)
+    local root=alife_storage_manager.get_state()
+    local saved=root[C.key]
+    if type(saved)~="table" then
+        if not create then return nil end
+        saved={version=1,notes={}};root[C.key]=saved
+    end
+    saved.notes=type(saved.notes)=="table" and saved.notes or {}
+    saved.reward_pending=nil;saved.reward_granted=nil
+    return saved
+end
+
+function section(index)
+    index=tonumber(index)
+    if not index or index~=math.floor(index) or index<1 or index>C.count then return nil end
+    return string.format("pf_photographer_note_%02d",index)
+end
+
+function note_index(name)
+    local index=type(name)=="string" and tonumber(name:match("^pf_photographer_note_(%d%d)$"))
+    if index and index>=1 and index<=C.count then return index end
+end
+
+function I.info(index) return string.format("pf_photographer_%02d_found",index) end
+function next_index()
+    if not db.actor then return 1 end
+    for index=1,C.count do if not db.actor:has_info(I.info(index)) then return index end end
+    return C.count+1
+end
+function finished() return db.actor~=nil and next_index()>C.count end
+
+function I.matches(object,record,name)
+    return object and record and object.id==record.object_id and
+        object:name()==record.object_name and (object:section_name()==name or (name==C.camera and object:section_name()=="pf_camera"))
+end
+function I.record(slot)
+    local index=slot and slot.state and tonumber(slot.state.photographer_note)
+    local saved=index and I.data(false)
+    local record=saved and saved.notes[index]
+    if type(record)~="table" or record.slot~=slot.index or
+        record.generation~=(tonumber(slot.state.loot_generation) or 0) then return nil end
+    return record,index,saved
+end
+function I.clear_camera(camera)
+    camera.status="claimed"
+    camera.object_id=nil;camera.object_name=nil;camera.box_id=nil;camera.actor_pending=nil
+end
+function I.camera_owned(saved,scan)
+    local camera=saved.camera
+    if camera and camera.status=="claimed" then return true end
+    local object=camera and camera.object_id and alife():object(camera.object_id,true)
+    if I.matches(object,camera,C.camera) and tonumber(object.parent_id)==db.actor:id() then
+        I.clear_camera(camera);return true
+    end
+    if scan then
+        local actor=alife():object(db.actor:id(),true)
+        if actor then
+            for id in alife():get_children(actor) do
+                local item=alife():object(id,true)
+                if item and (item:section_name()==C.camera or item:section_name()=="pf_camera") then
+                    saved.camera={status="claimed"};return true
+                end
+            end
+        end
+    end
+    return false
+end
+function I.camera_for_slot(saved,slot)
+    if not saved.camera and not I.camera_owned(saved,true) then
+        saved.camera={status="pending",slot=slot.index,
+            generation=tonumber(slot.state.loot_generation) or 0}
+    end
+    local camera=saved.camera
+    if camera.status=="live" and not I.camera_owned(saved,false) then
+        local object=camera.object_id and alife():object(camera.object_id,true)
+        if not I.matches(object,camera,C.camera) then
+            camera.status="pending";camera.object_id=nil;camera.object_name=nil;camera.box_id=nil
+        end
+    end
+    return camera
+end
+function I.cancel_camera(camera,keep_id)
+    local object=camera and camera.object_id and alife():object(camera.object_id,true)
+    if camera and camera.object_id~=keep_id and I.matches(object,camera,C.camera) and
+        tonumber(object.parent_id)==camera.box_id and tonumber(object.parent_id)~=db.actor:id() then
+        alife():release(object,true)
+    end
+end
+function I.cancel_reservation(index,keep_id)
+    local saved=I.data(false);local record=saved and saved.notes[index]
+    if not record then return end
+    local object=record.object_id and alife():object(record.object_id,true)
+    if record.object_id~=keep_id and I.matches(object,record,section(index)) and
+        tonumber(object.parent_id)==record.box_id then alife():release(object,true) end
+    record.status="claimed"
+    record.object_id=nil;record.object_name=nil;record.box_id=nil
+end
+function I.finish_slot(slot,record,index,saved)
+    if record.status=="claimed" and (index~=C.count or
+        (saved.camera and saved.camera.status=="claimed")) then
+        slot.state.photographer_note=nil
+    end
+end
+function I.claim(index,id,qa_camera)
+    if not db.actor or not index then return false end
+    if db.actor:has_info(I.info(index)) then return true end
+    if index~=next_index() then return false end
+    local object=id and alife():object(id,true)
+    if not object or object:section_name()~=section(index) or
+        tonumber(object.parent_id)~=db.actor:id() then return false end
+    local saved=I.data(true)
+    -- Commit a QA bundle and cancel its old world reservation before autosave.
+    if qa_camera then
+        I.cancel_camera(qa_camera.old,qa_camera.keep_id)
+        saved.camera={status="claimed"}
+    end
+    db.actor:give_info_portion(I.info(index))
+    I.cancel_reservation(index,id)
+    news_manager.send_tip(db.actor,"pf_photographer_note_found",nil,nil,nil,nil)
+    printf("[PF PHOTOGRAPHER] acquired note %02d",index)
+    xr_effects.scenario_autosave(db.actor,nil,{string.format("st_save_pf_photographer_%02d",index)})
+    return true
+end
+function claim(item)
+    if not item then return false end
+    local object=alife():object(item:id(),true)
+    return I.claim(note_index(object and object:section_name() or item:section()),item:id())
+end
+
+function I.spawn_bundle(names,parent,spawn_item)
+    for _,name in ipairs(names) do if not system_ini():section_exist(name) then return nil end end
+    local ids={};local requested={}
+    local ok,made=pcall(function()
+        local result={}
+        for _,name in ipairs(names) do
+            requested[name]=true
+            local before=#ids
+            if not spawn_item({section=name},parent,ids) or #ids~=before+1 then return nil end
+            local object=alife():object(ids[#ids],true)
+            if not object or object:section_name()~=name or tonumber(object.parent_id)~=parent then return nil end
+            result[name]=object
+        end
+        return result
+    end)
+    if ok and made then return made end
+    for _,id in ipairs(ids) do
+        local object=alife():object(id,true)
+        if object and requested[object:section_name()] and tonumber(object.parent_id)==parent then
+            alife():release(object,true)
+        end
+    end
+end
+function I.spawn_actor_item(entry,parent,ids)
+    local object=alife():create(entry.section,vector(),0,0,parent)
+    if not object then return false end
+    ids[#ids+1]=object.id;return true
+end
+
+function materialize(slot,box,spawn_item)
+    if not slot or not slot.state or slot.state.depleted or not box then return false end
+    local record,index,saved=I.record(slot)
+    if not record then return false end
+    if record.status=="live" then
+        local object=record.object_id and alife():object(record.object_id,true)
+        if I.matches(object,record,section(index)) then
+            if db.actor and tonumber(object.parent_id)==db.actor:id() then I.claim(index,object.id) end
+        else
+            record.status="pending";record.object_id=nil;record.object_name=nil;record.box_id=nil
+        end
+    end
+    if db.actor and db.actor:has_info(I.info(index)) then I.cancel_reservation(index,nil) end
+    local camera=index==C.count and I.camera_for_slot(saved,slot) or nil
+    local names={}
+    if camera and camera.status=="pending" then names[#names+1]=C.camera end
+    if record.status=="pending" then names[#names+1]=section(index) end
+    if #names>0 then
+        -- Create the camera first, then the final page. Any partial failure
+        -- rolls back both new children; no final page can be orphaned.
+        local made=I.spawn_bundle(names,box.id,spawn_item)
+        if not made then return false end
+        local object=made[section(index)]
+        if object then
+            record.status="live";record.object_id=object.id
+            record.object_name=object:name();record.box_id=box.id
+        end
+        object=made[C.camera]
+        if object then
+            camera.status="live";camera.object_id=object.id
+            camera.object_name=object:name();camera.box_id=box.id
+        end
+    end
+    I.finish_slot(slot,record,index,saved)
+    return record.status=="live" or (camera and camera.status=="live") or false
+end
+function search(slot,roll,box,spawn_item)
+    if not slot or not slot.state or slot.state.depleted or not C.tiers[slot.tier] then return false end
+    if slot.state.photographer_roll_checked then return materialize(slot,box,spawn_item) end
+    local index=next_index()
+    if not section(index) or not system_ini():section_exist(section(index)) then return false end
+    slot.state.photographer_roll_checked=true
+    local saved=I.data(false);local record=saved and saved.notes[index]
+    if record and (record.status=="pending" or record.status=="live") then return false end
+    if (tonumber(roll) or 100)>C.chance then return false end
+    saved=I.data(true)
+    saved.notes[index]={slot=slot.index,generation=tonumber(slot.state.loot_generation) or 0,status="pending"}
+    slot.state.photographer_note=index
+    return materialize(slot,box,spawn_item)
+end
+-- Read-only hint queries and explicit guaranteed reservations. The facade
+-- selects existing points; a coordinate sheet never marks a page as acquired.
+function hint_section(slot)
+    if not slot or not slot.state or slot.state.depleted or not C.tiers[slot.tier] then return nil end
+    local record,index=I.record(slot)
+    if record and index==next_index() and (record.status=="pending" or record.status=="live") then
+        return section(index)
+    end
+end
+function hint_index()
+    local index=next_index()
+    if not section(index) or not system_ini():section_exist(section(index)) then return nil end
+    local saved=I.data(false);local record=saved and saved.notes[index]
+    if record and (record.status=="pending" or record.status=="live") then return nil end
+    return index
+end
+function reserve_hint(slot,index)
+    local name=section(index)
+    if not name or not slot or not slot.state or slot.state.depleted or not C.tiers[slot.tier] then return false end
+    if hint_section(slot)==name then return true end
+    if slot.state.hint_checked or slot.state.photographer_roll_checked or slot.state.photographer_note or
+        hint_index()~=index then return false end
+    local saved=I.data(true)
+    saved.notes[index]={slot=slot.index,generation=tonumber(slot.state.loot_generation) or 0,status="pending"}
+    slot.state.photographer_note=index
+    slot.state.photographer_roll_checked=true
+    return true
+end
+
+function pending(slot)
+    local record,index,saved=I.record(slot)
+    if not record then return false end
+    if record.status=="pending" or record.status=="live" then return true end
+    local camera=index==C.count and saved.camera
+    return camera and camera.status~="claimed" or false
+end
+function taken(slot,item)
+    if not item then return false end
+    if item:section()==C.camera then
+        local saved=I.data(false)
+        local camera=saved and saved.camera
+        if not camera or camera.object_id~=item:id() or not I.camera_owned(saved,false) then return false end
+        local record,index=I.record(slot)
+        if record then I.finish_slot(slot,record,index,saved) end
+        return true
+    end
+    local index=note_index(item:section())
+    if not index then return false end
+    local acquired=claim(item)
+    local record,assigned,saved=I.record(slot)
+    if acquired and record and assigned==index then I.finish_slot(slot,record,index,saved) end
+    return acquired
+end
+function before_container_release(box)
+    local saved=I.data(false)
+    if not saved or not box then return end
+    for index,record in pairs(saved.notes) do
+        local object=record.object_id and alife():object(record.object_id,true)
+        if record.status=="live" and record.box_id==box.id and
+            I.matches(object,record,section(index)) and tonumber(object.parent_id)==box.id then
+            record.status="pending";record.object_id=nil;record.object_name=nil;record.box_id=nil
+        end
+    end
+    local camera=saved.camera
+    local object=camera and camera.object_id and alife():object(camera.object_id,true)
+    if camera and camera.status=="live" and camera.box_id==box.id and
+        I.matches(object,camera,C.camera) and tonumber(object.parent_id)==box.id then
+        camera.status="pending";camera.object_id=nil;camera.object_name=nil;camera.box_id=nil
+    end
+end
+
+-- A bounded, one-time recovery for completed saves from the retired pink-cache
+-- version. An outstanding new-world camera remains in its original cache.
+function reconcile_reward(spawn_item)
+    if not finished() then return false end
+    local saved=I.data(true)
+    if I.camera_owned(saved,not saved.camera) then return true end
+    if not saved.camera then saved.camera={status="pending",actor_pending=true} end
+    if not saved.camera.actor_pending then return false end
+    local made=I.spawn_bundle({C.camera},db.actor:id(),spawn_item or I.spawn_actor_item)
+    if not made then return false end
+    saved.camera={status="claimed"}
+    news_manager.relocate_item(db.actor,"in",C.camera)
+    return true
+end
+
+-- Manual QA action shares the same atomic item factory; no separate adapter.
+function give_next(tool)
+    local qa=rawget(_G,"pf_stash_qa")
+    if not db.actor or not qa or type(qa.is_developer_mode)~="function" or qa.is_developer_mode()~=true then
+        if db.actor then news_manager.send_tip(db.actor,"pf_photo_notes_tool_developer_only",nil,nil,nil,nil) end
+        return false
+    end
+    local owned=tool and alife():object(tool:id(),true)
+    if not owned or owned:section_name()~="pf_photo_notes_tool" or tonumber(owned.parent_id)~=db.actor:id() then return false end
+    local index=next_index();local name=section(index)
+    if not name then
+        reconcile_reward()
+        news_manager.send_tip(db.actor,"pf_photo_notes_tool_complete",nil,nil,nil,nil);return false
+    end
+    local saved=I.data(true);local old_camera=saved.camera;local names={}
+    if index==C.count and not I.camera_owned(saved,true) then names[#names+1]=C.camera end
+    names[#names+1]=name
+    local made=I.spawn_bundle(names,db.actor:id(),I.spawn_actor_item)
+    if not made then news_manager.send_tip(db.actor,"pf_photo_notes_tool_failed",nil,nil,nil,nil);return false end
+    local camera=index==C.count and {old=old_camera,keep_id=made[C.camera] and made[C.camera].id} or nil
+    if not I.claim(index,made[name].id,camera) then
+        for _,object in pairs(made) do alife():release(object,true) end
+        news_manager.send_tip(db.actor,"pf_photo_notes_tool_failed",nil,nil,nil,nil);return false
+    end
+    news_manager.relocate_item(db.actor,"in",name)
+    if made[C.camera] then news_manager.relocate_item(db.actor,"in",C.camera) end
+    return false
+end
+
+-- Compatibility for existing camera objects. Update the original reward owner
+-- instead of allowing replacement to make a pending story camera duplicate.
+function camera_replaced(old,replacement)
+    local saved=I.data(false)
+    local camera=saved and saved.camera
+    if camera and camera.object_id==old.id and camera.object_name==old:name() then
+        camera.object_id=replacement.id;camera.object_name=replacement:name()
+    end
+end

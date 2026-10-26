@@ -1,0 +1,81 @@
+![profiles]
+>files = npc_profile_pf_past
+>specific_characters_files = character_desc_pf_past
+
+[pf_past_immunities]
+burn_immunity = 0
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0
+
+[pf_past_ghost_akimov]:stalker
+$spawn = ""
+character_profile = pf_past_profile_akimov
+script_binding = pf_past_ghosts.bind
+custom_data = scripts\pf_past\ghost.ltx
+species = bird
+can_select_items = off
+community = pf_ghost
+immunities_sect = pf_past_immunities
+
+[pf_past_ghost_toptunov]:stalker
+$spawn = ""
+character_profile = pf_past_profile_toptunov
+script_binding = pf_past_ghosts.bind
+custom_data = scripts\pf_past\ghost.ltx
+species = bird
+can_select_items = off
+community = pf_ghost
+immunities_sect = pf_past_immunities
+
+[pf_past_ghost_khodemchuk]:stalker
+$spawn = ""
+character_profile = pf_past_profile_khodemchuk
+script_binding = pf_past_ghosts.bind
+custom_data = scripts\pf_past\ghost.ltx
+species = bird
+can_select_items = off
+community = pf_ghost
+immunities_sect = pf_past_immunities
+
+
+; Append only: keep every existing community index and relation intact.
+![dialogs]
+>files = dialogs_pf_past
+
+![game_relations]
+>communities = pf_ghost, 12
+
+![communities_relations]
+>actor = 0
+>bandit = 0
+>dolg = 0
+>ecolog = 0
+>freedom = 0
+>killer = 0
+>army = 0
+>monolith = 0
+>monster = 0
+>stalker = 0
+>zombied = 0
+>trader = 0
+pf_ghost = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+![communities_sympathy]
+pf_ghost = 0
+
+; Only three runtime slots, independent of the size of the memorial catalogue.
+
+[pf_past_ghost_slot_1]:pf_past_ghost_akimov
+character_profile = pf_past_profile_slot
+
+[pf_past_ghost_slot_2]:pf_past_ghost_akimov
+character_profile = pf_past_profile_slot
+
+[pf_past_ghost_slot_3]:pf_past_ghost_akimov
+character_profile = pf_past_profile_slot

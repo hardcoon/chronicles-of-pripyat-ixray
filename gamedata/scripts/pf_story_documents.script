@@ -1,0 +1,153 @@
+-- Sequential document progression for the Pripyat Full personal story.
+-- Physical stash assignment is owned by pf_dynamic_stashes; this module owns
+-- identity, info portions and the two guaranteed late-story hand-offs.
+
+local FIRST_CHAPTER_COUNT = 12
+local DOCUMENT_COUNT = 22
+local DOCUMENT_AUTOSAVE_PREFIX = "st_save_pf_story_document_"
+
+local function two_digits(index)
+	return index < 10 and "0" .. tostring(index) or tostring(index)
+end
+
+function document_section(index)
+	index = tonumber(index)
+	if not index or index < 1 or index > DOCUMENT_COUNT then return nil end
+	return "pf_story_document_" .. two_digits(index)
+end
+
+function document_info(index)
+	index = tonumber(index)
+	if not index or index < 1 or index > DOCUMENT_COUNT then return nil end
+	return "pf_story_doc_" .. two_digits(index) .. "_found"
+end
+
+function document_index(section)
+	if type(section) ~= "string" then return nil end
+	local value = string.match(section, "^pf_story_document_(%d%d)$")
+	value = tonumber(value)
+	if value and value >= 1 and value <= DOCUMENT_COUNT then return value end
+	return nil
+end
+
+function next_document_index()
+	if not db.actor then return 1 end
+	for index = 1, FIRST_CHAPTER_COUNT do
+		if not db.actor:has_info(document_info(index)) then return index end
+	end
+	-- Finishing the original twelve does not activate chapter two. Its
+	-- roulette opens only after the delayed conversation with Sergey.
+	if not pf_story_continuation.search_active() then return DOCUMENT_COUNT + 1 end
+	for index = FIRST_CHAPTER_COUNT + 1, DOCUMENT_COUNT do
+		if not db.actor:has_info(document_info(index)) then return index end
+	end
+	return DOCUMENT_COUNT + 1
+end
+
+function next_random_document_index()
+	local index = next_document_index()
+	if index >= 1 and index <= 10 or index >= 13 and index <= DOCUMENT_COUNT then
+		return index
+	end
+	return nil
+end
+
+local function send_discovery_news(index)
+	local article = "pf_story_article_" .. two_digits(index)
+	news_manager.send_tip(db.actor, "pf_story_document_unlocked", nil, nil, nil, nil)
+	printf("[PF STORY] document %02d found; encyclopedia article %s unlocked", index, article)
+end
+
+local function unlock_document(index)
+	local info = document_info(index)
+	if not info or db.actor:has_info(info) then return false end
+	db.actor:give_info_portion(info)
+	send_discovery_news(index)
+
+	-- The tenth document reveals both branches at once: the fixed legendary
+	-- encounter and an independent cyan stash containing document eleven.
+	-- Therefore killing Sergey, speaking to him or simply leaving cannot block
+	-- the last two documents.
+	if index == 10 then
+		pf_story_encounter.reveal_legendary_stash()
+		pf_dynamic_stashes.grant_story_document_hint(11)
+	elseif index == 11 then
+		pf_dynamic_stashes.grant_story_document_hint(12)
+	elseif index == 12 then
+		-- Evaluate achievement #4 at the exact requested story beat.
+		pf_story_encounter.on_final_document_found()
+	elseif index >= 13 then
+		pf_story_continuation.on_document_found(index)
+		if ui_lz_encyclopedia_tab and ui_lz_encyclopedia_tab.refresh_if_created then
+			ui_lz_encyclopedia_tab.refresh_if_created()
+		end
+	end
+
+	-- Save only after every consequence of the pickup has been applied. The
+	-- document info portion makes this one-shot even when IX-Ray reports both
+	-- generic item-take and box-take callbacks for the same item.
+	xr_effects.scenario_autosave(
+		db.actor, nil, { DOCUMENT_AUTOSAVE_PREFIX .. two_digits(index) })
+	return true
+end
+
+-- Idempotent because IX-Ray may report both generic item-take and box-take
+-- callbacks for the same transfer.
+function on_document_taken(item)
+	if not db.actor or not item then return false end
+	local server_item = alife():object(item:id(), true)
+	local section = server_item and server_item:section_name() or item:section()
+	local index = document_index(section)
+	if not index then return false end
+	local info = document_info(index)
+	if db.actor:has_info(info) then return true end
+
+	-- Refuse an out-of-order debug/spawn accident instead of silently skipping
+	-- part of the narrative. Normal stash assignment can never reach this path.
+	local expected = next_document_index()
+	-- F1 review copies can still open their encyclopedia articles before the
+	-- quest starts. Production roulette is gated above and remains sequential.
+	local require_order = index <= FIRST_CHAPTER_COUNT or pf_story_continuation.search_active()
+	if require_order and index ~= expected then
+		printf("[PF STORY] rejected out-of-order document %02d; expected %02d", index, expected)
+		return true
+	end
+
+	unlock_document(index)
+	return true
+end
+
+-- Reusable QA inventory action. It deliberately bypasses stash RNG so every
+-- article and task-description stage can be reviewed in a few minutes.
+function debug_give_next(debug_item)
+	if not db.actor then return false end
+	local index = next_document_index()
+	if index > DOCUMENT_COUNT then
+		news_manager.send_tip(db.actor, "pf_story_continuation_debug_complete", nil, nil, nil, nil)
+		return false
+	end
+	local section = document_section(index)
+	local item = alife():create(section, vector(), 0, 0, db.actor:id())
+	if not item then
+		printf("[PF STORY DEBUG] failed to create %s", tostring(section))
+		return false
+	end
+	unlock_document(index)
+	news_manager.relocate_item(db.actor, "in", section)
+	printf("[PF STORY DEBUG] issued document %02d", index)
+	return false
+end
+
+-- Console shortcut for a complete encyclopedia review:
+-- run_string pf_story_documents.debug_give_all()
+function debug_give_all()
+	if not db.actor then return false end
+	local safety = 0
+	while next_document_index() <= DOCUMENT_COUNT and safety < DOCUMENT_COUNT do
+		safety = safety + 1
+		debug_give_next(nil)
+	end
+	news_manager.send_tip(db.actor, "pf_story_continuation_debug_complete", nil, nil, nil, nil)
+	printf("[PF STORY DEBUG] all currently available documents issued")
+	return false
+end

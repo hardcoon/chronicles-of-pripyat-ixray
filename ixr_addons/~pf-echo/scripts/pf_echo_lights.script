@@ -1,0 +1,366 @@
+-- One transient, model-free native light. Never scans ALife or overrides a binder.
+local SECTION = "pf_echo_light"
+local CELL = 64
+local s = {pending = {}, used = {}, created = 0, removed = 0, attempts = 0}
+local cfg, registered, sync_schedule
+
+local function enabled()
+    return cfg.enabled and pf_city_horrors_settings.is_enabled()
+end
+
+local function point(v) return {x = v.x, y = v.y, z = v.z} end
+local function vec(p) return vector():set(p.x, p.y, p.z) end
+local function distance2(a, b)
+    return (a.x-b.x)^2 + (a.y-b.y)^2 + (a.z-b.z)^2
+end
+local function log(fmt, ...)
+    if not cfg or not cfg.debug then return end
+    local message = string.format(fmt, ...)
+    printf("[pf_echo] %s", message)
+    local file = io.open(getFS():update_path("$logs$", "pf_echo_lights.log"), "a")
+    if file then file:write(tostring(time_global()), " ", message, "\n"); file:close() end
+end
+local function read_settings()
+    local ini, section = system_ini(), "pf_echo_lights"
+    local function number(key, default, low, high)
+        local value = ini:line_exist(section, key) and tonumber(ini:r_string(section, key)) or default
+        if not value or value ~= value then value = default end
+        return math.max(low, math.min(high, value))
+    end
+    cfg = {
+        enabled = ini:r_bool(section, "enabled"), level = ini:r_string(section, "level"),
+        start_hour = number("start_hour", 0, 0, 23), end_hour = number("end_hour", 5, 0, 24),
+        interval = number("controller_interval_ms", 1000, 1000, 3600000),
+        minimum = number("spawn_min_distance", 25, 11, 1000),
+        maximum = number("spawn_max_distance", 100, 12, 1000),
+        approach = number("approach_min_distance", .25, 0, 10),
+        close = number("close_distance", 10, 1, 100),
+        retreat = number("retreat_factor", 1.2, 1.01, 2),
+        duration_min = number("duration_min_ms", 20000, 1000, 3600000),
+        duration_max = number("duration_max_ms", 60000, 1000, 3600000),
+        cooldown = number("point_cooldown_ms", 60000, 3000, 86400000),
+        chance = number("chance_percent", 100, 0, 100),
+        range = number("light_range", 6, .5, 20),
+        red = number("light_red", 1, 0, 1), green = number("light_green", .72, 0, 1),
+        blue = number("light_blue", .4, 0, 1),
+        debug = ini:r_bool(section, "debug_log")
+    }
+    cfg.minimum = math.max(cfg.minimum, cfg.close + 1)
+    cfg.maximum = math.max(cfg.maximum, cfg.minimum + 1)
+    cfg.duration_max = math.max(cfg.duration_max, cfg.duration_min)
+end
+
+function is_night(hour)
+    if not cfg then read_settings() end
+    if cfg.start_hour < cfg.end_hour then return hour >= cfg.start_hour and hour < cfg.end_hour end
+    if cfg.start_hour > cfg.end_hour then return hour >= cfg.start_hour or hour < cfg.end_hour end
+    return false
+end
+
+local function owned(id)
+    local sim = alife()
+    local object = sim and sim:object(id)
+    if object and object:section_name() == SECTION then return object end
+end
+local function release(id)
+    local object = owned(id)
+    if object then alife():release(object, true) end
+end
+function on_light_online(id)
+    s.pending[id] = true
+    if sync_schedule then sync_schedule() end
+end
+
+local function stop(reason, now)
+    local active = s.active
+    if not active then return end
+    -- Keep a retry token until release succeeds; ID reuse is guarded by section.
+    s.pending[active.id] = true
+    s.active = nil
+    release(active.id)
+    s.pending[active.id] = nil
+    s.removed = s.removed + 1
+    s.reason = reason
+    s.next_attempt = now + cfg.interval
+    log("STOP id=%d reason=%s", active.id, reason)
+end
+local function cleanup_pending()
+    for id in pairs(s.pending) do
+        if not s.active or s.active.id ~= id then release(id) end
+        s.pending[id] = nil
+    end
+end
+
+local function key(x, z) return x .. ":" .. z end
+local function build_grid()
+    s.grid, s.catalog_count = {}, 0
+    for _, entry in ipairs(pf_echo_window_points.get()) do
+        if entry.verified_window and entry.room_id and entry.pair and entry.frame and entry.outward and
+            entry.floor_y and entry.ceiling_y then
+            local p = entry.position
+            local candidate = {id = entry.id, x = p[1], y = p[2], z = p[3],
+                lv = entry.level_vertex_id, gv = entry.game_vertex_id,
+                room_id = entry.room_id, pair = entry.pair,
+                frame = entry.frame, outward = entry.outward,
+                floor_y = entry.floor_y, ceiling_y = entry.ceiling_y}
+            local cell = key(math.floor(candidate.x/CELL), math.floor(candidate.z/CELL))
+            s.grid[cell] = s.grid[cell] or {}
+            table.insert(s.grid[cell], candidate)
+            s.catalog_count = s.catalog_count + 1
+        end
+    end
+    log("READY catalog=%d interval=%d hours=%02d-%02d", s.catalog_count,
+        cfg.interval, cfg.start_hour, cfg.end_hour)
+end
+local function source_position(candidate)
+    -- The catalogue already places this point 0.5-1 m inside its window.
+    return {x = candidate.x, y = candidate.y, z = candidate.z}
+end
+local function cast(origin, direction, range)
+    s.ray = s.ray or ray_pick()
+    s.ray:set_flags(2) -- Static collision only; not NPCs or the player's equipment.
+    s.ray:set_position(vec(origin))
+    s.ray:set_direction(vector():set(0, direction, 0))
+    s.ray:set_range(range)
+    s.ray:set_ignore_object(db.actor)
+    if s.ray:query() then return s.ray:get_distance() end
+end
+local function clear_interior(candidate)
+    local position = source_position(candidate)
+    local floor_gap = position.y-candidate.floor_y
+    local ceiling_gap = candidate.ceiling_y-position.y
+    if floor_gap <= .35 or ceiling_gap <= .25 then return false end
+    local down = cast(position, -1, floor_gap+.6)
+    local up = cast(position, 1, ceiling_gap+.6)
+    return down and up and down > .35 and up > .25 and
+        math.abs(down-floor_gap) < .55 and math.abs(up-ceiling_gap) < .55
+end
+local function window_faces_player(actor, candidate)
+    -- A cheap facade-side test, not a camera-to-room visibility ray.
+    return (actor.x-candidate.frame[1])*candidate.outward[1] +
+        (actor.z-candidate.frame[3])*candidate.outward[2] > .1
+end
+local function in_camera_direction(position)
+    local view = device()
+    local dx, dy, dz = position.x-view.cam_pos.x, position.y-view.cam_pos.y, position.z-view.cam_pos.z
+    -- Only the forward half-space matters. Walls, screen bounds and fog do
+    -- not exclude verified window anchors behind the building's facade.
+    return dx*view.cam_dir.x + dy*view.cam_dir.y + dz*view.cam_dir.z > .1
+end
+local function nearby(actor, previous, now)
+    if not s.grid then build_grid() end
+    local found, span = {}, math.ceil(cfg.maximum/CELL)
+    local cx, cz = math.floor(actor.x/CELL), math.floor(actor.z/CELL)
+    for x = cx-span, cx+span do
+        for z = cz-span, cz+span do
+            for _, candidate in ipairs(s.grid[key(x,z)] or {}) do
+                local position = source_position(candidate)
+                local distance = math.sqrt(distance2(actor, position))
+                local deadline = s.used[candidate.id]
+                if distance >= cfg.minimum and distance <= cfg.maximum and in_camera_direction(position) and
+                    window_faces_player(actor, candidate) and
+                    (not deadline or now >= deadline) and
+                    math.sqrt(distance2(previous, position))-distance >= cfg.approach then
+                    found[#found+1] = {candidate = candidate, position = position, distance = distance}
+                end
+            end
+        end
+    end
+    return found
+end
+local function cool_room(position, now)
+    -- Suppress neighbouring furniture points too, including after backtracking.
+    for _, bucket in pairs(s.grid) do
+        for _, candidate in ipairs(bucket) do
+            if candidate.room_id == position.room_id or
+                (math.abs(candidate.y-position.y) < 2.5 and
+                (candidate.x-position.x)^2 + (candidate.z-position.z)^2 < 100) then
+                s.used[candidate.id] = now + cfg.cooldown
+            end
+        end
+    end
+end
+local function create(choice, now)
+    local candidate, position = choice.candidate, choice.position
+    if not level.valid_vertex_id(candidate.lv) then s.reject = "vertex"; return false end
+    if not clear_interior(candidate) then s.reject = "interior_geometry"; return false end
+    local sim = alife()
+    local object = sim:create(SECTION, vec(position), candidate.lv, candidate.gv)
+    if not object then return false end
+    local id = object.id
+    s.pending[id] = true -- Roll back partial setup through the normal release path.
+    object:use_ai_locations(false)
+    object.position = vec(position)
+    local color = fcolor():set(cfg.red, cfg.green, cfg.blue, 1)
+    assert(object:set_light_properties(color, cfg.range, 120, "root", false, true), "echo_light_setup_failed")
+    sim:set_switch_offline(id, false)
+    sim:set_switch_online(id, true)
+    s.active = {id = id, point_id = candidate.id, position = position, anchor = candidate, level = level.name(),
+        closest = choice.distance, started = now,
+        expires = now + math.random(math.floor(cfg.duration_min), math.floor(cfg.duration_max))}
+    s.pending[id] = nil
+    cool_room(candidate, now)
+    s.created = s.created + 1
+    log("START id=%d point=%d room=%d pair=%d pos=%.2f,%.2f,%.2f frame=%.2f,%.2f,%.2f distance=%.2f retreat=%.2f",
+        id, candidate.id, candidate.room_id, candidate.pair, position.x, position.y, position.z,
+        candidate.frame[1], candidate.frame[2], candidate.frame[3], choice.distance, choice.distance*cfg.retreat)
+    return true
+end
+
+local function tick()
+    if not cfg then read_settings() end
+    local now, actor = time_global(), db.actor
+    if s.last and now < s.last then s.next_attempt, s.previous = nil, nil end
+    s.last = now
+    if not actor or not alife() then return end
+    -- Restore/spawn callbacks can run before native level synchronization ends.
+    -- Keep their IDs queued until releasing objects is safe.
+    if device():is_paused() or device().precache_frame > 0 or not app_ready() then
+        s.gate = "loading_or_paused"
+        s.previous, s.next_attempt = nil, now + cfg.interval
+        return
+    end
+    cleanup_pending()
+    if not enabled() then
+        s.gate = "disabled"
+        stop("disabled", now)
+        s.previous, s.next_attempt = nil, nil
+        return
+    end
+    if s.failed then return end
+    if not actor:alive() then stop("actor_dead", now); return end
+    local _, _, _, hour = game.get_game_time():get()
+    s.hour = hour
+    if level.name() ~= cfg.level or not is_night(hour) then
+        s.gate = "outside_schedule"
+        stop("outside_schedule", now)
+        s.previous, s.next_attempt = nil, now + cfg.interval
+        return
+    end
+    if level.main_input_receiver() or actor:is_talking() then
+        s.gate = "ui_or_dialog"
+        s.previous, s.next_attempt = point(actor:position()), now + cfg.interval
+        return
+    end
+    local position = point(actor:position())
+    s.gate = "running"
+    local active = s.active
+    if active then
+        local distance = math.sqrt(distance2(position, active.position))
+        if active.level ~= level.name() then stop("level_changed", now)
+        elseif not owned(active.id) then stop("source_lost", now)
+        elseif distance < cfg.close then stop("approached", now)
+        elseif distance > active.closest*cfg.retreat then stop("retreated", now)
+        elseif now >= active.expires then stop("expired", now)
+        elseif not in_camera_direction(active.position) then stop("behind_camera", now)
+        elseif not window_faces_player(position, active.anchor) then stop("behind_facade", now)
+        else active.closest = math.min(active.closest, distance) end
+    end
+    if not s.next_attempt then s.next_attempt = now + cfg.interval; s.previous = position end
+    if now < s.next_attempt then return end
+    s.next_attempt = now + cfg.interval
+    local previous = s.previous or position
+    s.previous = position
+    if s.active then return end
+    s.attempts = s.attempts + 1
+    if math.random(1,100) > cfg.chance then return end
+    local choices = nearby(position, previous, now)
+    s.last_choices, s.reject = #choices, nil
+    -- Bound collision work even when a building contains many rejected points.
+    for _ = 1, math.min(4, #choices) do
+        local index = math.random(1, #choices)
+        local choice = table.remove(choices, index)
+        if create(choice, now) then break end
+    end
+end
+function update()
+    if s.failed and not s.active and not next(s.pending) then return end
+    local ok, err = pcall(tick)
+    if not ok then
+        s.failed = tostring(err)
+        pcall(cleanup_pending)
+        pcall(stop, "error", time_global())
+        printf("! [pf_echo] disabled after error: %s", s.failed)
+    end
+    sync_schedule()
+end
+
+sync_schedule = function()
+    -- Disabled effects have no recurring subscription. Saved/orphaned lights
+    -- get a temporary cleanup subscription, removed as soon as release is safe.
+    local needed = (enabled() and not s.failed) or s.active ~= nil or next(s.pending) ~= nil
+    if needed and not s.scheduled then
+        RegisterScriptTimedCallback(update, cfg.interval)
+        s.scheduled = true
+    elseif not needed and s.scheduled then
+        UnregisterScriptCallback("update", update)
+        s.scheduled = false
+    end
+end
+
+local function on_setting_changed()
+    s.previous, s.next_attempt, s.last = nil, nil, nil
+    if not enabled() then
+        s.gate = "disabled"
+        s.grid, s.catalog_count, s.ray = nil, nil, nil
+        if s.active or next(s.pending) then update() end
+    end
+    sync_schedule()
+end
+
+function status()
+    if not cfg then read_settings() end
+    local active = s.active
+    return {enabled = enabled(), configured_enabled = cfg.enabled, scheduled = s.scheduled == true,
+        failed = s.failed, interval_ms = cfg.interval,
+        start_hour = cfg.start_hour, end_hour = cfg.end_hour, created = s.created,
+        removed = s.removed, attempts = s.attempts, last_reason = s.reason,
+        gate = s.gate, hour = s.hour, last_candidates = s.last_choices, last_rejection = s.reject,
+        catalog_count = s.catalog_count, id = active and active.id,
+        point_id = active and active.point_id, position = active and point(active.position),
+        room_id = active and active.anchor.room_id, window_frame = active and active.anchor.frame,
+        closest = active and active.closest, retreat_distance = active and active.closest*cfg.retreat}
+end
+function save_state(storage)
+    local now, state = time_global(), {ids = {}, used = {}}
+    if s.active then state.ids[#state.ids+1] = s.active.id end
+    for id in pairs(s.pending) do state.ids[#state.ids+1] = id end
+    for id, deadline in pairs(s.used) do
+        if deadline > now then state.used[id] = deadline-now end
+    end
+    storage.pf_echo_lights = state
+end
+function load_state(storage) s.restored = storage.pf_echo_lights end
+function on_load()
+    local restored, now = s.restored, time_global()
+    s.active, s.next_attempt, s.previous, s.last, s.failed = nil, nil, nil, nil, nil
+    s.used, s.restored = {}, nil
+    if type(restored) == "table" then
+        for _, id in ipairs(restored.ids or {}) do
+            if type(id) == "number" then s.pending[id] = true end
+        end
+        for id, remaining in pairs(restored.used or {}) do
+            if type(remaining) == "number" and remaining > 0 then s.used[id] = now+remaining end
+        end
+    end
+    sync_schedule()
+end
+function on_net_destroy()
+    -- The engine owns destruction while unloading the level.
+    s.active, s.pending, s.used, s.restored = nil, {}, {}, nil
+    s.previous, s.next_attempt, s.last, s.ray = nil, nil, nil, nil
+    sync_schedule()
+end
+function on_game_start()
+    if registered then return end
+    if not cfg then read_settings() end
+    assert(type(RegisterScriptTimedCallback) == "function", "pf_echo requires the timed callback dispatcher")
+    RegisterScriptCallback("load", on_load)
+    RegisterScriptCallback("net_destroy", on_net_destroy)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    registered = true
+    pf_city_horrors_settings.register_listener(on_setting_changed)
+    on_setting_changed()
+end
+on_game_start()

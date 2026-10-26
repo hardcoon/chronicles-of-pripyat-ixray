@@ -5,6 +5,7 @@
 local LEVEL_NAME = "pripyat_full"
 local STASH_SECTION = "pf_story_legendary_stash"
 local PREACHER_SECTION = "pf_story_preacher"
+local PREACHER_LOGIC_FILE = "scripts\\pripyat_full\\pf_story_preacher.ltx"
 local PENDANT_SECTION = "pf_story_brother_pendant"
 local STASH_MARKER = "pf_stash_orange"
 local STASH_HINT = "pf_story_legendary_stash_name"
@@ -570,6 +571,26 @@ local function face_preacher_for_sermon(npc)
 	npc.angle = vector():set(0, yaw, 0)
 end
 
+local function refresh_preacher_story_logic(client_npc, storage)
+	if not storage or not storage.ini then return false end
+	if storage.pf_story_followup_logic_current then return true end
+	-- Spawn custom_data is embedded in saves. An existing Sergey can therefore
+	-- retain the entire old LTX even though the external file was updated.
+	-- Refresh only the configuration reference; preserve his live scheme/action
+	-- tables and callbacks, then let the normal section switch rebind them.
+	local current_ini = ini_file(PREACHER_LOGIC_FILE)
+	if not current_ini:section_exist("remark@continuation_dialog") then
+		printf("[PF STORY] continuation logic unavailable; section switch deferred")
+		return false
+	end
+	storage.ini = current_ini
+	storage.ini_filename = PREACHER_LOGIC_FILE
+	storage.pf_story_followup_logic_current = true
+	printf("[PF STORY] refreshed Sergey's embedded logic from %s (id=%d)",
+		PREACHER_LOGIC_FILE, client_npc:id())
+	return true
+end
+
 local function force_preacher_logic_section(client_npc, section, reason)
 	if not client_npc then
 		printf("[PF TRACE][SECTION] force %s failed: client=nil (%s)",
@@ -580,6 +601,11 @@ local function force_preacher_logic_section(client_npc, section, reason)
 	if not storage or not storage.ini then
 		printf("[PF TRACE][SECTION] force %s failed: storage/ini=nil id=%d (%s)",
 			tostring(section), client_npc:id(), tostring(reason))
+		return false
+	end
+	if not refresh_preacher_story_logic(client_npc, storage) or
+		not storage.ini:section_exist(section) then
+		printf("[PF STORY] preacher section %s unavailable; switch deferred", tostring(section))
 		return false
 	end
 	local before = storage.active_section
@@ -605,6 +631,16 @@ local function preacher_seated_facing_dot(client_npc)
 		direction.z / direction_length * dz / target_length
 end
 
+local function preacher_ground_seated()
+	return db.actor and (db.actor:has_info("pf_story_brother_ground_seated") or
+		db.actor:has_info("pf_story_brother_recollection_finished"))
+end
+
+local function preacher_pose_name()
+	return preacher_ground_seated() and pf_story_preacher_pose.FLOOR_STATE_NAME or
+		pf_story_preacher_pose.STATE_NAME
+end
+
 local function refresh_preacher_seated_facing(client_npc, storage, reason)
 	if not client_npc or not storage or not storage.state_mgr then return false end
 	local npc_position = client_npc:position()
@@ -617,7 +653,7 @@ local function refresh_preacher_seated_facing(client_npc, storage, reason)
 	-- This repairs the target that xr_remark clears when campfire_prayer has no
 	-- LTX target, without replaying idle or resetting the sitting animation.
 	storage.state_mgr:set_state(
-		pf_story_preacher_pose.STATE_NAME, nil, nil,
+		preacher_pose_name(), nil, nil,
 		{look_position = make_position(PREACHER_POSITION.look)})
 	next_preacher_facing_retry = time_global() + PREACHER_FACING_RETRY_INTERVAL_MS
 	printf("[PF STORY] seated facing refreshed, dot=%.3f (%s)",
@@ -643,10 +679,10 @@ local function force_preacher_campfire_sitting(client_npc, storage, reason)
 	end
 	storage.state_mgr:set_state("idle", nil, nil, target, {fast_set = true})
 	storage.state_mgr:set_state(
-		pf_story_preacher_pose.STATE_NAME, nil, nil, target, {fast_set = true})
+		preacher_pose_name(), nil, nil, target, {fast_set = true})
 	next_preacher_facing_retry = time_global() + PREACHER_FACING_RETRY_INTERVAL_MS
 	printf("[PF STORY] campfire pose reset: %s -> %s, facing flame (%s)",
-		tostring(previous_state), pf_story_preacher_pose.STATE_NAME, tostring(reason))
+		tostring(previous_state), preacher_pose_name(), tostring(reason))
 	return true
 end
 
@@ -680,7 +716,7 @@ local function update_preacher_campfire(server_npc)
 	set_preacher_prayer_relation(client_npc)
 	local state_mgr = storage and storage.state_mgr or nil
 	local wrong_state = state_mgr and
-		state_mgr:get_state() ~= pf_story_preacher_pose.STATE_NAME
+		state_mgr:get_state() ~= preacher_pose_name()
 	if seated_state_applied_id ~= client_npc:id() or wrong_state then
 		if force_preacher_campfire_sitting(
 			client_npc, storage, "upper campfire prayer") then
@@ -979,6 +1015,17 @@ local function apply_preacher_reunion_at_campfire(npc)
 	local reunion_finished = db.actor:has_info("pf_story_preacher_reunion_finished")
 	local desired_section = reunion_finished and "remark@entrance_idle" or
 		"remark@entrance_dialog"
+	if pf_story_continuation.can_talk() then
+		desired_section = "remark@continuation_dialog"
+	end
+	if preacher_ground_seated() then
+		desired_section = pf_story_continuation.can_talk() and
+			"remark@brother_ground_dialog" or "remark@brother_ground_idle"
+	end
+	if db.actor:has_info("pf_story_brother_outfit_task_given") and
+		not db.actor:has_info("pf_story_brother_outfit_delivered") then
+		desired_section = "remark@brother_outfit_dialog"
+	end
 	local migrate_to_campfire = not db.actor:has_info(
 		"pf_story_preacher_campfire_reunion_v15")
 	db.actor:disable_info_portion("pf_story_preacher_attacked")
@@ -1006,8 +1053,17 @@ local function apply_preacher_reunion_at_campfire(npc)
 	end
 	local client_npc = level.object_by_id(npc.id)
 	local storage = client_npc and db.storage[client_npc:id()] or nil
+	-- Resetting meet while talking can restart its dialog. Apply the floor
+	-- pose now, and move to its persistent logic section after the dialog.
+	if client_npc and client_npc:is_talking() and storage and
+		(storage.active_section == "remark@continuation_dialog" or
+		 storage.active_section == "remark@brother_ground_dialog" or
+		 storage.active_section == "remark@brother_outfit_dialog") then
+		desired_section = storage.active_section
+	end
 	clear_preacher_hit_event(storage)
 	if client_npc then
+		if not refresh_preacher_story_logic(client_npc, storage) then return false end
 		if not storage or storage.active_section ~= desired_section then
 			force_preacher_logic_section(
 				client_npc, desired_section, "document 12 campfire reunion")
@@ -1018,7 +1074,7 @@ local function apply_preacher_reunion_at_campfire(npc)
 		set_preacher_neutral_relation(client_npc)
 		local state_mgr = storage and storage.state_mgr or nil
 		local wrong_state = state_mgr and
-			state_mgr:get_state() ~= pf_story_preacher_pose.STATE_NAME
+			state_mgr:get_state() ~= preacher_pose_name()
 		if reunion_seated_applied_id ~= client_npc:id() or wrong_state then
 			if force_preacher_campfire_sitting(
 				client_npc, storage, "document 12 reunion") then
@@ -1225,7 +1281,7 @@ local function enable_monolith_story_npcs()
 	end
 end
 
-function on_preacher_reunion_finished(npc)
+function on_preacher_reunion_finished(npc, skip_autosave)
 	if not db.actor then return end
 	if not db.actor:has_info("pf_story_preacher_spared") then
 		db.actor:give_info_portion("pf_story_preacher_spared")
@@ -1243,21 +1299,65 @@ function on_preacher_reunion_finished(npc)
 	post_dialog_destination = nil
 	post_dialog_campfire_id = nil
 	if reunion_just_finished then
-		xr_effects.scenario_autosave(
-			db.actor, npc, {"st_save_pf_story_brothers_reunited"})
+		pf_story_continuation.on_reunion_finished()
+		if not skip_autosave then
+			xr_effects.scenario_autosave(
+				db.actor, npc, {"st_save_pf_story_brothers_reunited"})
+		end
 	end
 	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
 	if preacher then remove_preacher_important_marker(preacher.id) end
 	printf("[PF STORY] reunion dialog finished; Sergey remains seated at the upper campfire")
 end
 
-local function preacher_is_alive()
-	if not db.actor or db.actor:has_info("pf_story_preacher_dead") then return false end
+function preacher_object_id()
+	if db.actor and db.actor:has_info("pf_story_brother_left_pripyat") then return nil end
 	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
-	if not preacher then return false end
+	if not preacher then return nil end
+	preacher_id = preacher.id
+	return preacher_id
+end
+
+function preacher_life_state()
+	if not db.actor then return "missing" end
+	if db.actor:has_info("pf_story_preacher_dead") then return "dead" end
+	if db.actor:has_info("pf_story_brother_left_pripyat") then return "departed" end
+	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
+	if not preacher then return "missing" end
 	preacher_id = preacher.id
 	local client_object = level.object_by_id(preacher.id)
-	return not client_object or client_object:alive()
+	local alive
+	if client_object then alive = client_object:alive() else alive = preacher:alive() end
+	if not alive then
+		-- Old saves can retain a corpse without the scripted death callback.
+		db.actor:give_info_portion("pf_story_preacher_dead")
+		return "dead"
+	end
+	return "alive"
+end
+
+function protect_preacher_for_followup()
+	if not db.actor or not db.actor:has_info("pf_story_brother_task_given") or
+		preacher_life_state() ~= "alive" then return false end
+	local client_object = level.object_by_id(preacher_id)
+	if client_object and not client_object:invulnerable() then
+		client_object:invulnerable(true)
+	end
+	return true
+end
+
+function on_brother_recollection_started()
+	if not db.actor or preacher_life_state() ~= "alive" then return false end
+	if not db.actor:has_info("pf_story_brother_ground_seated") then
+		db.actor:give_info_portion("pf_story_brother_ground_seated")
+	end
+	local npc = server_object(preacher_id)
+	if npc then apply_preacher_reunion_at_campfire(npc) end
+	return true
+end
+
+local function preacher_is_alive()
+	return preacher_life_state() == "alive"
 end
 
 local function autosave_preacher_base_approach(preacher)
@@ -1325,6 +1425,9 @@ end
 
 function update()
 	if not db.actor then return end
+	-- Keep the follow-up on the same guaranteed actor-update path as the
+	-- original story rather than depending on a separate resident callback.
+	pf_story_continuation.update()
 	-- Register only after the common state tables exist. Early DLTX registration
 	-- races their creation during startup; the resident update is the accepted
 	-- project pattern for direction-neutral scenario poses.
@@ -1413,6 +1516,11 @@ function update()
 		spawn_legendary_stash()
 	end
 
+	if db.actor:has_info("pf_story_brother_left_pripyat") then
+		stop_quiet_sermon()
+		preacher_id = nil
+		return
+	end
 	if db.actor:has_info("pf_story_preacher_dead") then
 		stop_quiet_sermon()
 		-- Restore the clue on corpses from saves made before it was added to the

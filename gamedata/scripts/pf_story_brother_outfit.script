@@ -1,0 +1,231 @@
+-- The selected outfit owns Sergey's appearance; Yanov owns his resident life.
+local STATE_KEY = "pf_story_brother_outfit"
+local DEPARTURE_DISTANCE_SQR = 100 * 100
+local TRAVEL_SECONDS = 24 * 60 * 60
+local RESIDENT_SECTION = "pf_story_brother_yanov"
+local cache, pool, next_check, save_pending = {}, nil, 0, nil
+
+local function has(info)
+	return db.actor and db.actor:has_info(info)
+end
+
+local function saved()
+	local root = alife_storage_manager.get_state()
+	root[STATE_KEY] = root[STATE_KEY] or {}
+	return root[STATE_KEY]
+end
+
+local function game_seconds()
+	return math.max(0,tonumber(game.get_game_time():diffSec(level.get_start_time())) or 0)
+end
+
+local function translated(key)
+	return game.translate_string(key)
+end
+
+local function monolith(value)
+	value = string.lower(value or "")
+	return string.find(value,"monolit",1,true) ~= nil or string.find(value,"monolith",1,true) ~= nil
+end
+
+local function outfit(section)
+	if cache[section] ~= nil then return cache[section] or nil end
+	cache[section] = false
+	local ini = system_ini()
+	if not ini:section_exist(section) or not ini:line_exist(section,"class") or
+		ini:r_string(section,"class") ~= "E_STLK" or monolith(section) then return nil end
+	if not ini:line_exist(section,"actor_visual") then return nil end
+	-- CCustomOutfit uses actor_visual for the hero's third-person model too.
+	local visual = string.lower(ini:r_string(section,"actor_visual") or ""):gsub("/","\\")
+	local npc_visual = ini:line_exist(section,"npc_visual") and ini:r_string(section,"npc_visual") or ""
+	if visual == "" or monolith(visual) or monolith(npc_visual) then return nil end
+	local mesh = visual:match("%.ogf$") and visual or visual..".ogf"
+	if not getFS():exist("$game_meshes$",mesh) then return nil end
+	visual = visual:gsub("%.ogf$","")
+	local entry = {section=section,visual=visual,
+		name=ini:line_exist(section,"inv_name") and ini:r_string(section,"inv_name") or section}
+	cache[section] = entry
+	return entry
+end
+
+function outfit_sections()
+	if pool then return pool end
+	pool = {}
+	system_ini():section_for_each(function(section)
+		if outfit(section) then pool[#pool+1] = section end
+		return false
+	end)
+	table.sort(pool)
+	return pool
+end
+
+function waiting_for_outfit()
+	return has("pf_story_brother_outfit_task_given") and has("pf_story_brother_recollection_finished") and
+		not has("pf_story_brother_outfit_delivered") and not has("pf_story_preacher_dead") and
+		pf_story_encounter.preacher_life_state() == "alive" or false
+end
+
+local function candidate(section)
+	if not db.actor or not outfit(section) then return nil end
+	local worn = db.actor:item_in_slot(6)
+	local best, count = nil, 0
+	db.actor:iterate_inventory(function(_,item)
+		if item:section() ~= section or worn and worn:id() == item:id() then return end
+		count = count+1
+		-- Equipped gear is excluded. Among identical spares, show and hand
+		-- over the most worn instance instead of consuming the better copy.
+		if not best or item:condition() < best:condition() or
+			item:condition() == best:condition() and item:id() < best:id() then
+			best = item
+		end
+	end,db.actor)
+	return best,count
+end
+
+function can_offer(_,__,___,phrase_id,next_phrase_id)
+	local section = string.match(next_phrase_id or phrase_id or "","^give_(.+)$")
+	return section ~= nil and waiting_for_outfit() and candidate(section) ~= nil
+end
+
+function offer_text(_,__,___,phrase_id)
+	local section = string.match(phrase_id or "","^give_(.+)$")
+	local entry = section and outfit(section)
+	if not entry then return translated("pf_story_brother_outfit_cancel") end
+	local text = string.format(translated("pf_story_brother_outfit_give"),translated(entry.name))
+	local item,count = candidate(section)
+	if item and count > 1 then
+		text = text..string.format(translated("pf_story_brother_outfit_condition"),math.floor(item:condition()*100+0.5))
+	end
+	return text
+end
+
+function give_outfit(_,__,___,phrase_id)
+	if not waiting_for_outfit() then return false end
+	local section = string.match(phrase_id or "","^give_(.+)$")
+	local item = section and candidate(section)
+	local entry = section and outfit(section)
+	local id = pf_story_encounter.preacher_object_id()
+	local npc = id and level.object_by_id(id)
+	if not item or not entry or not npc or not npc:alive() then return false end
+	local position = npc:position()
+	local data = saved()
+	local condition = item:condition()
+	db.actor:transfer_item(item,npc)
+	data.section,data.visual,data.condition = section,entry.visual,condition
+	data.origin = {position.x,position.y,position.z}
+	db.actor:give_info_portion("pf_story_brother_outfit_delivered")
+	save_pending = "st_save_pf_story_brother_outfit"
+	return true
+end
+
+function thanks_text()
+	return translated(has("pf_story_brother_outfit_delivered") and
+		"pf_story_brother_outfit_thanks" or "pf_story_brother_outfit_missing")
+end
+
+function wait_text()
+	return translated(has("pf_story_brother_outfit_delivered") and
+		"pf_story_brother_outfit_wait" or "pf_story_brother_outfit_later")
+end
+
+function init_dialog(dialog)
+	dialog:AddPhrase("","0","",-10000)
+	-- Dialog graphs are cached by the engine. Build the entire outfit pool;
+	-- predicates evaluate the current inventory whenever the dialog opens.
+	for _,section in ipairs(outfit_sections()) do
+		local give,reply,finish = "give_"..section,"reply_"..section,"finish_"..section
+		local script = dialog:AddPhrase("pf_story_brother_outfit_give",give,"0",-10000):GetPhraseScript()
+		script:AddPrecondition("pf_story_brother_outfit.can_offer")
+		script:SetScriptText("pf_story_brother_outfit.offer_text")
+		script:AddAction("pf_story_brother_outfit.give_outfit")
+		script = dialog:AddPhrase("pf_story_brother_outfit_thanks",reply,give,-10000):GetPhraseScript()
+		script:SetScriptText("pf_story_brother_outfit.thanks_text")
+		script = dialog:AddPhrase("pf_story_brother_outfit_wait",finish,reply,-10000):GetPhraseScript()
+		script:SetScriptText("pf_story_brother_outfit.wait_text")
+		script:AddAction("dialogs.break_dialog")
+	end
+	dialog:AddPhrase("pf_story_brother_outfit_cancel","cancel","0",-10000):GetPhraseScript():AddAction("dialogs.break_dialog")
+end
+
+local function actor_left(position)
+	if level.name() ~= "pripyat_full" then return true end
+	local actor = db.actor:position()
+	local x,y,z = actor.x-position[1],actor.y-position[2],actor.z-position[3]
+	return x*x+y*y+z*z >= DEPARTURE_DISTANCE_SQR
+end
+
+function update()
+	if not db.actor then return end
+	if save_pending and not db.actor:is_talking() then
+		local key = save_pending;save_pending = nil
+		xr_effects.scenario_autosave(db.actor,nil,{key})
+	end
+	local now = time_global()
+	if now < next_check then return end
+	next_check = now+1000
+	if not has("pf_story_brother_outfit_delivered") then return end
+	local data = saved()
+	if not has("pf_story_brother_left_pripyat") then
+		if db.actor:is_talking() or not data.origin or not actor_left(data.origin) then return end
+		local id = pf_story_encounter.preacher_object_id()
+		local old = id and alife():object(id,true)
+		data.departed_at = game_seconds()
+		db.actor:give_info_portion("pf_story_brother_left_pripyat")
+		-- ALife release removes the old NPC and his inventory, including the suit.
+		if old then alife():release(old,true) end
+		save_pending = "st_save_pf_story_brother_departed"
+		printf("[PF BROTHER] Sergey left Pripyat; 24-hour journey started")
+	elseif not has("pf_story_brother_at_yanov") and data.departed_at and
+		game_seconds()-data.departed_at >= TRAVEL_SECONDS then
+		db.actor:give_info_portion("pf_story_brother_at_yanov")
+		save_pending = "st_save_pf_story_brother_arrived"
+		printf("[PF BROTHER] Sergey reached Yanov in [%s]",tostring(data.section))
+	end
+end
+
+local function arrived()
+	return has("pf_story_brother_at_yanov") and saved().visual ~= nil or false
+end
+
+local function visual()
+	return saved().visual
+end
+
+local function pin_visual(server)
+	local model = visual()
+	if model then assert(server:set_visual(model),"Sergey's selected outfit model is unavailable") end
+end
+
+local function protect_resident(npc)
+	if not npc:invulnerable() then npc:invulnerable(true) end
+	if npc:character_community() ~= "stalker" then npc:set_character_community("stalker",0,0) end
+end
+
+function resident()
+	return {
+		section=RESIDENT_SECTION,
+		visual=visual,
+		available=arrived,
+		on_pin=pin_visual,
+		on_online=protect_resident,
+		-- User-authored QA point 1 (2026-10-26), advanced 5 cm toward the counter.
+		position=vector():set(-969.546726,-0.001218,-1353.710977),
+		yaw=-2.733285971,
+		direction=vector():set(-0.397055781,0.000000000,-0.917794480),
+		look=vector():set(-973.517283810,1.498782000,-1362.888921796),
+		-- The point is off the AI mesh; keep a valid station ALife anchor.
+		level_vertex_id=2358185,game_vertex_id=377,
+		-- Flint's stock table idle, with Yanov's fixed position/facing wrapper.
+		state="pf_yanov_hawaiian_barman_fixed",fixed_direction=true,
+		logic_section="remark@pf_story_brother_yanov",
+	}
+end
+
+function can_talk_yanov(first,second)
+	if not arrived() then return false end
+	return first and first:section() == RESIDENT_SECTION or second and second:section() == RESIDENT_SECTION or false
+end
+
+function reset()
+	next_check,save_pending = 0,nil
+end

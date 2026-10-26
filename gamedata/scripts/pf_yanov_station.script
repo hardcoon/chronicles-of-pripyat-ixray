@@ -92,6 +92,7 @@ local savka = getFS():exist("$game_scripts$", "pf_hf_savka.script") and pf_hf_sa
 if savka ~= nil then
     residents[#residents + 1] = savka.resident()
 end
+residents[#residents + 1] = pf_story_brother_outfit.resident()
 
 local resident_by_section = {}
 for _, resident in ipairs(residents) do
@@ -99,6 +100,7 @@ for _, resident in ipairs(residents) do
 end
 
 local function resident_should_be_present(resident)
+    if resident.available ~= nil then return resident.available() == true end
     if resident.section ~= nimble_section then return true end
     if pf_yanov_nimble_dialog == nil or
             type(pf_yanov_nimble_dialog.nimble_should_be_present) ~= "function" then
@@ -145,6 +147,7 @@ local function pin_server_object(server_object, resident)
     server_object.m_game_vertex_id = resident.game_vertex_id
     server_object.m_smart_terrain_id = no_smart_terrain_id
     server_object:visible_for_map(true)
+    if resident.on_pin ~= nil then resident.on_pin(server_object) end
 end
 
 local function disable_stationary_perception(object)
@@ -274,8 +277,10 @@ local function apply_online_object(object, resident, force_position)
         return
     end
 
-    if object:get_visual_name() ~= resident.visual then
-        object:set_visual_name(resident.visual, true)
+    local visual = resident.visual
+    if type(visual) == "function" then visual = visual() end
+    if type(visual) == "string" and visual ~= "" and object:get_visual_name() ~= visual then
+        object:set_visual_name(visual, true)
         pose_applied[id] = nil
         next_direction_retry[id] = nil
     end
@@ -466,6 +471,7 @@ local function update_resident(sim, resident, spawn_allowed)
     local object = level.object_by_id(id)
     if object ~= nil then
         apply_online_object(object, resident, not prepared_online[id])
+        if resident.on_online ~= nil then resident.on_online(object) end
         if savka ~= nil and resident.section == "pf_yanov_savka" then
             savka.update(object)
         end

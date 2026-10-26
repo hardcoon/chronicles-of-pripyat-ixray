@@ -4,7 +4,7 @@
 -- even after server yaw, desired direction and look_position have changed.
 
 STATE_NAME = "pf_story_sergey_sit_fixed"
-local animation_name = "pf_story_sergey_sit_fixed_pose"
+FLOOR_STATE_NAME = "pf_story_sergey_floor_fixed"
 local registered = false
 
 function ensure_registered()
@@ -16,30 +16,35 @@ function ensure_registered()
 		return false
 	end
 
-	states[STATE_NAME] = {
-		weapon = "strapped",
-		movement = move.stand,
-		mental = anim.free,
-		bodystate = move.standing,
-		animstate = nil,
-		animation = animation_name,
-	}
+	local function register_pose(name, motion)
+		local animation_name = name.."_pose"
+		states[name] = {
+			weapon = "strapped",
+			movement = move.stand,
+			mental = anim.free,
+			bodystate = move.standing,
+			animstate = nil,
+			animation = animation_name,
+		}
 
-	animations[animation_name] = {
-		prop = {
-			maxidle = 5,
-			sumidle = 3,
-			rnd = 80,
-			moving = false,
-		},
-		into = nil,
-		out = nil,
-		idle = { [0] = "sit_0_idle_0" },
-		rnd = nil,
-	}
+		animations[animation_name] = {
+			prop = {
+				maxidle = 5,
+				sumidle = 3,
+				rnd = 80,
+				moving = false,
+			},
+			into = nil,
+			out = nil,
+			idle = { [0] = motion },
+			rnd = nil,
+		}
+	end
+	register_pose(STATE_NAME, "sit_0_idle_0")
+	-- The stock sit_ass state uses sit_2; sit_0 is the former squat.
+	register_pose(FLOOR_STATE_NAME, "sit_2_idle_0")
 
 	registered = true
-	printf("~ [pf_story_preacher_pose] registered [%s] with [%s]",
-		STATE_NAME, animation_name)
+	printf("~ [pf_story_preacher_pose] registered squat and floor seated poses")
 	return true
 end

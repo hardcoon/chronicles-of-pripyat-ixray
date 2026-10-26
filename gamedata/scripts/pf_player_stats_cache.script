@@ -239,6 +239,107 @@ function records(profile)
     return result
 end
 
+-- One local install-ID list, shared across IRC servers and game saves.
+function impl.load_blacklist()
+    if state.blocked then return end
+    state.blocked, state.blacklist_revision = {}, 1
+    state.blacklist_path = getFS():update_path("$app_data_root$", "pf_player_stats_blacklist.cfg")
+    local file = io.open(state.blacklist_path, "rb")
+    if not file then return end
+    local content = file:read(1024 * 1024 + 1)
+    file:close()
+    local header = "PF_STATS_BLACKLIST_1\n"
+    if not content or #content > 1024 * 1024 or content:sub(1, #header) ~= header then
+        state.blacklist_read_only = true
+        return -- Preserve unknown/corrupt files; never replace them with an empty list.
+    end
+    for line in content:sub(#header + 1):gmatch("[^\r\n]+") do
+        local identity, nick = line:match("^([^\t]+)\t([^\t]*)$")
+        if identity and has_copid(identity) and #nick <= 384 then
+            nick = impl.unescape(nick)
+            if #nick <= 128 and not nick:find("[%z\1-\31\127]") then state.blocked[identity:lower()] = nick end
+        end
+    end
+end
+
+function impl.replace_file(path, content)
+    local temporary = path .. ".tmp"
+    local file = io.open(temporary, "wb")
+    local ok = false
+    if file then
+        ok = file:write(content) ~= nil
+        ok = file:close() and ok
+    end
+    if ok then
+        if not state.kernel then
+            local loaded, ffi = pcall(require, "ffi")
+            if loaded then
+                pcall(ffi.cdef, "int __stdcall MoveFileExA(const char*, const char*, unsigned long);")
+                local ready, kernel = pcall(ffi.load, "kernel32")
+                if ready then state.kernel = kernel end
+            end
+        end
+        local moved, result = pcall(function()
+            return state.kernel and state.kernel.MoveFileExA(temporary, path, 9) ~= 0
+        end)
+        ok = moved and result
+    end
+    return ok == true
+end
+
+function is_blocked(identity)
+    impl.load_blacklist()
+    return state.blocked[tostring(identity or ""):lower()] ~= nil
+end
+
+function blacklist_revision()
+    impl.load_blacklist()
+    return state.blacklist_revision
+end
+
+function blocked_ids()
+    impl.load_blacklist()
+    local result = {}
+    for identity in pairs(state.blocked) do result[identity] = true end
+    return result
+end
+
+function blocked_records()
+    impl.load_blacklist()
+    local result = {}
+    for identity, nick in pairs(state.blocked) do
+        result[#result + 1] = {identity = identity, nick = nick}
+    end
+    return result
+end
+
+function set_blocked(identity, nick, blocked)
+    impl.load_blacklist()
+    identity, nick = tostring(identity or ""):lower(), tostring(nick or "")
+    if not has_copid(identity) or type(blocked) ~= "boolean" or #nick > 128 or
+        nick:find("[%z\1-\31\127]") or (state.self and identity == state.self.identity) then
+        return false, "pf_pda_blacklist_invalid"
+    end
+    if (state.blocked[identity] ~= nil) == blocked then return true end
+    if state.blacklist_read_only then return false, "pf_pda_blacklist_save_error" end
+    local candidate, identities = {}, {}
+    for key, value in pairs(state.blocked) do candidate[key] = value end
+    candidate[identity] = blocked and nick or nil
+    for key in pairs(candidate) do identities[#identities + 1] = key end
+    table.sort(identities)
+    local lines = {"PF_STATS_BLACKLIST_1"}
+    for _, key in ipairs(identities) do lines[#lines + 1] = key .. "\t" .. impl.escape(candidate[key]) end
+    local content = table.concat(lines, "\n") .. "\n"
+    if #content > 1024 * 1024 or not impl.replace_file(state.blacklist_path, content) then
+        return false, "pf_pda_blacklist_save_error"
+    end
+    state.blocked = candidate
+    state.blacklist_revision = state.blacklist_revision + 1
+    state.revision = state.revision + 1
+    return true
+end
+
+
 function is_confirmed(identity) return impl.strength(tostring(identity or "")) >= 3 end
 
 function is_operator(profile, identity)

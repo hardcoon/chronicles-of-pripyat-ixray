@@ -35,6 +35,14 @@ function opt_gameplay:InitControls(x, y, xml, handler)
         addControl(_st)
     end
 
+    if getFS():exist("$game_scripts$", "pf_city_horrors_settings.script") then
+        _st = xml:InitStatic("video_adv:templ_item", nil)
+        local caption = xml:InitStatic("tab_gameplay:cap_disable_green_stash_spawning", _st)
+        caption:TextControl():SetTextST("pf_city_horrors_option")
+        self.check_city_horrors = xml:InitCheck("tab_gameplay:check_disable_green_stash_spawning", _st)
+        addControl(_st)
+    end
+
     addStandard("cap_lang", "list_lang", "combo")
     addStandard("cap_bobbing_factor", "track_bobbing_factor", "track")
     addStandard("cap_hit_slowmo", "check_hit_slowmo", "check")
@@ -88,6 +96,21 @@ function opt_gameplay:InitControls(x, y, xml, handler)
         "tab_gameplay:check_spawn_discoverable_vehicles", _st
     )
     addControl(_st)
+end
+
+function opt_gameplay:SetCityHorrorsValue()
+    if not self.check_city_horrors then return end
+    self.city_horrors_backup = pf_city_horrors_settings.is_enabled()
+    self.check_city_horrors:SetCheck(self.city_horrors_backup)
+end
+
+function opt_gameplay:SaveCityHorrorsValue()
+    if not self.check_city_horrors then return true end
+    local enabled = self.check_city_horrors:GetCheck() == true
+    if enabled == self.city_horrors_backup then return true end
+    if not pf_city_horrors_settings.set_enabled(enabled) then return false end
+    self.city_horrors_backup = enabled
+    return true
 end
 
 function opt_gameplay:SetDisableGreenStashSpawningValue()

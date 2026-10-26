@@ -1,0 +1,72 @@
+[logic]
+active = remark@past
+dont_spawn_loot = true
+
+[dont_spawn_loot]
+
+[keep_items]
+
+; Native remark owns the pose and facing, including while the document is open.
+[remark@past]
+anim = guard_na
+target = nil
+meet = meet@past
+combat_ignore_cond = true
+combat_ignore_keep_when_attacked = true
+invulnerable = true
+gather_items_enabled = false
+help_wounded_enabled = false
+corpse_detection_enabled = false
+use_camp = false
+danger = danger@past
+
+[remark@past_pf_past_sit]:remark@past
+anim = pf_past_sit
+
+[remark@past_pf_past_sit_knee]:remark@past
+anim = pf_past_sit_knee
+
+[remark@past_pf_past_sit_ass]:remark@past
+anim = pf_past_sit_ass
+
+[remark@past_pf_past_ward]:remark@past
+anim = pf_past_ward
+
+[remark@past_pf_past_scan_stand]:remark@past
+anim = pf_past_scan_stand
+
+[remark@past_pf_past_scan_knee]:remark@past
+anim = pf_past_scan_knee
+
+[remark@past_pf_past_arms]:remark@past
+anim = pf_past_arms
+
+[remark@past_pf_past_pockets]:remark@past
+anim = pf_past_pockets
+
+[meet@past]
+close_distance = 0
+close_anim = nil
+close_snd_hello = nil
+close_snd_bye = nil
+close_snd_distance = 0
+close_victim = nil
+far_distance = 0
+far_anim = nil
+far_victim = nil
+far_snd = nil
+meet_on_talking = false
+meet_dialog = pf_past_memorial
+snd_on_use = nil
+trade_enable = false
+use = true
+use_text = pf_past_read_memorial
+allow_break = true
+abuse = false
+
+[danger@past]
+ignore_distance = 0
+ignore_distance_grenade = 0
+ignore_distance_corpse = 0
+ignore_distance_hit = 0
+ignore_distance_sound = 0

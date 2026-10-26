@@ -14,6 +14,7 @@ end
 
 function on_load()
     st.next_update, st.cursor, st.rows, st.revision, st.rewards = 0, 1, {}, nil, nil
+    st.blacklist_revision = nil
     pf_irc_npc_jobs.reset()
 end
 function on_save_state(data) pf_irc_npc_jobs.save(data) end
@@ -33,6 +34,11 @@ function update()
     if now < st.next_update or not db.actor or not alife() then return end
     st.next_update = now + 1000
     if not pf_pa_world.irc_ready() then return end
+    local blacklist_revision = pf_player_stats_cache.blacklist_revision()
+    if blacklist_revision ~= st.blacklist_revision then
+        pf_pa_world.configure_irc_blacklist(pf_player_stats_cache.blocked_ids())
+        st.blacklist_revision, st.revision = blacklist_revision, nil
+    end
     if not st.rewards then
         local natural, seen = {}, {}
         for _, family in ipairs({"psi", "electric", "chemical", "gravitational", "thermal"}) do
@@ -74,7 +80,7 @@ function update()
             if record then
                 break -- At most one creation per second, spread across the map.
             end
-            if reason == "placement" or reason == "create" then break end
+            if reason == "limit" or reason == "placement" or reason == "create" then break end
         end
     end
 end

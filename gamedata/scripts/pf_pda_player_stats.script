@@ -122,7 +122,8 @@ function get_rows(filters)
     for _, record in ipairs(result) do
         local has_data = record.values and not record.values.no_data
         local connected = record.presence == "online" or record.presence == "away"
-        if (filters.show_empty == true or has_data) and
+        if (filters.include_blocked == true or not pf_player_stats_cache.is_blocked(record.identity)) and
+            (filters.show_empty == true or has_data) and
             (not filters.online_only or connected) then
             visible[#visible + 1] = record
         end

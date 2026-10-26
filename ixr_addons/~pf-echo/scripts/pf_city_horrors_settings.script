@@ -1,0 +1,46 @@
+-- Shared switch for the city's ambient horror events; defaults to enabled.
+local SETTING_FILE = "pf_city_horrors.setting"
+local enabled
+local listeners = {}
+
+local function setting_path()
+    return getFS():update_path("$app_data_root$", SETTING_FILE)
+end
+
+function is_enabled()
+    if enabled ~= nil then return enabled end
+    enabled = true
+    local file = io.open(setting_path(), "r")
+    if file then
+        local value = string.lower(file:read("*l") or ""):match("^%s*(.-)%s*$")
+        file:close()
+        if value == "0" or value == "false" or value == "off" then enabled = false end
+    end
+    return enabled
+end
+
+function register_listener(callback)
+    listeners[callback] = true
+end
+
+function set_enabled(value)
+    value = value == true
+    if value == is_enabled() then return true end
+    local file = io.open(setting_path(), "w")
+    if not file then
+        printf("! [pf_echo] Unable to save city horrors setting")
+        return false
+    end
+    local written = file:write(value and "1\n" or "0\n")
+    local closed = file:close()
+    if not written or not closed then
+        printf("! [pf_echo] Unable to write city horrors setting")
+        return false
+    end
+    enabled = value
+    for callback in pairs(listeners) do
+        local ok, err = pcall(callback, value)
+        if not ok then printf("! [pf_echo] Setting listener failed: %s", tostring(err)) end
+    end
+    return true
+end

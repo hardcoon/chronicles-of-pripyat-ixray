@@ -1,0 +1,452 @@
+-- Temporary memorial NPCs. This facade owns the lifetime, actor callbacks,
+-- binder and three random poses through the stock remark/state_mgr scheme.
+-- The catalogue stays in LTX/XML. Only an actor progress counter is saved.
+local C={prefix="pf_past_ghost_",duration=60000,radius=10,min_radius=5,count=3,tick=250,front_cos=0.573576436,progress="pf_past_cursor_v2",camera="pf_camera_q"}
+local S={records={},planned={},remove={},deadline=0,next_tick=0,sweep=true,registered=false}
+local I={}
+
+function I.is_ghost(object)
+    return object and string.sub(object:section(),1,#C.prefix)==C.prefix
+end
+
+function I.people()
+    if S.people then return S.people end
+    local ini=ini_file("pf_past_names.ltx")
+    local people={}
+    for index=1,ini:r_u32("pool","count") do
+        local key=ini:r_string("pool",string.format("entry_%06d",index))
+        people[#people+1]={key=key,
+            model=ini:r_string("skins",ini:r_string(key,"skin"))}
+    end
+    S.people=people
+    return people
+end
+
+function I.pose_pool()
+    if S.poses then return S.poses end
+    local ini=ini_file("pf_past_poses.ltx")
+    local poses={}
+    for name in string.gmatch(ini:r_string("pool","states"),"[^,%s]+") do
+        poses[#poses+1]=name
+    end
+    S.poses=poses
+    return poses
+end
+
+
+function I.register_pose_states()
+    if S.pose_states_ready then return end
+    -- Native state_mgr graphs, using the same eight approved vanilla clips.
+    -- One idle per pose: no props, root motion, entrance or random turn.
+    for name,clip in pairs({pf_past_sit="sit_0_idle_0",pf_past_sit_knee="sit_1_idle_0",
+        pf_past_sit_ass="sit_2_idle_0",pf_past_ward="ohrana_1",
+        pf_past_scan_stand="metering_anomalys_0_idle_0",
+        pf_past_scan_knee="metering_anomalys_1_idle_0",pf_past_arms="cut_scene_idle_0",
+        pf_past_pockets="lead_1_idle"}) do
+        state_lib.states[name]={weapon="none",movement=move.stand,
+            mental=anim.free,bodystate=move.standing,animstate=nil,animation=name}
+        state_mgr_animation_list.animations[name]={
+            prop={maxidle=10,sumidle=10,rnd=0,moving=false},
+            into=nil,out=nil,idle={[0]=clip},rnd=nil}
+    end
+    local action=xr_remark.action_remark_activity
+    if not action.pf_past_target_wrapped then
+        local previous=action.get_target
+        action.get_target=function(self,...)
+            local npc=self.object
+            local record=S.records[npc:id()] or S.planned[npc:section()]
+            if record and I.is_ghost(npc) then
+                -- Supply the target in remark's FIRST set_state call. Applying
+                -- it after animation entry can leave the native direction
+                -- executor locked for the whole idle clip.
+                local p=npc:position()
+                local dx,dz=record.center.x-p.x,record.center.z-p.z
+                local length=math.sqrt(dx*dx+dz*dz)
+                if length>0.01 then npc:set_desired_direction(vector():set(dx/length,0,dz/length)) end
+                return {look_position=record.center}
+            end
+            return previous(self,...)
+        end
+        action.pf_past_target_wrapped=true
+    end
+    S.pose_states_ready=true
+end
+
+function I.close_talk()
+    for id in pairs(S.records) do
+        local object=level.object_by_id(id)
+        if object and I.is_ghost(object) and object:is_talking() then
+            object:stop_talk()
+            if db.actor then db.actor:stop_talk() end
+        end
+    end
+end
+
+function I.release(id)
+    -- Native talk UI releases its partner on the next frame. Never free that
+    -- NPC from the same callback that requested StopTalk/StopMenu.
+    if S.remove_after and time_global()<S.remove_after then return end
+    local simulator=alife()
+    local object=simulator and simulator:object(id,true)
+    if object and string.sub(object:section_name(),1,#C.prefix)==C.prefix then
+        simulator:release(object,true)
+    end
+    S.records[id]=nil;S.remove[id]=nil
+end
+
+function I.finish()
+    I.close_talk()
+    for id in pairs(S.records) do S.remove[id]=true end
+    S.deadline=0;S.planned={};S.anchor=nil;S.remove_after=time_global()+300
+end
+
+function I.reset()
+    I.close_talk()
+    S.records={};S.planned={};S.remove={};S.deadline=0;S.remove_after=nil
+    S.anchor=nil;S.next_tick=0;S.sweep=true;S.cameras=nil
+end
+
+
+function I.purge_saved()
+    -- One scan after load. Saved apparitions are discarded, never resumed.
+    local simulator=alife()
+    if not simulator then return false end
+    if not db.storage or not db.storage[db.actor:id()] then return false end
+    -- This confirmed-only catalogue starts with a fresh counter once.
+    -- Remove the old version; subsequent loads preserve cursor_v2 normally.
+    xr_logic.pstor_store(db.actor,"pf_past_cursor_v1",nil)
+    local cameras={}
+    for id,object in simulator:objects() do
+        if object then
+            local section=object:section_name()
+            if string.sub(section,1,#C.prefix)==C.prefix then S.remove[id]=true
+            elseif section=="pf_camera" then cameras[#cameras+1]=id end
+        end
+    end
+    -- Change class by replacing the object, never by reading an old II_ATTCH
+    -- client save payload as CEatableItemObject. Stash/world parent is retained.
+    S.cameras=cameras
+    S.sweep=false
+    return true
+end
+
+function I.migrate_camera(id)
+    local simulator=alife()
+    local old=simulator and simulator:object(id,true)
+    if not old or old:section_name()~="pf_camera" then return end
+    local camera=simulator:create(C.camera,old.position,old.m_level_vertex_id,
+        old.m_game_vertex_id,tonumber(old.parent_id))
+    if not camera then return end
+    camera.angle=vector():set(old.angle)
+    pf_photographer_notes.camera_replaced(old,camera)
+    simulator:release(old,true)
+end
+
+function I.clear_inventory(object)
+    local simulator=alife()
+    local server=simulator and simulator:object(object:id(),true)
+    if not server then return end
+    local children={}
+    for id in simulator:get_children(server) do children[#children+1]=id end
+    for _,id in ipairs(children) do
+        local child=simulator:object(id,true)
+        if child and tonumber(child.parent_id)==object:id() then simulator:release(child,true) end
+    end
+end
+
+function I.prepare(object,record)
+    if object:get_visual_name()~=record.model then object:set_visual_name(record.model) end
+    local server=alife():object(object:id(),true)
+    if server then server:set_character_name("pf_past_"..record.person.key.."_name") end
+    object:invulnerable(true)
+    object:enable_talk();object:disable_trade()
+    object:set_nonscript_usable(true)
+    object:set_start_dialog("pf_past_memorial")
+    object:set_tip_text("pf_past_read_memorial")
+    object:set_visual_memory_enabled(false)
+    object:set_sound_threshold(1000000)
+    if db.actor then
+        object:set_relation(game_object.neutral,db.actor)
+        db.actor:set_relation(game_object.neutral,object)
+    end
+    I.clear_inventory(object)
+    I.configure_meet(object)
+    record.ready=true;record.check_inventory=time_global()+1000
+end
+
+
+function I.configure_meet(object)
+    local storage=db.storage[object:id()]
+    if storage and storage.meet then
+        -- The stock parser stores a condlist; its consumer expects a boolean.
+        -- The document uses native talk UI without taking ownership of the body.
+        storage.meet.meet_on_talking=false
+    end
+end
+
+function I.vertex(origin,start,direction,distance)
+    if not start or not level.valid_vertex_id(start) then return nil end
+    local id=level.vertex_in_direction(start,direction,distance)
+    if not id or not level.valid_vertex_id(id) then return nil end
+    local position=level.vertex_position(id)
+    if math.abs(position.y-origin.y)>2 or position:distance_to(origin)>C.radius+1 then return nil end
+    return id,position
+end
+
+function I.spawn_points(actor)
+    local origin=actor:position()
+    local start=actor:level_vertex_id()
+    if not level.valid_vertex_id(start) then return {} end
+    local camera=device().cam_dir
+    local length=math.sqrt(camera.x*camera.x+camera.z*camera.z)
+    if length<0.001 then camera=actor:direction();length=math.sqrt(camera.x*camera.x+camera.z*camera.z) end
+    if length<0.001 then return {} end
+    local forward={x=camera.x/length,z=camera.z/length}
+    local center={x=origin.x+forward.x*7.5,z=origin.z+forward.z*7.5}
+    local phase=math.random()*math.pi*2
+    for attempt=1,12 do
+        local points={}
+        local radius=2.1+math.random()*0.3
+        for index=1,C.count do
+            local angle=phase+attempt*2.39996323+(index-1)*math.pi*2/C.count
+            local dx=center.x+math.sin(angle)*radius-origin.x
+            local dz=center.z+math.cos(angle)*radius-origin.z
+            local distance=math.sqrt(dx*dx+dz*dz)
+            local direction=vector():set(dx/distance,0,dz/distance)
+            local id,position=I.vertex(origin,start,direction,distance)
+            if id then
+                local actual=position:distance_to(origin)
+                local x,z=position.x-origin.x,position.z-origin.z
+                local horizontal=math.sqrt(x*x+z*z)
+                local clear=actual>=C.min_radius and actual<=C.radius and horizontal>0.001
+                    and (x*forward.x+z*forward.z)/horizontal>=C.front_cos
+                for _,point in ipairs(points) do if point.position:distance_to(position)<3 then clear=false end end
+                if clear then points[#points+1]={id=id,position=position} end
+            end
+        end
+        if #points==C.count then
+            local a,b,c=points[1].position,points[2].position,points[3].position
+            -- Actual AI nodes must form a triangle, not collapse onto a corridor line.
+            local double_area=math.abs((b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x))
+            if double_area>=6 then return points end
+        end
+    end
+    return {}
+end
+
+
+function I.pose(object,record)
+    local storage=db.storage[object:id()]
+    if not storage or not storage.state_mgr or not storage.ini then return end
+    local section="remark@past_"..record.pose
+    if storage.active_section~=section then
+        xr_logic.switch_to_section(object,storage.ini,section)
+        I.configure_meet(object)
+        record.face_center=true
+    end
+    local planner=object:motivation_action_manager()
+    if not planner:initialized() or planner:current_action_id()~=xr_actions_id.zmey_remark_base+1 then return end
+    -- The initial base remark can finish entering guard_na after our section
+    -- switch. Restore the selected pose instead of leaving that idle forever.
+    if storage.state_mgr:get_state()~=record.pose then record.face_center=true end
+    local p=object:position()
+    local dx,dz=record.center.x-p.x,record.center.z-p.z
+    local length=math.sqrt(dx*dx+dz*dz)
+    if length<0.01 then return end
+    local direction=vector():set(dx/length,0,dz/length)
+    local current=object:direction()
+    local horizontal=math.sqrt(current.x*current.x+current.z*current.z)
+    local dot=horizontal>0.001 and (current.x*direction.x+current.z*direction.z)/horizontal or 0
+    local now=time_global()
+    if record.face_center or (dot<0.995 and now>=(record.face_retry or 0)) then
+        -- Same state: adjust only its look target, preserving the playing loop.
+        object:set_desired_direction(direction)
+        state_mgr.set_state(object,record.pose,nil,nil,{look_position=record.center})
+        record.face_center=false;record.face_retry=now+1000
+    end
+end
+
+function I.update()
+    if not db or not db.actor or not alife() then return end
+    if not S.sweep and not S.cameras and S.deadline==0 and next(S.remove)==nil then return end
+    local now=time_global()
+    if S.sweep then I.purge_saved() end
+    if S.cameras then
+        for _,id in ipairs(S.cameras) do I.migrate_camera(id) end
+        S.cameras=nil
+    end
+    if S.deadline>0 and (now>=S.deadline or not db.actor:alive()
+        or db.actor:position():distance_to(S.anchor)>45) then I.finish() end
+    if next(S.remove)~=nil then
+        local pending={};for id in pairs(S.remove) do pending[#pending+1]=id end
+        for _,id in ipairs(pending) do I.release(id) end
+    end
+    if S.deadline==0 or now<S.next_tick then return end
+    S.next_tick=now+C.tick
+    for id,record in pairs(S.records) do
+        local object=level.object_by_id(id)
+        if object and I.is_ghost(object) then
+            if not record.ready then I.prepare(object,record) end
+            if record.check_inventory and now>=record.check_inventory then
+                I.clear_inventory(object);record.check_inventory=now+1000
+            end
+            I.pose(object,record)
+        end
+    end
+end
+
+
+function use(item)
+    if not db or not db.actor or not db.actor:alive() or not item then return false end
+    local section=item:section()
+    if section~="pf_camera" and section~=C.camera then return false end
+    local parent=item:parent()
+    if not parent or parent:id()~=db.actor:id() then return false end
+    -- Import native animation tables only after the game world is fully ready.
+    I.register_pose_states()
+    if S.sweep then I.purge_saved() end
+    if S.deadline>0 then
+        I.finish()
+        local pending={};for id in pairs(S.remove) do pending[#pending+1]=id end
+        for _,id in ipairs(pending) do I.release(id) end
+        return true
+    end
+    local pending={};for id in pairs(S.remove) do pending[#pending+1]=id end
+    for _,id in ipairs(pending) do I.release(id) end
+    if next(S.remove)~=nil then return false end
+    local people=I.people()
+    local cursor=math.max(0,math.floor(tonumber(xr_logic.pstor_retrieve(db.actor,C.progress,0)) or 0))
+    if cursor>=#people then
+        news_manager.send_tip(db.actor,"pf_past_all_seen",nil,nil,nil,nil)
+        return false
+    end
+    local points=I.spawn_points(db.actor)
+    if #points==0 then
+        news_manager.send_tip(db.actor,"pf_past_no_space",nil,nil,nil,nil)
+        return false
+    end
+    S.anchor=vector():set(db.actor:position())
+    S.deadline=time_global()+C.duration;S.next_tick=0
+    local count=math.min(#points,#people-cursor)
+    local center=vector():set(0,0,0)
+    for index=1,count do
+        local p=points[index].position
+        center.x=center.x+p.x/count;center.y=center.y+p.y/count;center.z=center.z+p.z/count
+    end
+    center.y=center.y+1.2
+    if count==1 then center.x=center.x+S.anchor.x-points[1].position.x;center.z=center.z+S.anchor.z-points[1].position.z end
+    local poses={};for index,name in ipairs(I.pose_pool()) do poses[index]=name end
+    for index=#poses,2,-1 do
+        local other=math.random(index);poses[index],poses[other]=poses[other],poses[index]
+    end
+    -- Avoid a whole group of three standing variants looking like default idle.
+    local seated=false
+    for index=1,count do if string.find(poses[index],"^pf_past_sit") then seated=true end end
+    if not seated then
+        for index=count+1,#poses do
+            if string.find(poses[index],"^pf_past_sit") then poses[1],poses[index]=poses[index],poses[1];break end
+        end
+    end
+    local simulator=alife()
+    for index=1,count do
+        local person=people[cursor+1]
+        local point=points[index]
+        local section=C.prefix.."slot_"..index
+        local record={person=person,model=person.model,pose=poses[index],center=center}
+        S.planned[section]=record
+        local server=simulator:create(section,point.position,point.id,db.actor:game_vertex_id())
+        if not server then break end
+        server:set_character_name("pf_past_"..person.key.."_name")
+        local toward=vector():set(center.x-point.position.x,0,center.z-point.position.z)
+        server.angle=vector():set(0,toward:getH(),0)
+        S.records[server.id]=record
+        simulator:set_switch_online(server.id,true);simulator:set_switch_offline(server.id,false)
+        cursor=cursor+1
+        -- Commit progress per successful spawn; failed space/create spends no name.
+        xr_logic.pstor_store(db.actor,C.progress,cursor)
+    end
+    S.planned={}
+    if next(S.records)==nil then S.deadline=0;S.anchor=nil;return false end
+    -- If a native create failed, face the center of the actual survivors.
+    local survivors=0
+    center:set(0,0,0)
+    for id in pairs(S.records) do
+        local server=simulator:object(id,true)
+        if server then center:add(server.position);survivors=survivors+1 end
+    end
+    center:div(survivors);center.y=center.y+1.2
+    if survivors==1 then center.x=S.anchor.x;center.z=S.anchor.z end
+    return true
+end
+
+function bind(object)
+    object:bind_object(pf_past_binder(object))
+end
+
+class "pf_past_binder" (xr_motivator.motivator_binder)
+
+function pf_past_binder:__init(object) super(object) end
+
+function pf_past_binder:net_spawn(server)
+    -- Cold loads can restore a saved private pose before the camera is used.
+    -- Register its native state definitions before the parent restores logic.
+    I.register_pose_states()
+    if not xr_motivator.motivator_binder.net_spawn(self,server) then return false end
+    local id=self.object:id()
+    local record=S.records[id] or S.planned[self.object:section()]
+    if record and S.deadline>time_global() then
+        S.records[id]=record
+        I.prepare(self.object,record)
+    else
+        -- Release from the actor update, never from inside a native spawn stack.
+        S.remove[id]=true
+    end
+    return true
+end
+
+function pf_past_binder:update(delta)
+    if not S.records[self.object:id()] then S.remove[self.object:id()]=true;return end
+    xr_motivator.motivator_binder.update(self,delta)
+    self.object:enable_talk();self.object:disable_trade()
+    self.object:set_nonscript_usable(true)
+    self.object:set_tip_text("pf_past_read_memorial")
+    I.configure_meet(self.object)
+end
+
+-- script_text receives (NPC, dialog ID, phrase ID). This is a sourced record,
+-- not invented first-person speech. The native dialog owns all presentation.
+
+function dialog_text(object)
+    if not object or not I.is_ghost(object) then return "" end
+    local record=S.records[object:id()]
+    if record then return game.translate_string("pf_past_"..record.person.key.."_memorial") end
+    return ""
+end
+
+function on_game_start()
+    if S.registered then return end
+    S.registered=true
+    RegisterScriptCallback("update",I.update)
+    RegisterScriptCallback("load",I.reset)
+    local owner=bind_stalker.actor_binder
+    if not owner.pf_past_use_wrapped then
+        local previous=owner.use_inventory_item
+        owner.use_inventory_item=function(self,item,...)
+            if item and item:section()==C.camera then
+                item:set_remaining_uses(1)
+                return use(item)
+            end
+            if previous then return previous(self,item,...) end
+        end
+        owner.pf_past_use_wrapped=true
+    end
+    if not owner.pf_past_destroy_wrapped then
+        local previous=owner.net_destroy
+        owner.net_destroy=function(self,...)
+            I.reset()
+            if previous then return previous(self,...) end
+        end
+        owner.pf_past_destroy_wrapped=true
+    end
+end
+on_game_start()

@@ -17,6 +17,9 @@ for section,entry in pairs(pf_hf_stock_catalog.by_object) do catalog.by_object[s
 for _,entry in ipairs(pf_hf_appliances_catalog.entries) do
     catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
 end
+for _,entry in ipairs(pf_hf_map_catalog.entries) do
+    catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
+end
 local pending={}
 local data={}
 local generation=0
@@ -33,7 +36,9 @@ end
 local light_interaction_distance=configured_light_interaction_distance()
 
 function definition(section)
-    if section=="pf_hfe_stove_storage" then return {kind="stash",capacity=100} end
+    -- Old stove weight limit; kept for restoring limited storage.
+    -- if section=="pf_hfe_stove_storage" then return {kind="stash",capacity=100} end
+    if section=="pf_hfe_stove_storage" then return {kind="stash"} end
     if section=="pf_hf_test_crate" then
         return {item="pf_hf_test_crate_item",object=section,kind="prop",title="pf_rt_crate_title"}
     end
@@ -445,15 +450,20 @@ function can_store(box,item)
     if entry.specialized_storage and not pf_hf_expansion.accepts(entry.specialized_storage,item) then return false end
     local profile=pf_hf_displays.has_profile(entry.object) and pf_hf_display_data.profiles[entry.object]
     if profile and not pf_hf_displays.accepts_item(item,entry.object) then return false end
-    local weight,count=0,0
+    -- Weight limits are disabled for all furniture storage. Keep the old
+    -- calculation and catalog/LTX capacities commented for easy restoration.
+    -- local weight,count=0,0
+    local count=0
     local contains=false
     box:iterate_inventory_box(function(_,stored)
-        weight=weight+stored:weight();count=count+1
+        -- weight=weight+stored:weight();count=count+1
+        count=count+1
         if stored:id()==item:id() then contains=true end
     end,box)
     if contains then return true end
-    return (not entry.capacity or weight+item:weight()<=entry.capacity+.00001) and
-        (not profile or count<profile.count)
+    -- return (not entry.capacity or weight+item:weight()<=entry.capacity+.00001) and
+    --     (not profile or count<profile.count)
+    return not profile or count<profile.count
 end
 
 -- Kept only for saves or scripts that still reference the old action.
