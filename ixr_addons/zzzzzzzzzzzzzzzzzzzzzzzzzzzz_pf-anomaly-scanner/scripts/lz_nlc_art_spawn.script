@@ -74,7 +74,7 @@ local function storage()
 		root[settings.storage_key] = {}
 	end
 	local data = root[settings.storage_key]
-	data.version = 3
+	data.version = 4
 	data.prng_state = tonumber(data.prng_state) or settings.seed
 	if type(data.slots) ~= "table" then data.slots = {} end
 	if type(data.cooldowns) ~= "table" then data.cooldowns = {} end
@@ -146,6 +146,7 @@ local function scan_registry()
 					tonumber(object.m_level_vertex_id) ~= INVALID_VERTEX_ID and
 					tonumber(object.m_game_vertex_id) ~= INVALID_VERTEX_ID then
 					table.insert(state.zones[point_id].points, {
+						name = name,
 						position = vector():set(object.position),
 						level_vertex_id = object.m_level_vertex_id,
 						game_vertex_id = object.m_game_vertex_id
@@ -164,6 +165,109 @@ local function scan_registry()
 		report("registry ready, zones=[%s]", tostring(ready))
 	else
 		report("registry incomplete, ready=[%s/41]", tostring(ready))
+	end
+end
+
+-- Query only static level geometry, close to the known floor. Starting high
+-- above the zone could hit a roof/tree and move an artifact onto it instead.
+local function floor_height(position, rise, range, ignored_object)
+	if not state.ground_ray then
+		state.ground_ray = ray_pick()
+		state.ground_ray:set_flags(2)
+	end
+	local origin = vector():set(position.x, position.y + rise, position.z)
+	state.ground_ray:set_position(origin)
+	state.ground_ray:set_direction(vector():set(0, -1, 0))
+	state.ground_ray:set_range(range)
+	state.ground_ray:set_ignore_object(ignored_object or db.actor)
+	if state.ground_ray:query() then
+		return origin.y - state.ground_ray:get_distance()
+	end
+	return nil
+end
+
+local function spawn_origin(point)
+	return {
+		name = point.name,
+		x = point.position.x,
+		y = floor_height(point.position, 0.75, 2.0) or point.position.y,
+		z = point.position.z,
+		level_vertex_id = point.level_vertex_id,
+		game_vertex_id = point.game_vertex_id
+	}
+end
+
+local function spawn_position(origin)
+	return vector():set(origin.x, origin.y + settings.spawn_height, origin.z)
+end
+
+-- Older saves have no origin in their population slots. Match X/Z against
+-- points in the owning zone: a fallen physics body's Y must not affect this.
+local function restore_spawn_origin(zone_key, entry, object)
+	if type(entry.spawn_origin) == "table" then return entry.spawn_origin end
+	local zone = state.zones[tonumber(zone_key)]
+	if not zone or not object.position then return nil end
+	local nearest, nearest_distance
+	for _, point in ipairs(zone.points) do
+		local dx = point.position.x - object.position.x
+		local dz = point.position.z - object.position.z
+		local distance = dx * dx + dz * dz
+		if not nearest or distance < nearest_distance or
+			(distance == nearest_distance and point.name < nearest.name) then
+			nearest, nearest_distance = point, distance
+		end
+	end
+	if not nearest then return nil end
+	entry.spawn_origin = spawn_origin(nearest)
+	return entry.spawn_origin
+end
+
+local function return_to_spawn(object, client, shell, origin, zone_key, fallen_y)
+	local target = spawn_position(origin)
+	-- IX-Ray FixBody clears velocity, force and torque. Release only elements
+	-- fixed here, preserving existing locks and the artifact's identity/state.
+	local released = {}
+	for index = 0, shell:get_elements_number() - 1 do
+		local element = shell:get_element_by_order(index)
+		if not element:is_fixed() then
+			element:fix()
+			table.insert(released, element)
+		end
+	end
+	client:force_set_position(target, false)
+	for _, element in ipairs(released) do element:release_fixed() end
+	object.position = vector():set(target)
+	object.m_level_vertex_id = origin.level_vertex_id
+	object.m_game_vertex_id = origin.game_vertex_id
+	report(
+		"recovered [%s], zone=[%s], id=[%s], y=[%.3f -> %.3f]",
+		object:section_name(), zone_key, tostring(object.id), fallen_y, target.y
+	)
+end
+
+local function recover_fallen_artifacts(data)
+	for zone_key, entry in pairs(data.slots) do
+		local id = tonumber(entry.id)
+		local object = id and alife():object(id, true) or nil
+		if object and tonumber(object.parent_id) == NO_PARENT_ID and
+			object:section_name() == entry.section then
+			local origin = restore_spawn_origin(zone_key, entry, object)
+			local client = origin and level.object_by_id(id) or nil
+			local shell = client and not client:parent() and client:get_physics_shell() or nil
+			if shell and shell:get_elements_number() > 0 then
+				-- ALife position can still be the original spawn position while
+				-- client physics (also saved separately) is far below the ground.
+				-- Read the physical root too: an invisible item's XFORM may lag it.
+				local position = vector():set(shell:get_element_by_order(0):global_transform().c)
+				if position.y < origin.y - settings.recovery_depth then
+					local floor = floor_height(position, 0.25, 0.75, client)
+					-- A lower slope/floor supporting the object is legitimate.
+					if not floor or floor > position.y + 0.10 then
+						return_to_spawn(object, client, shell, origin, zone_key, position.y)
+					end
+				end
+			end
+		end
 	end
 end
 
@@ -306,11 +410,8 @@ local function spawn_one(data, phase, forced_class)
 	local section = weighted_section(data, candidate.pool)
 	local point = candidate.points[next_random(data, #candidate.points)]
 	if not section or not point then return false end
-	local position = vector():set(
-		point.position.x,
-		point.position.y + settings.spawn_height,
-		point.position.z
-	)
+	local origin = spawn_origin(point)
+	local position = spawn_position(origin)
 	local created = alife():create(
 		section, position, point.level_vertex_id, point.game_vertex_id
 	)
@@ -325,7 +426,8 @@ local function spawn_one(data, phase, forced_class)
 		id = created.id,
 		section = section,
 		artifact_class = artifact_class,
-		family = candidate.zone.definition.family
+		family = candidate.zone.definition.family,
+		spawn_origin = origin
 	}
 	state.id_to_zone[created.id] = candidate.key
 	events().fields[candidate.id] = true
@@ -458,6 +560,7 @@ function on_game_load()
 	state.scan_due = time_global()
 	state.zones = {}
 	state.id_to_zone = {}
+	state.ground_ray = nil
 	local data = storage()
 	if data.last_surges == nil then data.last_surges = current_surges() end
 	audit_slots(data)
@@ -478,6 +581,7 @@ function update(now)
 
 	local data = storage()
 	audit_slots(data)
+	recover_fallen_artifacts(data)
 	process_initial_population(data)
 	local surges = current_surges()
 	local previous = math.max(0, math.floor(tonumber(data.last_surges) or surges))
@@ -525,4 +629,4 @@ function debug_runtime_smoke()
 	return current.ready
 end
 
-report("module loaded")
+report("module loaded; ground_guard=v4")

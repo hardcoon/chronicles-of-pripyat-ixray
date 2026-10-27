@@ -1,0 +1,68 @@
+-- Native DCP-style overlap: engine loop begins before the starter tail ends.
+-- No distance checks here; only owned voices and their envelopes.
+local Audio={};Audio.__index=Audio
+function new(config,create_sound,on_engine_started)
+    return setmetatable({cfg=config,create=create_sound,on_engine_started=on_engine_started,events={}},Audio)
+end
+local function stop_voice(event,key)
+    local voice=event.voices[key]
+    if voice then voice.object:stop();event.voices[key]=nil end
+end
+function Audio:finish(id)
+    local event=self.events[id]
+    if event then
+        stop_voice(event,'starter');stop_voice(event,'engine');self.events[id]=nil
+    end
+end
+function Audio:cancel()
+    local ids={};for id in pairs(self.events) do ids[#ids+1]=id end
+    for _,id in ipairs(ids) do self:finish(id) end
+end
+function Audio:start(entry,scenario,now)
+    assert(scenario==1 or scenario==2,'unknown_car_scenario')
+    self:finish(entry.id)
+    local event={entry=entry,scenario=scenario,voices={},started=now,
+        starter_due=now+entry.sound_duration_ms,engine_due=now+entry.engine_start_delay_ms}
+    self.events[entry.id]=event
+    -- The factory registers ownership before calling the native play method.
+    self.create(entry.sound,entry.engine,false,event,'starter')
+end
+function Audio:stop(id,now)
+    local event=self.events[id];if not event or event.fade_started then return end
+    if event.scenario==1 then event.fade_started=now;event.fade_end=now+self.cfg.engine_fade_ms end
+    -- Scenario 2 plays its single starter clip fully, without an idle loop.
+end
+function Audio:shift_time(delta)
+    for _,event in pairs(self.events) do
+        for _,key in ipairs({'started','starter_due','engine_due','fade_started','fade_end'}) do
+            if event[key] then event[key]=event[key]+delta end
+        end
+    end
+end
+function Audio:needs_update()
+    for _,event in pairs(self.events) do
+        if event.voices.starter or event.fade_started or (event.scenario==1 and not event.engine_started) then return true end
+    end
+    return false
+end
+function Audio:step(now)
+    local ids={};for id in pairs(self.events) do ids[#ids+1]=id end;table.sort(ids)
+    for _,id in ipairs(ids) do
+        local event=self.events[id]
+        if event.fade_started then
+            if now>=event.fade_end then self:finish(id)
+            else
+                local gain=math.max(0,math.min(1,1-(now-event.fade_started)/math.max(1,self.cfg.engine_fade_ms)))
+                for _,voice in pairs(event.voices) do voice.object.volume=voice.gain*gain end
+            end
+        else
+            if event.scenario==1 and not event.engine_started and now>=event.engine_due then
+                self.create(event.entry.idle_sound,event.entry.engine,true,event,'engine')
+                event.engine_started=true
+                if self.on_engine_started then self.on_engine_started(id,now) end
+            end
+            if event.voices.starter and now>=event.starter_due then stop_voice(event,'starter') end
+            if event.scenario==2 and not event.voices.starter then self:finish(id) end
+        end
+    end
+end

@@ -190,11 +190,13 @@ end
 
 -- Actor callbacks may overlap UI rendering. Only the native UI dispatcher
 -- creates/closes panels or edits the mount; the actor phase supplies context.
-function update(actor,begin_inspect,end_inspect,can_open)
+function update(actor,begin_inspect,end_inspect,can_open,watch_mount_allowed)
     state.actor=actor;state.begin=begin_inspect;state.finish=end_inspect;state.can_open=can_open
+    -- Suit displays use their fixed bone mount, never a saved watch adjustment.
+    if watch_mount_allowed==false and state.current then state.current=nil;state.profile_poll=0 end
     -- Saved profiles do not require any registered UI window. Apply once per
     -- changed HUD after loading has finished; this phase never allocates a dialog.
-    if actor and actor:alive() and not state.session and app_ready() and device().precache_frame==0 then
+    if watch_mount_allowed~=false and actor and actor:alive() and not state.session and app_ready() and device().precache_frame==0 then
         local now=time_global()
         if now>=(state.profile_poll or 0) then
             state.profile_poll=now+100

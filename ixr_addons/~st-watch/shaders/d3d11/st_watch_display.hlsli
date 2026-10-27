@@ -55,7 +55,7 @@ float3 st_watch_backlight(float2 tc)
     float falloff=.65+.35*exp(-dot(p,p)*1.5);
     return watch_color_params.rgb*.006*falloff*st_watch_grid(tc);
 }
-float3 NixieTime(float2 tc)
+float3 st_watch_mode(float2 tc,float mode)
 {
     float2 uv=(tc-.5)*float2(1.1,-1.1);
     float2 basepos=-float2(1.1,1.6)/6*float2(numberLength(9999),1)*.5;
@@ -81,7 +81,7 @@ float3 NixieTime(float2 tc)
     icon_color+=st_icon(uv,icon_pos+float2(.90,0),16,radiation,.99);
 
     float rad_dist=dfNumber2(basepos+float2(.15,-.3),round(watch_actor_params_1.z),uv*1.3);
-    float3 select=float3(watch_actor_params_1.w==1,watch_actor_params_1.w==2,watch_actor_params_1.w==3);
+    float3 select=float3(mode==1,mode==2,mode==3);
     float dist=dot(select,float3(time_dist,health_dist,rad_dist));
     float footprint=max(fwidth(dist),.0004);
     float shade=.003/sqrt(dist*dist+footprint*footprint*.25);
@@ -90,5 +90,7 @@ float3 NixieTime(float2 tc)
     return min(color,2);
 }
 
+// Preserve the wristwatch entry and its selected mode without changing its layout.
+float3 NixieTime(float2 tc) {return st_watch_mode(tc,watch_actor_params_1.w);}
 float3 st_watch_display(float2 tc) {return NixieTime(tc);}
 #endif

@@ -1,0 +1,46 @@
+; All car timing values are real active-game milliseconds.
+; Night hours and level are shared with [pf_echo_lights], not duplicated here.
+[pf_echo_cars]
+enabled = true
+controller_interval_ms = 1000
+trigger_distance = 25
+rearm_distance = 28
+stop_near_distance = 5
+stop_far_distance = 50
+chance_percent = 15
+; After a successful chance roll: 40% two headlights, 60% one headlight.
+scenario_selection = random
+two_headlights_chance_percent = 40
+headlights_delay_ms = 1000
+; Scenario 1: full lit time from headlights activation, independent of engine.
+headlights_duration_ms = 60000
+; Scenario 1: working engine time from actual DCP loop start, then fade.
+engine_run_duration_ms = 30000
+engine_fade_ms = 2000
+; Active starter/overlap/fade only; distance checks still run once per second.
+audio_update_interval_ms = 50
+light_range = 20
+light_cone_degrees = 65
+light_red = 1
+; Warm incandescent headlight; the visible lens discs remain white.
+light_green = 0.78
+light_blue = 0.45
+sound_max_distance = 200
+sound_volume_multiplier = 1
+debug_log = true
+
+; Native spotlight with no visual/physics. Rotation comes from each exact lamp.
+[pf_echo_car_spot]
+class = SO_HLAMP
+script_binding = pf_echo_car_binder.bind
+remove_time = 0
+damage_immune = true
+
+; Rigid root for R4 rendering; no cform, bone collision shape, physics or AI.
+[pf_echo_car_discs]
+class = SCRPTOBJ
+script_binding = pf_echo_car_binder.bind
+remove_time = 0
+damage_immune = true
+
+#include "pf_echo\car_discs.ltx"

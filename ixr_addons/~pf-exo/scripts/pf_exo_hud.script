@@ -1,0 +1,77 @@
+-- Called once when a native consumable animator starts; no update callback.
+local variants={medkit_use="pf_exo_medkit_use",medkit_use_army="pf_exo_medkit_use",
+    medkit_use_scientic="pf_exo_medkit_use",antirad_use="pf_exo_antirad_use",drug_radioprotector_use="pf_exo_antirad_use"}
+function select_animator(section)
+    local actor=db.actor
+    if not actor or not variants[section] then return section end
+    local outfit=actor:item_in_slot(7)
+    if not outfit then return section end
+    local ini=system_ini()
+    local name=outfit:section()
+    if not ini:line_exist(name,"player_hud_section") then return section end
+    local hud=ini:r_string(name,"player_hud_section")
+    if hud and ini:line_exist(hud,"pf_exo_hud") and ini:r_bool(hud,"pf_exo_hud") then
+        return variants[section]
+    end
+    return section
+end
+
+-- Transient drawer state, read by the existing watch publisher; no callback owner.
+local drawer={started=nil,actor=nil,section=nil,curve=nil}
+local curves={
+    pf_exo_medkit_use={0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.1931697,0.5397346,0.8863314,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,0.0000000},
+    pf_exo_antirad_use={0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.0000000,0.1931697,0.5397346,0.8863314,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,1.0000000,0.0000000},
+}
+function reset_drawer()
+    drawer.started=nil;drawer.actor=nil;drawer.section=nil;drawer.curve=nil
+end
+function on_medical_started()
+    local actor=db.actor
+    if not actor or not actor:is_hud_animator_active() then reset_drawer();return end
+    local section=actor:get_hud_animator_section()
+    if not curves[section] then reset_drawer();return end
+    drawer.started=time_global();drawer.actor=actor;drawer.section=section;drawer.curve=curves[section]
+end
+function drawer_progress(actor,now)
+    if not drawer.started then return 0 end
+    if actor~=drawer.actor or not actor:is_hud_animator_active()
+       or actor:get_hud_animator_section()~=drawer.section or now<drawer.started then
+        reset_drawer();return 0
+    end
+    -- Original OMF block2 translation sampled at 30 fps, linearly interpolated.
+    local frame=(now-drawer.started)*.03
+    local index=math.floor(frame)+1
+    local curve=drawer.curve
+    if index>=#curve then return curve[#curve] end
+    return curve[index]+(curve[index+1]-curve[index])*(frame-math.floor(frame))
+end
+
+local tap_windows={
+    pf_exo_medkit_use={37.9083,43.5597},
+    pf_exo_antirad_use={37.5189,43.0566},
+}
+local display={language=0,language_at=-1000,power_contact_ms=500}
+-- Both retained donor motions share the first side-button press at frame15/30fps.
+-- Later medication-button touch windows below stay independent of screen power.
+function medical_display_on(actor,now)
+    return drawer.started and actor==drawer.actor and now>=drawer.started
+        and actor:is_hud_animator_active() and actor:get_hud_animator_section()==drawer.section
+        and now-drawer.started>=display.power_contact_ms or false
+end
+function display_state(actor,now)
+    local progress=drawer_progress(actor,now)
+    local action=0
+    if drawer.started and progress>=.99 then
+        local frame=(now-drawer.started)*.03
+        local window=tap_windows[drawer.section]
+        if window and frame>=window[1] and frame<window[2] then
+            action=drawer.section=="pf_exo_medkit_use" and 1 or 2
+        end
+    end
+    if now<display.language_at or now-display.language_at>=1000 then
+        display.language_at=now
+        local console=type(get_console)=="function" and get_console()
+        display.language=console and console:get_string("language")=="eng" and 1 or 0
+    end
+    return progress+action*2+display.language*6
+end

@@ -8,16 +8,58 @@ local boosters={
     eBoostBleedingRestore=EBoostParams.eBoostBleedingRestore,
 }
 local function own(actor)
-    return actor and actor:is_hud_animator_active() and actor:get_hud_animator_section()=="pf_st_watch_inspect"
+    if not actor or not actor:is_hud_animator_active() then return false end
+    local section=actor:get_hud_animator_section()
+    return section=="pf_st_watch_inspect" or section==state.active_section
 end
 function on_started()
     if db.actor then db.actor:set_hud_animator_force_hide_items(false) end
     state.started=time_global()
     -- Let the donor's opening motion finish before reversing a quick tap.
-    state.ready=state.started+state.opening
+    state.ready=state.started+(state.active_opening or state.opening)
+end
+-- An explicitly empty watch_visual disables the independent watch mount.
+-- Cache by equipped outfit; no inventory scan or per-frame INI read.
+local function mount_allowed(actor)
+    if not actor then return false end
+    local outfit=actor:item_in_slot(7)
+    local section=outfit and outfit:section() or ""
+    if state.outfit_section~=section then
+        local ini=system_ini()
+        local hud="actor_hud"
+        if outfit and ini:line_exist(section,"player_hud_section") then
+            hud=ini:r_string(section,"player_hud_section") or hud
+        end
+        state.mount_allowed=not ini:line_exist(hud,"watch_visual") or (ini:r_string(hud,"watch_visual") or "")~=""
+        state.inspect_section=nil;state.inspect_opening=nil;state.exo_display=nil
+        if ini:line_exist(hud,"pf_inspect_animator") then
+            state.mount_allowed=false
+            local custom=ini:r_string(hud,"pf_inspect_animator")
+            if custom and custom~="" and ini:line_exist(custom,"anm_show") then
+                state.inspect_section=custom
+                -- Import the private display helper once at a HUD change, so
+                -- language works before the first consumable animation too.
+                if custom=="pf_exo_inspect" then state.exo_display=pf_exo_hud end
+                if ini:line_exist(custom,"inspection_opening_ms") then
+                    state.inspect_opening=ini:r_u32(custom,"inspection_opening_ms")
+                end
+            end
+        end
+        -- A suit screen occupies the native mount, not the independent watch.
+        state.mount_allowed=state.mount_allowed and not state.inspect_section
+        state.outfit_section=section
+    end
+    return state.mount_allowed
+end
+-- A suit panel uses the existing inspect binding independently of watch enabled.
+local function inspection_section(actor,for_editor)
+    if not actor then return nil end
+    local watch=mount_allowed(actor)
+    if not for_editor and state.inspect_section then return state.inspect_section end
+    if watch and pf_st_watch_settings.get().enabled==1 then return "pf_st_watch_inspect" end
 end
 local function available(actor,for_editor)
-    if not actor or not actor:alive() or pf_st_watch_settings.get().enabled~=1 then return false end
+    if not actor or not actor:alive() or not inspection_section(actor,for_editor) then return false end
     local inspecting=own(actor)
     if actor:is_hud_animator_active() and not inspecting then return false end
     if not for_editor and not inspecting and (actor:is_inventory_disabled() or actor:is_pda_disabled()) then return false end
@@ -38,13 +80,16 @@ local function available(actor,for_editor)
 end
 function inspect(for_editor)
     local actor=db.actor
-    if own(actor) and for_editor then state.held=true;state.released=false;return true end
+    if own(actor) and for_editor and actor:get_hud_animator_section()=="pf_st_watch_inspect" then state.held=true;state.released=false;return true end
     if not available(actor,for_editor) or actor:is_hud_animator_active() then return false end
-    state.started=time_global();state.ready=state.started+state.opening
+    state.active_section=inspection_section(actor,for_editor)
+    state.active_opening=state.active_section=="pf_st_watch_inspect" and state.opening or (state.inspect_opening or state.opening)
+    state.active_outfit=state.outfit_section
+    state.started=time_global();state.ready=state.started+state.active_opening
     state.hold_key=pf_st_watch_settings.get().inspect_key
     state.held=true;state.released=false
     actor:set_hud_animator_force_hide_items(true)
-    actor:start_hud_animator("pf_st_watch_inspect")
+    actor:start_hud_animator(state.active_section)
     return true
 end
 function release()
@@ -53,21 +98,50 @@ end
 local function reset()
     pf_st_watch_editor.reset()
     state.held=false;state.released=false;state.started=0;state.ready=0;state.last_data=0;state.bound=nil
-    state.pending_key=0;state.pending_at=0;state.visible=nil
+    state.pending_key=0;state.pending_at=0;state.pending_outfit=nil;state.visible=nil
+    state.outfit_section=nil;state.mount_allowed=nil;state.inspect_section=nil;state.inspect_opening=nil;state.exo_display=nil
+    state.active_section=nil;state.active_opening=nil;state.active_outfit=nil
+    state.actor_params=nil;state.drawer_progress=nil
+    local exo=rawget(_G,"pf_exo_hud")
+    if exo and type(exo.reset_drawer)=="function" then exo.reset_drawer() end
 end
 local function boosted(actor,name)
     local enum=boosters[name]
     return type(enum)=="number" and actor:is_booster_influence(enum)
 end
 local function publish(actor,now)
+    local settings=pf_st_watch_settings.get()
+    local mount=mount_allowed(actor)
+    local visible=settings.enabled==1 and mount
+    local display_visible=visible or state.inspect_section~=nil
+    if state.visible~=display_visible and player_hud and type(player_hud.set_watch_visible)=="function" then
+        if player_hud.set_watch_visible(display_visible) then state.visible=display_visible end
+    end
+    -- Only the suit screen uses W as drawer travel; wristwatch modes stay 1..3.
+    local progress=0
+    if state.inspect_section then
+        local exo=state.exo_display
+        if exo and type(exo.display_state)=="function" then progress=exo.display_state(actor,now) end
+        -- An opaque dark pane covers the old donor bitmap even when powered off.
+        -- A powered-off screen turns on at the donor side-button contact, then stays on until treatment ends.
+        if state.inspect_section=="pf_exo_inspect" and settings.exo_enabled==0
+           and not (exo and type(exo.medical_display_on)=="function" and exo.medical_display_on(actor,now)) then
+            progress=progress+12
+        end
+    end
+    local mode=state.inspect_section and progress or settings.mode
+    -- Smooth travel needs frame-rate publication of this one cached vector only.
+    if type(set_watch_shader_param)=="function" and state.actor_params
+       and state.drawer_progress~=mode and now-state.last_data<100 then
+        local p=state.actor_params
+        set_watch_shader_param("watch_actor_params_1",p[1],p[2],p[3],mode)
+        state.drawer_progress=mode
+    end
+    -- Outfit changes affect visibility immediately; data keeps its 100 ms rate.
     if type(set_watch_shader_param)~="function" or now-state.last_data<100 then return end
     state.last_data=now
-    local settings=pf_st_watch_settings.get()
-    local visible=settings.enabled==1
-    if state.visible~=visible and player_hud and type(player_hud.set_watch_visible)=="function" then
-        if player_hud.set_watch_visible(visible) then state.visible=visible end
-    end
-    if not visible then return end
+    -- The exoskeleton shares live data while its independent watch stays hidden.
+    if not visible and not state.inspect_section then return end
     local _,_,_,h,m,s=game.get_game_time():get()
     -- The watch-only vector's unused W carries the independent background level.
     -- Its XYZ remain hours/minutes/seconds; no global lighting commands are changed.
@@ -75,7 +149,10 @@ local function publish(actor,now)
     local radiation=math.max(0,actor.radiation)*500
     local protection=math.max(0,math.min(1,(500-radiation)/400))
     if boosted(actor,"eBoostRadiationProtection") or boosted(actor,"eBoostRadiationRestore") then protection=-1 end
-    set_watch_shader_param("watch_actor_params_1",actor.health,protection,radiation,settings.mode)
+    state.actor_params=state.actor_params or {}
+    local p=state.actor_params;p[1]=actor.health;p[2]=protection;p[3]=radiation
+    set_watch_shader_param("watch_actor_params_1",p[1],p[2],p[3],mode)
+    state.drawer_progress=mode
     -- Reuse the dynamic weight module's equipment-aware thresholds and cache.
     -- rawget avoids importing a module from the actor update path.
     local weight_system=rawget(_G,"pf_progressive_overweight")
@@ -94,9 +171,19 @@ local function publish(actor,now)
     set_watch_shader_param("watch_actor_params_2",needs,psy,overweight,bleeding)
     set_watch_shader_param("watch_color_params",settings.red,settings.green,settings.blue,settings.brightness)
 end
-local function cycle_mode()
-    if not available(db.actor) then return false end
-    if pf_st_watch_settings.next_mode() then
+local function cycle_mode(dik)
+    local actor=db.actor
+    local mount=mount_allowed(actor)
+    local changed
+    if state.inspect_section=="pf_exo_inspect" then
+        -- Use the same configurable mode binding as the watch.
+        if dik~=pf_st_watch_settings.get().mode_key or not available(actor) then return false end
+        changed=pf_st_watch_settings.toggle_exo_display()
+    else
+        if pf_st_watch_settings.get().enabled~=1 or not mount or not available(actor) then return false end
+        changed=pf_st_watch_settings.next_mode()
+    end
+    if changed then
         if not state.sound then state.sound=sound_object("st_watch\\mode") end
         state.sound:play(db.actor,0,sound_object.s2d)
     end
@@ -104,24 +191,27 @@ local function cycle_mode()
 end
 local function key_press(dik)
     local settings=pf_st_watch_settings.get()
-    if settings.enabled~=1 then return end
-    if settings.editor_key>0 and dik==settings.editor_key then return pf_st_watch_editor.request() end
+    if not inspection_section(db.actor) then return end
+    if settings.editor_key>0 and dik==settings.editor_key then
+        if settings.enabled==1 and mount_allowed(db.actor) then return pf_st_watch_editor.request() end
+        return false
+    end
     if dik==settings.inspect_key then
         if state.pending_key~=0 or state.held then return true end
         if settings.inspect_key==settings.mode_key then
             if not available(db.actor) then return false end
-            state.pending_key=dik;state.pending_at=time_global()
+            state.pending_key=dik;state.pending_at=time_global();state.pending_outfit=state.outfit_section
             return true
         end
         return inspect()
     end
-    if dik==settings.mode_key then return cycle_mode() end
+    if dik==settings.mode_key then return cycle_mode(dik) end
 end
 local function key_release(dik)
     if dik==state.pending_key then
         local tap=time_global()-state.pending_at<hold_ms
         state.pending_key=0;state.pending_at=0
-        if tap then cycle_mode() end
+        if tap then cycle_mode(dik) end
         return
     end
     if dik==state.hold_key or dik==pf_st_watch_settings.get().inspect_key then release() end
@@ -174,8 +264,9 @@ local function update()
     hook_input_owner()
     local now=time_global()
     publish(actor,now)
-    local editing=pf_st_watch_editor.update(actor,inspect_for_editor,release,available(actor))
-    if pf_st_watch_settings.get().enabled~=1 then
+    local editing=pf_st_watch_editor.update(actor,inspect_for_editor,release,mount_allowed(actor) and available(actor),mount_allowed(actor))
+    local target=inspection_section(actor)
+    if not target or (own(actor) and (actor:get_hud_animator_section()~=target or (state.active_outfit and state.active_outfit~=state.outfit_section))) then
         state.pending_key=0;state.held=false
         if own(actor) then actor:close_hud_animator() end
         return
@@ -183,7 +274,7 @@ local function update()
     if editing~=nil then state.pending_key=0;if editing then state.held=true end end
     if state.pending_key~=0 then
         local settings=pf_st_watch_settings.get()
-        if settings.inspect_key~=state.pending_key or settings.mode_key~=state.pending_key or not available(actor) then
+        if settings.inspect_key~=state.pending_key or settings.mode_key~=state.pending_key or state.pending_outfit~=state.outfit_section or not available(actor) then
             state.pending_key=0
         elseif now-state.pending_at>=hold_ms then
             state.pending_key=0;inspect()

@@ -1,6 +1,6 @@
 -- Persistent observations, independent of game saves. Presence is never saved.
 -- The optional fifth log field "op" retains the last observed channel role.
-local state = { records = {}, seen = {}, loaded = false, revision = 0 }
+local state = { records = {}, by_network = {}, by_nick = {}, live = {}, seen = {}, loaded = false, revision = 0 }
 local impl = {}
 
 function impl.fold(text)
@@ -43,6 +43,24 @@ function impl.strength(identity)
     return 1
 end
 
+function impl.serialize(record)
+    if not record.serialized_line then
+        record.serialized_line = table.concat({impl.escape(record.network), impl.escape(record.identity),
+            impl.escape(record.nick), record.payload}, "\t") .. (record.operator and "\top" or "")
+    end
+    return record.serialized_line
+end
+
+function impl.unindex(record, key)
+    local network = state.by_nick[record.network]
+    local nick = canonical_nick(record.nick)
+    local bucket = network and network[nick]
+    if bucket then
+        bucket[key] = nil
+        if next(bucket) == nil then network[nick] = nil end
+    end
+end
+
 function impl.put(network, identity, nick, payload)
     if not impl.valid(network, 260) or not impl.valid(identity, 260) or not impl.valid(nick, 128) then return end
     local values = payload ~= "-" and pf_player_stats_wire.decode(payload) or nil
@@ -57,23 +75,34 @@ function impl.put(network, identity, nick, payload)
     local weak_key = impl.key(network, "nick:" .. canonical_nick(nick))
     local weak = key ~= weak_key and state.records[weak_key] or nil
     if weak then
+        impl.unindex(weak, weak_key)
         -- This is an exact current nickname, never a guessed suffix match.
         -- Different confirmed identities are never absorbed by this path.
         record = record or weak
-        if weak.current_values then
+        if weak.current_payload then
             record.values, record.payload = weak.current_values, weak.current_payload
         end
         if weak.operator then record.operator = true end
         state.records[weak_key] = nil
+        if state.by_network[network] then state.by_network[network][weak_key] = nil end
         changed = true
     end
     record = record or {}
+    if record.nick and (record.nick ~= nick or record.identity ~= identity) then impl.unindex(record, key) end
     changed = changed or record.nick ~= nick or record.identity ~= identity or
         (values ~= nil and record.payload ~= payload)
     record.network, record.identity, record.nick = network, identity:lower(), nick
     if values or not record.payload then record.payload, record.values = payload, values end
     record.presence = record.presence or "offline"
+    if changed then record.serialized_line = nil end
+    impl.serialize(record)
     state.records[key] = record
+    state.by_network[network] = state.by_network[network] or {}
+    state.by_network[network][key] = record
+    state.by_nick[network] = state.by_nick[network] or {}
+    local folded = canonical_nick(nick)
+    state.by_nick[network][folded] = state.by_nick[network][folded] or {}
+    state.by_nick[network][folded][key] = record
     return record, key, changed
 end
 
@@ -101,13 +130,15 @@ function impl.load()
             if network then
                 local record = impl.put(impl.unescape(network), impl.unescape(identity),
                     impl.unescape(nick), payload)
-                if record and role == "op" then record.operator = true end
+                if record and role == "op" then record.operator = true; record.serialized_line = nil end
             end
         end
     end
 end
 
-function impl.changed()
+function impl.changed(record)
+    if record then record.serialized_line = nil end
+    if not state.dirty then state.flush_after = (time_global and time_global() or 0) + 5000 end
     state.dirty = true
 end
 
@@ -135,7 +166,8 @@ function impl.observe_role(record, roles)
     local operator = nick == true or identity == true
     if (record.operator == true) ~= operator then
         record.operator = operator
-        impl.changed()
+        impl.changed(record)
+        return true
     end
 end
 
@@ -153,7 +185,8 @@ end
 function sync(profile, channels)
     impl.load()
     local network = impl.network(profile)
-    local signature, seen = {}, {}
+    local view_changed, seen = false, {}
+    local live = {}
     local confirmed = {}
     for _, channel in pairs(channels or {}) do
         if channel.ready then
@@ -169,7 +202,7 @@ function sync(profile, channels)
     -- Gather all channels before applying roles: operator in any joined
     -- channel wins, regardless of channel iteration order.
     local roles = impl.roles(channels, confirmed)
-    for _, record in pairs(state.records) do record.next_presence = "offline" end
+    for record in pairs(state.live) do record.next_presence = "offline" end
     for channel_key, channel in pairs(channels or {}) do
         if channel.ready then
             for _, user in pairs(channel.users or {}) do
@@ -184,8 +217,9 @@ function sync(profile, channels)
                         identity = confirmed[canonical_nick(nick)] or identity
                     end
                     local record, _, changed = impl.put(network, identity, nick, "-")
-                    if changed then impl.changed() end
+                    if changed then impl.changed(); view_changed = true end
                     if record then
+                        live[record] = true
                         if record.next_presence ~= "online" then
                             record.next_presence = user.presence == "away" and "away" or "online"
                         end
@@ -195,9 +229,16 @@ function sync(profile, channels)
                         if payload ~= state.seen[source] then
                             local values = pf_player_stats_wire.decode(payload)
                             if values then
-                                if payload ~= record.payload then impl.changed() end
+                                if payload ~= record.payload then impl.changed(record); view_changed = true end
                                 record.payload, record.values = payload, values
                                 record.current_payload, record.current_values = payload, values
+                            elseif user.presence == "away" and type(payload) == "string" and payload ~= "" then
+                                -- An explicit non-game/invalid AWAY (including the spawner
+                                -- fallback) withdraws old data and appearance. Online clears
+                                -- AWAY normally, so an empty Online reason retains the cache.
+                                if record.payload ~= "-" then impl.changed(record); view_changed = true end
+                                record.payload, record.values = "-", nil
+                                record.current_payload, record.current_values = "-", nil
                             end
                         end
                     end
@@ -206,17 +247,28 @@ function sync(profile, channels)
         end
     end
     state.seen = seen
-    for key, record in pairs(state.records) do
-        -- Also classify old cached entries by their exact IRC nickname. This
-        -- changes visibility only, without merging or discarding identities.
-        if record.network == network then impl.observe_role(record, roles) end
-        record.presence = record.next_presence or "offline"
-        signature[#signature + 1] = key .. record.nick .. record.payload .. record.presence ..
-            (record.operator and "op" or "")
+    -- Presence needs only previously/currently connected records, not the
+    -- thousands of offline historical identities in the cache.
+    for record in pairs(state.live) do
+        if not live[record] then
+            if record.presence ~= "offline" then view_changed = true end
+            record.presence, record.next_presence = "offline", "offline"
+        end
     end
-    table.sort(signature)
-    local current = table.concat(signature, "\n")
-    if current ~= state.signature then state.signature = current; state.revision = state.revision + 1 end
+    for record in pairs(live) do
+        if record.presence ~= (record.next_presence or "offline") then view_changed = true end
+        record.presence = record.next_presence or "offline"
+    end
+    state.live = live
+    -- Preserve role classification of old cached entries sharing a currently
+    -- visible nickname, using the nickname index instead of a history scan.
+    for nick in pairs(roles.nicks) do
+        local index = state.by_nick[network]
+        for _, record in pairs(index and index[nick] or {}) do
+            if impl.observe_role(record, roles) then view_changed = true end
+        end
+    end
+    if view_changed then state.revision = state.revision + 1 end
 end
 
 -- COPID is the bridge's advertised install GUID; other IRC identities do not
@@ -231,8 +283,8 @@ end
 function records(profile)
     impl.load()
     local network, result = impl.network(profile), {}
-    for _, record in pairs(state.records) do
-        if record.network == network and has_copid(record.identity) and not record.operator then
+    for _, record in pairs(state.by_network[network] or {}) do
+        if has_copid(record.identity) and not record.operator then
             result[#result + 1] = record
         end
     end
@@ -350,22 +402,19 @@ end
 
 function revision() return state.revision end
 
-function flush()
+function flush(defer)
     if not state.dirty or state.read_only then return true end
     local now = time_global and time_global() or 0
     if now < (state.retry_after or 0) then return false end
-    local lines = { "PF_STATS_1" }
+    -- The periodic tick batches writes. Explicit/default flush remains immediate
+    -- for disconnect, save/load, shutdown and callers of the existing API.
+    if defer and now < (state.flush_after or 0) then return true end
+    local lines = {}
     for _, record in pairs(state.records) do
-        local line = table.concat({ impl.escape(record.network), impl.escape(record.identity),
-            impl.escape(record.nick), record.payload }, "\t")
-        lines[#lines + 1] = line .. (record.operator and "\top" or "")
+        lines[#lines + 1] = impl.serialize(record)
     end
-    table.sort(lines, function(a, b)
-        if a == "PF_STATS_1" then return true end
-        if b == "PF_STATS_1" then return false end
-        return a < b
-    end)
-    local content = table.concat(lines, "\r\n") .. "\r\n"
+    table.sort(lines)
+    local content = "PF_STATS_1\r\n" .. table.concat(lines, "\r\n") .. "\r\n"
     if #content > 8 * 1024 * 1024 then state.read_only = true; return false end
     local temporary = state.path .. ".tmp"
     local file = io.open(temporary, "wb")
@@ -383,7 +432,7 @@ function flush()
             end
         end
         -- Atomic replacement: failure leaves the previous file intact.
-        ok = state.kernel and state.kernel.MoveFileExA(temporary, state.path, 9) ~= 0
+        ok = state.kernel and state.kernel.MoveFileExA(temporary, state.path, defer and 1 or 9) ~= 0
     end
     if ok then state.dirty = false; return true end
     state.retry_after = now + 5000

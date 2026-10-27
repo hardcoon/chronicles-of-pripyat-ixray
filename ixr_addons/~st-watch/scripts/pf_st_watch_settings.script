@@ -1,7 +1,7 @@
 -- Installation settings; no changes to save-game packets or global controls.
 local state={value=nil}
-local defaults={enabled=1,red=.65,green=.45,blue=.25,brightness=5,backlight=11,mode=1,inspect_key=226,mode_key=339,editor_key=0}
-local order={"enabled","red","green","blue","brightness","backlight","mode","inspect_key","mode_key","editor_key"}
+local defaults={enabled=1,exo_enabled=1,red=.65,green=.45,blue=.25,brightness=4,backlight=11,mode=1,inspect_key=226,mode_key=339,editor_key=0}
+local order={"enabled","exo_enabled","red","green","blue","brightness","backlight","mode","inspect_key","mode_key","editor_key"}
 local function path() return getFS():update_path("$app_data_root$","pf_st_watch.setting") end
 local function normalized(value)
     local result={}
@@ -10,6 +10,7 @@ local function normalized(value)
         result[key]=math.max(0,math.min(1,result[key]))
     end
     result.enabled=result.enabled==1 and 1 or 0
+    result.exo_enabled=result.exo_enabled==1 and 1 or 0
     result.mode=math.max(1,math.min(3,math.floor(result.mode)))
     result.brightness=math.max(.25,math.min(6,result.brightness))
     result.backlight=math.max(0,math.min(30,result.backlight))
@@ -39,7 +40,11 @@ function get()
     return normalized(state.value)
 end
 function save(value)
+    -- The existing options form does not edit the exo power button state.
+    local exo_enabled=value.exo_enabled
+    if exo_enabled==nil then exo_enabled=get().exo_enabled end
     value=normalized(value)
+    value.exo_enabled=tonumber(exo_enabled)==1 and 1 or 0
     local file=io.open(path(),"w")
     if not file then printf("! [st_watch] Cannot save settings");return false end
     local lines={}
@@ -53,6 +58,11 @@ end
 function next_mode()
     local value=get()
     value.mode=value.mode%3+1
+    return save(value)
+end
+function toggle_exo_display()
+    local value=get()
+    value.exo_enabled=value.exo_enabled==1 and 0 or 1
     return save(value)
 end
 function key_name(dik)

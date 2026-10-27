@@ -1,0 +1,25 @@
+function bind(object) object:bind_object(car_effect_binder(object)) end
+class 'car_effect_binder' (object_binder)
+function car_effect_binder:__init(object) super(object) end
+function car_effect_binder:net_spawn(server)
+    if not object_binder.net_spawn(self,server) then return false end
+    -- CHangingLamp invokes this callback through its base net_Spawn before
+    -- constructing light_render. The wrapper is present, but is not ready.
+    self.initialize_pending=true
+    self.static_pending=self.object:section()=='pf_echo_car_spot'
+    return true
+end
+function car_effect_binder:update(delta)
+    object_binder.update(self,delta)
+    if not self.initialize_pending then return end
+    if self.static_pending then
+        local lamp=self.object:get_hanging_lamp()
+        -- A false result means native initialization has not finished yet.
+        if not lamp or not lamp:set_lighting_features(false,false) then return end
+        self.static_pending=false
+    end
+    -- Restored-source cleanup can call turn_off(), so it must also wait until
+    -- the native spawn is complete. Announce the source only once.
+    pf_echo_cars.on_source_online(self.object:id())
+    self.initialize_pending=false
+end

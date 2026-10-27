@@ -77,7 +77,8 @@ function settings()
 			"spawn_settings", "empty_zone_cooldown_emissions", 1
 		))),
 		actor_exclusion_radius = math.max(0, number("spawn_settings", "actor_exclusion_radius", 120)),
-		spawn_height = number("spawn_settings", "spawn_height", 0.25),
+		spawn_height = math.max(0.5, number("spawn_settings", "spawn_height", 1.0)),
+		recovery_depth = math.max(0.25, number("spawn_settings", "recovery_depth", 0.75)),
 		update_interval_ms = math.max(100, math.floor(number("spawn_settings", "update_interval_ms", 1000))),
 		scan_retry_ms = math.max(1000, math.floor(number("spawn_settings", "scan_retry_ms", 5000))),
 		seed = math.max(1, math.floor(number("spawn_settings", "seed", 24681357)))

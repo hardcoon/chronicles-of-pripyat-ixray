@@ -76,7 +76,7 @@ function update()
     end
     local revision = pf_pda_player_stats.revision()
     if revision ~= st.revision then
-        -- Only currently connected peers with real CP2 statistics. Cached
+        -- Only currently connected peers with a transmitted rank. Cached
         -- offline entries, our own card and data-less IRC clients never spawn.
         st.rows = pf_pda_player_stats.get_rows({online_only = true})
         st.revision = revision
@@ -87,7 +87,8 @@ function update()
         st.cursor = st.cursor % #st.rows + 1
         if not row.own and pf_player_stats_cache.has_copid(row.identity)
             and (row.presence == "online" or row.presence == "away") and row.rank ~= nil then
-            local record, reason = pf_pa_world.spawn_irc(row.identity, row.nick, row.rank, row.irc_nick)
+            local record, reason = pf_pa_world.spawn_irc(row.identity, row.nick, row.rank, row.irc_nick,
+                row.values and row.values.armor_id)
             if record then
                 break -- At most one creation per second, spread across the map.
             end

@@ -200,7 +200,9 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
     -- "system", but a non-empty sender still makes them ordinary chat rows.
     local has_sender = tostring(message.nick or "") ~= ""
     local is_system = message.kind == "system" and not has_sender
-    self.body = xml:InitTextWnd(is_system and "message_row:system_body" or "message_row:body", self)
+    local is_service = not has_sender and
+        (message.kind == "system" or message.kind == "warning" or message.kind == "error")
+    self.body = xml:InitTextWnd(is_service and "message_row:system_body" or "message_row:body", self)
     local row_width = math.max(20, math.floor(self:GetWidth()))
     local show_header = has_sender and not grouped
     self.mention_nick = show_header and not message.own and tostring(message.nick or "") or ""
@@ -268,7 +270,7 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
         local icon_width = (emoji_width or 14) * icon_height / (emoji_height or 14)
         self.rich_renderer = pf_irc_emoji_view.create(self.rich_body, GetFontLetterica16Russian(),
             icon_width, icon_height, line_height)
-        body_height = self.rich_renderer:render(raw_text, body_width, color, { center = is_system, allow_colors = true })
+        body_height = self.rich_renderer:render(raw_text, body_width, color, { center = false, allow_colors = true })
         self.rich_body:SetWndSize(vector2():set(body_width, body_height))
         self:SetWndSize(vector2():set(row_width, body_y + body_height))
     end
@@ -550,8 +552,11 @@ function pf_irc_chat_tab:__init() super()
     self.disconnect_button = xml:Init3tButton("chat:disconnect", self.chat)
     xml:InitTextWnd("chat:status_label", self.chat)
     self.status_value = xml:InitTextWnd("chat:status_value", self.chat)
+    self.status_value:SetEllipsis(true)
     self.actual_nick = xml:InitTextWnd("chat:actual_nick", self.chat)
+    self.actual_nick:SetEllipsis(true)
     self.topic = xml:InitTextWnd("chat:topic", self.chat)
+    self.topic:SetEllipsis(true)
     xml:InitFrameLine("chat:private_divider", self.chat)
     xml:InitFrameLine("chat:users_divider", self.chat)
     xml:InitFrameLine("chat:input_divider", self.chat)
@@ -1033,6 +1038,16 @@ function pf_irc_chat_tab:Update()
 end
 
 function pf_irc_chat_tab:Pulse()
+    -- Network/history state keeps advancing in the runtime. Native message
+    -- and participant widgets need rebuilding only while this page is visible.
+    if not self:InputScope() then
+        if self.last_input_scope ~= nil then
+            self:ReleaseInlineInput()
+            self.last_input_scope = nil
+        end
+        if self.input_fields then self.input_fields:update(nil) end
+        return
+    end
     local state = pf_irc_chat.get_state()
     if state.revision ~= self.last_revision then self:Refresh(false) end
     self:PollHistoryPaging(state)

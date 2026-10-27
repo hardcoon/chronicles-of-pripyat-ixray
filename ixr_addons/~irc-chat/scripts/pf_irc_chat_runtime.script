@@ -872,6 +872,8 @@ local function upsert_user(nick, identity, prefix, presence, target, silent, awa
     target = target or runtime.users
     local key = user_key(nick)
     local current = target[key] or make_user(nick, identity, prefix, presence)
+    local before = target[key] and (current.nick .. "\t" .. current.identity .. "\t" .. current.prefix ..
+        "\t" .. current.presence .. "\t" .. tostring(current.muted)) or nil
     current.nick = nick
     if trim(identity) ~= "" then current.identity = trim(identity):lower() end
     if prefix ~= nil then current.prefix = trim(prefix) end
@@ -881,7 +883,10 @@ local function upsert_user(nick, identity, prefix, presence, target, silent, awa
     current.muted = pf_irc_chat_config.is_muted(current.identity)
     if away_message ~= nil then current.away_message = tostring(away_message) end
     target[key] = current
-    if not silent then touch() end
+    -- AWAY payload changes affect statistics, not the visible chat roster.
+    local after = current.nick .. "\t" .. current.identity .. "\t" .. current.prefix ..
+        "\t" .. current.presence .. "\t" .. tostring(current.muted)
+    if not silent and before ~= after then touch() end
 end
 
 local function remove_user(nick, channel)
@@ -1297,6 +1302,8 @@ local function connect_current_profile()
 end
 
 local function update_impl()
+    -- Finish deferred cache writes even while reconnecting or disconnected.
+    pf_pda_player_stats.flush(true)
     if not is_enabled() then return end
     if not db or not db.actor then return end
     local now = time_global and time_global() or 0
@@ -1334,7 +1341,7 @@ local function update_impl()
         end
         return
     end
-    for _, fields in ipairs(pf_irc_chat_transport.poll(64)) do
+    for _, fields in ipairs(pf_irc_chat_transport.poll(8)) do
         if not handle_event(fields) then break end
     end
     local marked = pf_pda_player_stats.developer_marked()
@@ -1343,11 +1350,19 @@ local function update_impl()
         runtime.stats_packet = nil
         runtime.presence_dirty = true
     end
+    if now >= (runtime.next_stats_check_ms or 0) then
+        runtime.next_stats_check_ms = now + 1000
+        local packet = pf_pda_player_stats.packet()
+        if packet ~= runtime.stats_packet then
+            runtime.stats_packet = packet
+            runtime.presence_dirty = true
+        end
+    end
     flush_presence()
-    if runtime.stats_users_dirty then
+    if runtime.stats_users_dirty and now >= (runtime.next_stats_sync_ms or 0) then
         runtime.stats_users_dirty = false
+        runtime.next_stats_sync_ms = now + 300
         pf_pda_player_stats.sync(pf_irc_chat_config.get_active_profile(), runtime.channels)
-        pf_pda_player_stats.flush()
     end
 end
 
@@ -1376,6 +1391,8 @@ function on_game_load()
     local stats_ui = rawget(_G, "pf_player_stats_ui")
     if stats_ui then stats_ui.on_game_load() end
     runtime.stats_packet, runtime.stats_sent = nil, nil
+    runtime.next_stats_check_ms = 0
+    runtime.next_stats_sync_ms = 0
     local pda_ui = rawget(_G, "pf_irc_chat_pda")
     if pda_ui and pda_ui.on_game_load then pcall(pda_ui.on_game_load) end
     -- A save/load invalidates both C++ UI wrappers and the level Lua context.
@@ -1394,6 +1411,7 @@ function on_game_load()
 end
 
 local function prepare_ui_for_game_reload()
+    pf_pda_player_stats.flush()
     local stats_ui = rawget(_G, "pf_player_stats_ui")
     if stats_ui and stats_ui.before_game_reload then
         local ok, cleared = pcall(stats_ui.before_game_reload)

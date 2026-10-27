@@ -1,6 +1,7 @@
 -- Local counters and persistent IRC observations for the PDA player cards.
 local tiers = { "green", "cyan", "purple", "orange", "red" }
 local tier_weights = { 1, 2, 3, 5, 10 }
+local appearance_state = { revision = 0 }
 local sort_indices = { mutants = 1, stalkers = 2, days = 3, stashes = 4, artifacts = 5 }
 local sort_options = {
     { key = "sort_field", default = "rank", values = { "rank", "mutants", "stalkers", "days", "artifacts", "stashes" } },
@@ -50,6 +51,19 @@ function developer_marked()
          xr_logic.pstor_retrieve(actor, "pf_spawner_used", false) == true)
 end
 
+local function local_appearance()
+    local actor, avatar, armor = db.actor, 0, 0
+    avatar = pf_player_appearance.local_avatar()
+    -- Ask the engine for the equipped outfit; LTX and Lua slot IDs differ.
+    -- The transport calls packet at most once per second, not every frame.
+    local ok, section = pcall(function()
+        local outfit = actor:get_current_outfit()
+        return outfit and outfit:section() or nil
+    end)
+    if ok then armor = pf_player_appearance.outfit_id(section) end
+    return avatar, armor
+end
+
 function local_values()
     if not db or not db.actor then return nil end
     if developer_marked() then return { no_data = true } end
@@ -66,13 +80,15 @@ function local_values()
         count(game.get_game_time():diffSec(level.get_start_time()) / 86400),
         total, count(stats.artefacts_founded) }
     values[6] = values[1] + values[2] + values[3] + values[5] + stash_score
+    values.avatar_id, values.armor_id = local_appearance()
     return values
 end
 
 function packet()
     local values = local_values()
-    if values and values.no_data then return "" end
-    return values and pf_player_stats_wire.encode(values) or nil
+    local payload = values and (values.no_data and "" or pf_player_stats_wire.encode(values)) or nil
+    appearance_state.packet = payload
+    return payload
 end
 
 function rank(values) return values and pf_player_stats_wire.rank(values) or nil end
@@ -158,8 +174,17 @@ function bind_self(nick)
 end
 
 function sync(profile, channels) return pf_player_stats_cache.sync(profile, channels) end
-function flush() return pf_player_stats_cache.flush() end
-function revision() return pf_player_stats_cache.revision() * 2 + (developer_marked() and 1 or 0) end
+function flush(defer) return pf_player_stats_cache.flush(defer) end
+function revision()
+    local signature = tostring(pf_player_stats_cache.revision()) .. ":" ..
+        tostring(appearance_state.packet) .. ":" .. tostring(developer_marked()) .. ":" ..
+        tostring(pf_player_appearance.local_avatar())
+    if signature ~= appearance_state.signature then
+        appearance_state.signature = signature
+        appearance_state.revision = appearance_state.revision + 1
+    end
+    return appearance_state.revision
+end
 
 function get_stat(index)
     -- Cards now live in a scroll view attached to the existing native ranking page.

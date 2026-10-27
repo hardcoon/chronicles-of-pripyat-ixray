@@ -1,4 +1,4 @@
--- Modal owned by the options dialog. Drafts never change game/profile state.
+-- Schedule drafts do not change profiles; bulk lamp actions apply immediately.
 local active=nil
 local tr=pf_interiors.translate
 local function clock(minutes)
@@ -52,6 +52,8 @@ function dialog:__init(owner) super()
     self.lights_off=xml:Init3tButton("main:lights_off",self)
     local callbacks={lights_on=function() self:SetLights(true) end,
         lights_off=function() self:SetLights(false) end,
+        lights_static=function() self:SetLightMode("static") end,
+        lights_dynamic=function() self:SetLightMode("dynamic") end,
         apply=function() self:Apply() end,cancel=function() self:Close() end,close=function() self:Close() end}
     for key,fn in pairs(callbacks) do
         local button=self[key] or xml:Init3tButton("main:"..key,self)
@@ -139,12 +141,19 @@ end
 function dialog:RefreshAvailability()
     local ready=pf_interiors_menu.available()
     self.lights_on:Enable(ready);self.lights_off:Enable(ready)
+    self.lights_static:Enable(ready);self.lights_dynamic:Enable(ready)
 end
 function dialog:SetLights(enabled)
     if not pf_interiors_menu.available() then return end
     local ok,count=xpcall(function() return pf_hf_light_controls.set_lights(enabled) end,debug.traceback)
     if not ok then pf_interiors.report("bulk lights failed: "..tostring(count));return end
     self.status:SetText(tr(enabled and "pf_interiors_lights_on_count" or "pf_interiors_lights_off_count",count))
+end
+function dialog:SetLightMode(mode)
+    if not pf_interiors_menu.available() then return end
+    local ok,count=xpcall(function() return pf_hf_light_controls.set_light_mode(mode) end,debug.traceback)
+    if not ok then pf_interiors.report("bulk light mode failed: "..tostring(count));return end
+    self.status:SetText(tr(mode=="static" and "pf_interiors_lights_static_count" or "pf_interiors_lights_dynamic_count",count))
 end
 function dialog:Apply()
     self:ReadDraft()

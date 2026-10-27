@@ -1,0 +1,298 @@
+-- City car scares: one-second distance checks, one active event.
+local SPOT='pf_echo_car_spot'
+local s={owned={},pending={},ticks=0}
+local cfg,registered,sync_schedule,audio_update
+local function vec(p) return vector():set(p[1],p[2],p[3]) end
+local function pos(v) return {v.x,v.y,v.z} end
+local function enabled() return cfg.enabled and pf_city_horrors_settings.is_enabled() end
+local function read_settings()
+    local ini,section=system_ini(),'pf_echo_cars'
+    local function number(key,default,low,high,source)
+        source=source or section
+        local n=ini:line_exist(source,key) and tonumber(ini:r_string(source,key)) or default
+        if not n or n~=n or n==math.huge or n==-math.huge then n=default end
+        return math.max(low,math.min(high,n))
+    end
+    cfg={enabled=ini:r_bool(section,'enabled'),level=ini:r_string('pf_echo_lights','level'),
+        interval=number('controller_interval_ms',1000,1000,60000),
+        trigger_distance=number('trigger_distance',25,1,100),rearm_distance=number('rearm_distance',28,2,150),
+        stop_near_distance=number('stop_near_distance',5,0,99),stop_far_distance=number('stop_far_distance',50,2,1000),
+        engine_fade_ms=number('engine_fade_ms',2000,0,60000),audio_interval=number('audio_update_interval_ms',50,25,250),
+        scenario_selection=ini:line_exist(section,'scenario_selection') and ini:r_string(section,'scenario_selection') or 'random',
+        chance_percent=number('chance_percent',15,0,100),
+        two_headlights_chance_percent=number('two_headlights_chance_percent',40,0,100),
+        headlights_delay_ms=number('headlights_delay_ms',1000,0,60000),
+        headlights_duration_ms=number('headlights_duration_ms',60000,1,600000),
+        engine_run_duration_ms=number('engine_run_duration_ms',30000,1,600000),
+        start_hour=number('start_hour',0,0,23,'pf_echo_lights'),end_hour=number('end_hour',5,0,24,'pf_echo_lights'),
+        range=number('light_range',20,.1,100),cone=number('light_cone_degrees',65,1,120),
+        red=number('light_red',1,0,1),green=number('light_green',.78,0,1),blue=number('light_blue',.45,0,1),
+        sound_distance=number('sound_max_distance',200,1,1000),volume=number('sound_volume_multiplier',1,0,4),
+        debug=ini:r_bool(section,'debug_log')}
+    cfg.rearm_distance=math.max(cfg.rearm_distance,cfg.trigger_distance+1)
+    cfg.stop_near_distance=math.min(cfg.stop_near_distance,cfg.trigger_distance-1)
+    cfg.stop_far_distance=math.max(cfg.stop_far_distance,cfg.rearm_distance+1)
+    if cfg.scenario_selection~='sequential' then cfg.scenario_selection='random' end
+end
+local function log(fmt,...)
+    if cfg.debug then printf('[pf_echo_cars] '..string.format(fmt,...)) end
+end
+local function ensure_logic()
+    if not s.logic then
+        s.logic=pf_echo_cars_logic.new(pf_echo_car_catalog.get(),cfg)
+        s.logic:load(s.saved_logic);s.saved_logic=nil
+    end
+    return s.logic
+end
+local function ensure_audio()
+    if not s.audio then
+        s.audio=pf_echo_car_audio.new(cfg,function(path,position,loop,event,key)
+            local object=sound_object(path)
+            local voice={object=object,gain=1};event.voices[key]=voice
+            object:play_at_pos(db.actor,vec(position),0,sound_object.s3d+(loop and sound_object.looped or 0))
+            object.max_distance=cfg.sound_distance
+            voice.gain=object.volume*cfg.volume;object.volume=voice.gain
+        end,function(id,now)
+            if s.logic then s.logic:on_engine_started(id,now) end
+            log('ENGINE_RUNNING car=%s',id)
+        end)
+    end
+    return s.audio
+end
+local function describe(object)
+    return {id=object.id,section=object:section_name(),position=pos(object.position)}
+end
+local function owned_object(record)
+    local sim=alife();local object=sim and sim:object(record.id)
+    if not object or object:section_name()~=record.section then return nil end
+    local p=object.position;local old=record.position
+    if (p.x-old[1])^2+(p.y-old[2])^2+(p.z-old[3])^2>.01 then return nil end
+    return object
+end
+local function hide(record)
+    local object=level.object_by_id(record.id)
+    if not object or object:section()~=record.section then return end
+    if record.section==SPOT then
+        local lamp=object:get_hanging_lamp()
+        if lamp then lamp:turn_off() end
+    else
+        object:set_render_visible(false)
+    end
+end
+local function safe_release()
+    return alife() and db.actor and app_ready() and device().precache_frame==0 and not device():is_paused()
+end
+local function cleanup_pending()
+    if not safe_release() then return end
+    for id,record in pairs(s.pending) do
+        local object=owned_object(record)
+        if object then alife():release(object,true) end
+        s.pending[id]=nil;s.owned[id]=nil
+    end
+end
+local function lights_off(car_id)
+    for id,record in pairs(s.owned) do
+        if not car_id or record.car_id==car_id then pcall(hide,record);s.pending[id]=record end
+    end
+    cleanup_pending()
+end
+local function stop_sound()
+    if s.audio then s.audio:cancel() end
+end
+local function cancel(reason)
+    stop_sound();lights_off()
+    if s.logic then s.logic:cancel() end
+    s.paused_at=nil;s.last_reason=reason
+end
+local function spawn(section,position,angle,car_id)
+    local actor,sim=db.actor,alife()
+    local lv,gv=actor:level_vertex_id(),actor:game_vertex_id()
+    assert(level.valid_vertex_id(lv),'car_light_invalid_actor_vertex')
+    local object=assert(sim:create(section,vec(position),lv,gv),'car_source_create_failed')
+    -- Register before force-online; a restored source uses the same binder.
+    s.owned[object.id]=describe(object)
+    s.owned[object.id].car_id=car_id
+    object.position=vec(position);object.angle=vec(angle or {0,0,0})
+    if section==SPOT then
+        object:use_ai_locations(false)
+        assert(object:set_light_properties(fcolor():set(cfg.red,cfg.green,cfg.blue,1),
+            cfg.range,cfg.cone,'root',true,false),'car_spot_setup_failed')
+    end
+    sim:set_switch_offline(object.id,false);sim:set_switch_online(object.id,true)
+    return object.id
+end
+local function lights_on(entry,side)
+    if side then
+        local spot=entry.spots[side]
+        spawn(SPOT,spot.position,spot.angle,entry.id)
+        spawn(spot.disc_section,entry.engine,nil,entry.id)
+    else
+        for _,spot in ipairs(entry.spots) do spawn(SPOT,spot.position,spot.angle,entry.id) end
+        spawn(entry.disc_section,entry.engine,nil,entry.id)
+    end
+end
+local function apply(actions)
+    for _,action in ipairs(actions) do
+        local entry=action.entry
+        if action.kind=='start' then
+            local ok,err=pcall(function()
+                ensure_audio():start(entry,action.scenario,action.started)
+            end)
+            if not ok then s.logic:rollback_start(entry.id);error(err) end
+            log('START car=%s scenario=%d side=%s model=%s source=%s',entry.id,action.scenario,tostring(action.side),entry.model_id,entry.sound)
+        elseif action.kind=='lights_on' then
+            lights_on(entry,action.side);log('LIGHTS_ON car=%s scenario=%d side=%s',entry.id,action.scenario,tostring(action.side))
+        elseif action.kind=='stop' then
+            lights_off(entry.id)
+            if s.audio then s.audio:stop(entry.id,time_global()) end
+            log('STOP car=%s scenario=%d reason=%s',entry.id,action.scenario,action.reason)
+        elseif action.kind=='engine_stop' then
+            if s.audio then s.audio:stop(entry.id,time_global()) end
+            log('ENGINE_STOP car=%s reason=%s',entry.id,action.reason)
+        elseif action.kind=='lights_off' then
+            lights_off(entry.id);log('LIGHTS_OFF car=%s reason=%s',entry.id,action.reason)
+        elseif action.kind=='finished' then
+            if s.audio then s.audio:finish(entry.id) end
+            lights_off(entry.id);log('FINISHED car=%s scenario=%d',entry.id,action.scenario)
+        end
+    end
+end
+local function runtime_ready(now)
+    if device():is_paused() or device().precache_frame>0 or not app_ready() then
+        s.paused_at=s.paused_at or now
+        if s.logic then s.logic:reset_approach() end
+        return false
+    end
+    if s.paused_at then
+        local delta=math.max(0,now-s.paused_at)
+        if s.logic then s.logic:shift_time(delta) end
+        if s.audio then s.audio:shift_time(delta) end
+        s.paused_at=nil
+    end
+    return true
+end
+local function tick()
+    local now=time_global();s.ticks=s.ticks+1
+    if s.last and now<s.last then cancel('clock_reset') end
+    s.last=now
+    if not enabled() then cancel('disabled');return end
+    if not db.actor or not alife() then return end
+    if not runtime_ready(now) then return end
+    cleanup_pending()
+    if s.failed then return end
+    if not db.actor:alive() then cancel('actor_dead');return end
+    if level.name()~=cfg.level then cancel('other_level');return end
+    local y,m,d,h=game.get_game_time():get();local date={y,m,d,h}
+    if not s.logic and not pf_echo_cars_logic.night_id(date,cfg.start_hour,cfg.end_hour) then return end
+    local logic=ensure_logic()
+    local allow=not level.main_input_receiver() and not db.actor:is_talking()
+    apply(logic:step(now,date,pos(db.actor:position()),allow,math.random))
+end
+function update()
+    local ok,err=pcall(tick)
+    if not ok then
+        s.failed=tostring(err);pcall(cancel,'error')
+        printf('! [pf_echo_cars] disabled after error: %s',s.failed)
+    end
+    sync_schedule()
+end
+audio_update=function()
+    local ok,err=pcall(function()
+        if not enabled() or not db.actor or not db.actor:alive() then cancel('audio_disabled');return end
+        local now=time_global()
+        if runtime_ready(now) and s.audio then s.audio:step(now) end
+    end)
+    if not ok then
+        s.failed=tostring(err);pcall(cancel,'audio_error')
+        printf('! [pf_echo_cars] disabled after audio error: %s',s.failed)
+    end
+    sync_schedule()
+end
+sync_schedule=function()
+    local needed=(enabled() and not s.failed) or next(s.pending)~=nil
+    if needed and not s.scheduled then RegisterScriptTimedCallback(update,cfg.interval);s.scheduled=true
+    elseif not needed and s.scheduled then UnregisterScriptCallback('update',update);s.scheduled=false end
+    -- This short-lived callback touches sound envelopes only, never the car
+    -- catalogue or actor distances. Idle loops need no envelope polling.
+    local audio_needed=enabled() and not s.failed and s.audio and s.audio:needs_update()
+    if audio_needed and not s.audio_scheduled then RegisterScriptTimedCallback(audio_update,cfg.audio_interval);s.audio_scheduled=true
+    elseif not audio_needed and s.audio_scheduled then UnregisterScriptCallback('update',audio_update);s.audio_scheduled=false end
+end
+function on_source_online(id)
+    -- Called from the binder's first ready update, never from net_spawn:
+    -- restoring a source may need to turn off its fully constructed light.
+    local object=alife() and alife():object(id)
+    if not object then return end
+    local record=describe(object)
+    if not s.owned[id] or s.pending[id] then
+        s.pending[id]=record;pcall(hide,record)
+    end
+    sync_schedule()
+end
+local function on_setting_changed()
+    if not enabled() then
+        local ok,err=pcall(cancel,'disabled')
+        if not ok then s.failed=tostring(err) end
+    else
+        s.failed=nil;s.last=nil
+        if s.logic then s.logic:reset_approach() end
+    end
+    sync_schedule()
+end
+function save_state(storage)
+    local ids={}
+    for id,record in pairs(s.owned) do ids[id]=record end
+    for id,record in pairs(s.pending) do ids[id]=record end
+    storage.pf_echo_cars={version=3,logic=s.logic and s.logic:save() or s.saved_logic,ids=ids}
+end
+function load_state(storage) s.restored=storage.pf_echo_cars end
+function on_load()
+    stop_sound()
+    for id,record in pairs(s.owned) do s.pending[id]=record end
+    local restored=type(s.restored)=='table' and s.restored or {}
+    for id,record in pairs(type(restored.ids)=='table' and restored.ids or {}) do
+        if type(id)=='number' and type(record)=='table' and type(record.section)=='string' and
+            type(record.position)=='table' and #record.position==3 and record.id==id and
+            (record.section==SPOT or record.section:match('^pf_echo_car_discs_%d+$') or record.section:match('^pf_echo_car_discs_%d+_[lr]$')) then
+            s.pending[id]=record
+        end
+    end
+    s.owned={};s.saved_logic=restored.logic
+    if s.logic then s.logic:load(s.saved_logic);s.saved_logic=nil end
+    s.failed,s.last,s.paused_at,s.restored=nil,nil,nil,nil
+    sync_schedule()
+end
+function on_net_destroy()
+    stop_sound()
+    if s.logic then s.logic:cancel() end
+    s.owned,s.pending,s.last,s.paused_at={},{},nil,nil
+    sync_schedule()
+end
+function status()
+    local sources={}
+    for id,record in pairs(s.owned) do sources[#sources+1]={id=id,section=record.section,car_id=record.car_id} end
+    local active={}
+    if s.logic then for id,event in pairs(s.logic.active) do active[#active+1]={id=id,scenario=event.scenario,side=event.side,stopping=event.stop_at~=nil} end end
+    table.sort(active,function(a,b) return a.id<b.id end)
+    return {enabled=enabled(),scheduled=s.scheduled==true,failed=s.failed,interval_ms=cfg.interval,
+        start_hour=cfg.start_hour,end_hour=cfg.end_hour,chance_percent=cfg.chance_percent,
+        trigger_distance=cfg.trigger_distance,rearm_distance=cfg.rearm_distance,
+        stop_near_distance=cfg.stop_near_distance,stop_far_distance=cfg.stop_far_distance,engine_fade_ms=cfg.engine_fade_ms,
+        scenario_selection=cfg.scenario_selection,next_scenario=s.logic and s.logic.next_scenario or 1,
+        two_headlights_chance_percent=cfg.two_headlights_chance_percent,one_headlight_chance_percent=100-cfg.two_headlights_chance_percent,
+        headlights_delay_ms=cfg.headlights_delay_ms,headlights_duration_ms=cfg.headlights_duration_ms,
+        engine_run_duration_ms=cfg.engine_run_duration_ms,
+        ticks=s.ticks,attempts=s.logic and s.logic.attempts or 0,starts=s.logic and s.logic.starts or 0,
+        active_car=active[1] and active[1].id,active_cars=active,active_count=#active,audio_scheduled=s.audio_scheduled==true,
+        night=s.logic and s.logic.night,last_reason=s.last_reason,sources=sources}
+end
+function on_game_start()
+    if registered then return end
+    read_settings()
+    RegisterScriptCallback('save_state',save_state);RegisterScriptCallback('load_state',load_state)
+    RegisterScriptCallback('load',on_load);RegisterScriptCallback('net_destroy',on_net_destroy)
+    registered=true
+    pf_city_horrors_settings.register_listener(on_setting_changed)
+    on_setting_changed()
+end
+on_game_start()

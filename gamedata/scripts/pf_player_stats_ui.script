@@ -75,6 +75,7 @@ local function capture_filters()
         sync_filters()
         state.settings:SetCheck(false)
         state.blacklist_button:SetCheck(false)
+        if state.avatar_manager then state.avatar_manager:set_open(false) end
         state.filters_needs_sync = nil
         return true
     end
@@ -251,6 +252,31 @@ local function update_settings()
     return changed
 end
 
+local function update_avatar(parent)
+    local manager = state.avatar_manager
+    if not manager then return false end
+    local current = pf_player_appearance.local_avatar()
+    manager:set_portrait(current, pf_player_appearance.avatar_texture(current))
+    local blocked = state.popup_open or (state.blacklist_manager and state.blacklist_manager.open)
+    local selected = manager:poll(current, blocked)
+    local changed = false
+    if selected ~= nil then
+        if pf_player_appearance.select_avatar(selected) then
+            manager:set_portrait(selected, pf_player_appearance.avatar_texture(selected))
+            manager:set_open(false)
+            pf_pda_player_stats.packet()
+            changed = true
+        else manager:show_error() end
+    end
+    if manager.open then
+        state.view:Enable(false)
+        state.settings:Enable(false)
+        state.blacklist_button:Enable(false)
+        for _, key in ipairs(filter_keys) do state.checks[key]:Enable(false) end
+    end
+    return changed
+end
+
 local function refresh_blacklist()
     local available, blocked, current = {}, {}, {}
     for _, record in ipairs(pf_pda_player_stats.get_rows({show_empty = true, include_blocked = true})) do
@@ -342,6 +368,7 @@ end
 
 local function set_stat_line(line, text, has_values)
     line:SetEllipsis(true)
+    line:SetTextComplexMode(false)
     if has_values then
         -- Complex colored text ignores native ellipsis; fit the plain line first.
         text = fit_stat_line(line, text)
@@ -360,34 +387,57 @@ local function clear_rows(view_is_current)
         for _, card in ipairs(pair.cards) do pair.window:DetachChild(card) end
     end
     state.rows = {}
+    state.card_count = 0
 end
 
 class "pf_player_stats_row" (CUIScriptWnd)
 
 function pf_player_stats_row:__init(xml, record, position) super()
     xml:InitWindow("player", 0, self)
-    xml:InitStatic("player:avatar", self)
+    self.widgets = {}
+    local widgets = self.widgets
+    widgets.avatar = xml:InitStatic("player:avatar", self)
     xml:InitStatic("player:position_frame", self)
-    xml:InitTextWnd("player:position", self):SetText(tostring(position))
+    widgets.position = xml:InitTextWnd("player:position", self)
     xml:InitStatic("player:presence_outline", self)
-    local dot = xml:InitStatic("player:presence", self)
-    local colors = { online = GetARGB(255, 74, 186, 94),
-        away = GetARGB(255, 215, 155, 65), offline = GetARGB(255, 205, 65, 55) }
-    dot:SetTextureColor(colors[record.presence] or colors.offline)
-    local nick = xml:InitTextWnd("player:nick", self)
-    nick:SetEllipsis(true)
-    nick:SetText(pf_irc_text_codec.escape_markup(record.nick))
-    local rank = xml:InitTextWnd("player:rank", self)
-    rank:SetText(record.rank and string.format(game.translate_string("pf_pda_player_stats_rank"),
-        record.rank) or game.translate_string("pf_pda_player_stats_rank_unknown"))
-    local kills, found = pf_pda_player_stats.card_lines(record.values)
-    for name, text in pairs({kills = kills, found = found}) do
-        local line = xml:InitTextWnd("player:" .. name, self)
-        set_stat_line(line, text, record.values and not record.values.no_data)
-    end
+    widgets.dot = xml:InitStatic("player:presence", self)
+    widgets.nick = xml:InitTextWnd("player:nick", self)
+    widgets.rank = xml:InitTextWnd("player:rank", self)
+    widgets.kills = xml:InitTextWnd("player:kills", self)
+    widgets.found = xml:InitTextWnd("player:found", self)
+    widgets.nick:SetEllipsis(true)
+    self.shown = {}
+    self:ApplyRecord(record, position)
     -- CUIDialogWnd starts hidden; attaching it to a scroll view does not show it.
     self:Show(true)
     self:Enable(true)
+end
+
+function pf_player_stats_row:ApplyRecord(record, position)
+    local widgets, shown = self.widgets, self.shown
+    self.identity = record.identity
+    local texture = pf_player_appearance.avatar_texture(record.values and
+        not record.values.no_data and record.values.avatar_id or 0)
+    if shown.texture ~= texture then widgets.avatar:InitTexture(texture); shown.texture = texture end
+    if shown.position ~= position then widgets.position:SetText(tostring(position)); shown.position = position end
+    local presence = record.presence or "offline"
+    if shown.presence ~= presence then
+        local colors = {online = GetARGB(255, 74, 186, 94), away = GetARGB(255, 215, 155, 65),
+            offline = GetARGB(255, 205, 65, 55)}
+        widgets.dot:SetTextureColor(colors[presence] or colors.offline)
+        shown.presence = presence
+    end
+    if shown.nick ~= record.nick then
+        widgets.nick:SetText(pf_irc_text_codec.escape_markup(record.nick)); shown.nick = record.nick
+    end
+    local rank = record.rank and string.format(game.translate_string("pf_pda_player_stats_rank"), record.rank) or
+        game.translate_string("pf_pda_player_stats_rank_unknown")
+    if shown.rank ~= rank then widgets.rank:SetText(rank); shown.rank = rank end
+    local kills, found = pf_pda_player_stats.card_lines(record.values)
+    local has_data = record.values and not record.values.no_data or false
+    if shown.kills ~= kills or shown.has_data ~= has_data then set_stat_line(widgets.kills, kills, has_data) end
+    if shown.found ~= found or shown.has_data ~= has_data then set_stat_line(widgets.found, found, has_data) end
+    shown.kills, shown.found, shown.has_data = kills, found, has_data
 end
 
 local function refresh_rows(parent, reset_scroll)
@@ -395,6 +445,7 @@ local function refresh_rows(parent, reset_scroll)
     -- can already be destroyed after vid_restart/ui_reload, without a load.
     -- A string cookie also avoids CUIWindow's unsupported userdata equality.
     if not state.view or parent:WindowName() ~= state.owner_name then
+        if state.avatar_manager then state.avatar_manager:dispose() end
         clear_rows(false)
         generation = generation + 1
         state = { xml = CScriptXmlInit(),
@@ -455,14 +506,28 @@ local function refresh_rows(parent, reset_scroll)
         for _, option in ipairs(sort_options) do state.sort_controls[option.key]:InitList(#option.values) end
         update_settings()
         update_blacklist(parent)
+        state.avatar_manager = pf_player_avatar_ui.create(state.xml, parent,
+            pf_player_appearance.avatar_options(), state.controls)
+        update_avatar(parent)
         -- Mark this page only; the PDA root's name belongs to the map filter.
         parent:SetWindowName(state.owner_name)
     end
     local position = reset_scroll and 0 or state.view:GetCurrentScrollPos()
-    clear_rows(true)
     local records = pf_pda_player_stats.get_rows(filters)
     state.count:SetText(string.format(game.translate_string("pf_pda_player_stats_count"), #records))
     state.empty:Show(#records == 0)
+    if state.card_count == #records then
+        -- Cells have no player-specific click handlers. Reuse them for updated
+        -- values and reordered records; only membership-size changes rebuild.
+        for index, record in ipairs(records) do
+            local pair = state.rows[math.floor((index - 1) / 2) + 1]
+            pair.cards[(index - 1) % 2 + 1]:ApplyRecord(record, index)
+        end
+        if reset_scroll then state.view:SetScrollPos(0) end
+        state.revision = pf_pda_player_stats.revision()
+        return
+    end
+    clear_rows(true)
     for index = 1, #records, 2 do
         local pair = {window = CUIScriptWnd(), cards = {}}
         state.xml:InitWindow("player_pair", 0, pair.window)
@@ -486,6 +551,7 @@ local function refresh_rows(parent, reset_scroll)
         state.rows[#state.rows + 1] = pair
     end
     state.view:SetScrollPos(position)
+    state.card_count = #records
     state.revision = pf_pda_player_stats.revision()
 end
 
@@ -516,6 +582,7 @@ function pulse()
         if state.view and parent:WindowName() == state.owner_name then
             state.settings:SetCheck(false)
             state.blacklist_button:SetCheck(false)
+            if state.avatar_manager then state.avatar_manager:set_open(false) end
             update_settings()
             update_blacklist(parent)
         end
@@ -528,6 +595,7 @@ function pulse()
     local changed = capture_filters()
     changed = update_settings() or changed
     changed = update_blacklist(parent) or changed
+    update_avatar(parent)
     if changed or state.revision ~= pf_pda_player_stats.revision() then refresh_rows(parent, changed) end
 end
 
@@ -542,6 +610,8 @@ function on_game_load()
 end
 
 function before_game_reload()
+    -- Remove the independent modal before validating borrowed native controls.
+    if state.avatar_manager then state.avatar_manager:dispose() end
     if not state.view then return true end
     -- F9 can recreate Lua while the native Ranking page survives. Remove every
     -- parent-owned control, not just its rows, before releasing this VM.
@@ -560,6 +630,7 @@ function before_game_reload()
             capture_filters()
             clear_sort_lists()
             if state.blacklist_manager then state.blacklist_manager:clear() end
+            if state.avatar_manager then state.avatar_manager:set_open(false) end
             clear_rows(true)
             for _, control in ipairs(state.controls) do parent:DetachChild(control) end
         else

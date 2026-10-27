@@ -1,0 +1,169 @@
+-- Native modal: its render/input layer sits above PDA achievement hints.
+local impl = {}
+
+class "pf_player_avatar_dialog" (CUIScriptWnd)
+function pf_player_avatar_dialog:__init(owner) super()
+    self.owner = owner
+    self:SetAutoDelete(false)
+    self:Show(false)
+end
+function pf_player_avatar_dialog:OnKeyboard(dik, action)
+    if self.owner and action == ui_events.WINDOW_KEY_PRESSED then
+        local binding = dik_to_bind(dik)
+        if binding == key_bindings.kQUIT or binding == key_bindings.kACTIVE_JOBS then
+            self.owner:set_open(false)
+            if binding == key_bindings.kACTIVE_JOBS then ActorMenu.get_pda_menu():HideDialog() end
+            return true
+        end
+    end
+    return CUIScriptWnd.OnKeyboard(self, dik, action)
+end
+
+function impl.paint(self)
+    for _, tile in ipairs(self.tiles or {}) do
+        local style = tile.id == self.pending and "selected" or
+            (tile.button:IsCursorOverWindow() and "hover" or "normal")
+        if tile.style ~= style then
+            local color = style == "selected" and GetARGB(255, 178, 124, 45) or
+                (style == "hover" and GetARGB(230, 192, 198, 184) or GetARGB(180, 145, 155, 143))
+            for _, line in ipairs(tile.frame) do line:SetTextureColor(color) end
+            tile.style = style
+        end
+    end
+end
+
+function impl.select(self, id)
+    self.pending = self.by_id[id] and id or 0
+    for _, tile in ipairs(self.tiles or {}) do
+        local selected = tile.id == self.pending
+        tile.button:SetCheck(selected)
+        tile.mark:Show(selected)
+    end
+    impl.paint(self)
+end
+
+function impl.build(self)
+    if self.window then return end
+    self.window = pf_player_avatar_dialog(self)
+    self.xml:InitWindow("avatar_popup", 0, self.window)
+    local position, parent_rect = self.window:GetWndPos(), Frect()
+    self.parent:GetAbsoluteRect(parent_rect)
+    self.window:SetWndPos(vector2():set(position.x + parent_rect.x1, position.y + parent_rect.y1))
+    self.xml:InitStatic("avatar_popup:background", self.window):Enable(false)
+    for _, key in ipairs({"border_top", "border_bottom", "border_left", "border_right", "header_line", "footer_line"}) do
+        self.xml:InitStatic("avatar_popup:" .. key, self.window):Enable(false)
+    end
+    self.xml:InitTextWnd("avatar_popup:title", self.window):Enable(false)
+    local count = self.xml:InitTextWnd("avatar_popup:count", self.window)
+    count:SetText(string.format(game.translate_string("pf_pda_avatar_count"), #self.entries))
+    count:Enable(false)
+    self.error = self.xml:InitTextWnd("avatar_popup:error", self.window)
+    self.error:Enable(false)
+    local grid = self.xml:InitStatic("avatar_popup:grid", self.window)
+    self.tiles = {}
+    for index, entry in ipairs(self.entries) do
+        local button = self.xml:InitCheck("avatar_tile", grid)
+        local image = self.xml:InitStatic("avatar_tile:image", button)
+        image:InitTexture(entry.texture)
+        image:Enable(false)
+        local frame = {}
+        for _, key in ipairs({"frame_top", "frame_bottom", "frame_left", "frame_right"}) do
+            frame[#frame + 1] = self.xml:InitStatic("avatar_tile:" .. key, button)
+            frame[#frame]:Enable(false)
+        end
+        local mark = self.xml:InitStatic("avatar_tile:selected", button)
+        mark:Enable(false)
+        local gap_x = (grid:GetWidth() - 11 * button:GetWidth()) / 10
+        local gap_y = (grid:GetHeight() - 4 * button:GetHeight()) / 3
+        button:SetWndPos(vector2():set((index - 1) % 11 * (button:GetWidth() + gap_x),
+            math.floor((index - 1) / 11) * (button:GetHeight() + gap_y)))
+        self.tiles[index] = {id = entry.id, button = button, mark = mark, frame = frame}
+    end
+    self.actions = {}
+    for _, key in ipairs({"apply", "cancel"}) do
+        local path = "avatar_popup:" .. key
+        self.actions[key] = self.xml:InitCheck(path, self.window)
+        self.xml:InitTextWnd(path .. ":caption", self.actions[key]):Enable(false)
+    end
+    self.window:Show(false)
+end
+
+function create(xml, parent, entries, roots)
+    local self = {xml = xml, parent = parent, entries = entries, roots = roots,
+        by_id = {}, open = false}
+    for _, entry in ipairs(entries) do self.by_id[entry.id] = entry end
+    self.portrait = xml:InitStatic("actor_avatar", parent)
+    self.portrait:Enable(false)
+    self.button = xml:InitCheck("avatar_button", parent)
+    self.icon = xml:InitStatic("avatar_button:icon", self.button)
+    self.caption = xml:InitTextWnd("avatar_button:caption", self.button)
+    self.icon:Enable(false)
+    self.caption:Enable(false)
+    self.caption:AdjustWidthToText()
+    local left = (self.button:GetWidth() - self.icon:GetWidth() - 5 - self.caption:GetWidth()) / 2
+    self.icon:SetWndPos(vector2():set(left, (self.button:GetHeight() - self.icon:GetHeight()) / 2))
+    self.caption:SetWndPos(vector2():set(left + self.icon:GetWidth() + 5, 0))
+    roots[#roots + 1] = self.portrait
+    roots[#roots + 1] = self.button
+    function self:set_portrait(id, texture)
+        if self.current ~= id then self.portrait:InitTexture(texture); self.current = id end
+    end
+    function self:set_open(shown, current)
+        if shown then impl.build(self); self.error:SetText("") end
+        local previous = self.open
+        self.open = shown == true
+        self.button:SetCheck(self.open)
+        if self.window then
+            for _, button in pairs(self.actions) do button:SetCheck(false) end
+            if self.open and not previous then
+                local cursor = GetCursorPosition()
+                self.window:Enable(true)
+                -- This holder path does not warp the OS cursor; PDA already owns it.
+                ActorMenu.get_pda_menu():GetHolder():start_stop_menu(self.window, false)
+                SetCursorPosition(cursor)
+            elseif not self.open and previous then self.window:HideDialog() end
+            if self.open then impl.select(self, current) end
+        end
+    end
+    function self:dispose()
+        -- This dialog is Lua-owned, independent of the possibly destroyed ranking.
+        if self.window then
+            self.window:HideDialog()
+            self.window.owner = nil
+        end
+        self.open = false
+    end
+    function self:poll(current, blocked)
+        self.button:Enable(not blocked)
+        if blocked and (self.open or self.button:GetCheck()) then self:set_open(false) end
+        if not blocked and self.button:GetCheck() ~= self.open then
+            self:set_open(self.button:GetCheck(), current)
+        end
+        local style = self.open and "t" or
+            (not blocked and self.button:IsCursorOverWindow() and "h" or "e")
+        if self.style ~= style then
+            self.icon:InitTexture("pf_player_stats_gear_" .. style)
+            self.caption:SetTextColor(self.open and GetARGB(255, 218, 191, 142) or
+                (style == "h" and GetARGB(255, 230, 230, 220) or GetARGB(255, 200, 200, 200)))
+            self.style = style
+        end
+        if not self.open then return nil end
+        if self.actions.cancel:GetCheck() then self:set_open(false); return nil end
+        for _, tile in ipairs(self.tiles) do
+            if tile.button:GetCheck() ~= (tile.id == self.pending) then
+                impl.select(self, tile.id)
+                break
+            end
+        end
+        impl.paint(self)
+        if self.actions.apply:GetCheck() then
+            self.actions.apply:SetCheck(false)
+            return self.pending
+        end
+    end
+    function self:show_error()
+        self.error:SetText(game.translate_string("pf_pda_avatar_save_error"))
+    end
+    self:set_open(false)
+    return self
+end

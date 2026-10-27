@@ -6,7 +6,7 @@ function unregister(binder)
     local id=binder.object:id()
     if lamps[id]==binder then lamps[id]=nil end
 end
-function set_lights(enabled)
+local function for_each_light(action)
     if not db.actor or not db.actor:alive() or not alife() then return 0 end
     local weather=pf_hf_visuals.weather_range()
     local scale=get_console():get_float("r4_full_detail_distance_scale")
@@ -20,14 +20,26 @@ function set_lights(enabled)
             object:in_furniture_render_range(weather,scale) and (weather or binder:light_available()) then
             local lamp=object:get_hanging_lamp()
             local own=lamp and pf_hf_furniture.state(id)
-            if own then
-                own.is_on=enabled;own.condition=1;own.last_time=nil
-                if enabled then lamp:turn_on() else lamp:turn_off() end
-                object:set_bone_visible(binder.entry.light.main_bone,enabled,true)
-                if binder.entry.hide_bone then object:set_bone_visible(binder.entry.hide_bone,enabled,true) end
-                count=count+1
-            end
+            if own and action(object,lamp,own,binder) then count=count+1 end
         end
     end
     return count
+end
+function set_lights(enabled)
+    return for_each_light(function(object,lamp,own,binder)
+        own.is_on=enabled;own.condition=1;own.last_time=nil
+        if enabled then lamp:turn_on() else lamp:turn_off() end
+        object:set_bone_visible(binder.entry.light.main_bone,enabled,true)
+        if binder.entry.hide_bone then object:set_bone_visible(binder.entry.hide_bone,enabled,true) end
+        return true
+    end)
+end
+function set_light_mode(mode)
+    if mode~="static" and mode~="dynamic" then return 0 end
+    return for_each_light(function(object,lamp,own,binder)
+        if not pf_hf_furniture.apply_light_mode(lamp,binder.entry,mode) then return false end
+        own.light_mode=mode
+        binder.last_light_mode=mode
+        return true
+    end)
 end

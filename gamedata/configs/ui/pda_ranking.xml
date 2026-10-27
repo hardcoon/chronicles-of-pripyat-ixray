@@ -3,10 +3,10 @@
 
 	<background x="35" y="41" width="955" height="198">
         <texture>ui_inGame2_pda_buttons_background</texture>
-		<auto_frameline x="235" y="95" width="689" height="1" vertical="0">
+		<auto_frameline x="175" y="95" width="749" height="1" vertical="0">
 			<texture>ui_inGame2_pda_line_horizontal</texture>
 		</auto_frameline>
-		<auto_frameline x="235" y="142" width="689" height="1" vertical="0">
+		<auto_frameline x="175" y="142" width="749" height="1" vertical="0">
 			<texture>ui_inGame2_pda_line_horizontal</texture>
 		</auto_frameline>
 		<auto_frameline x="512" y="95" width="1" height="95" vertical="1">
@@ -14,15 +14,17 @@
 		</auto_frameline>
 	</background>
 
-	<actor_ch_info x="70" y="92" width="169" height="138">
-		<name_static x="2" y="112" width="165" height="26">
-			<text align="c" vert_align="c" font="graffiti19" color="ui_2"/>
-		</name_static>
-		<icon x="2" y="2" width="165" height="108" stretch="1"/>
+
+
+	<actor_ch_info x="70" y="92" width="116" height="138">
+		<icon x="4" y="2" width="108" height="108" stretch="1" />
 	</actor_ch_info>
-	<actor_icon_over x="70" y="92" width="169" height="138">
+
+	<actor_icon_over x="70" y="92" width="116" height="138">
 		<texture>ui_inGame2_pda_ranking_icon_over</texture>
 	</actor_icon_over>
+
+
 
 	<money_caption x="830" y="103" width="100" height="16">
 		<text align="l" font="letterica18" r="220" g="220" b="220">ui_inv_money</text>
@@ -430,4 +432,84 @@
             <texture a="100">ui_inGame2_pda_line_horizontal</texture>
         </auto_frameline>
     </player>
+<actor_avatar x="74" y="94" width="108" height="108" stretch="1">
+    <texture>pf_player_avatar</texture>
+</actor_avatar>
+<avatar_button x="72" y="204" width="112" height="26">
+    <texture>pf_player_stats_settings_hit</texture>
+    <icon x="0" y="2" width="22" height="22" stretch="1">
+        <texture>pf_player_stats_gear_e</texture>
+    </icon>
+    <caption x="27" y="0" width="85" height="26">
+        <text font="letterica16" vert_align="c" r="200" g="200" b="200">pf_pda_avatar_button</text>
+    </caption>
+</avatar_button>
+<avatar_popup x="70" y="244.5" width="858" height="455">
+    <background x="0" y="0" width="858" height="455" stretch="1">
+        <texture a="255" r="14" g="19" b="19">ui\ui_noise</texture>
+    </background>
+    <title x="12" y="8" width="688" height="24">
+        <text font="letterica16" vert_align="c" align="l" r="218" g="191" b="142">pf_pda_avatar_title</text>
+    </title>
+    <count x="704" y="8" width="142" height="24">
+        <text font="letterica16" vert_align="c" align="r" r="155" g="164" b="153">pf_pda_avatar_count</text>
+    </count>
+    <grid x="12" y="54" width="826" height="298" />
+    <error x="12" y="357" width="834" height="20">
+        <text font="letterica16" align="l" r="220" g="110" b="85" />
+    </error>
+    <apply x="562" y="407" width="136" height="31" stretch="1">
+        <texture>pf_player_stats_button</texture>
+        <caption x="0" y="0" width="136" height="31">
+            <text font="letterica16" align="c" vert_align="c">pf_pda_sort_apply</text>
+        </caption>
+    </apply>
+    <cancel x="710" y="407" width="136" height="31" stretch="1">
+        <texture>pf_player_stats_button</texture>
+        <caption x="0" y="0" width="136" height="31">
+            <text font="letterica16" align="c" vert_align="c">pf_pda_sort_cancel</text>
+        </caption>
+    </cancel>
+    <border_top x="0" y="0" width="858" height="1" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </border_top>
+    <border_bottom x="0" y="454" width="858" height="1" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </border_bottom>
+    <border_left x="0" y="0" width="1" height="455" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </border_left>
+    <border_right x="857" y="0" width="1" height="455" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </border_right>
+    <header_line x="12" y="38" width="834" height="1" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </header_line>
+    <footer_line x="12" y="381" width="834" height="1" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </footer_line>
+</avatar_popup>
+
+<avatar_tile x="0" y="0" width="70" height="70" stretch="1">
+    <texture>pf_player_stats_settings_hit</texture>
+    <image x="3" y="3" width="64" height="64" stretch="1">
+        <texture>pf_player_avatar</texture>
+    </image>
+    <selected x="49" y="49" width="17" height="17" stretch="1">
+        <texture>pf_player_stats_check_t</texture>
+    </selected>
+    <frame_top x="0" y="0" width="70" height="1" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </frame_top>
+    <frame_bottom x="0" y="69" width="70" height="1" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </frame_bottom>
+    <frame_left x="0" y="0" width="1" height="70" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </frame_left>
+    <frame_right x="69" y="0" width="1" height="70" stretch="1">
+        <texture a="150" r="175" g="184" b="171">ui_pf_irc_line_horizontal</texture>
+    </frame_right>
+</avatar_tile>
+
 </w>

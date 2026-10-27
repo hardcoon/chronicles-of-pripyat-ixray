@@ -111,6 +111,19 @@ local function read_ledger(id)
                 if section=="anomaly_scaner" then section="pf_anomaly_scanner" end
                 local record=night and ledger.records[night]
                 local remaining=record and record.left[section]
+                -- Preset 4 formerly stocked ten VSSK boxes. Replay its old
+                -- purchase counts against the new twenty-box shelf without
+                -- rewriting the journal or restoring already purchased boxes.
+                if record and record.preset==4 and section=="ammo_12.7x55_fmj" then
+                    if remaining==20 and count==9 then record.vssk_legacy_offset=10 end
+                    if record.vssk_legacy_offset then
+                        if count==remaining-1 then
+                            record.vssk_legacy_offset=nil
+                        elseif count and count+record.vssk_legacy_offset==remaining-1 then
+                            count=count+record.vssk_legacy_offset
+                        end
+                    end
+                end
                 ok=remaining~=nil and count==remaining-1 and count>=0
                 if ok then record.left[section]=count;record.revision=record.revision+1 end
             end

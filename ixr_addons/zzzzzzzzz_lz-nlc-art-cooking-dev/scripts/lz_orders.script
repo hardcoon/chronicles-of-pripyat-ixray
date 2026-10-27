@@ -1936,7 +1936,11 @@ local function requirements_text(entry, with_progress)
 end
 
 local function board_description(entry)
-	return wrap_words(order_title(entry) .. "\\n" .. order_description(entry, true), BOARD_DESCRIPTION_WIDTH)
+	-- Wrap plain text first so color tags do not change the visible line width.
+	local title = wrap_words(order_title(entry), BOARD_DESCRIPTION_WIDTH)
+	local descr = wrap_words(order_description(entry, true), BOARD_DESCRIPTION_WIDTH)
+	-- A leading newline in a new color run is skipped by the legacy UI.
+	return "%c[255,205,190,155]" .. title .. "\\n%c[default]" .. descr
 end
 
 function get_board_state()

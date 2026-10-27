@@ -285,8 +285,19 @@ function poll(max_events)
     local events = {}
     if not state.started or handle_is_invalid(state.pipe) then return events end
     max_events = math.max(1, math.min(tonumber(max_events) or 32, 128))
+    local read_budget = 16384
 
     while #events < max_events do
+        -- Drain already-read lines first. They must not wait for another pipe
+        -- write when a previous bounded poll left complete lines buffered.
+        while #events < max_events do
+            local delimiter = state.read_buffer:find("\n", 1, true)
+            if not delimiter then break end
+            local line = state.read_buffer:sub(1, delimiter - 1):gsub("\r$", "")
+            state.read_buffer = state.read_buffer:sub(delimiter + 1)
+            if line ~= "" then table.insert(events, decode(line)) end
+        end
+        if #events >= max_events or read_budget <= 0 then break end
         local available_bytes = ffi.new("PF_IRC_DWORD[1]")
         if kernel32.PeekNamedPipe(state.pipe, nil, 0, nil, available_bytes, nil) == 0 then
             stop(false)
@@ -294,25 +305,20 @@ function poll(max_events)
         end
         local count = tonumber(available_bytes[0])
         if count <= 0 then break end
-        count = math.min(count, 8192)
+        count = math.min(count, 8192, read_budget)
         local buffer = ffi.new("char[?]", count)
         local bytes_read = ffi.new("PF_IRC_DWORD[1]")
         if kernel32.ReadFile(state.pipe, buffer, count, bytes_read, nil) == 0 then
             stop(false)
             break
         end
-        state.read_buffer = state.read_buffer .. ffi.string(buffer, tonumber(bytes_read[0]))
+        local received = tonumber(bytes_read[0])
+        read_budget = read_budget - received
+        state.read_buffer = state.read_buffer .. ffi.string(buffer, received)
         if #state.read_buffer > 65536 then
             state.read_buffer = ""
             table.insert(events, { "ERROR", "ipc_overflow", "IPC receive buffer was reset." })
             break
-        end
-        while #events < max_events do
-            local delimiter = state.read_buffer:find("\n", 1, true)
-            if not delimiter then break end
-            local line = state.read_buffer:sub(1, delimiter - 1):gsub("\r$", "")
-            state.read_buffer = state.read_buffer:sub(delimiter + 1)
-            if line ~= "" then table.insert(events, decode(line)) end
         end
     end
     return events

@@ -506,7 +506,7 @@ function sync_irc_rank(server)
     return true
 end
 
-function spawn_irc(identity, nick, rank, irc_nick)
+function spawn_irc(identity, nick, rank, irc_nick, armor_id)
     if not irc_ready() or not db.actor or not db.actor:alive() then return nil, "not_ready" end
     if not rt.overrides or rt.overrides.irc_npcs ~= true then return nil, "disabled" end
     if type(identity) ~= "string" or not identity:match("^install:%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
@@ -534,12 +534,21 @@ function spawn_irc(identity, nick, rank, irc_nick)
     if not p or impl.distance2(p, actor_position) < safe * safe then return nil, "placement" end
     local server = alife():create(section, p, lv, gv)
     if not server then return nil, "create" end
-    local native_name
+    local native_name, selected_visual
     local ok, failure = pcall(function()
         assert(server.group_id == 65535 and server:community() == "stalker", "IRC resident faction/squad mismatch")
-        if tier == "master" then
+        local visual = pf_player_appearance.armor_visual(armor_id)
+        local applied = false
+        if visual then
+            local model_ok, accepted = pcall(server.set_visual, server, visual)
+            applied = model_ok and accepted == true
+            if not applied then impl.log("IRC outfit visual rejected; using rank pool: " .. visual) end
+        end
+        if not applied and tier == "master" then
             assert(server:set_visual("actors\\stalker_neutral\\stalker_neutral_4") == true, "IRC exoskeleton rejected")
         end
+        selected_visual = applied and visual or (tier == "master" and
+            "actors\\stalker_neutral\\stalker_neutral_4" or "rank_pool")
         sync_irc_rank(server)
         native_name = server:character_name()
         if native_name == "" then native_name = nil end
@@ -559,7 +568,8 @@ function spawn_irc(identity, nick, rank, irc_nick)
         identity = identity, rank = rank, tier = tier, native_name = native_name,
         life = previous and (previous.life or 1) + 1 or 1}
     rt.root.irc[identity], rt.irc_used[identity] = record, true
-    impl.log("IRC resident spawned: " .. identity .. " / " .. nick .. " / " .. tier)
+    impl.log("IRC resident spawned: " .. identity .. " / " .. nick .. " / " .. tier ..
+        " / armor=" .. tostring(armor_id or 0) .. " / visual=" .. selected_visual)
     return record
 end
 

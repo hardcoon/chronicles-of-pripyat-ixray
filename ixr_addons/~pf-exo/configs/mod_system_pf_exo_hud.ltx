@@ -1,0 +1,67 @@
+; Native IX-Ray HUD animators. Loner uses the donor bandit colour by user request.
+![actor_hud_exo]
+pf_exo_hud = true
+pf_inspect_animator = pf_exo_inspect
+
+![actor_hud_exo_dolg]
+pf_exo_hud = true
+pf_inspect_animator = pf_exo_inspect
+
+![actor_hud_exo_free]
+pf_exo_hud = true
+pf_inspect_animator = pf_exo_inspect
+
+![actor_hud_exo_kill]
+pf_exo_hud = true
+pf_inspect_animator = pf_exo_inspect
+
+![actor_hud_exo_mono]
+pf_exo_hud = true
+pf_inspect_animator = pf_exo_inspect
+
+![medkit_use]
+modify_sect_lua_callback = pf_exo_hud.select_animator
+
+![medkit_use_army]
+modify_sect_lua_callback = pf_exo_hud.select_animator
+
+![medkit_use_scientic]
+modify_sect_lua_callback = pf_exo_hud.select_animator
+
+![antirad_use]
+modify_sect_lua_callback = pf_exo_hud.select_animator
+
+![drug_radioprotector_use]
+modify_sect_lua_callback = pf_exo_hud.select_animator
+
+[pf_exo_medkit_use]:animator_base
+hands_position = 0.0, 0.017, 0.01
+hands_position_16x9 = 0.0, 0.017, 0.01
+hands_orientation = 0.0, 0.0, 0.0
+hands_orientation_16x9 = 0.0, 0.0, 0.0
+sound_1 = pf_exo\medkit_exo, 0.30
+anm_show = medex_blue, medkit_exo_blue
+dof = 0.0, 0.5, 5, 2.3
+disable_ui_input = true
+start_lua_callback = pf_exo_hud.on_medical_started
+end_lua_callback = pf_exo_hud.reset_drawer
+
+[pf_exo_antirad_use]:pf_exo_medkit_use
+anm_show = medex_antirad, medkit_exo_antirad
+sound_1 = pf_exo\medkit_exo_alt, 0.30
+
+; Same inspection key as the independent watch, with no inventory use.
+[pf_exo_inspect]
+hands_position = 0.0, 0.017, -0.03
+hands_position_16x9 = 0.0, 0.017, -0.03
+hands_orientation = 0.0, 0.0, 0.0
+hands_orientation_16x9 = 0.0, 0.0, 0.0
+anm_show = pfxh_in__, pfxp_in__, 1.5
+anm_idle = pfxh_idle__, pfxp_idle__, 1.5
+anm_hide = pfxh_out__, pfxp_out__, 1.5
+hold_after_end = true
+can_sprint = false
+blend = false
+hud_fov = 53
+inspection_opening_ms = 290
+start_lua_callback = pf_st_watch.on_started

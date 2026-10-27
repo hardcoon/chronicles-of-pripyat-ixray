@@ -1,6 +1,7 @@
--- CP2 adds the sender's rank: five uint32 counters plus an exact Lua integer.
--- CP1 remains readable, but its aggregate stash count cannot recover a rank.
+-- CP3 adds an optional two-character avatar/armor field to CP2's counters/rank.
+-- CP1/CP2 remain readable with default appearance. CRC covers the whole body.
 local alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+local appearance_alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_"
 local crc_table = nil
 
 local function crc32(text)
@@ -28,8 +29,9 @@ function rank(values)
 end
 
 function encode(values)
+    if type(values) ~= "table" then return nil end
     local fields = values[6] ~= nil and 6 or 5
-    local parts = { fields == 6 and "CP2" or "CP1", "a" }
+    local parts = { fields == 6 and "CP3" or "CP1", "a" }
     for i = 1, fields do
         local n = tonumber(values[i])
         local limit = i == 6 and 9007199254740991 or 4294967295
@@ -42,17 +44,37 @@ function encode(values)
         until n == 0
         parts[#parts + 1] = digits
     end
+    if fields == 6 then
+        local avatar, armor = values.avatar_id or 0, values.armor_id or 0
+        for _, value in ipairs({avatar, armor}) do
+            if type(value) ~= "number" or value ~= value or value < 0 or value > 63 or
+                value ~= math.floor(value) then return nil end
+        end
+        if avatar ~= 0 or armor ~= 0 then
+            parts[#parts + 1] = appearance_alphabet:sub(avatar + 1, avatar + 1) ..
+                appearance_alphabet:sub(armor + 1, armor + 1)
+        end
+    end
     local body = table.concat(parts, "|")
     return body .. "|" .. crc32(body) .. "!"
 end
 
 function decode(text)
-    if type(text) ~= "string" or #text > 67 then return nil end
-    local body, checksum = text:match("^(CP[12]|a|[0-9a-z|]+)|(%x%x%x%x%x%x%x%x)!$")
+    if type(text) ~= "string" or #text > 70 then return nil end
+    local body, checksum = text:match("^(CP[123]|a|.+)|(%x%x%x%x%x%x%x%x)!$")
     if not body or crc32(body) ~= checksum then return nil end
-    local values = {}
+    local version, fields = body:sub(1, 3), {}
     for field in (body:sub(7) .. "|"):gmatch("(.-)|") do
-        local rank_field = body:sub(1, 3) == "CP2" and #values == 5
+        fields[#fields + 1] = field
+    end
+    local count = version == "CP1" and 5 or 6
+    if version == "CP3" then
+        if #fields ~= 6 and #fields ~= 7 then return nil end
+    elseif #text > 67 or #fields ~= count then return nil end
+    local values = {avatar_id = 0, armor_id = 0}
+    for index = 1, count do
+        local field = fields[index]
+        local rank_field = index == 6
         if #field == 0 or #field > (rank_field and 11 or 7) or
             (#field > 1 and field:sub(1, 1) == "0") then return nil end
         -- The installed Lua's tonumber(base36) saturates at uint32. Parse
@@ -60,12 +82,20 @@ function decode(text)
         local n, limit = 0, rank_field and 9007199254740991 or 4294967295
         for i = 1, #field do
             local byte = field:byte(i)
+            if not (byte >= 48 and byte <= 57 or byte >= 97 and byte <= 122) then return nil end
             local digit = byte <= 57 and byte - 48 or byte - 87
             if n > math.floor((limit - digit) / 36) then return nil end
             n = n * 36 + digit
         end
         values[#values + 1] = n
     end
-    if #values ~= (body:sub(1, 3) == "CP2" and 6 or 5) then return nil end
+    if #fields == 7 then
+        local field = fields[7]
+        if #field ~= 2 then return nil end
+        local avatar = appearance_alphabet:find(field:sub(1, 1), 1, true)
+        local armor = appearance_alphabet:find(field:sub(2, 2), 1, true)
+        if not avatar or not armor then return nil end
+        values.avatar_id, values.armor_id = avatar - 1, armor - 1
+    end
     return values
 end

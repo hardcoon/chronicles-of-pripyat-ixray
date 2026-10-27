@@ -1,0 +1,156 @@
+-- Stable appearance catalogs. Codes are independent of atlas order and model packs.
+-- Retired avatar IDs 33/34 are intentionally absent and must never be reused.
+local avatars = {
+    [0] = "pf_player_avatar",
+    [26] = "pf_irc_avatar_26",
+    [27] = "pf_irc_avatar_27",
+    [28] = "pf_irc_avatar_28",
+    [29] = "pf_irc_avatar_29",
+    [30] = "pf_irc_avatar_30",
+    [31] = "pf_irc_avatar_31",
+    [32] = "pf_irc_avatar_32",
+    [35] = "pf_irc_avatar_35",
+    [36] = "pf_irc_avatar_36",
+    [37] = "pf_irc_avatar_37",
+    [38] = "pf_irc_avatar_38",
+    [39] = "pf_irc_avatar_39",
+    [40] = "pf_irc_avatar_40",
+    [41] = "pf_irc_avatar_41",
+    [42] = "pf_irc_avatar_42",
+    [43] = "pf_irc_avatar_43",
+    [44] = "pf_irc_avatar_44",
+    [45] = "pf_irc_avatar_45",
+    [5] = "pf_irc_avatar_05",
+    [6] = "pf_irc_avatar_06",
+    [7] = "pf_irc_avatar_07",
+    [8] = "pf_irc_avatar_08",
+    [11] = "pf_irc_avatar_11",
+    [12] = "pf_irc_avatar_12",
+    [15] = "pf_irc_avatar_15",
+    [16] = "pf_irc_avatar_16",
+    [17] = "pf_irc_avatar_17",
+    [18] = "pf_irc_avatar_18",
+    [20] = "pf_irc_avatar_20",
+    [25] = "pf_irc_avatar_25",
+    [1] = "pf_irc_avatar_01",
+    [2] = "pf_irc_avatar_02",
+    [3] = "pf_irc_avatar_03",
+    [9] = "pf_irc_avatar_09",
+    [10] = "pf_irc_avatar_10",
+    [13] = "pf_irc_avatar_13",
+    [14] = "pf_irc_avatar_14",
+    [4] = "pf_irc_avatar_04",
+    [19] = "pf_irc_avatar_19",
+    [21] = "pf_irc_avatar_21",
+    [22] = "pf_irc_avatar_22",
+    [23] = "pf_irc_avatar_23",
+    [24] = "pf_irc_avatar_24",
+}
+local armor = {
+    [1] = "actors\\stalker_bandit\\stalker_bandit_4",
+    [2] = "actors\\stalker_bandit\\stalker_bandit_3",
+    [3] = "actors\\stalker_bandit\\stalker_bandit_1",
+    [4] = "actors\\stalker_bandit\\stalker_bandit_2",
+    [5] = "actors\\stalker_neutral\\stalker_neutral_2",
+    [6] = "actors\\stalker_neutral\\stalker_neutral_3",
+    [7] = "actors\\stalker_soldier\\stalker_soldier_3",
+    [8] = "actors\\stalker_soldier\\stalker_soldier_4",
+    [9] = "actors\\stalker_dolg\\stalker_dolg_2",
+    [10] = "actors\\stalker_dolg\\stalker_dolg_3",
+    [11] = "actors\\stalker_freedom\\stalker_freedom_2",
+    [12] = "actors\\stalker_freedom\\stalker_freedom_1",
+    [13] = "actors\\stalker_freedom\\stalker_freedom_3",
+    [14] = "actors\\stalker_merc\\stalker_merc_2",
+    [15] = "actors\\stalker_monolith\\stalker_monolith_2",
+    [16] = "actors\\stalker_neutral\\stalker_neutral_nauchniy",
+    [17] = "actors\\stalker_dolg\\stalker_dolg_1",
+    [18] = "actors\\stalker_freedom\\stalker_freedom_5",
+    [19] = "actors\\stalker_monolith\\stalker_monolith_1",
+    [20] = "actors\\stalker_ecolog\\ecolog_red",
+    [21] = "actors\\stalker_neutral\\stalker_neutral_4",
+    [22] = "actors\\stalker_dolg\\stalker_dolg_4",
+    [23] = "actors\\stalker_freedom\\stalker_freedom_4",
+    [24] = "actors\\stalker_merc\\stalker_merc_4",
+    [25] = "actors\\stalker_monolith\\stalker_monolith_4",
+}
+local outfits = {
+    novice_outfit = 1,
+    bandit_blackrain_outfit = 1,
+    bandit_brownrain_outfit = 2,
+    bandit_outfit = 3,
+    bandit_light_outfit = 4,
+    stalker_outfit = 5,
+    stalker_outfit_barge = 5,
+    cs_heavy_outfit = 6,
+    specops_outfit = 7,
+    military_outfit = 8,
+    dolg_outfit = 9,
+    dolg_heavy_outfit = 10,
+    svoboda_light_outfit = 11,
+    svoboda_outfit = 12,
+    svoboda_heavy_outfit = 13,
+    merc_outfit = 14,
+    monolith_outfit = 15,
+    scientific_outfit = 16,
+    dolg_scientific_outfit = 17,
+    svoboda_scientific_outfit = 18,
+    monolith_scientific_outfit = 19,
+    pf_guardian_seva_outfit = 19,
+    ecolog_outfit = 20,
+    exo_outfit = 21,
+    dolg_exo_outfit = 22,
+    svoboda_exo_outfit = 23,
+    merc_exo_outfit = 24,
+    monolith_exo_outfit = 25,
+}
+local available = {}
+
+local function code(value)
+    return type(value) == "number" and value == math.floor(value) and value >= 0 and value <= 63
+end
+
+function avatar_id(value)
+    return code(value) and avatars[value] and value or 0
+end
+
+function armor_id(value)
+    return code(value) and armor[value] and value or 0
+end
+
+function avatar_texture(value)
+    return avatars[avatar_id(value)]
+end
+
+function outfit_id(section)
+    return type(section) == "string" and outfits[section] or 0
+end
+
+function armor_visual(value)
+    local id = armor_id(value)
+    if id == 0 then return nil end
+    if available[id] == nil then
+        -- exist returns fs_file userdata (or nil), not a boolean.
+        available[id] = not not getFS():exist("$game_meshes$", armor[id] .. ".ogf")
+    end
+    return available[id] and armor[id] or nil
+end
+
+-- Display order is independent of the stable wire IDs and atlas positions.
+local avatar_order = {0,26,27,28,29,30,31,32,35,36,37,38,39,40,41,42,43,44,45,5,6,7,8,11,12,15,16,17,18,20,25,1,2,3,9,10,13,14,4,19,21,22,23,24}
+function avatar_options()
+    local result = {}
+    for _, id in ipairs(avatar_order) do result[#result + 1] = {id = id, texture = avatars[id]} end
+    return result
+end
+function local_avatar()
+    local actor = db and db.actor
+    if not actor or not db.storage or not db.storage[actor:id()] then return 0 end
+    return avatar_id(xr_logic.pstor_retrieve(actor, "pf_irc_avatar_id", 0))
+end
+function select_avatar(value)
+    local actor = db and db.actor
+    if not code(value) or not avatars[value] or not actor or not db.storage or
+        not db.storage[actor:id()] then return false end
+    xr_logic.pstor_store(actor, "pf_irc_avatar_id", value)
+    return true
+end

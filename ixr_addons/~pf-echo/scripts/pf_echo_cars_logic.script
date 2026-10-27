@@ -1,0 +1,146 @@
+-- Pure event state machine. No engine calls, spawning, audio or subscriptions.
+local State = {}
+State.__index = State
+local function distance2(a,b)
+    return (a[1]-b[1])^2+(a[2]-b[2])^2+(a[3]-b[3])^2
+end
+local function ordinal(year,month,day)
+    local y=year-1
+    local days=365*y+math.floor(y/4)-math.floor(y/100)+math.floor(y/400)+day
+    local lengths={31,28,31,30,31,30,31,31,30,31,30,31}
+    if year%4==0 and (year%100~=0 or year%400==0) then lengths[2]=29 end
+    for m=1,month-1 do days=days+lengths[m] end
+    return days
+end
+function night_id(date,start_hour,end_hour)
+    local hour=date[4]
+    local inside=(start_hour<end_hour and hour>=start_hour and hour<end_hour) or
+        (start_hour>end_hour and (hour>=start_hour or hour<end_hour))
+    if not inside then return nil end
+    local day=ordinal(date[1],date[2],date[3])
+    if start_hour>end_hour and hour<end_hour then day=day-1 end
+    return day
+end
+function new(entries,config)
+    local by_id={}
+    for _,entry in ipairs(entries) do assert(not by_id[entry.id]);by_id[entry.id]=entry end
+    return setmetatable({entries=entries,by_id=by_id,cfg=config,used={},active={},next_scenario=1,attempts=0,starts=0},State)
+end
+function State:reset_approach() self.armed=nil end
+function State:cancel() self.active={};self:reset_approach() end
+function State:rollback_start(id)
+    local active=self.active[id]
+    if active and active.sequence_before then self.next_scenario=active.sequence_before end
+    self.used[id]=nil;self.active[id]=nil
+end
+function State:shift_time(delta)
+    for _,active in pairs(self.active) do
+        active.started=active.started+delta
+        if active.stop_at then active.stop_at=active.stop_at+delta end
+        for _,key in ipairs({'light_deadline','run_deadline','engine_stop_at'}) do
+            if active[key] then active[key]=active[key]+delta end
+        end
+    end
+end
+function State:on_engine_started(id,now)
+    local active=self.active[id]
+    if active and active.scenario==1 and not active.stop_at and not active.run_deadline then
+        active.run_deadline=now+self.cfg.engine_run_duration_ms
+    end
+end
+function State:save()
+    local used={}
+    for id in pairs(self.used) do used[id]=true end
+    return {version=3,night=self.night,used=used,next_scenario=self.next_scenario}
+end
+function State:load(saved)
+    self.night,self.used,self.active,self.armed,self.next_scenario=nil,{},{},nil,1
+    if type(saved)~='table' then return end
+    if saved.next_scenario==1 or saved.next_scenario==2 then self.next_scenario=saved.next_scenario end
+    if type(saved.night)=='number' and saved.night==saved.night and math.abs(saved.night)<1e8 then
+        self.night=saved.night
+        for id,value in pairs(type(saved.used)=='table' and saved.used or {}) do
+            if value==true and self.by_id[id] then self.used[id]=true end
+        end
+    end
+end
+function State:step(now,date,position,allow,roll)
+    local actions={}
+    local function emit(kind,active,reason)
+        actions[#actions+1]={kind=kind,entry=self.by_id[active.id],id=active.id,
+            scenario=active.scenario,side=active.side,reason=reason,started=active.started}
+    end
+    -- Only one car runs; keep ownership per ID for safe cleanup and old saves.
+    local ids={};for id in pairs(self.active) do ids[#ids+1]=id end;table.sort(ids)
+    for _,id in ipairs(ids) do
+        local active=self.active[id];local entry=self.by_id[id]
+        local elapsed=now-active.started
+        if not active.stop_at then
+            local d=distance2(position,entry.engine)
+            local reason=d<=self.cfg.stop_near_distance^2 and 'near' or
+                (d>=self.cfg.stop_far_distance^2 and 'far' or nil)
+            if reason then
+                local tail=active.scenario==1 and self.cfg.engine_fade_ms or 0
+                if active.scenario==1 and active.engine_stop_at then tail=math.max(0,active.engine_stop_at-now) end
+                if active.scenario==2 then tail=math.max(0,entry.sound_duration_ms-elapsed) end
+                active.stop_at=now+tail;active.lit=false;emit('stop',active,reason)
+            else
+                if active.scenario==1 then
+                    if active.run_deadline and not active.engine_stop_at and now>=active.run_deadline then
+                        active.engine_stop_at=now+self.cfg.engine_fade_ms;emit('engine_stop',active,'timer')
+                    end
+                    if active.lit and now>=active.light_deadline then
+                        active.lit=false;active.light_done=true;emit('lights_off',active,'timer')
+                    end
+                end
+                if not active.lit and not active.light_done and elapsed>=self.cfg.headlights_delay_ms then
+                    active.lit=true
+                    if active.scenario==1 then active.light_deadline=now+self.cfg.headlights_duration_ms end
+                    emit('lights_on',active)
+                end
+            end
+        end
+        if (active.stop_at and now>=active.stop_at) or
+            (active.light_done and active.engine_stop_at and now>=active.engine_stop_at) then
+            emit('finished',active);self.active[id]=nil
+        end
+    end
+    local night=night_id(date,self.cfg.start_hour,self.cfg.end_hour)
+    if not night or not allow then self:reset_approach();return actions end
+    if self.night~=night then
+        self.night,self.used,self.armed=night,{},nil
+    end
+    local radius2=self.cfg.trigger_distance^2
+    local rearm2=self.cfg.rearm_distance^2
+    if not self.armed then
+        self.armed={}
+        for _,entry in ipairs(self.entries) do self.armed[entry.id]=distance2(position,entry.engine)>radius2 end
+        return actions
+    end
+    local closest,closest_distance
+    for _,entry in ipairs(self.entries) do
+        local d=distance2(position,entry.engine)
+        if d>rearm2 then self.armed[entry.id]=true
+        elseif d<=radius2 then
+            if self.armed[entry.id] and not self.used[entry.id] and not self.active[entry.id] and
+                (not closest_distance or d<closest_distance or (d==closest_distance and entry.id<closest.id)) then
+                closest,closest_distance=entry,d
+            end
+            -- Other cars get no queued attempt: a fresh approach is required.
+            self.armed[entry.id]=false
+        end
+    end
+    if next(self.active) or not closest then return actions end
+    self.attempts=self.attempts+1
+    if roll(1,100)>self.cfg.chance_percent then return actions end
+    local sequence_before=self.next_scenario
+    local scenario=sequence_before
+    if self.cfg.scenario_selection=='random' then scenario=roll(1,100)<=self.cfg.two_headlights_chance_percent and 1 or 2 end
+    if self.cfg.scenario_selection~='random' then self.next_scenario=scenario%2+1 end
+    local active={id=closest.id,started=now,lit=false,scenario=scenario,
+        side=scenario==2 and roll(1,2) or nil,sequence_before=sequence_before}
+    self.active[closest.id]=active
+    self.used[closest.id]=true;self.starts=self.starts+1
+    emit('start',active)
+    return actions
+end
