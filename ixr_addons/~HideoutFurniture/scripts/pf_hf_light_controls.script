@@ -34,6 +34,17 @@ function set_lights(enabled)
         return true
     end)
 end
+function toggle_lights()
+    -- Derive the next action from real saved lamp state, including manual and
+    -- scheduled changes. Scan this bounded online registry only on a key press.
+    local any_on=false
+    for_each_light(function(object,lamp,own,binder)
+        if own.is_on then any_on=true end
+        return false
+    end)
+    local enabled=not any_on
+    return enabled,set_lights(enabled)
+end
 function set_light_mode(mode)
     if mode~="static" and mode~="dynamic" then return 0 end
     return for_each_light(function(object,lamp,own,binder)

@@ -47,7 +47,7 @@ local function category_map()
             elseif storage_items[section] or kind == "stash" and (not display or entry.specialized_storage == "ammo" or
                     display.kind == "ammo") then
                 categories[section] = "storage"
-            elseif interactive_kinds[kind] or display ~= nil or section == "pf_hfm_tv_box_item" then
+            elseif interactive_kinds[kind] or display ~= nil or section == "pf_hfm_tv_box_item" or section == "pf_hfe_tv_item" then
                 categories[section] = "interactive"
             elseif kind == "light" or kind == "campfire" then
                 categories[section] = "lighting"

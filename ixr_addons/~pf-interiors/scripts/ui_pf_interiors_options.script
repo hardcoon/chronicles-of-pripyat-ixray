@@ -1,5 +1,7 @@
 -- Compact Interior page. Lighting controls live in their own modal dialog.
 local tr=pf_interiors.translate
+local emission_flicker_available=getFS():exist("$game_scripts$","pf_furniture_emission_lights.script") and
+    getFS():exist("$game_scripts$","pf_furniture_flicker_settings.script")
 class "panel" (CUIWindow)
 function panel:__init() super() end
 function panel:__finalize() end
@@ -14,6 +16,11 @@ function panel:InitControls(xml,owner)
     xml:InitStatic("panel:forum_rule",self):Enable(false)
     self.range_caption=xml:InitStatic("panel:range_caption",self)
     self.weather_range=xml:InitCheck("panel:weather_range",self)
+    if emission_flicker_available then
+        self.flicker_caption=xml:InitStatic("panel:flicker_caption",self)
+        self.emission_flicker=xml:InitCheck("panel:emission_flicker",self)
+        self:SetFlickerValue()
+    end
     self.global_lights=xml:Init3tButton("panel:global_lights",self)
     self.light_status=xml:InitTextWnd("panel:light_status",self)
     self.forum:Enable(true)
@@ -33,4 +40,22 @@ function panel:RefreshAvailability()
     local ready=pf_interiors_menu.available()
     self.manage:Enable(ready)
     self.hint:SetText(ready and tr("pf_interiors_menu_key",pf_interiors.key_label()) or tr("pf_interiors_menu_load_first"))
+end
+
+function panel:SetFlickerValue()
+    if not self.emission_flicker then return end
+    self.flicker_backup=pf_furniture_flicker_settings.is_enabled()
+    self.emission_flicker:SetCheck(self.flicker_backup)
+end
+function panel:SaveFlickerValue()
+    if not self.emission_flicker then return true end
+    local value=self.emission_flicker:GetCheck()==true
+    if value~=self.flicker_backup then
+        if not pf_furniture_flicker_settings.set_enabled(value) then
+            pf_interiors.report("unable to save furniture emission flicker setting")
+            return false
+        end
+        self.flicker_backup=value
+    end
+    return true
 end

@@ -57,6 +57,7 @@ local PREACHER_FACING_DOT_MIN = 0.92
 local PREACHER_SEATED_FACING_DOT_MIN = 0.90
 
 local next_check = 0
+local legendary_autosave_after = nil
 local next_preacher_hit_check = 0
 local preacher_base_migrations_checked = false
 local preacher_branch_migrations_complete = false
@@ -1416,8 +1417,9 @@ function on_actor_item_take(item, previous_owner_id)
 		if not db.actor:has_info("pf_story_legendary_searched") then
 			db.actor:give_info_portion("pf_story_legendary_searched")
 			news_manager.send_tip(db.actor, "pf_story_legendary_searched_news", nil, nil, nil, nil)
-			xr_effects.scenario_autosave(
-				db.actor, nil, {"st_save_pf_story_legendary_searched"})
+			-- Box-take runs between native SELL/BUY events. Save after the
+			-- transfer finishes, never while the item has no client parent.
+			legendary_autosave_after = time_global() + 1
 		end
 		add_stash_marker(owner)
 	end
@@ -1425,6 +1427,11 @@ end
 
 function update()
 	if not db.actor then return end
+	if legendary_autosave_after and time_global() >= legendary_autosave_after then
+		legendary_autosave_after = nil
+		xr_effects.scenario_autosave(
+			db.actor, nil, {"st_save_pf_story_legendary_searched"})
+	end
 	-- Keep the follow-up on the same guaranteed actor-update path as the
 	-- original story rather than depending on a separate resident callback.
 	pf_story_continuation.update()
@@ -1557,6 +1564,7 @@ function update()
 end
 
 function reset()
+	legendary_autosave_after = nil
 	stop_quiet_sermon()
 	pf_monolith_guardian.reset()
 	next_check = 0

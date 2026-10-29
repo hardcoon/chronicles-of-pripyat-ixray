@@ -1,0 +1,149 @@
+-- Native map objects only. Keep their existing binders, logic, color and sounds.
+local state = {entries={}, restore={}, registered=false, next_tick=0}
+local SAVE_KEY = "pf_emission_map_lamps_v1"
+local INTERVAL, RANGE2 = 100, 90*90
+
+local function distance2(p, q)
+    return (p.x-q[1])^2 + (p.y-q[2])^2 + (p.z-q[3])^2
+end
+local function random_delay(entry, low, high)
+    -- A private RNG: cosmetic flicker must not advance gameplay's math.random.
+    entry.seed = (entry.seed*16807)%2147483647
+    return low + entry.seed%(high-low+1)
+end
+function register(object)
+    if object:section() ~= "lights_hanging_lamp" then return end
+    local name = object:name()
+    local definition = pf_emission_lamps_map.entries[name]
+    if not definition or distance2(object:position(), definition.position) > 0.25 then return end
+    local id = object:id()
+    state.entries[id] = {name=name, definition=definition, seed=(id*101+17)%2147483646+1}
+end
+local function current_object(id, entry)
+    local object = level.object_by_id(id)
+    if object and object:section() == "lights_hanging_lamp" and object:name() == entry.name then
+        return object
+    end
+end
+local function permitted(id, entry, actor_position)
+    local cull = entry.definition.cull
+    if cull and distance2(actor_position, entry.definition.position) >= cull*cull then return false end
+    local storage = db.storage[id]
+    local section = storage and storage.active_section
+    -- Do not undo a map logic transition to its distance-culling state.
+    return not (section and section:match("@far$"))
+end
+local function restore_lamp(id, entry, lamp, actor_position)
+    if entry.off then
+        if permitted(id, entry, actor_position) and not lamp:is_on() then lamp:turn_on() end
+        entry.off = nil
+    end
+end
+local function emission_active()
+    if level.name() ~= "pripyat_full" then return false end
+    local manager = surge_manager.get_surge_manager()
+    if not manager or not manager.started or not manager.inited_time then return false end
+    local factor = level.get_time_factor()
+    if not factor or factor <= 0 then return false end
+    local phase = math.ceil(game.get_game_time():diffSec(manager.inited_time)/factor)
+    return phase >= 100 and phase < math.min(200, manager.surge_time or 206)
+end
+function update()
+    local actor = db.actor
+    if not actor or device().precache_frame > 0 then return end
+    local now = time_global()
+    if state.last_tick and now < state.last_tick then
+        state.next_tick = 0
+        for _, entry in pairs(state.entries) do entry.due = now end
+    end
+    state.last_tick = now
+    if now < state.next_tick then return end
+    state.next_tick = now + INTERVAL
+    local position = actor:position()
+    local active = actor:alive() and emission_active()
+    -- This is a bounded registry of 26 allowlisted map objects, never an ALife scan.
+    for id, entry in pairs(state.entries) do
+        local object = current_object(id, entry)
+        if not object then
+            state.entries[id] = nil
+        else
+            local lamp = object:get_hanging_lamp()
+            if lamp then
+                if state.restore[entry.name] then
+                    entry.off = true
+                    restore_lamp(id, entry, lamp, position)
+                    state.restore[entry.name] = nil
+                end
+                local allowed = permitted(id, entry, position)
+                if not active or not allowed or distance2(position, entry.definition.position) > RANGE2 then
+                    restore_lamp(id, entry, lamp, position)
+                    entry.due = nil
+                elseif entry.off then
+                    -- Another controller may already have switched it on: relinquish ownership.
+                    if lamp:is_on() or now >= entry.due then
+                        restore_lamp(id, entry, lamp, position)
+                        entry.due = now + random_delay(entry, 450, 1700)
+                    end
+                elseif lamp:is_on() then
+                    if not entry.due then entry.due = now + random_delay(entry, 150, 1200) end
+                    if now >= entry.due then
+                        lamp:turn_off()
+                        entry.off = true
+                        entry.due = now + random_delay(entry, 120, 650)
+                    end
+                else
+                    -- A light that was off independently is never switched on by this addon.
+                    entry.due = nil
+                end
+            end
+        end
+    end
+end
+local function save_state(data)
+    local off = {}
+    for id, entry in pairs(state.entries) do
+        if entry.off and current_object(id, entry) then off[entry.name] = true end
+    end
+    for name, value in pairs(state.restore) do if value then off[name] = true end end
+    -- Only our temporary dark pulses are persisted, not original lamp states or IDs.
+    data[SAVE_KEY] = next(off) and {level=level.name(), off=off} or nil
+end
+local function load_state(data)
+    local saved = data[SAVE_KEY]
+    state.entries, state.restore = {}, {}
+    if type(saved) == "table" and saved.level == "pripyat_full" and type(saved.off) == "table" then
+        for name, value in pairs(saved.off) do
+            if value == true and pf_emission_lamps_map.entries[name] then state.restore[name] = true end
+        end
+    end
+    data[SAVE_KEY] = nil
+    state.next_tick, state.last_tick = 0, nil
+end
+local function loaded()
+    -- Actor load may run between individual map-object init calls. Keep registrations.
+    for _, entry in pairs(state.entries) do entry.off, entry.due = nil, nil end
+    state.next_tick, state.last_tick = 0, nil
+end
+function status()
+    local count, off = 0, 0
+    for _, entry in pairs(state.entries) do count=count+1; if entry.off then off=off+1 end end
+    return count, off
+end
+function on_game_start()
+    if state.registered then return end
+    local original = bind_physic_object.init
+    bind_physic_object.init = function(object)
+        original(object)
+        register(object)
+    end
+    RegisterScriptCallback("load", loaded)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    if type(RegisterScriptTimedCallback) == "function" then
+        RegisterScriptTimedCallback(update, INTERVAL)
+    else
+        RegisterScriptCallback("update", update)
+    end
+    state.registered = true
+end
+on_game_start()

@@ -7,6 +7,9 @@ local function configured_light_distance()
     if not distance or distance~=distance or distance<=0 or distance>=math.huge then return 100 end
     return distance
 end
+-- Optional emission addon: a clean restart without it keeps ordinary lights usable.
+local emission_flicker_available=getFS():exist("$game_scripts$","pf_furniture_emission_lights.script") and
+    getFS():exist("$game_scripts$","pf_furniture_flicker_settings.script")
 local light_distance=configured_light_distance()
 local light_distance_sq=light_distance*light_distance
 local light_return_sq=(light_distance*.95)^2
@@ -67,6 +70,9 @@ function pf_hf_static_furniture:update(delta)
             if root and root.fix then root:fix();self.frozen=true end
         end
     end
+    if pf_hf_online_tv.is_tv(self.entry.object) then
+        pf_hf_online_tv.track(self,pf_hf_furniture.state(self.object:id()))
+    end
     local rendered=pf_hf_visuals.update(self)
     -- Bone-only presentation (clock digits/cans) resumes from current data.
     -- Fan animation and radio playback keep their existing simulation state.
@@ -90,14 +96,20 @@ function pf_hf_static_furniture:update(delta)
         end
         pf_hf_light_schedule.update(self,own,visible)
         -- Hiding the model must not extinguish a distant light when preservation is enabled.
-        local emitting=own.is_on and visible
+        local powered=own.is_on and visible
+        local emitting,flicker_dark=powered,false
+        if emission_flicker_available then
+            emitting,flicker_dark=pf_furniture_emission_lights.emitting(self,powered,
+                pf_furniture_flicker_settings.is_enabled())
+        end
         local changed=emitting~=lamp:is_on()
         if changed then if emitting then lamp:turn_on() else lamp:turn_off() end end
         -- TurnOff unregisters the native light/ambient/glow but also hides its
         -- bone. Restore the model for distance culling without enabling light.
-        if changed or self.last_on~=own.is_on then
-            self.object:set_bone_visible(self.entry.light.main_bone,self.entry.keep_light_bone or own.is_on,true)
+        if changed or self.last_on~=own.is_on or self.last_flicker_dark~=flicker_dark then
+            self.object:set_bone_visible(self.entry.light.main_bone,self.entry.keep_light_bone or (own.is_on and not flicker_dark),true)
         end
+        self.last_flicker_dark=flicker_dark
         if self.last_on~=own.is_on then
             if self.entry.hide_bone then self.object:set_bone_visible(self.entry.hide_bone,own.is_on,true) end
             local path=own.is_on and self.entry.snd_turn_on or self.entry.snd_turn_off
@@ -106,8 +118,8 @@ function pf_hf_static_furniture:update(delta)
             end
             self.last_on=own.is_on
         end
-        if not emitting and self.hum then self.hum:stop();self.hum=nil end
-        if emitting and self.entry.snd_on then
+        if not powered and self.hum then self.hum:stop();self.hum=nil end
+        if powered and self.entry.snd_on then
             if not self.hum or not self.hum:playing() then
                 local path=self.entry.snd_on
                 self.hum=sound_object(path)
@@ -140,7 +152,9 @@ function pf_hf_static_furniture:light_available()
     return pf_hf_visuals.in_standard_range(self.object) and light_in_range(self,true)
 end
 function pf_hf_static_furniture:net_destroy()
+    pf_hf_online_tv.untrack(self)
     pf_hf_light_controls.unregister(self)
+    self.emission_flicker=nil
     self.object:set_callback(callback.use_object,nil)
     pf_hf_expansion.cleanup(self)
     if self.radio_sound then self.radio_sound:stop();self.radio_sound=nil end

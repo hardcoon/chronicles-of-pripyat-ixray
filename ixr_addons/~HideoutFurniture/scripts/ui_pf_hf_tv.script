@@ -1,0 +1,243 @@
+-- Native game UI; all player operations are supplied by its owner.
+local active=nil
+local qualities={0,144,240,360,480,720,1080}
+local function tr(key) return game.translate_string(key) end
+local function clock(value) value=math.max(0,math.floor(value or 0));return string.format('%02d:%02d',math.floor(value/60),value%60) end
+local function contains(window,cursor)
+    local p=window:GetWndPos();return cursor.x>=p.x and cursor.x<=p.x+window:GetWidth() and cursor.y>=p.y and cursor.y<=p.y+window:GetHeight()
+end
+class 'tv_dialog' (CUIScriptWnd)
+function tv_dialog:__init(context) super()
+    self.context=context;self.rects={};self.main={};self.editor={};self.buttons={};self.icons={};self.mix_count=0;self.rows={};self.popup={};self.quality_options={};self.row_callbacks={}
+    local xml=CScriptXmlInit();xml:ParseFile('ui_pf_hf_tv.xml');xml:InitWindow('main',0,self);self.xml=xml
+    local function keep(window,group,child)
+        local p=window:GetWndPos();self.rects[#self.rects+1]={window=window,x=p.x,y=p.y,w=window:GetWidth(),h=window:GetHeight(),child=child}
+        if group then self[group][#self[group]+1]=window end
+        return window
+    end
+    self.keep=keep
+    keep(xml:InitStatic('main:panel',self)):Enable(false)
+    keep(xml:InitTextWnd('main:title',self))
+    keep(xml:InitStatic('main:header_rule',self)):Enable(false)
+    for _,name in ipairs({'columns_rule','player_rule'}) do keep(xml:InitStatic('main:'..name,self),'main'):Enable(false) end
+    for _,name in ipairs({'playlist_title','count','empty','source','index','track','url','status','elapsed','duration','quality_label','volume_label','volume_value','mode','order_label'}) do
+        self[name]=keep(xml:InitTextWnd('main:'..name,self),'main')
+    end
+    self.track:SetEllipsis(true);self.url:SetEllipsis(true)
+    self.list=keep(xml:InitListBox('main:list',self),'main');self:Register(self.list,'playlist')
+    self:AddCallback('playlist',ui_events.LIST_ITEM_SELECT,self.Select,self)
+    for _,name in ipairs({'close','add','rename','delete','up','down','mix','previous','play','next','stop','shuffle','repeat','quieter','louder','quality'}) do
+        local action=name
+        local button=keep(xml:Init3tButton('main:'..name,self),name~='close' and 'main' or nil)
+        self.buttons[name]=button;self:Register(button,name)
+        if name~='add' then button:SetText('') end
+        if name=='quality' then self.quality=button end
+        self:AddCallback(name,ui_events.BUTTON_CLICKED,function() self:Action(action) end,self)
+        if name~='add' then self.icons[name]=keep(xml:InitStatic('main:'..name..'_icon',button),nil,true);self.icons[name]:Enable(false) end
+    end
+    self.pause={}
+    for _,name in ipairs({'pause_left','pause_right'}) do local bar=keep(xml:InitStatic('main:'..name,self.buttons.play),nil,true);bar:Enable(false);self.pause[#self.pause+1]=bar end
+    self.sliders={}
+    for _,name in ipairs({'seek','volume'}) do
+        local key=name;local slider=keep(xml:Init3tButton('main:'..name,self),'main');slider:SetText('')
+        local fill=keep(xml:InitStatic('main:'..name..'_fill',slider),nil,true);fill:Enable(false)
+        local thumb=keep(xml:InitStatic('main:'..name..'_thumb',slider),nil,true);thumb:Enable(false)
+        self.sliders[name]={window=slider,fill=fill,thumb=thumb};self:Register(slider,name)
+        self:AddCallback(name,ui_events.BUTTON_DOWN,function() self.drag=key;self:Drag() end,self)
+        self:AddCallback(name,ui_events.BUTTON_CLICKED,function() self:Drag();if self.seek_target then context.action('seek',self.seek_target);self.seek_target=nil end;self.drag=nil;context.action('flush') end,self)
+    end
+    for _,name in ipairs({'heading','url_label','name_label','note'}) do self['edit_'..name]=keep(xml:InitTextWnd('editor:'..name,self),'editor') end
+    for _,name in ipairs({'url_background','name_background'}) do self['edit_'..name]=keep(xml:InitStatic('editor:'..name,self),'editor');self['edit_'..name]:Enable(false) end
+    self.url_edit=keep(xml:InitEditBox('editor:url',self),'editor');self.name_edit=keep(xml:InitEditBox('editor:name',self),'editor')
+    for _,name in ipairs({'paste','cancel','confirm'}) do
+        local action=name;local button=keep(xml:Init3tButton('editor:'..name,self),'editor')
+        self['edit_'..name]=button;self:Register(button,'edit_'..name)
+        self:AddCallback('edit_'..name,ui_events.BUTTON_CLICKED,function() self:Action(action) end,self)
+    end
+    keep(xml:InitStatic('quality_options:background',self),'popup'):Enable(false)
+    for _,quality in ipairs(qualities) do
+        local value=quality;local name='quality_'..quality
+        local button=keep(xml:Init3tButton('quality_options:'..name,self),'popup')
+        button:SetText(quality==0 and tr('pf_tv_auto') or quality..'p')
+        self.quality_options[#self.quality_options+1]={value=quality,button=button}
+        self:Register(button,name)
+        self:AddCallback(name,ui_events.BUTTON_CLICKED,function()
+            self.context.action('quality',value);self:QualityPopup(false);self:Refresh()
+        end,self)
+    end
+    self:Fit();self:Edit(nil);self:RefreshList();self:Refresh()
+end
+function tv_dialog:Fit()
+    local screen=device();local kx=(4/3)/(math.max(1,screen.width)/math.max(1,screen.height))
+    if self.kx==kx then return end;self.kx=kx
+    for _,rect in ipairs(self.rects) do
+        rect.window:SetWndPos(vector2():set(rect.child and rect.x*kx or 512+(rect.x-512)*kx,rect.y))
+        rect.window:SetWidth(rect.w*kx);rect.window:SetHeight(rect.h)
+    end
+    self.list_version=nil
+end
+function tv_dialog:LayoutRow(row)
+    local width=row.window:GetWidth()
+    if row.width==width and row.scale==self.kx then return end
+    local x=math.max(8*self.kx,width-28*self.kx)
+    row.button:SetWndPos(vector2():set(x,2));row.button:SetWidth(20*self.kx);row.button:SetHeight(20)
+    row.icon:SetWndPos(vector2():set(3*self.kx,3));row.icon:SetWidth(14*self.kx);row.icon:SetHeight(14)
+    row.title:SetWndPos(vector2():set(8*self.kx,2));row.title:SetWidth(math.max(1,x-16*self.kx));row.title:SetHeight(22)
+    row.source:SetWndPos(vector2():set(8*self.kx,23));row.source:SetWidth(math.max(1,x-16*self.kx));row.source:SetHeight(17)
+    row.width=width;row.scale=self.kx
+end
+function tv_dialog:RefreshList()
+    self.syncing=true
+    local data=self.context.data();local selected=0
+    local rebuild=self.row_scale~=self.kx or #self.rows~=#data.tracks
+    for index,track in ipairs(data.tracks) do if not self.rows[index] or self.rows[index].id~=track.id then rebuild=true;break end end
+    if rebuild then
+        self.list:RemoveAll();self.rows={}
+        for index,track in ipairs(data.tracks) do
+            -- MsgChain lets the row select itself, then dispatch the child button.
+            local item=CUIListBoxItemMsgChain(self.list:GetItemHeight());self.list:AddExistingItem(item)
+            local title=item:GetTextItem();title:SetFont(self.playlist_title:GetFont());title:SetEllipsis(true)
+            local source=item:AddTextField(string.format('%02d · %s',index,track.source),item:GetWidth())
+            source:SetFont(self.mode:GetFont());source:SetTextColor(GetARGB(255,150,145,133))
+            local button=self.xml:Init3tButton('playlist_row:play',item);button:SetText('')
+            local icon=self.xml:InitStatic('playlist_row:play_icon',button);icon:Enable(false)
+            self.rows[index]={id=track.id,window=item,title=title,source=source,button=button,icon=icon}
+            local name='row_play_'..index;self:Register(button,name)
+            if not self.row_callbacks[index] then
+                local slot=index
+                self:AddCallback(name,ui_events.BUTTON_CLICKED,function()
+                    local row=self.rows[slot]
+                    if row and not self.edit_mode then self:QualityPopup(false);self.context.action('start',row.id);self:Refresh() end
+                end,self)
+                self.row_callbacks[index]=true
+            end
+        end
+    end
+    for index,track in ipairs(data.tracks) do
+        local row=self.rows[index]
+        if row.name~=track.name then row.title:SetText(track.name);row.name=track.name end
+        self:LayoutRow(row)
+        if track.id==data.current then selected=index-1 end
+    end
+    -- Selection/volume/quality saves must not destroy a button between down/up.
+    if #data.tracks>0 and (rebuild or self.list:GetSelectedIndex()~=selected) then self.list:SetSelectedIndex(selected) end
+    self.empty:Show(#data.tracks==0 and not self.edit_mode);self.syncing=false
+    self.row_scale=self.kx;self.list_version=self.context.version()
+end
+function tv_dialog:Select()
+    if self.syncing or self.edit_mode then return end
+    local row=self.rows[(tonumber(self.list:GetSelectedIndex()) or -1)+1]
+    if row and row.id~=self.context.data().current then self.context.action('select',row.id) end
+end
+function tv_dialog:QualityPopup(show)
+    self.quality_open=show and not self.edit_mode or false
+    for _,window in ipairs(self.popup) do window:Show(self.quality_open) end
+end
+function tv_dialog:Edit(mode)
+    self.edit_mode=mode;self.drag=nil;self:QualityPopup(false)
+    for _,window in ipairs(self.main) do window:Show(mode==nil) end
+    for _,window in ipairs(self.editor) do window:Show(mode~=nil) end
+    if not mode then return end
+    local track=self.context.current()
+    self.edit_heading:SetText(tr(mode=='add' and 'pf_tv_insert' or 'pf_tv_rename'))
+    self.url_edit:SetText(mode=='add' and '' or track and track.url or '')
+    self.name_edit:SetText(mode=='add' and '' or track and track.name or '')
+    for _,window in ipairs({self.url_edit,self.edit_url_label,self.edit_url_background,self.edit_paste}) do window:Show(mode=='add') end
+    self.edit_note:SetText(mode=='add' and tr('pf_tv_name_hint') or '')
+end
+function tv_dialog:Action(action)
+    local context=self.context;local track=context.current()
+    if action=='quality' then self:QualityPopup(not self.quality_open);return end
+    self:QualityPopup(false)
+    if action=='close' then self:Close();return end
+    if action=='quieter' or action=='louder' then context.action('volume',context.data().volume+(action=='quieter' and -5 or 5));context.action('flush');self:Refresh();return end
+    if action=='add' then self:Edit('add');return end
+    if action=='rename' then if track then self:Edit('rename') end;return end
+    if action=='cancel' then self:Edit(nil);self:RefreshList();return end
+    if action=='paste' then
+        local ok,text=false,nil
+        if type(pf_tv_clipboard)=='function' then ok,text=pcall(pf_tv_clipboard) end
+        if ok and type(text)=='string' and text~='' then self.url_edit:SetText(text);self.edit_note:SetText(tr('pf_tv_name_hint'))
+        else self.edit_note:SetText(tr(ok and text=='' and 'pf_tv_clipboard_empty' or 'pf_tv_clipboard_error')) end
+        return
+    end
+    if action=='confirm' then
+        local ok,problem
+        if self.edit_mode=='add' then ok,problem=context.action('add',self.url_edit:GetText(),self.name_edit:GetText())
+        elseif track then ok=context.action('rename',track.id,self.name_edit:GetText());problem='pf_tv_name_empty' end
+        if ok then self:Edit(nil);self:RefreshList() else self.edit_note:SetText(tr(problem or 'pf_tv_bad_url')) end
+        return
+    end
+    if action=='mix' then
+        self.mix_count=self.mix_count+1
+        if self.mix_count==6 then self:Close();context.action('egg');return end
+    end
+    context.action(action,track and track.id)
+    self:Refresh()
+end
+function tv_dialog:Drag()
+    local name=self.drag;local slider=name and self.sliders[name];if not slider then return end
+    local cursor=GetCursorPosition();local p=slider.window:GetWndPos();local width=slider.window:GetWidth()-slider.thumb:GetWidth()
+    local fraction=math.max(0,math.min(1,(cursor.x-p.x-slider.thumb:GetWidth()/2)/math.max(1,width)))
+    if name=='volume' then local value=math.floor(fraction*100+.5);if self.context.data().volume~=value then self.context.action('volume',value) end
+    else local duration=self.context.status().duration;if duration and duration>0 then self.seek_target=fraction*duration end end
+end
+function tv_dialog:Refresh()
+    local context=self.context;local data=context.data();local info=context.status();local selected,index=context.current()
+    if self.list_version~=context.version() then self:RefreshList() end
+    local selected_index=index;local track=selected
+    for row_index,row in ipairs(data.tracks) do if row.id==info.track_id then track=row;index=row_index;break end end
+    self.track:SetText(track and track.name or tr('pf_tv_empty'));self.url:SetText(track and track.url or '')
+    self.source:SetText(track and track.source or '');self.index:SetText(string.format('%d / %d',index or 0,#data.tracks));self.count:SetText(tostring(#data.tracks))
+    self.status:SetText(tr(data.error or 'pf_tv_status_'..(info.status or 0)))
+    self.elapsed:SetText(clock(self.seek_target or info.position));self.duration:SetText(info.duration>0 and clock(info.duration) or '--:--')
+    self.volume_value:SetText(data.volume..'%')
+    self.quality:SetText(data.quality==0 and tr('pf_tv_auto') or data.quality..'p')
+    self.mode:SetText(tr(data.shuffle and 'pf_tv_random' or 'pf_tv_ordered')..' · '..tr('pf_tv_repeat_'..data.repeat_mode))
+    for row_index,row in ipairs(self.rows) do self:LayoutRow(row);row.title:SetTextColor(GetARGB(255,205,row.id==data.current and 146 or 197,row.id==data.current and 44 or 178)) end
+    for _,name in ipairs({'rename','delete','play','next','previous','up','down'}) do self.buttons[name]:Enable(selected~=nil) end
+    self.buttons.up:Enable(selected_index~=nil and selected_index>1);self.buttons.down:Enable(selected_index~=nil and selected_index<#data.tracks)
+    -- Mix remains enabled for an empty playlist (the hidden six-click action).
+    self.icons.shuffle:SetTextureColor(GetARGB(255,205,data.shuffle and 146 or 197,data.shuffle and 44 or 178))
+    if self.repeat_mode~=data.repeat_mode then
+        self.icons['repeat']:InitTexture(data.repeat_mode==2 and 'pf_hf_tv_icon_repeat_one' or 'pf_hf_tv_icon_repeat')
+        self.repeat_mode=data.repeat_mode
+    end
+    self.icons['repeat']:SetTextureColor(GetARGB(255,205,data.repeat_mode>0 and 146 or 197,data.repeat_mode>0 and 44 or 178))
+    local playing=info.status==1 or info.status==2
+    self.icons.play:Show(not playing);for _,bar in ipairs(self.pause) do bar:Show(playing and not self.edit_mode) end
+    for _,name in ipairs({'seek','volume'}) do
+        local slider=self.sliders[name];local fraction=name=='volume' and data.volume/100 or info.duration>0 and (self.seek_target or info.position)/info.duration or 0
+        fraction=math.max(0,math.min(1,fraction));local x=(slider.window:GetWidth()-slider.thumb:GetWidth())*fraction
+        slider.thumb:SetWndPos(vector2():set(x,0));slider.fill:SetWidth(math.max(.01,x));slider.fill:Show(fraction>0)
+        slider.window:Enable(name=='volume' or info.duration>0)
+    end
+end
+function tv_dialog:Update()
+    CUIScriptWnd.Update(self)
+    if not self.context.available() then self:Close();return end
+    self:Fit()
+    if not self.edit_mode then
+        if self.drag then
+            if pf_runtime_editor.key_down(DIK_keys.MOUSE_1) then self:Drag()
+            else if self.seek_target then self.context.action('seek',self.seek_target);self.seek_target=nil end;self.drag=nil;self.context.action('flush') end
+        end
+        self:Refresh()
+    end
+end
+function tv_dialog:OnKeyboard(dik,action)
+    if action==ui_events.WINDOW_KEY_PRESSED then
+        if dik==DIK_keys.DIK_F5 or dik==DIK_keys.DIK_F9 then self:Close();return false end
+        if dik==DIK_keys.DIK_ESCAPE then if self.quality_open then self:QualityPopup(false) elseif self.edit_mode then self:Edit(nil);self:RefreshList() else self:Close() end;return true end
+        if not self.edit_mode and dik==self.context.key then self:Close();return true end
+    end
+    CUIScriptWnd.OnKeyboard(self,dik,action);return true
+end
+function tv_dialog:Close()
+    self.context.action('flush');self.drag=nil;self:QualityPopup(false);self:HideDialog();if active==self then active=nil end
+end
+function show(context)
+    force_close();active=tv_dialog(context)
+    active:ShowDialog(false);return true
+end
+function force_close() if active then active:Close() end end

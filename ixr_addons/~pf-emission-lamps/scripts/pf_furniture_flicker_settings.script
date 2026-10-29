@@ -1,0 +1,24 @@
+-- Client preference only: never stored in a character save.
+local enabled=nil
+local function path()
+    return getFS():update_path("$app_data_root$","pf_furniture_emission_flicker.setting")
+end
+function is_enabled()
+    if enabled~=nil then return enabled end
+    local file=io.open(path(),"r")
+    local value=""
+    if file then value=string.lower(file:read("*l") or "");file:close() end
+    value=value:match("^%s*(.-)%s*$")
+    enabled=value~="0" and value~="false" and value~="off"
+    return enabled
+end
+function set_enabled(value)
+    value=value==true
+    local file=io.open(path(),"w")
+    if not file then return false end
+    local written=file:write(value and "1\n" or "0\n")
+    local closed=file:close()
+    if not written or not closed then return false end
+    enabled=value
+    return true
+end

@@ -1,0 +1,53 @@
+-- A transient gate inside the existing furniture binder, never a second lamp owner.
+-- The binder supplies its final manual/schedule/range/native visibility decision.
+local allowed={
+    pf_hfa_bulb=true,
+    pf_hfm_light1=true,pf_hfm_light2=true,pf_hfm_light3=true,pf_hfm_light4=true,
+    pf_hfm_light5=true,pf_hfm_light6=true,pf_hfm_light7=true,pf_hfm_light8=true,
+    pf_hfe_lamp1=true,pf_hfe_lamp2=true,
+    pf_hf_metal_torch=true,pf_hf_light_altar=true,
+}
+local cache={due=0}
+local function active(now)
+    if cache.last and now<cache.last then cache.due=0 end
+    cache.last=now
+    if now<cache.due then return cache.active end
+    cache.due=now+100;cache.active=false
+    if not db.actor or not db.actor:alive() or level.name()~="pripyat_full" then return false end
+    local manager=surge_manager.get_surge_manager()
+    if not manager or not manager.started or not manager.inited_time then return false end
+    local factor=level.get_time_factor()
+    if not factor or factor<=0 then return false end
+    local phase=math.ceil(game.get_game_time():diffSec(manager.inited_time)/factor)
+    cache.active=phase>=100 and phase<math.min(200,manager.surge_time or 206)
+    return cache.active
+end
+local function delay(pulse,low,high)
+    -- Independent RNG: light cosmetics do not advance gameplay random sequences.
+    pulse.seed=(pulse.seed*16807)%2147483647
+    return low+pulse.seed%(high-low+1)
+end
+function reset(binder)
+    binder.emission_flicker=nil
+end
+function emitting(binder,intended,enabled)
+    local entry=binder.entry
+    if not intended or not entry or entry.kind~="light" or not allowed[entry.object] or
+        binder.object:section()~=entry.object or not enabled then
+        reset(binder);return intended,false
+    end
+    local now=time_global()
+    if not active(now) then reset(binder);return intended,false end
+    local pulse=binder.emission_flicker
+    if not pulse or now<pulse.last then
+        pulse={seed=(binder.object:id()*101+17)%2147483646+1,last=now}
+        pulse.due=now+delay(pulse,150,1200)
+        binder.emission_flicker=pulse
+    end
+    pulse.last=now
+    if now>=pulse.due then
+        pulse.off=not pulse.off
+        pulse.due=now+(pulse.off and delay(pulse,120,650) or delay(pulse,450,1700))
+    end
+    return not pulse.off,pulse.off==true
+end

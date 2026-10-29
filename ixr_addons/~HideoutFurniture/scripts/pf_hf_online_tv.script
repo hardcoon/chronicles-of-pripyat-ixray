@@ -1,0 +1,125 @@
+-- Furniture/engine facade. One shared programme, client-owned playlist.
+local state={tvs={},running=false,due=0,registered=false,finished=false,snapshot={status=0,position=0,duration=0},range=20}
+local playlist=pf_hf_tv_playlist
+local function command(text) get_console():execute('pf_tv '..text) end
+function is_tv(section) return section=='pf_hfe_tv' or section=='pf_hfm_tv_box' end
+local function start(id)
+    local track=playlist.current();if not track then return false end
+    if state.running then command('stop') end
+    command('quality '..playlist.data().quality);command('play '..track.url)
+    if id then local own=pf_hf_furniture.state(id);if own then own.is_on=true end end
+    state.running=true;state.finished=false;state.paused=false;state.due=0;state.playing_id=track.id
+    state.snapshot={status=1,position=0,duration=0};return true
+end
+function track(binder,own)
+    if not binder.entry or not is_tv(binder.entry.object) then return end
+    local id=binder.object:id();local record=state.tvs[id]
+    if record and record.binder==binder then record.own=own else state.tvs[id]={binder=binder,own=own} end
+end
+function untrack(binder)
+    local id=binder.object:id();local record=state.tvs[id]
+    if record and record.binder==binder then state.tvs[id]=nil;state.due=0 end
+end
+function toggle(own)
+    if not own then return false end
+    own.is_on=not own.is_on;state.finished=false;state.due=0;return true
+end
+local function available(id)
+    local object=level.object_by_id(id)
+    return object and db.actor and db.actor:alive() and is_tv(object:section()) and
+        not pf_runtime_editor.is_active() and object:position():distance_to(db.actor:position())<=3.25
+end
+function reset()
+    command('stop');command('ready');ui_pf_hf_tv.force_close()
+    state.running=false;state.tvs={};state.due=0;state.finished=false;state.paused=false;state.handled=nil;state.playing_id=nil
+    state.snapshot={status=0,position=0,duration=0}
+end
+local function control(id,action,a,b)
+    local data=playlist.data()
+    if action=='play' then
+        if state.running and not state.finished and data.current==state.playing_id then
+            state.paused=not state.paused;command('pause '..(state.paused and '1' or '0'));state.snapshot.status=state.paused and 3 or 2;return true
+        end
+        return start(id)
+    elseif action=='stop' then
+        command('stop');state.running=false;state.finished=false;state.paused=false;state.playing_id=nil
+        for _,record in pairs(state.tvs) do if record.own then record.own.is_on=false end end
+        local own=pf_hf_furniture.state(id);if own then own.is_on=false end
+        state.snapshot={status=0,position=0,duration=0}
+    elseif action=='next' or action=='previous' then
+        if playlist.next_track(action=='next' and 1 or -1,false) then start(id) end
+    elseif action=='select' then playlist.select(a)
+    elseif action=='start' then if playlist.select(a) then start(id) end
+    elseif action=='add' then return playlist.add(a,b)
+    elseif action=='rename' then return playlist.rename(a,b)
+    elseif action=='delete' then
+        local active=a==state.playing_id;playlist.remove(a)
+        if active then command('stop');state.running=false;state.finished=true;state.snapshot={status=0,position=0,duration=0} end
+    elseif action=='up' or action=='down' then playlist.move(a,action=='up' and -1 or 1)
+    elseif action=='mix' then playlist.mix()
+    elseif action=='shuffle' then data.shuffle=not data.shuffle;playlist.save()
+    elseif action=='repeat' then data.repeat_mode=(data.repeat_mode+1)%3;playlist.save()
+    elseif action=='volume' then data.volume=math.max(0,math.min(100,math.floor(a+.5)));state.save_due=time_global()+300;state.due=0
+    elseif action=='flush' then if state.save_due then playlist.save();state.save_due=nil end
+    elseif action=='quality' then data.quality=a;playlist.save();command('quality '..a)
+    elseif action=='seek' then command(string.format('seek %.3f',math.max(0,a)))
+    elseif action=='egg' then
+        local result=playlist.add('https://youtu.be/_lANHZuzMNw','МЭДДИСОН — СЛОВО ПАЦАНА')
+        if result then return start(id) end
+    end
+    return true
+end
+function show(id,key)
+    if not available(id) or level.main_input_receiver() then return false end
+    return ui_pf_hf_tv.show({key=key,data=playlist.data,current=playlist.current,version=playlist.version,
+        status=function() state.snapshot.track_id=state.playing_id;return state.snapshot end,available=function() return available(id) end,
+        action=function(action,a,b) return control(id,action,a,b) end})
+end
+local function snapshot()
+    local raw=get_console():get_string('pf_tv') or ''
+    local serial,status,position,duration,width,height,error,title=raw:match('^TV2 (%d+) (%d+) ([%d%.]+) ([%d%.]+) (%d+) (%d+) ([%-%d]+)%s*(%x*)')
+    if not serial then return nil end
+    return {serial=tonumber(serial),status=tonumber(status),position=tonumber(position) or 0,duration=tonumber(duration) or 0,
+        width=tonumber(width),height=tonumber(height),error=tonumber(error),title=(title:gsub('%x%x',function(hex) return string.char(tonumber(hex,16)) end))}
+end
+function update()
+    local now=time_global();if now<state.due then return end;state.due=now+250
+    if not state.configured then
+        local ini=system_ini()
+        if ini and ini:section_exist('pf_hf_online_tv') and ini:line_exist('pf_hf_online_tv','audible_distance') then
+            local range=tonumber(ini:r_string('pf_hf_online_tv','audible_distance'));if range and range==range and range>1 and range<=100 then state.range=range end
+        end
+        command('ready');state.configured=true
+    end
+    if state.save_due and now>=state.save_due then playlist.save();state.save_due=nil end
+    local nearest=nil
+    if db.actor and db.actor:alive() then
+        local position=db.actor:position()
+        for id,record in pairs(state.tvs) do
+            local object=level.object_by_id(id)
+            if object and record.binder.object:id()==id and is_tv(object:section()) then
+                if record.own and record.own.is_on then local distance=object:position():distance_to(position);if not nearest or distance<nearest then nearest=distance end end
+            else state.tvs[id]=nil end
+        end
+    end
+    local enabled=nearest and nearest<state.range
+    if not enabled and state.running then command('stop');state.running=false;state.snapshot={status=0,position=0,duration=0}
+    elseif enabled and not state.running and not state.finished then start() end
+    if not state.running then return end
+    -- libmpv has its own mixer. The TV slider is independent of game effects.
+    local gain=math.max(0,1-nearest/state.range)
+    command(string.format('gain %.3f',playlist.data().volume*gain*gain))
+    local info=snapshot();if not info then return end;state.snapshot=info
+    local selected=playlist.current()
+    if selected and selected.id==state.playing_id and selected.automatic and info.status==2 and info.title~='' and selected.name~=info.title then selected.name=info.title;playlist.save() end
+    if (info.status==4 or info.status==5) and state.handled~=info.serial then
+        state.handled=info.serial
+        if state.playing_id then playlist.data().current=state.playing_id end
+        if info.status==4 and playlist.next_track(1,true) then start() else state.running=false;state.finished=true end
+    end
+end
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback('update',update);RegisterScriptCallback('load',reset);state.registered=true
+end
+on_game_start()

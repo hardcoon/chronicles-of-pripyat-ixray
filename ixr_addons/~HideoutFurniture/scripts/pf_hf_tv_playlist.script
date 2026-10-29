@@ -1,0 +1,138 @@
+-- Client-owned playlist. World saves never replace this file or its ordering.
+local state=nil
+local path=nil
+local revision=0
+local allowed_quality={[0]=true,[144]=true,[240]=true,[360]=true,[480]=true,[720]=true,[1080]=true}
+local function fresh() return {tracks={},current=0,next_id=1,quality=360,volume=50,shuffle=false,repeat_mode=0,error=nil} end
+local function escape(value) return (value:gsub('[%%"\r\n%z]',function(ch) return string.format('%%%02X',ch:byte()) end)) end
+local function unescape(value) return (value:gsub('%%(%x%x)',function(hex) return string.char(tonumber(hex,16)) end)) end
+local function integer(value,minimum,maximum,default)
+    value=tonumber(value)
+    return value and value==value and value==math.floor(value) and value>=minimum and value<=maximum and value or default
+end
+function normalize(url)
+    if type(url)~='string' then return nil end
+    url=url:match('^%s*(.-)%s*$')
+    if #url>1500 or url:find('[%c%s"<>]') then return nil end
+    local host,tail=url:match('^https://([^/]+)(/.*)$')
+    if not host then return nil end
+    host=host:lower():gsub('^www%.','')
+    if host=='youtube.com' or host=='m.youtube.com' or host=='youtu.be' then
+        local id=host=='youtu.be' and tail:match('^/([%w_%-]+)') or tail:match('[?&]v=([%w_%-]+)') or tail:match('^/shorts/([%w_%-]+)')
+        if not id or #id~=11 then return nil end
+        return 'https://www.youtube.com/watch?v='..id,'YouTube'
+    end
+    if host=='rutube.ru' and (tail:match('^/video/[%w_%-]+') or tail:match('^/play/embed/[%w_%-]+')) then return 'https://rutube.ru'..tail,'Rutube' end
+    return nil
+end
+local function read(file)
+    local handle=io.open(file,'rb');if not handle then return nil end
+    local content=handle:read(524289);handle:close()
+    if not content or #content>524288 then return nil end
+    return content
+end
+function data()
+    if state then return state end
+    state=fresh();path=getFS():update_path('$app_data_root$','pf_tv_playlist.ltx')
+    local content=read(path) or read(path..'.prev')
+    if not content then return state end
+    local headers,rows,section={}, {},nil
+    for line in content:gmatch('[^\r\n]+') do
+        local name=line:match('^%[([%w_]+)%]$')
+        if name then section=name
+        elseif section then
+            local key,value=line:match('^([%w_]+)%s*=%s*(.*)$')
+            if key then
+                value=unescape(value:match('^"(.*)"$') or value)
+                if section=='playlist' then headers[key]=value
+                else local id=tonumber(section:match('^video_(%d+)$'));if id then rows[id]=rows[id] or {};rows[id][key]=value end end
+            end
+        end
+    end
+    if headers.version~='1' then state.error='pf_tv_file_error';state.read_only=true;return state end
+    local seen={}
+    for text in (headers.order or ''):gmatch('%d+') do
+        local id=integer(text,1,1000000000,nil);local row=id and rows[id]
+        local url,source=row and normalize(row.url)
+        -- Lua's and-expression only returns one value.
+        if row then url,source=normalize(row.url) end
+        if url and not seen[url] and #state.tracks<200 then
+            local name=type(row.name)=='string' and row.name:gsub('[%c]',' '):sub(1,240) or ''
+            state.tracks[#state.tracks+1]={id=id,url=url,source=source,name=name~='' and name or source,automatic=row.automatic=='1'}
+            state.next_id=math.max(state.next_id,id+1);seen[url]=true
+        end
+    end
+    state.current=integer(headers.current,0,1000000000,0)
+    local found=false;for _,track in ipairs(state.tracks) do if track.id==state.current then found=true end end
+    if not found then state.current=state.tracks[1] and state.tracks[1].id or 0 end
+    state.quality=integer(headers.quality,0,1080,360);if not allowed_quality[state.quality] then state.quality=360 end
+    state.volume=integer(headers.volume,0,100,50);state.shuffle=headers.shuffle=='1'
+    state.repeat_mode=integer(headers.repeat_mode,0,2,0)
+    return state
+end
+function version() return revision end
+function current()
+    local value=data();for index,track in ipairs(value.tracks) do if track.id==value.current then return track,index end end
+end
+function save()
+    local value=data();revision=revision+1
+    if value.read_only then return false end
+    local order={};for _,track in ipairs(value.tracks) do order[#order+1]=track.id end
+    local lines={'[playlist]','version=1','order='..table.concat(order,','),'current='..value.current,'quality='..value.quality,
+        'volume='..value.volume,'shuffle='..(value.shuffle and '1' or '0'),'repeat_mode='..value.repeat_mode}
+    for _,track in ipairs(value.tracks) do
+        lines[#lines+1]=string.format('\n[video_%d]\nurl="%s"\nname="%s"\nautomatic=%d',track.id,escape(track.url),escape(track.name),track.automatic and 1 or 0)
+    end
+    local file=io.open(path..'.new','wb');if not file then value.error='pf_tv_file_error';return false end
+    local ok=file:write(table.concat(lines,'\n')..'\n');local closed=file:close()
+    if not ok or not closed then os.remove(path..'.new');value.error='pf_tv_file_error';return false end
+    os.remove(path..'.prev')
+    local old=io.open(path,'rb');if old then old:close();if not os.rename(path,path..'.prev') then value.error='pf_tv_file_error';return false end end
+    if not os.rename(path..'.new',path) then os.rename(path..'.prev',path);value.error='pf_tv_file_error';return false end
+    value.error=nil;return true
+end
+function select(id)
+    for _,track in ipairs(data().tracks) do if track.id==id then data().current=id;save();return true end end
+    return false
+end
+function add(url,name)
+    local normalized,source=normalize(url);if not normalized then return nil,'pf_tv_bad_url' end
+    local value=data()
+    for _,track in ipairs(value.tracks) do if track.url==normalized then select(track.id);return track end end
+    if #value.tracks>=200 then return nil,'pf_tv_list_full' end
+    name=type(name)=='string' and name:gsub('[%c]',' '):match('^%s*(.-)%s*$'):sub(1,240) or ''
+    local track={id=value.next_id,url=normalized,source=source,name=name~='' and name or source,automatic=name==''}
+    value.next_id=value.next_id+1;value.tracks[#value.tracks+1]=track;value.current=track.id;save();return track
+end
+function rename(id,name)
+    name=type(name)=='string' and name:gsub('[%c]',' '):match('^%s*(.-)%s*$'):sub(1,240) or ''
+    if name=='' then return false end
+    for _,track in ipairs(data().tracks) do if track.id==id then track.name=name;track.automatic=false;save();return true end end
+    return false
+end
+function remove(id)
+    local value=data()
+    for index,track in ipairs(value.tracks) do
+        if track.id==id then table.remove(value.tracks,index);if value.current==id then value.current=value.tracks[math.min(index,#value.tracks)] and value.tracks[math.min(index,#value.tracks)].id or 0 end;save();return true end
+    end
+    return false
+end
+function move(id,direction)
+    local rows=data().tracks
+    for index,track in ipairs(rows) do if track.id==id then local target=index+direction;if target<1 or target>#rows then return false end;rows[index],rows[target]=rows[target],rows[index];save();return true end end
+    return false
+end
+function mix()
+    local rows=data().tracks
+    for index=#rows,2,-1 do local other=math.random(index);rows[index],rows[other]=rows[other],rows[index] end
+    save()
+end
+function next_track(direction,automatic)
+    local track,index=current();local value=data();local count=#value.tracks
+    if not track or count==0 then return nil end
+    if automatic and value.repeat_mode==2 then return track end
+    local target=index+direction
+    if value.shuffle and count>1 then repeat target=math.random(count) until target~=index
+    elseif target<1 or target>count then if automatic and value.repeat_mode==0 then return nil end;target=target<1 and count or 1 end
+    value.current=value.tracks[target].id;save();return value.tracks[target]
+end

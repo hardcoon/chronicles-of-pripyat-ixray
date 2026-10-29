@@ -93,10 +93,17 @@ function install()
         current(self,...)
         if self.light_dialog then self.light_dialog:Close() end
         self.dlg_interiors:RefreshLightSummary()
+        self.dlg_interiors:SetFlickerValue()
+    end
+    local accept=options.OnBtnAccept
+    function options:OnBtnAccept(...)
+        if not self.dlg_interiors:SaveFlickerValue() then return end
+        return accept(self,...)
     end
     local cancel=options.OnBtnCancel
     function options:OnBtnCancel(...)
         if self.light_dialog then self.light_dialog:Close() end
+        self.dlg_interiors:SetFlickerValue()
         return cancel(self,...)
     end
 end

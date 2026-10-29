@@ -10,6 +10,13 @@ end
 settings={default_radius=12,maximum_radius=200,coordinate_tolerance=.08,rotation_tolerance=.02,maximum_objects=512}
 local key_name="DIK_HOME"
 local open_key=DIK_keys.DIK_HOME
+local lights_toggle_key=DIK_keys.DIK_END
+local lights_key_name="DIK_END"
+local function control_key(ini,name,default)
+    if not ini or not ini:section_exist("controls") or not ini:line_exist("controls",name) then return default end
+    local value="DIK_"..ini:r_string("controls",name):upper():gsub("^DIK_","")
+    return DIK_keys[value] and value or default
+end
 local function configure()
     local ok,ini=pcall(ini_file,"pf_interiors.ltx")
     if not ok then ini=nil end
@@ -18,15 +25,23 @@ local function configure()
     settings.coordinate_tolerance=setting(ini,"capture","coordinate_tolerance",.08,.001,.5)
     settings.rotation_tolerance=setting(ini,"safety","rotation_tolerance",.02,.001,.1)
     settings.maximum_objects=math.floor(setting(ini,"safety","maximum_objects",512,1,512))
-    if ini and ini:section_exist("controls") and ini:line_exist("controls","open_key") then
-        local value=ini:r_string("controls","open_key"):upper():gsub("^DIK_","")
-        if DIK_keys["DIK_"..value] then key_name="DIK_"..value;open_key=DIK_keys[key_name] end
-    end
+    key_name=control_key(ini,"open_key","DIK_HOME")
+    open_key=DIK_keys[key_name]
+    lights_key_name=control_key(ini,"lights_toggle_key","DIK_END")
+    lights_toggle_key=DIK_keys[lights_key_name]
+    -- Keep Home/menu access when a user assigns both actions to one key.
+    if lights_toggle_key==open_key then lights_toggle_key=nil end
     pf_interiors_world.configure(settings)
 end
 function key() return open_key end
 function key_label()
     local value=key_name:gsub("^DIK_","")
+    local names={HOME="Home",END="End",INSERT="Insert",DELETE="Delete",CAPITAL="CapsLock",SPACE="Space",RETURN="Enter",TAB="Tab"}
+    return names[value] or value
+end
+function lights_key_label()
+    if not lights_toggle_key then return "-" end
+    local value=lights_key_name:gsub("^DIK_","")
     local names={HOME="Home",END="End",INSERT="Insert",DELETE="Delete",CAPITAL="CapsLock",SPACE="Space",RETURN="Enter",TAB="Tab"}
     return names[value] or value
 end
@@ -46,6 +61,14 @@ end
 function on_key_press(dik)
     if dik==DIK_keys.DIK_F9 or dik==DIK_keys.DIK_F5 then
         ui_pf_interiors.force_close();pf_interiors_files.cancel()
+    end
+    if dik==lights_toggle_key then
+        if not db.actor or not db.actor:alive() or not alife() or
+            pf_runtime_editor.is_active() or ui_pf_interiors.is_active() or level.main_input_receiver() then return false end
+        local ok,enabled,count=xpcall(pf_hf_light_controls.toggle_lights,debug.traceback)
+        if ok then report("lights "..(enabled and "on" or "off")..": "..tostring(count))
+        else report("bulk lights failed: "..tostring(enabled)) end
+        return true
     end
     if dik~=open_key then return false end
     -- CLevel calls the actor callback before dispatching the same key to UI.

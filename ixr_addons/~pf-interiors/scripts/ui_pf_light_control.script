@@ -43,6 +43,7 @@ function dialog:__init(owner) super()
     end
     self.summary=xml:InitTextWnd("main:summary",self)
     self.status=xml:InitTextWnd("main:status",self)
+    self.hotkey=xml:InitTextWnd("main:hotkey",self)
     self.timeline=xml:InitStatic("main:timeline",self);self.timeline:Enable(false)
     self.timeline:SetTextureColor(GetARGB(255,61,60,51))
     self.segments={xml:InitStatic("main:segment_1",self),xml:InitStatic("main:segment_2",self)}
@@ -67,6 +68,7 @@ function dialog:Open()
     if self:IsShown() then return end
     if active and active~=self then active:Close() end
     self.draft=pf_hf_light_schedule.profiles()
+    self.hotkey:SetText(tr("pf_interiors_light_hotkey",pf_interiors.lights_key_label()))
     self.status:SetText("")
     self:RenderGraph();self:RefreshAvailability()
     active=self
