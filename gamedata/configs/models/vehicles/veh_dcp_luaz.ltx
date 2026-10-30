@@ -1,0 +1,539 @@
+; Isolated DCP test port. Generated from the effective donor; see task source receipt.
+
+[disable]
+linear_factor = 0.5
+angular_factor = 0.5
+
+[car_free_cam]
+apply_inert = false
+lim_zoom = 1.1, 7.7
+
+[car_look_cam]
+apply_inert = false
+lim_zoom = 1.1, 7.7
+
+[car_definition]
+character_scraper
+time_to_explosion = 0
+camera_pos = -0.39, 1.54, 0.298
+camera_pos_firsteye = -0.39, 1.54, 0.298
+camera_pos_lookat = 0.0, 1.82, 0.02
+camera_pos_free = 0.0, 1.78, 0.02
+camera_inertion_n = 0
+camera_inertion_k = 0
+camera_angle_factor = 1.04
+grass_coll_spheres = grass_coll_sphere_1, grass_coll_sphere_2
+driving_wheels = back_left_wheel, back_right_wheel, front_left_wheel, front_right_wheel
+steering_wheels = front_left_wheel, front_right_wheel
+breaking_wheels = back_left_wheel, back_right_wheel, front_left_wheel, front_right_wheel
+doors = back_door, left_door, right_door, front_door
+steer = stearing_wheel
+stearing_wheel_factor = 6
+driver_place = seat_left
+exhausts = exhausts
+exhaust_particles = vehiclefx\exhaust_1
+damage = damage_bones
+trunk_bone = back_door
+collision_hit_threshold = 0.2
+fuel_tank = 39
+fuel_consumption = 7
+engine_power = 4.7
+max_power_rpm = 3800
+max_torque_rpm = 1700
+sound_rpm = 3200
+power_increment_factor = 0.01
+power_decrement_factor = 0.2
+rpm_increment_factor = 0.07
+rpm_decrement_factor = 0.14
+rpm_brp_increment_factor = 1.4
+rpm_brp_decrement_factor = 1.4
+power_neutral_factor = 0.5
+max_engine_rpm = 5000
+idling_engine_rpm = 850
+reference_radius = 0.33
+axle_friction = 2
+steering_speed = 0.76
+steering_torque = 100000
+break_torque = 0.05
+break_time = 0.9
+hand_break_torque = 0.02
+steer_nonlinear = true
+steer_invert = false
+break_abs = false
+main_gear_ratio = 13.6
+auto_transmission = on
+transmission_switch_delay = 0.4
+hit_stall_threshold = 0.1
+fuel_speed_factor = 2
+fuel_speed_optimal = 50
+fuel_rpm_factor = 1
+fuel_gas_factor = 1
+tire_trail_wallmark_size = 0.13
+tire_trails = true
+tire_trail_notsimilars = false
+tire_sounds = true
+wheels_sound_delay = 0.05
+slip_sliding_threshold = 0.4
+vel_sliding_threshold = 5
+wheels_spin_factor_start = 0.86
+wheels_spin_factor_stop = 0.88
+friction_slip_factor = 0.8
+friction2_slip_factor = 0.64
+friction_spin_factor = 0.64
+friction2_spin_factor = 0.41
+friction_slip_speed = 0.004
+friction2_brp_boost = 1.1
+handbrake_rpm_threshold = 1.5
+drift_start_boost = 1.5
+drift_boost_time = 0.25
+steer_spin_boost = 0
+steer_speed_boost = 0.9
+steer_turn_factor = 1.9
+steer_counter_turn_factor = 1
+steer_turn_compensation = 0.4
+steer_turn_compensation_max = 0
+steer_turn_delta = 0.6
+interior_volume = .65
+firsteye_panel = false
+vehicle_feature_profile = dcp_vehicle_v1
+camera_dynamics_profile = vehicle_comfort_v1
+fuel_profile = dcp_vehicle_fuel_v1
+part_damage_mode = body_only
+durability_factor = 3.0
+vehicle_condition_profile = dcp_vehicle_condition_v1
+collision_sound_profile = dcp_vehicle_collision_v1
+door_air_resistance_scale = .001
+trunk_use_mode = open_inventory
+trunk_use_distance = 3.5
+trunk_interaction_padding = .05, .05, .05
+trunk_interaction_offset = 0, 0, 0
+doors_use_recursive = back_door, left_door, right_door, front_door
+
+[transmission_gear_ratio]
+R = 3.42, 1950, 4560
+N1 = 3.42, 1950, 4560, 8
+N2 = 1.70, 1950, 4560
+N3 = 1.07, 2075, 4560
+N4 = 0.73, 2200, 4560
+
+[lights]
+headlights = f1, f2, f1o, f2o, f3o, f4o
+stoplights = f5o, f6o
+reverselights = f8o
+indoorlights = f9o
+indoorlightdoors = left_door, right_door
+
+[f1]
+bone = left_light
+color = 1.13,1.1,0.98,1
+range = 40
+cone_angle = 57
+spot_texture = dcp_luaz\lights_bspot01_car
+glow_texture = dcp_luaz\glow_yellow
+glow_radius = 0.4
+volumetric = true
+volumetric_distance = 0.8
+volumetric_intensity = 0.05
+volumetric_quality = 1
+flare = flares_headlights_mid
+
+[f2]
+bone = right_light
+color = 1.13,1.1,0.98,1
+range = 40
+cone_angle = 57
+spot_texture = dcp_luaz\lights_bspot01_car
+glow_texture = dcp_luaz\glow_yellow
+glow_radius = 0.4
+volumetric = true
+volumetric_distance = 0.8
+volumetric_intensity = 0.05
+volumetric_quality = 1
+flare = flares_headlights_mid
+
+[f1o]
+bone = left_light
+type = 1
+position = 0.0,0.0,0.0
+color = 1.03,1.0,0.88,1.0
+range = 0.25
+
+[f2o]
+bone = right_light
+type = 1
+position = 0.0,0.0,0.0
+color = 1.03,1.0,0.88,1.0
+range = 0.25
+
+[f3o]
+bone = left_back_light
+type = 1
+position = 0.0,0.0,0.0
+color = 0.45,0,0,1
+range = 0.16
+
+[f4o]
+bone = right_back_light
+type = 1
+position = 0.0,0.0,0.0
+color = 0.45,0,0,1
+range = 0.16
+
+[f5o]
+bone = left_stop_light
+type = 1
+position = 0.0,0.0,0.0
+color = 0.7,0,0,1
+range = 0.35
+
+[f6o]
+bone = right_stop_light
+type = 1
+position = 0.0,0.0,0.0
+color = 0.7,0,0,1
+range = 0.35
+
+[f8o]
+bone = right_reverse_light
+type = 1
+position = 0.0,0.0,0.0
+color = 0.7,0.69,0.67,1
+range = 0.4
+
+[f9o]
+bone = interior_light
+type = 1
+position = 0.0,0.06,-0.1
+color = 0.35,0.31,0.2,1
+range = 1.15
+
+[car_sound]
+snd_volume = 1.0
+snd_name = dcp_luaz\mud_zaz_high
+engine_sound_start_dellay = 0.5
+engine_start = dcp_luaz\mud_zaz_start
+engine_stop = dcp_luaz\mud_zaz_stop
+transmission_switch = dcp_luaz\mud_zaz_gear
+explosion_sound
+relative_pos = -0.15, 0.45, 1.6
+horn_sound = dcp_luaz\ac_horn
+decel_sound = dcp_luaz\mud_zaz_low
+idle_sound = dcp_luaz\mud_zaz_idle
+whine_sound = dcp_luaz\nfs_whine3
+whine_speed = 50
+whine_reverse = true
+left_door_open = dcp_luaz\o_car2_door_open
+left_door_close = dcp_luaz\o_car2_door_close
+right_door_open = dcp_luaz\o_car2_door_open
+right_door_close = dcp_luaz\o_car2_door_close
+back_door_open = dcp_luaz\gta_trunk_open
+back_door_close = dcp_luaz\gta_trunk_close
+front_door_open = dcp_luaz\gta_trunk_open
+front_door_close = dcp_luaz\gta_trunk_close
+relative_engine_pos = -0.15, 0.45, 1.6
+wheel_road = dcp_luaz\wheel_road
+wheel_dirt = dcp_luaz\wheel_dirt
+wheel_grass = dcp_luaz\wheel_grass
+wheel_water = dcp_luaz\wheel_water
+dirt_skid = dcp_luaz\dirt_skid
+
+[doors]
+open_torque_factor = 5
+
+[left_door]
+use_distance = 2.2
+linear_factor = 200.0
+angular_factor = 500
+
+[right_door]
+use_distance = 2.2
+linear_factor = 200.0
+angular_factor = 500
+
+[front_door]
+use_distance = 2.5
+linear_factor = 200.0
+angular_factor = 1000
+non_enterable = true
+spring_loaded = true
+pos_open_invert = true
+
+[back_door]
+non_enterable = true
+spring_loaded = true
+use_distance = 3.5
+linear_factor = 200.0
+angular_factor = 1000
+
+[speedometer]
+speedometer
+speedometer_min_speed = 8
+speedometer_max_speed = 120
+speedometer_factor = 1.25
+speedometer_offset = 20
+speedometer_direction = -1
+speedometer_profile = dcp_body_speed_v1
+
+[fuel]
+fuel
+fuel_angle = 66
+fuel_offset = 1
+
+[temp]
+temp
+temp_angle = 52
+temp_offset = 0
+
+[oil]
+pressure
+pressure_max_angle = 85
+pressure_idle_angle = 29
+pressure_factor = 1.35
+pressure_offset = 0
+
+[battery]
+battery
+battery_angle = 43
+battery_factor = 0.2
+
+[gear]
+gear
+gear_manual = true
+gear_speed = 1
+gear_park_angle_x = 10
+gear_drive_angle_x = 0
+gear_reverse_angle_x = 20
+gear_left_angle = 8
+gear_middle_angle = 0
+gear_right_angle = -8
+
+[fan]
+fan
+fan_speed = -25
+fan_engine = true
+
+[fan2]
+fan
+
+[front_left_suspension]
+suspension
+steer = false
+move = true
+first_wheel = front_left_wheel
+suspension_offset = 0
+
+[front_right_suspension]
+suspension
+steer = false
+move = true
+first_wheel = front_right_wheel
+suspension_offset = 0
+
+[back_left_suspension]
+suspension
+steer = false
+move = true
+first_wheel = back_left_wheel
+suspension_offset = 0
+
+[back_right_suspension]
+suspension
+steer = false
+move = true
+first_wheel = back_right_wheel
+suspension_offset = 0
+
+[left_caliper]
+suspension
+steer = true
+move = false
+first_wheel = front_left_wheel
+suspension_offset = 0
+
+[right_caliper]
+suspension
+steer = true
+move = false
+first_wheel = front_right_wheel
+suspension_offset = 0
+
+[front_left_axle]
+suspension
+steer = true
+move = false
+first_wheel = left_caliper
+second_wheel = front_left_axle
+suspension_offset = 0
+
+[front_right_axle]
+suspension
+steer = true
+move = false
+first_wheel = right_caliper
+second_wheel = front_right_axle
+suspension_offset = 0
+
+[back_left_axle]
+suspension
+steer = true
+move = false
+first_wheel = back_left_axle
+second_wheel = back_left_suspension
+suspension_offset = 0
+
+[back_right_axle]
+suspension
+steer = true
+move = false
+first_wheel = back_right_axle
+second_wheel = back_right_suspension
+suspension_offset = 0
+
+[grass_coll_sphere_1]
+position = 0, 1, 1
+radius = 1.35
+scale_factor = 0.5
+
+[grass_coll_sphere_2]
+position = 0, 1, -0.9
+radius = 1.35
+scale_factor = 0.5
+
+[animations]
+driver_animation_type = 0
+
+[damage_particles]
+explosion_particles = explosions\expl_vehichels
+car_damage_particles1 = explosions\expl_car_smoke_small
+car_damage_particles2 = explosions\expl_car_smoke_big
+wheels_damage_particles1 = vehiclefx\exhaust_1
+wheels_damage_particles2 = vehiclefx\exhaust_1
+particle_bones1 = front_bamper
+particle_bones2 = root
+
+[particle_bones]
+root = 0, -0.5, 1.6
+front_bamper = 0, 0.1, -0.1
+
+[damage_items]
+back_left_wheel = 0
+back_right_wheel = 0
+front_left_wheel = 0
+front_right_wheel = 0
+left_door = 0
+right_door = 0
+back_door = 0
+front_door = 0
+
+[collision_damage]
+root = 0.00008
+kabina = 0.00008
+front_bamper = 0.0001
+front_axle = 0.00005
+back_axle = 0.00005
+back_wheel = 0.00006
+back_left_wheel = 0.00001
+back_right_wheel = 0.00001
+front_left_wheel = 0.00001
+front_right_wheel = 0.00001
+
+[damage_bones]
+default = 1, -1, 0.1
+
+[immunities]
+burn_immunity = 0.13
+strike_immunity = 0.018
+shock_immunity = 0.08
+wound_immunity = 0.0
+radiation_immunity = 0.0
+telepatic_immunity = 0.0
+chemical_burn_immunity = 0.08
+explosion_immunity = 0.17
+fire_wound_immunity = 0.020
+
+[explosion]
+blast = 1
+blast_r = 15
+blast_impulse = 350
+frags = 15
+frags_r = 30
+frag_hit = 0.5
+frag_hit_impulse = 350
+hit_type_blast = explosion
+hit_type_frag = fire_wound
+up_throw_factor = 0.25
+wm_size = 0.1
+explode_particles = explosions\expl_car
+light_color = 0.6, 0.5, 0.3
+light_range = 15.0
+light_time = 0.5
+fragment_speed = 76
+fragment_tracer_max_length = 3
+explode_duration = 50
+snd_explode = dcp_luaz\vehicle_explosion
+wallmark_section = explosion_marks
+
+[explode_effector]
+effect_sect_name = effector_explode_hit
+
+[air_resistance]
+linear_factor = 21000
+angular_factor = 5800
+
+[wheels_params]
+suspension_distance = 0.20
+suspension_force_inc = 50
+suspension_spring_factor = 1
+suspension_damping_factor = 5
+suspension_inertia = 0.5
+damping_factor = 1.5
+spring_factor = 0.5
+friction_factor = 1.2
+
+[front_left_wheel]
+break_torque = 0.011
+hand_break_torque = 0
+damping_factor = 1.5
+spring_factor = 0.5
+friction_factor = 1.09
+torque_factor = 0.7
+
+[front_right_wheel]
+break_torque = 0.011
+hand_break_torque = 0
+damping_factor = 1.5
+spring_factor = 0.5
+friction_factor = 1.09
+torque_factor = 0.7
+
+[back_left_wheel]
+break_torque = 0.006
+hand_break_torque = 0.012
+damping_factor = 1.5
+spring_factor = 0.5
+friction_factor = 1.11
+torque_factor = 1.3
+
+[back_right_wheel]
+break_torque = 0.006
+hand_break_torque = 0.012
+damping_factor = 1.5
+spring_factor = 0.5
+friction_factor = 1.11
+torque_factor = 1.3
+
+[collide]
+not_collide_parts = 1
+
+[destroyed]
+physics\vehicles\veh_empty
+
+[autoremove_parts]
+time = 180
+
+[impulse_transition_to_parts]
+random_min = 10.0
+random_hit_imp = 1.0
+imp_transition_factor = 1.0
+lv_transition_factor = 0.5
+av_transition_factor = 0.5

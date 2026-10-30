@@ -1,0 +1,87 @@
+; Native DCP vehicle primary barrel. Dormant until explicit weapon activation.
+; Existing vehicle ballistics; native PKM-box inventory feed for heavy and roof mounts.
+[dcp_vehicle_heavy_mgun]
+ammo_feed_profile = actor_inventory_v1
+ammo_inventory_class = ammo_pkm_100
+smoke_particles = weapons\generic_shoot_00
+shell_point = 0.0, 0.0, 0.0
+shell_particles = weapons\generic_shells00
+light_color = 0.9, 0.9, 0.5
+light_range = 6
+light_var_color = 0.05
+light_var_range = 0.5
+light_time = 0.3
+hit_power = 1.0
+hit_power_critical = 1.0
+hit_impulse = 340
+hit_type = fire_wound
+bullet_speed = 700
+fire_distance = 500
+fire_dispersion_base = 1
+rpm = 600
+use_aim_bullet = false
+time_to_aim = 1.0
+flame_particles = weapons\generic_weapon_btr
+ammo_class = dcp_vehicle_heavy_cartridge
+snd_shoot = dcp_vehicle_weapon\heavy_shot
+
+[dcp_vehicle_heavy_cartridge]
+k_dist = 1
+k_disp = 1
+k_hit = 4
+k_impulse = 1
+k_ap = 1.2
+k_air_resistance = 1
+tracer = on
+tracer_color_ID = 0
+buck_shot = 1
+impair = 1
+wm_size = 0.15
+allow_ricochet = true
+explosive = false
+box_size = 100
+inv_weight = 2.2
+inv_name_short = 7.62x54
+
+[dcp_vehicle_roof_mgun]
+ammo_feed_profile = actor_inventory_v1
+ammo_inventory_class = ammo_pkm_100
+smoke_particles = weapons\generic_shoot_00
+shell_point = 0.0, 0.0, 0.0
+shell_particles = weapons\generic_shells00
+light_color = 0.9, 0.9, 0.5
+light_range = 6
+light_var_color = 0.05
+light_var_range = 0.5
+light_time = 0.3
+hit_power = 1.0
+hit_power_critical = 1.0
+hit_impulse = 340
+hit_type = fire_wound
+bullet_speed = 700
+fire_distance = 500
+fire_dispersion_base = 1
+rpm = 650
+use_aim_bullet = false
+time_to_aim = 1.0
+flame_particles = weapons\generic_weapon_btr
+ammo_class = dcp_vehicle_roof_cartridge
+snd_shoot = dcp_vehicle_weapon\roof_shot
+
+[dcp_vehicle_roof_cartridge]
+k_dist = 1
+k_disp = 1
+k_hit = 2.15
+k_impulse = 1
+k_ap = 0.5
+k_air_resistance = 1
+tracer = on
+tracer_color_ID = 0
+buck_shot = 1
+impair = 1
+wm_size = 0.10
+allow_ricochet = true
+explosive = false
+box_size = 100
+inv_weight = 2.2
+inv_name_short = 7.62x54

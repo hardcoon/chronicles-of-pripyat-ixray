@@ -79,15 +79,41 @@ local DEFAULT_GROUP_ORDER = {
 }
 
 local VEHICLE_SECTIONS = {
-	"veh_btr", "veh_kamaz", "veh_niva_g", "veh_niva_w",
-	"veh_dcp_niva", "veh_dcp_niva_green", "veh_dcp_zaz968_2", "veh_dcp_lada_2101", "veh_dcp_lada_dead",
-	"veh_dcp_uaz_van", "veh_dcp_uaz_van_broken", "veh_dcp_uaz_broken",
-	"veh_dcp_gaz24", "veh_dcp_moskvich_412", "veh_dcp_raf", "veh_dcp_moskvich_2715", "veh_dcp_uaz",
-	"veh_dcp_zil", "veh_dcp_zil131",
-	"veh_dcp_mercedes_w123", "veh_dcp_lada_2107", "veh_dcp_lada_2108",
-	"veh_dcp_niva_2329", "veh_dcp_brdm", "veh_dcp_btr",
-	"veh_dcp_kamaz_army_tent", "veh_dcp_kamaz_army",
-	"veh_tr13", "veh_uaz", "veh_zaz",
+	"veh_dcp_niva",
+	"veh_dcp_niva_green",
+	"veh_dcp_zaz968_2",
+	"veh_dcp_lada_2101",
+	"veh_dcp_lada_dead",
+	"veh_dcp_uaz_van",
+	"veh_dcp_uaz_van_broken",
+	"veh_dcp_uaz_broken",
+	"veh_dcp_gaz24",
+	"veh_dcp_moskvich_412",
+	"veh_dcp_raf",
+	"veh_dcp_moskvich_2715",
+	"veh_dcp_uaz",
+	"veh_dcp_zil",
+	"veh_dcp_zil131",
+	"veh_dcp_mercedes_w123",
+	"veh_dcp_lada_2107",
+	"veh_dcp_lada_2108",
+	"veh_dcp_niva_2329",
+	"veh_dcp_brdm",
+	"veh_dcp_btr",
+	"veh_dcp_kamaz_army_tent",
+	"veh_dcp_kamaz_army",
+	"veh_dcp_luaz",
+	"veh_dcp_brdm_nogun",
+	"veh_dcp_zaz965",
+	"veh_dcp_paz3206",
+	"veh_dcp_moskvich_408",
+	"veh_btr",
+	"veh_kamaz",
+	"veh_niva_g",
+	"veh_niva_w",
+	"veh_tr13",
+	"veh_uaz",
+	"veh_zaz",
 }
 
 local RU_UPPER = {
@@ -329,27 +355,38 @@ function group_position(group)
 end
 
 function build_vehicle_catalog()
-	local ini = system_ini()
-	local catalog = {}
-	for _, section in ipairs(VEHICLE_SECTIONS) do
-		if ini:section_exist(section) then
-			local name_id = read_string(ini, section, "inv_name", "")
-			local description_id = read_string(ini, section, "description", "")
-			table.insert(catalog, {
-				section = section,
-				name = name_id ~= "" and translate_or(name_id, section) or
-					translate_or("pf_f1_vehicle_" .. section, section),
-				description = description_id ~= "" and translate_or(description_id, "") or "",
-				texture = PLACEHOLDER_ICON_TEXTURE,
-				icon_x = 0,
-				icon_y = 0,
-				icon_width = ICON_CELL_SIZE,
-				icon_height = ICON_CELL_SIZE,
-				icon_valid = false,
-			})
-		end
-	end
-	return catalog
+ local ini = system_ini()
+ local catalog = {}
+ local priorities = {normal=0, dev=1, legacy=2}
+ for index, section in ipairs(VEHICLE_SECTIONS) do
+  if ini:section_exist(section) then
+   local name_id = read_string(ini, section, "inv_name", "")
+   local name = name_id ~= "" and translate_or(name_id, section) or translate_or("pf_f1_vehicle_" .. section, section)
+   local number = ini:section_exist("pf_f1_vehicle_numbers") and tonumber(read_string(ini, "pf_f1_vehicle_numbers", section, tostring(index))) or index
+   local kind = ini:section_exist("pf_f1_vehicle_groups") and read_string(ini, "pf_f1_vehicle_groups", section, "normal") or "normal"
+   local preview = ini:section_exist("pf_f1_vehicle_previews") and read_string(ini, "pf_f1_vehicle_previews", section, "") or ""
+   table.insert(catalog, {
+    section = section,
+    number = number,
+    vehicle_group = kind,
+    name = name,
+    description = "",
+    texture = preview ~= "" and preview or PLACEHOLDER_ICON_TEXTURE,
+    icon_x = 0,
+    icon_y = 0,
+    icon_width = preview ~= "" and 512 or ICON_CELL_SIZE,
+    icon_height = preview ~= "" and 256 or ICON_CELL_SIZE,
+    icon_valid = preview ~= "",
+   })
+  end
+ end
+ table.sort(catalog, function(a, b)
+  local ag, bg = priorities[a.vehicle_group] or 0, priorities[b.vehicle_group] or 0
+  if ag ~= bg then return ag < bg end
+  if a.number ~= b.number then return a.number < b.number end
+  return a.section < b.section
+ end)
+ return catalog
 end
 
 function is_sensitive(item)

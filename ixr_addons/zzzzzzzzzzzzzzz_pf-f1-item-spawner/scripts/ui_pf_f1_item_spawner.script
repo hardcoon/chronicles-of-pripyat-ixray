@@ -56,21 +56,6 @@ local function fit_icon(control, item, box_x, box_y, box_width, box_height)
 	control:Show(true)
 end
 
-class "pf_f1_vehicle_list_item" (CUIListBoxItem)
-
-function pf_f1_vehicle_list_item:__init(index, vehicle, width) super(42)
-	-- CUIListBoxItem's own data field is reliably returned by IX-Ray; arbitrary
-	-- Lua members on the wrapper may be lost when GetSelectedItem crosses C++.
-	self.data = index
-	self:SetWndSize(vector2():set(width, 42))
-	local text = self:GetTextItem()
-	text:SetFont(GetFontLetterica16Russian())
-	text:SetEllipsis(true)
-	text:SetWndPos(vector2():set(7, 0))
-	text:SetWndSize(vector2():set(width - 14, 42))
-	text:SetText(string.format("%02d. %s", index, vehicle.name))
-end
-
 class "pf_f1_npc_list_item" (CUIListBoxItem)
 
 function pf_f1_npc_list_item:__init(index, npc, width) super(30)
@@ -181,12 +166,22 @@ function item_spawner_dialog:InitControls()
 	self.spawn_button = xml:Init3tButton(
 		"main:form:items_panel:spawn_button", self.items_panel)
 	self.vehicles_panel = xml:InitStatic("main:form:vehicles_panel", self.form)
-	self.vehicle_list = xml:InitListBox("main:form:vehicles_panel:list", self.vehicles_panel)
-	self.vehicle_list:ShowSelectedItem(true)
+	self.vehicle_gallery = pf_f1_vehicle_gallery.create(xml, self.vehicles_panel)
+	for slot, button in ipairs(self.vehicle_gallery.buttons) do
+		local callback_name = "pf_f1_vehicle_card_" .. slot
+		self:Register(button, callback_name)
+		local selected_slot = slot
+		self:AddCallback(callback_name, ui_events.BUTTON_CLICKED,
+			function(dialog) dialog:OnVehicleCard(selected_slot) end, self)
+	end
+	self.vehicle_preview = xml:InitStatic("main:form:vehicles_panel:preview", self.vehicles_panel)
+	self.vehicle_preview:Enable(false)
 	self.vehicle_name = xml:InitTextWnd("main:form:vehicles_panel:name", self.vehicles_panel)
 	self.vehicle_section = xml:InitTextWnd("main:form:vehicles_panel:section", self.vehicles_panel)
+	self.vehicle_description_scroll = xml:InitScrollView(
+		"main:form:vehicles_panel:description_scroll", self.vehicles_panel)
 	self.vehicle_description = xml:InitTextWnd(
-		"main:form:vehicles_panel:description", self.vehicles_panel)
+		"main:form:vehicles_panel:description_scroll:description", self.vehicle_description_scroll)
 	self.vehicle_spawn = xml:Init3tButton("main:form:vehicles_panel:spawn", self.vehicles_panel)
 	self.tools_panel = xml:InitStatic("main:form:tools_panel", self.form)
 	self.time_value = xml:InitTextWnd("main:form:tools_panel:time_value", self.tools_panel)
@@ -266,7 +261,11 @@ function item_spawner_dialog:InitControls()
 		{ self.npc_list, "pf_f1_npc_list" },
 		{ self.npc_spawn, "pf_f1_npc_spawn" },
 		{ self.npc_spawn_five, "pf_f1_npc_spawn_five" },
-		{ self.vehicle_list, "pf_f1_vehicle_list" },
+		{ self.vehicle_gallery.search, "pf_f1_vehicle_search_edit" },
+		{ self.vehicle_gallery.search_button, "pf_f1_vehicle_search" },
+		{ self.vehicle_gallery.clear_button, "pf_f1_vehicle_clear" },
+		{ self.vehicle_gallery.previous, "pf_f1_vehicle_previous" },
+		{ self.vehicle_gallery.next, "pf_f1_vehicle_next" },
 		{ self.vehicle_spawn, "pf_f1_vehicle_spawn" },
 		{ self.time_factor, "pf_f1_time_factor" },
 		{ self.time_plus_1, "pf_f1_time_plus_1" },
@@ -314,8 +313,11 @@ function item_spawner_dialog:InitCallbacks()
 	self:AddCallback("pf_f1_npc_list", ui_events.LIST_ITEM_CLICKED, self.OnNPCSelected, self)
 	self:AddCallback("pf_f1_npc_spawn", ui_events.BUTTON_CLICKED, self.OnNPCSpawn, self)
 	self:AddCallback("pf_f1_npc_spawn_five", ui_events.BUTTON_CLICKED, self.OnNPCSpawnFive, self)
-	self:AddCallback("pf_f1_vehicle_list", ui_events.LIST_ITEM_CLICKED,
-		self.OnVehicleSelected, self)
+	self:AddCallback("pf_f1_vehicle_search_edit", ui_events.EDIT_TEXT_COMMIT, self.OnVehicleSearch, self)
+	self:AddCallback("pf_f1_vehicle_search", ui_events.BUTTON_CLICKED, self.OnVehicleSearch, self)
+	self:AddCallback("pf_f1_vehicle_clear", ui_events.BUTTON_CLICKED, self.OnVehicleClear, self)
+	self:AddCallback("pf_f1_vehicle_previous", ui_events.BUTTON_CLICKED, self.OnVehiclePrevious, self)
+	self:AddCallback("pf_f1_vehicle_next", ui_events.BUTTON_CLICKED, self.OnVehicleNext, self)
 	self:AddCallback("pf_f1_vehicle_spawn", ui_events.BUTTON_CLICKED,
 		self.OnVehicleSpawn, self)
 	self:AddCallback("pf_f1_time_factor", ui_events.LIST_ITEM_SELECT,
@@ -466,36 +468,57 @@ function item_spawner_dialog:SpawnNPCs(count)
 end
 
 function item_spawner_dialog:PopulateVehicles()
-	self.vehicle_list:RemoveAll()
-	local width = self.vehicle_list:GetWidth() - 8
-	for index, vehicle in ipairs(self.vehicle_catalog) do
-		self.vehicle_list:AddExistingItem(
-			pf_f1_vehicle_list_item(index, vehicle, width))
+	for _, vehicle in ipairs(self.vehicle_catalog) do
+		vehicle.search_name = pf_f1_item_catalog.fold_text(vehicle.name .. " " .. vehicle.section)
 	end
-	self.selected_vehicle = self.vehicle_catalog[1]
+	self:OnVehicleSearch()
+end
+
+function item_spawner_dialog:RefreshVehicleGallery()
+	self:HideContextMenu()
+	self.selected_vehicle = pf_f1_vehicle_gallery.render(self.vehicle_gallery)
 	self:OnVehicleSelected()
 end
 
+function item_spawner_dialog:OnVehicleSearch()
+	pf_f1_vehicle_gallery.filter(self.vehicle_gallery, self.vehicle_catalog,
+		pf_f1_item_catalog.fold_text(self.vehicle_gallery.search:GetText() or ""))
+	self:RefreshVehicleGallery()
+end
+
+function item_spawner_dialog:OnVehicleClear()
+	self.vehicle_gallery.search:SetText("")
+	self:OnVehicleSearch()
+end
+
+function item_spawner_dialog:OnVehicleCard(slot)
+	pf_f1_vehicle_gallery.select(self.vehicle_gallery, slot)
+	self:RefreshVehicleGallery()
+end
+
+function item_spawner_dialog:OnVehiclePrevious()
+	pf_f1_vehicle_gallery.turn_page(self.vehicle_gallery, -1)
+	self:RefreshVehicleGallery()
+end
+
+function item_spawner_dialog:OnVehicleNext()
+	pf_f1_vehicle_gallery.turn_page(self.vehicle_gallery, 1)
+	self:RefreshVehicleGallery()
+end
+
 function item_spawner_dialog:OnVehicleSelected()
-	local row = self.vehicle_list:GetSelectedItem()
-	local index = row and tonumber(row.data) or nil
-	if index then self.selected_vehicle = self.vehicle_catalog[index] end
-	local vehicle = self.selected_vehicle
-	if not vehicle then
-		self.vehicle_name:SetText(tr("pf_f1_no_vehicle"))
-		self.vehicle_section:SetText("")
-		self.vehicle_description:SetText("")
-		self.vehicle_spawn:Enable(false)
-		return
-	end
-	self.vehicle_name:SetText(vehicle.name)
-	self.vehicle_section:SetText(format_text("pf_f1_detail_section", vehicle.section))
-	self.vehicle_description:SetText(vehicle.description ~= "" and
-		vehicle.description or tr("pf_f1_vehicle_default_description"))
-	self.vehicle_spawn:Enable(true)
+ fit_icon(self.vehicle_preview, self.selected_vehicle, 694, 56, 259, 130)
+ self.vehicle_section:SetText("")
+ self.vehicle_section:Show(false)
+ self.vehicle_description:SetText("")
+ self.vehicle_description_scroll:Show(false)
+ local vehicle = self.selected_vehicle
+ self.vehicle_name:SetText(vehicle and vehicle.name or tr("pf_f1_no_vehicle"))
+ self.vehicle_spawn:Enable(vehicle ~= nil)
 end
 
 function item_spawner_dialog:OnVehicleSpawn()
+	self:HideContextMenu()
 	local object, error_id = pf_f1_item_catalog.spawn_vehicle(self.selected_vehicle)
 	if object then
 		self:SetStatus(format_text("pf_f1_status_vehicle_created",
@@ -774,9 +797,11 @@ end
 function item_spawner_dialog:HideContextMenu()
 	if self.context_menu then self.context_menu:Show(false) end
 	self.context_item = nil
+	self.context_kind = nil
 end
 
 function item_spawner_dialog:CardAtCursor(cursor)
+	if self.active_tab == "vehicles" then return pf_f1_vehicle_gallery.slot_at_cursor(self.vehicle_gallery, cursor) end
 	if self.active_tab ~= "items" then return nil end
 	local relative_x = cursor.x - GRID_X
 	local relative_y = cursor.y - GRID_Y
@@ -793,38 +818,57 @@ function item_spawner_dialog:CardAtCursor(cursor)
 	return nil
 end
 
-function item_spawner_dialog:ShowContextMenu(item, cursor)
-	local x = math.max(0, math.min(cursor.x + 4, 1024 - CONTEXT_WIDTH))
-	local y = math.max(0, math.min(cursor.y + 4, 768 - CONTEXT_HEIGHT))
-	self.context_item = item
-	self.context_menu:SetWndPos(vector2():set(x, y))
-	self.context_menu:Show(true)
+function item_spawner_dialog:ShowContextMenu(item, cursor, vehicle)
+ local height = vehicle and 38 or CONTEXT_HEIGHT
+ local x = math.max(0, math.min(cursor.x + 4, 1024 - CONTEXT_WIDTH))
+ local y = math.max(0, math.min(cursor.y + 4, 768 - height))
+ self.context_item = item
+ self.context_kind = vehicle and "vehicle" or "item"
+ self.context_inventory:Show(not vehicle)
+ self.context_inventory:Enable(not vehicle)
+ self.context_world:SetWndPos(vector2():set(5, vehicle and 5 or 38))
+ self.context_menu:SetWndSize(vector2():set(CONTEXT_WIDTH, height))
+ self.context_menu:SetWndPos(vector2():set(x, y))
+ self.context_menu:Show(true)
 end
 
 function item_spawner_dialog:CursorInContextMenu(cursor)
-	local position = self.context_menu:GetWndPos()
-	return cursor.x >= position.x and cursor.x <= position.x + CONTEXT_WIDTH and
-		cursor.y >= position.y and cursor.y <= position.y + CONTEXT_HEIGHT
+ local rect = Frect()
+ self.context_menu:GetAbsoluteRect(rect)
+ return cursor.x >= rect.x1 and cursor.x <= rect.x2 and cursor.y >= rect.y1 and cursor.y <= rect.y2
 end
 
 function item_spawner_dialog:OnCardContext(slot, cursor)
-	local item = self.slot_items[slot]
-	if not item then return end
-	self.selected_item = item
-	self:RenderPage()
-	self:ShowContextMenu(item, cursor)
+ if self.active_tab == "vehicles" then
+  local vehicle = self.vehicle_gallery.slots[slot]
+  if not vehicle then return end
+  self:OnVehicleCard(slot)
+  self:ShowContextMenu(vehicle, cursor, true)
+  return
+ end
+ local item = self.slot_items[slot]
+ if not item then return end
+ self.selected_item = item
+ self:RenderPage()
+ self:ShowContextMenu(item, cursor)
 end
 
 function item_spawner_dialog:OnContextInventory()
-	local item = self.context_item
-	self:HideContextMenu()
-	self:RequestSpawn(item, "inventory")
+ if self.context_kind == "vehicle" then return end
+ local item = self.context_item
+ self:HideContextMenu()
+ self:RequestSpawn(item, "inventory")
 end
 
 function item_spawner_dialog:OnContextWorld()
-	local item = self.context_item
-	self:HideContextMenu()
-	self:RequestSpawn(item, "world")
+ local item, vehicle = self.context_item, self.context_kind == "vehicle"
+ self:HideContextMenu()
+ if vehicle then
+  self.selected_vehicle = item
+  self:OnVehicleSpawn()
+ else
+  self:RequestSpawn(item, "world")
+ end
 end
 
 function item_spawner_dialog:UpdateModeButtons()
@@ -972,8 +1016,10 @@ function item_spawner_dialog:OnKeyboard(dik, keyboard_action)
 				return true
 			end
 		elseif dik == DIK_keys.MOUSE_1 and self.context_menu:IsShown() then
-			self:HideContextMenu()
-			return true
+			if not self:CursorInContextMenu(GetCursorPosition()) then
+				self:HideContextMenu()
+				return true
+			end
 		elseif dik_to_bind(dik) == key_bindings.kQUIT then
 			if self.context_menu:IsShown() then
 				self:HideContextMenu()

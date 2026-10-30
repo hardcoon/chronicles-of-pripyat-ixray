@@ -156,6 +156,8 @@ N4 = 0.90, 1700, 3200
 ;------ Rest Adjustment --------------------------------------------------------
 
 [lights]
+indoorlightdoors = left_door, right_door
+indoorlights = cabin_light
 headlights                  = f1, f2, f1o, f2o
 stoplights					= f5o, f6o
 
@@ -591,3 +593,10 @@ av_transition_factor		= 0.5		; ����������� �����
 
 ;-------------------------------------------------------------------------------
 ;------ End params -------------------------------------------------------------
+
+[cabin_light]
+range = 2.2
+color = 0.14,0.12,0.07,1
+position = 0,0,0
+type = 1
+bone = interior_light

@@ -22,6 +22,7 @@ apply_inert             	= false
 lim_zoom                	= 0, 0
 
 [car_definition]
+camera_firsteye_pitch_up_deg = 89
 grass_coll_spheres = grass_coll_sphere_1, grass_coll_sphere_2, grass_coll_sphere_3
 character_scraper
 time_to_explosion			= 0 ;-- time to explode when damaged (ms)
@@ -144,6 +145,7 @@ transmission_switch_power 	= 0.6
 transmission_clutch_factor 	= 0.7
 ;transmission_clutch_time 	= 0.5
 ;transmission_type			= 0
+camera_firsteye_yaw_unlimited = true
 
 [transmission_gear_ratio]
 										; shift down/ shift up. (rpm, ����������� ��� ������������)
@@ -635,3 +637,19 @@ av_transition_factor     = 0.5     ; ����������� ���
 
 ;-------------------------------------------------------------------------------
 ;------ End params -------------------------------------------------------------
+
+[mounted_weapon_definition]
+cam_external_zoom = 3.5, 9
+cam_external_pos_rel = 0, 0.8, 0
+cam_external_enabled = true
+cam_bone = machine_gun_tower
+cam_pos_rel = -0.5, 0.65, -0.6
+yaw_torque = 5000
+pitch_torque = 2500
+wpn_section = dcp_vehicle_heavy_mgun
+weapon_feature_profile = dcp_vehicle_weapon_v1
+max_gun_speed = 2.5
+min_gun_speed = 0.5
+fire_bone = machine_gun_fire_point
+rotate_y_bone = machine_gun_tower
+rotate_x_bone = machine_gun

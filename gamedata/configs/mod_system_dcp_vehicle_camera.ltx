@@ -1,0 +1,35 @@
+; Shared runtime-tunable vehicle camera profile.
+; Cars reference this section from their OGF UserData through
+; camera_dynamics_profile. All values are read at vehicle load time, so tuning
+; this file does not require rebuilding xrGame.dll or the vehicle OGF.
+
+[vehicle_comfort_v1]
+implementation = vehicle_comfort_v1
+
+; Overall multiplier for local first-person camera motion.
+motion_strength = 0.35
+
+; Maximum roll compensation against the world horizon. Beyond this angle the
+; camera follows the vehicle, including a rollover.
+horizon_limit = 15.0
+
+; Seconds used to approach active motion and to return to neutral.
+motion_response = 0.14
+motion_return = 0.24
+acceleration_response = 0.08
+
+; Local acceleration clamps in metres per second squared.
+max_lateral_acceleration = 12.0
+max_longitudinal_acceleration = 10.0
+
+; First-person position offset per unit of local acceleration and hard limits
+; in metres. Lateral acceleration changes position only; it never rolls the
+; horizon.
+lateral_offset_per_accel = 0.004
+longitudinal_offset_per_accel = 0.0045
+max_lateral_offset = 0.05
+max_longitudinal_offset = 0.045
+
+; Longitudinal acceleration may add a small pitch, specified in degrees.
+pitch_per_accel = 0.18
+max_pitch = 1.8

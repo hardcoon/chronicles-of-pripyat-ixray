@@ -1,0 +1,93 @@
+-- Vehicle gallery: event-driven view state; no update callback or spawned preview objects.
+local PAGE_SIZE = 25
+local COLUMNS = 5
+local COLUMN_STEP = 136
+local ROW_STEP = 94
+local ICON_WIDTH = 118
+local ICON_HEIGHT = 48
+local NORMAL = GetARGB(225, 235, 235, 228)
+local SELECTED = GetARGB(255, 224, 164, 70)
+
+function create(xml, panel)
+ local path = 'main:form:vehicles_panel'
+ local view = {page=1, filtered={}, slots={}, buttons={}, icons={}}
+ view.grid = xml:InitFrame(path..':grid', panel)
+ view.search = xml:InitEditBox(path..':search_edit', panel)
+ view.search_button = xml:Init3tButton(path..':search_button', panel)
+ view.clear_button = xml:Init3tButton(path..':clear_button', panel)
+ view.previous = xml:Init3tButton(path..':previous', panel)
+ view.next = xml:Init3tButton(path..':next', panel)
+ view.page_text = xml:InitTextWnd(path..':page', panel)
+ for slot=1,PAGE_SIZE do
+  local suffix = string.format('%02d',slot)
+  view.buttons[slot] = xml:Init3tButton(path..':grid:card_'..suffix, view.grid)
+  view.icons[slot] = xml:InitStatic(path..':grid:icon_'..suffix, view.grid)
+  view.icons[slot]:Enable(false)
+  pcall(function() view.buttons[slot]:TextControl():SetElipsis(true) end)
+ end
+ return view
+end
+
+function filter(view, catalog, query)
+ view.filtered={};view.page=1;view.selected=nil
+ for _,vehicle in ipairs(catalog) do
+  if query=='' or string.find(vehicle.search_name or '',query,1,true) then
+   view.filtered[#view.filtered+1]=vehicle
+  end
+ end
+end
+
+local function preview(icon, vehicle, slot)
+ local x=((slot-1)%COLUMNS)*COLUMN_STEP+6
+ local y=math.floor((slot-1)/COLUMNS)*ROW_STEP+4
+ local w,h=tonumber(vehicle.icon_width) or 50,tonumber(vehicle.icon_height) or 50
+ local factor=math.min(ICON_WIDTH/math.max(w,1),ICON_HEIGHT/math.max(h,1))
+ icon:InitTexture(vehicle.texture or 'ui\\ui_noise')
+ icon:SetTextureRect(Frect():set(0,0,w,h));icon:SetStretchTexture(true)
+ icon:SetWndPos(vector2():set(x+(ICON_WIDTH-w*factor)/2,y+(ICON_HEIGHT-h*factor)/2))
+ icon:SetWndSize(vector2():set(w*factor,h*factor));icon:Show(true)
+end
+
+function render(view)
+ local pages=math.max(1,math.ceil(#view.filtered/PAGE_SIZE))
+ view.page=math.max(1,math.min(view.page,pages))
+ local first=(view.page-1)*PAGE_SIZE+1
+ local selected_on_page=false
+ for index=first,math.min(first+PAGE_SIZE-1,#view.filtered) do
+  if view.filtered[index]==view.selected then selected_on_page=true;break end
+ end
+ if not selected_on_page then view.selected=view.filtered[first] end
+ for slot=1,PAGE_SIZE do
+  local vehicle=view.filtered[first+slot-1]
+  view.slots[slot]=vehicle
+  view.buttons[slot]:Show(vehicle~=nil);view.buttons[slot]:Enable(vehicle~=nil)
+  if vehicle then
+   view.buttons[slot]:SetText(vehicle.name)
+   view.buttons[slot]:SetTextureColor(vehicle==view.selected and SELECTED or NORMAL)
+   preview(view.icons[slot],vehicle,slot)
+  else view.icons[slot]:Show(false) end
+ end
+ view.page_text:SetText(string.format(game.translate_string('pf_f1_page'),view.page,pages,#view.filtered))
+ view.previous:Enable(view.page>1);view.next:Enable(view.page<pages)
+ return view.selected
+end
+
+function select(view, slot)
+ if view.slots[slot] then view.selected=view.slots[slot] end
+end
+
+function turn_page(view, delta)
+ view.page=math.max(1,math.min(view.page+delta,math.max(1,math.ceil(#view.filtered/PAGE_SIZE))))
+end
+
+-- Hit the actual native card rectangles, including the current page/filter.
+function slot_at_cursor(view, cursor)
+ for slot, button in ipairs(view.buttons) do
+  if view.slots[slot] then
+   local rect = Frect()
+   button:GetAbsoluteRect(rect)
+   if cursor.x >= rect.x1 and cursor.x <= rect.x2 and cursor.y >= rect.y1 and cursor.y <= rect.y2 then return slot end
+  end
+ end
+ return nil
+end

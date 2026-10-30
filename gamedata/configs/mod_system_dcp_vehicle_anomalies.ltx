@@ -1,0 +1,36 @@
+; Universal response for all present and future DCP vehicles in gravitational anomalies.
+; Mass controls eligibility; pull controls prevent inverse-cube center locking.
+[dcp_vehicle_anomaly_mass_v1]
+full_response_mass = 2500
+immune_mass = 6000
+damage_scale = 0.1
+pull_strength_scale = 0.1
+pull_acceleration_limit = 2.0
+telekinesis_gravity_compensation = 0.0
+telekinesis_hold_enabled = false
+
+![zone_mine_gravitational_weak]
+vehicle_anomaly_profile = dcp_vehicle_anomaly_mass_v1
+car_hit_scale = 2
+hit_koef_car = 3
+car_hit_impulse_scale = 0.1
+
+![zone_mine_gravitational_average]
+vehicle_anomaly_profile = dcp_vehicle_anomaly_mass_v1
+throw_in_impulse_car = 80
+throw_in_hit_koef_car = 13
+
+![zone_gravi_zone]
+vehicle_anomaly_profile = dcp_vehicle_anomaly_mass_v1
+throw_in_impulse_car = 80
+throw_in_hit_koef_car = 13
+
+![zone_mine_gravitational_strong]
+vehicle_anomaly_profile = dcp_vehicle_anomaly_mass_v1
+throw_in_impulse_car = 100
+throw_in_hit_koef_car = 8
+
+![zone_mine_gravitational_big]
+vehicle_anomaly_profile = dcp_vehicle_anomaly_mass_v1
+throw_in_impulse_car = 200
+throw_in_hit_koef_car = 10

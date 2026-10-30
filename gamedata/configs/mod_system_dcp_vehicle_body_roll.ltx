@@ -1,0 +1,17 @@
+; Shared grounded body-roll damping for every DCP vehicle feature profile.
+; This profile changes only roll angular velocity. Donor suspension, steering,
+; grip, pitch/yaw response and per-car air_resistance remain authoritative.
+
+[dcp_white_niva]
+body_roll_profile = dcp_vehicle_body_roll_v1
+starter_drive_delay = 1.0
+
+[dcp_vehicle_v1]
+body_roll_profile = dcp_vehicle_body_roll_v1
+starter_drive_delay = 1.0
+
+[dcp_vehicle_body_roll_v1]
+enabled = true
+roll_damping = 10.0
+min_grounded_wheels = 2
+contact_grace_ms = 120
