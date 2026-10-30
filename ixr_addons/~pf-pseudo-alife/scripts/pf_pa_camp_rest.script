@@ -122,7 +122,9 @@ function impl.members(g,ctx)
     for _,key in ipairs(g.members) do
         local r=ctx.slots[key]
         local server=r and alife():object(r.id)
-        if r and server and server:alive() and server:name()==r.name and server:section_name()==r.section then
+        -- ALife IDs can be reused by non-creatures: reconcile identity before calling creature methods.
+        if r and server and server:name()==r.name and server:section_name()==r.section
+            and server.alive and server:alive() then
             local m={key=key,record=r,server=server,npc=server.online and level.object_by_id(r.id)}
             members[#members+1]=m
             if not leader or string.match(r.section,"^pf_pa_s_a_") then leader=m end
