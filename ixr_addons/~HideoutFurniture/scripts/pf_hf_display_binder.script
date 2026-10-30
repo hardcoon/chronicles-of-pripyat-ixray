@@ -46,6 +46,11 @@ function pf_hf_display_visual:update(delta)
         end
     end
     local record,case_id,item_id=pf_hf_displays.proxy_record(self.object:id())
+    if self.frozen and not self.pose_restored then
+        -- Freeze first so spawn collisions cannot displace the display again.
+        -- Retry only until the saved inventory item and cabinet are online.
+        self.pose_restored=pf_hf_displays.restore_pose(self.object,record,case_id,item_id)
+    end
     local case=case_id and level.object_by_id(case_id)
     if case and not self.tip_set then
         self.object:set_tip_text(pf_hf_furniture.tip(case:section(),case:id()));self.tip_set=true

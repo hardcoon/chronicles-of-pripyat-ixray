@@ -63,6 +63,41 @@ function proxy_record(id)
     end
 end
 
+local function display_pose(server,item,profile,slot,center_y)
+    local math=pf_runtime_editor_math
+    local case_q=math.RuntimeEditorQuaternion(server.angle)
+    local section=ini_value(item:section(),"parent_section") or item:section()
+    local angle=vec(profile.angles[slot]):add(vec(profiles.angle_offsets[section])):mul(0.017453292519943295)
+    local offset_q=math.RuntimeEditorQuaternion(angle)
+    local offset=text_vector(ini_value(item:section(),"position"))
+    if profile.kind~="artifact" then offset.x=0 end
+    offset:add(vec(profiles.position_offsets[section]))
+    -- Correct mesh origins in model space, including tilted shelves.
+    offset.y=offset.y-(center_y or 0)
+    offset=offset_q:rotate_vector(offset):add(vec(profile.positions[slot]))
+    return case_q:rotate_vector(offset):add(server.position),offset_q:multiply(case_q):to_euler_angles()
+end
+
+function restore_pose(object,record,case_id,item_id)
+    if not record or record.id~=object:id() or object:section()~=SECTION then return false end
+    local server=simulator_object(case_id)
+    local item=level.object_by_id(item_id)
+    local source=simulator_object(item_id)
+    local profile=server and profiles.profiles[server:section_name()]
+    if not profile or not item or not source or source.parent_id~=case_id or
+        record.visual~=item:get_visual_name() or not profile.positions[record.slot] then return false end
+    local visual=display_visual(item,profile)
+    if not visual then return false end
+    local center_y=profile.kind=="artifact" and pf_hf_artifact_display_data.center_y[visual] or nil
+    if record.center_y~=center_y then return false end
+    -- Reconstruct from the cabinet and slot, never from an already shifted proxy.
+    -- The existing furniture setter moves physics and refreshes visual caches.
+    if type(object.set_furniture_render_tag)~="function" or type(object.set_editor_transform)~="function" or
+        not object:set_furniture_render_tag() then return false end
+    local position,angle=display_pose(server,item,profile,record.slot,center_y)
+    return object:set_editor_transform(position,angle)
+end
+
 function sync(case)
     local profile=profiles.profiles[case:section()]
     if not profile then return end
@@ -86,8 +121,6 @@ function sync(case)
     local ids={}
     for id in pairs(items) do ids[#ids+1]=id end
     table.sort(ids)
-    local math=pf_runtime_editor_math
-    local case_q=math.RuntimeEditorQuaternion(server.angle)
     for _,id in ipairs(ids) do
         local item=items[id]
         local record=records[id]
@@ -101,23 +134,13 @@ function sync(case)
                 for i=1,profile.count do if not slots[i] then slot=i;break end end
             end
             if slot then
-                local section=ini_value(item:section(),"parent_section") or item:section()
-                local angle=vec(profile.angles[slot]):add(vec(profiles.angle_offsets[section])):mul(0.017453292519943295)
-                local offset_q=math.RuntimeEditorQuaternion(angle)
-                local offset=text_vector(ini_value(item:section(),"position"))
-                if profile.kind~="artifact" then offset.x=0 end
-                offset:add(vec(profiles.position_offsets[section]))
-                -- Artifact mesh origins are below their visible centers. Apply the
-                -- correction in model space so tilted shelves retain their pose.
-                offset.y=offset.y-(center_y or 0)
-                offset=offset_q:rotate_vector(offset):add(vec(profile.positions[slot]))
-                local position=case_q:rotate_vector(offset):add(server.position)
+                local position,angle=display_pose(server,item,profile,slot,center_y)
                 local proxy
                 local ok=pcall(function()
                     proxy=alife():create(SECTION,position,server.m_level_vertex_id,server.m_game_vertex_id)
                     assert(proxy and proxy:set_visual(visual),"display_visual_failed")
                     proxy:use_ai_locations(false)
-                    proxy.angle=offset_q:multiply(case_q):to_euler_angles()
+                    proxy.angle=angle
                     if record then release(record) end
                 end)
                 if ok then
