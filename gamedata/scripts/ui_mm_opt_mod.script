@@ -38,6 +38,10 @@ function opt_mod:InitControls(x, y, xml, handler)
     end
     -- Keep the same console entry and COptionsManager group used in the old page.
     addRow("pf_mod_opt_shift_transfer", "check_shift_transfer")
+    if getFS():exist("$game_scripts$", "pf_inventory_ui.script") then
+        addRow("pf_mod_opt_transparent_interface", "check", pf_inventory_ui.is_enabled,
+            pf_inventory_ui.set_enabled)
+    end
     if getFS():exist("$game_scripts$", "pf_irc_chat.script") then
         addRow("pf_mod_opt_game_chat", "check", pf_irc_chat.is_enabled, pf_irc_chat.set_enabled)
     end
