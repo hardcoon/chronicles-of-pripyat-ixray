@@ -5,7 +5,7 @@
 
 ![profiles]
 >files = npc_profile_pf_pa
->specific_characters_files = character_desc_pf_pa, character_desc_pf_pa_legacy
+>specific_characters_files = character_desc_pf_pa, character_desc_pf_pa_legacy, character_desc_pf_pa_zombied
 
 [pf_pa_stalker_base]:stalker
 custom_data = scripts\pf_pseudo_alife\stalker.ltx
@@ -8733,5 +8733,27 @@ custom_data = scripts\pf_pseudo_alife\monster.ltx
 
 [pf_pa_m_11_100]:tushkano_normal
 custom_data = scripts\pf_pseudo_alife\monster.ltx
+
+
+; Zombied use the same population slots and navigation, without human dialogue.
+[pf_pa_zombied_base]:pf_pa_stalker_base
+community = zombied
+custom_data = scripts\pf_pseudo_alife\zombied.ltx
+
+[pf_pa_s_z_001]:pf_pa_zombied_base
+character_profile = pf_pa_zombied_1
+spec_rank = novice
+
+[pf_pa_s_z_002]:pf_pa_zombied_base
+character_profile = pf_pa_zombied_2
+spec_rank = regular
+
+[pf_pa_s_z_003]:pf_pa_zombied_base
+character_profile = pf_pa_zombied_3
+spec_rank = veteran
+
+[pf_pa_s_z_004]:pf_pa_zombied_base
+character_profile = pf_pa_zombied_4
+spec_rank = master
 
 #include "pf_pa_population_slots.ltx"

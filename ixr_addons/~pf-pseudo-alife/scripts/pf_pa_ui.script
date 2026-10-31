@@ -158,7 +158,7 @@ function panel:Counts()
         local n = values["human_size_" .. size]
         if n then counts.sizes=counts.sizes+n;counts.humans=counts.humans+size*n else sizes_ok=false end
     end
-    for _, name in ipairs({"stalker","bandit","dolg","freedom","monolith","killer"}) do
+    for _, name in ipairs({"stalker","bandit","dolg","freedom","monolith","killer","zombied"}) do
         local n = values["faction_" .. name]
         if n then counts.factions=counts.factions+n else factions_ok=false end
     end

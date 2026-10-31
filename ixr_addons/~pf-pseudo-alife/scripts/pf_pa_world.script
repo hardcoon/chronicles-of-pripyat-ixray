@@ -1790,7 +1790,7 @@ end
 
 function status(print_to_log)
     local result = {stalkers = 0, mutants = 0, online = 0, dead = 0, waiting = 0, failed = rt.failed, ready = rt.initialized or false}
-    result.factions = {stalker = 0, dolg = 0, freedom = 0, monolith = 0, bandit = 0, ecolog = 0, army = 0, killer = 0}
+    result.factions = {stalker = 0, dolg = 0, freedom = 0, monolith = 0, bandit = 0, ecolog = 0, army = 0, killer = 0, zombied = 0}
     if rt.root and alife() then
         for _, record in pairs(rt.root.slots) do
             local server = alife():object(record.id)
@@ -1799,8 +1799,8 @@ function status(print_to_log)
                     local name = record.kind == "s" and "stalkers" or "mutants"
                     result[name] = result[name] + 1
                     if record.kind == "s" then
-                        local code = string.match(record.section, "^pf_pa_s_([dfobeac])_") or ""
-                        local faction = ({[""] = "stalker", d = "dolg", f = "freedom", o = "monolith", b = "bandit", e = "ecolog", a = "army", c = "killer"})[code]
+                        local code = string.match(record.section, "^pf_pa_s_([dfobeacz])_") or ""
+                        local faction = ({[""] = "stalker", d = "dolg", f = "freedom", o = "monolith", b = "bandit", e = "ecolog", a = "army", c = "killer", z = "zombied"})[code]
                         result.factions[faction] = result.factions[faction] + 1
                     end
                     if server.online then result.online = result.online + 1 end
@@ -1826,8 +1826,8 @@ function status(print_to_log)
             m.routes or 0, m.route_failures or 0, m.offline_moves or 0, m.orders or 0, m.stuck or 0,
             tostring(result.draining or false), tostring(rt.failed or "none")))
         local f = result.factions
-        impl.log(string.format("factions stalker=%d duty=%d freedom=%d monolith=%d bandit=%d scientist=%d military=%d",
-            f.stalker, f.dolg, f.freedom, f.monolith, f.bandit, f.ecolog, f.army))
+        impl.log(string.format("factions stalker=%d duty=%d freedom=%d monolith=%d bandit=%d scientist=%d military=%d zombied=%d",
+            f.stalker, f.dolg, f.freedom, f.monolith, f.bandit, f.ecolog, f.army, f.zombied))
     end
     return result
 end
@@ -1898,7 +1898,7 @@ function rumor_objects()
                     local group = impl.group(record)
                     result[#result + 1] = {managed = true, id = record.id, name = record.name,
                         section = record.section, kind = kind, group = group and group.id,
-                        faction = kind == "s" and (record.section:match("^pf_pa_s_([dfobeac])_") or "") or nil,
+                        faction = kind == "s" and (record.section:match("^pf_pa_s_([dfobeacz])_") or "") or nil,
                         species = kind == "m" and (tonumber(record.section:match("^pf_pa_m_(%d%d)_")) or (number - 1) % 11 + 1) or nil,
                         x = position.x, z = position.z}
                     seen[record.id] = true

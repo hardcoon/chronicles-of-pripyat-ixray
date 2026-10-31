@@ -177,7 +177,7 @@ function impl.choose(g,s,leader,ctx,orders)
     end
 end
 function impl.process(g,ctx,orders)
-    if g.kind~="s" then return end
+    if g.kind~="s" or g.faction=="z" then return end
     local members,leader=impl.members(g,ctx)
     local s=rt.root.groups[g.id] or {}
     if not leader then

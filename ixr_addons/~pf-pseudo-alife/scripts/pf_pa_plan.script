@@ -23,7 +23,7 @@ function build(values)
     local sizes = {}
     for size=1,5 do for i=1,values["human_size_" .. size] do sizes[#sizes+1]=size end end
     for i=#sizes,2,-1 do local j=random(i);sizes[i],sizes[j]=sizes[j],sizes[i] end
-    local factions = {{"stalker",""},{"bandit","b"},{"dolg","d"},{"freedom","f"},{"monolith","o"},{"killer","c"}}
+    local factions = {{"stalker",""},{"bandit","b"},{"dolg","d"},{"freedom","f"},{"monolith","o"},{"killer","c"},{"zombied","z"}}
     local counts,total = {},0
     for i,item in ipairs(factions) do counts[i]=values["faction_" .. item[1]];total=total+counts[i] end
     assert(total==#sizes,"regular size/faction group totals differ")

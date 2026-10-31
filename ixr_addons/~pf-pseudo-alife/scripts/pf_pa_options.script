@@ -24,6 +24,7 @@ local schema = {
     {key="faction_monolith", default=1, min=0, max=999, side="human"},
     {key="faction_ecolog", default=2, min=0, max=999, side="human"},
     {key="faction_killer", default=0, min=0, max=999, side="human"},
+    {key="faction_zombied", default=0, min=0, max=999, side="human"},
     {key="mutants", default=80, min=0, max=999, side="mutant"},
     {key="mutant_group_max", default=4, min=1, max=100, side="mutant"},
     {key="mutant_dog", default=6, min=0, max=999, side="mutant", heading="species"},
@@ -207,7 +208,7 @@ function validate(values)
         local n = values["human_size_" .. size]
         groups, people = groups + n, people + size * n
     end
-    for _, name in ipairs({"stalker","bandit","dolg","freedom","monolith","killer"}) do
+    for _, name in ipairs({"stalker","bandit","dolg","freedom","monolith","killer","zombied"}) do
         factions = factions + values["faction_" .. name]
     end
     if groups ~= factions then return false, "pf_pa_opt_group_totals" end
