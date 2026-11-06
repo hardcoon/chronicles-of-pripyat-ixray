@@ -1,0 +1,15 @@
+#pragma once
+struct lua_State;
+
+class IGame_ObjectFactory
+{
+
+public:
+	virtual	void register_script() const = 0;
+	virtual	void init() = 0;
+	virtual	void init_script(const char* str) = 0;
+	virtual	void export_classes(lua_State* L) = 0;
+	virtual int  script_clsid(const CLASS_ID& clsid) const = 0;
+};
+
+extern ENGINE_API IGame_ObjectFactory* g_object_factory;

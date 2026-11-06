@@ -1,0 +1,102 @@
+////////////////////////////////////////////////////////////////////////////
+//	Module 		: UIActorStateInfo.h
+//	Created 	: 15.02.2008
+//	Author		: Evgeniy Sokolov
+//	Description : UI actor state window class
+////////////////////////////////////////////////////////////////////////////
+
+#ifndef	UI_ACTOR_STATE_INFO_H_INCLUDED
+#define UI_ACTOR_STATE_INFO_H_INCLUDED
+
+#include "alife_space.h"
+#include "../../xrUI/Widgets/UIHint.h"
+
+class CUIProgressBar;
+class CUIProgressShape;
+class CUIStatic;
+class CUIFrameWindow;
+class CUIXml;
+class CUIArrow;
+class CInventoryOwner;
+class CActor;
+
+class ui_actor_state_item;
+
+class ui_actor_state_wnd : public CUIWindow
+{
+private:
+	typedef CUIWindow		inherited;
+
+	enum EStateType
+	{
+		stt_stamina = 0,
+		stt_health,
+		stt_bleeding,
+		stt_radiation,
+		stt_armor,
+		stt_main,
+		stt_fire,
+		stt_radia,
+		stt_acid,
+		stt_psi,
+		stt_wound,
+		stt_fire_wound,
+		stt_shock,
+		stt_power,
+		stt_satiety,
+		stt_thirst,
+		stt_sleep,
+		stt_count
+	};
+	ui_actor_state_item*	m_state[stt_count];
+	UIHint*					m_hint_wnd;
+
+public:
+							ui_actor_state_wnd	() = default;
+	virtual					~ui_actor_state_wnd	();
+			void			init_from_xml			( CUIXml& xml, LPCSTR path );
+			void			UpdateActorInfo			( CInventoryOwner* owner );
+			void			UpdateHitZone			();
+
+	virtual void			Draw					();
+	virtual void			Show					( bool status );
+
+	virtual CUIWindow* ui_cast_window() { return this; }
+
+private:
+			void			update_round_states		(EStateType stt_type, float initial, float max_power);
+
+};
+
+class ui_actor_state_item : public UIHintWindow
+{
+	typedef UIHintWindow	inherited;
+
+protected:
+	CUIStatic*				m_static;
+	CUIStatic*				m_static2;
+	CUIStatic*				m_static3;
+	CUIProgressShape*		m_sensor;
+	CUIArrow*				m_arrow;
+	CUIArrow*				m_arrow_shadow;
+	float					m_magnitude;
+	// COP_ENGINE_PATCH: COP-ENG-005
+	bool					m_show_percent;
+
+public:
+	CUIProgressBar*			m_progress;
+					ui_actor_state_item		();
+	virtual			~ui_actor_state_item	();
+			void	init_from_xml			( CUIXml& xml, LPCSTR path );
+	
+			bool	set_text				( float value ); // 0..1
+			bool	set_progress			( float value ); // 0..1
+			bool	set_progress_shape		( float value ); // 0..1
+			int		set_arrow				( float value ); // 0..1
+			bool	show_static				( bool status, u8 number=1 );
+			bool	shows_percent			() const { return m_show_percent; }
+
+	virtual CUIWindow* ui_cast_window() { return this; }
+}; // class ui_actor_state_item
+
+#endif // UI_ACTOR_STATE_INFO_H_INCLUDED

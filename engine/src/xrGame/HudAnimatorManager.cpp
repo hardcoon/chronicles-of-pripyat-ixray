@@ -1,0 +1,557 @@
+#include "StdAfx.h"
+#include "HudAnimatorManager.h"
+#include "player_hud.h"
+#include "UIGameCustom.h"
+#include "Inventory.h"
+#include "ai_space.h"
+#include "../../xrScripts/script_engine.h"
+
+namespace
+{
+constexpr u32 hudAnimatorActivationTimeoutMs = 5000;
+}
+
+CHudAnimatorManager::CHudAnimatorManager(CActor* parent)
+{
+	m_actor = parent;
+}
+
+CHudAnimatorManager::~CHudAnimatorManager()
+{
+	StopAnimator();
+}
+
+void CHudAnimatorManager::Load()
+{
+	m_sounds.~HUD_SOUND_COLLECTION();
+
+	if (pSettings->line_exist(m_section, "sound_1"))
+	{
+		m_sounds.LoadSound(m_section.c_str(), "sound_1", "sndSnd", true);
+	}
+	if (pSettings->line_exist(m_section, "sound_hide"))
+	{
+		m_sounds.LoadSound(m_section.c_str(), "sound_hide", "sndHide", true);
+	}
+
+	m_fHudFov = READ_IF_EXISTS(pSettings, r_float, m_section, "hud_fov", 0.0f);
+	m_fHudFovFactor = READ_IF_EXISTS(pSettings, r_float, m_section, "hud_fov_factor", 1.0f);
+
+	m_bBlend = READ_IF_EXISTS(pSettings, r_bool, m_section, "blend", false);
+
+	m_bCanSprint = READ_IF_EXISTS(pSettings, r_bool, m_section, "can_sprint", false);
+	// COP_ENGINE_PATCH: COP-ENG-100 - opt-in inventory decoration keeps the UI
+	// interactive and holds the same HUD model in its idle motion.
+	m_bNonmodalUi = READ_IF_EXISTS(pSettings, r_bool, m_section, "nonmodal_ui", false);
+	m_bHoldAfterEnd = READ_IF_EXISTS(pSettings, r_bool, m_section, "hold_after_end", false);
+	// COP_ENGINE_PATCH: COP-ENG-101 - only opt-in decorative animators defer
+	// inventory use until their visible closing motion has ended.
+	m_bDeferInventoryUse = READ_IF_EXISTS(pSettings, r_bool, m_section, "defer_inventory_use", false);
+
+	m_sLuaLeftCallback = READ_IF_EXISTS(pSettings, r_string, m_section, "left_lua_callback", "null");
+	m_sLuaLeft2Callback = READ_IF_EXISTS(pSettings, r_string, m_section, "left2_lua_callback", "null");
+	m_sLuaRightCallback = READ_IF_EXISTS(pSettings, r_string, m_section, "right_lua_callback", "null");
+	m_sLuaRight2Callback = READ_IF_EXISTS(pSettings, r_string, m_section, "right2_lua_callback", "null");
+	m_sLuaStartCallback = READ_IF_EXISTS(pSettings, r_string, m_section, "start_lua_callback", "null");
+	m_sLuaEndCallback = READ_IF_EXISTS(pSettings, r_string, m_section, "end_lua_callback", "null");
+}
+
+void CHudAnimatorManager::Update()
+{
+	if (m_bNeedActivated)
+	{
+		// COP_ENGINE_PATCH: COP-ENG-082 - a completed hide can reach this
+		// manager one frame before CInventory commits NO_ACTIVE_SLOT. Do not
+		// restart the hide transition in that gap, and never hold actor input
+		// forever if another HUD state still fails to settle.
+		if (Device.dwTimeGlobal - m_dwActivationStartTm >= hudAnimatorActivationTimeoutMs)
+		{
+			Msg("! HUD animator [%s] activation timed out; completing without motion", *m_section);
+			OnAnimationEnd();
+			return;
+		}
+
+		bool wpn_hide = !g_player_hud->attached_item(0) && !m_actor->inventory().ActiveItem() && !m_actor->inventory().GetNextActiveSlot() && !m_actor->inventory().GetActiveSlot();
+		if (wpn_hide && !g_player_hud->attached_item(1))
+		{
+			PlayMotion();
+		}
+		else
+		{
+			CHudItem* active_item = m_actor->inventory().ActiveItem() ? m_actor->inventory().ActiveItem()->cast_hud_item() : nullptr;
+			if (active_item != nullptr)
+			{
+				u16 slot = m_actor->inventory().GetActiveSlot();
+				m_iRestoreSlot = slot;
+
+				if (m_bForceHideItems)
+				{
+					m_actor->inventory().SetActiveSlot(NO_ACTIVE_SLOT);
+					active_item->SwitchState(CHUDState::EHudStates::eHidden);
+					active_item->SetState(CHUDState::EHudStates::eHidden);
+					g_player_hud->detach_item_idx(0);
+				}
+				else if (!active_item->IsHiding() && !active_item->IsHidden())
+				{
+					m_actor->inventory().Activate(NO_ACTIVE_SLOT);
+				}
+			}
+
+			if (CCustomDevice* dev = m_actor->GetDevice())
+			{
+				m_bRestoreDetector = true;
+
+				if (m_bForceHideItems)
+				{
+					dev->SwitchState(CHUDState::EHudStates::eHidden);
+					dev->SetState(CHUDState::EHudStates::eHidden);
+					g_player_hud->detach_item_idx(1);
+				}
+				else if (!dev->IsHiding() && !dev->IsHidden())
+				{
+					dev->HideDetector(true, true);
+				}
+			}
+		}
+	}
+
+	UpdateAnimation();
+	if (!IsActive() && m_pendingInventoryUseItemId != u16(-1))
+	{
+		ProcessPendingInventoryUse();
+		if (!IsActive())
+			RestoreEquipment();
+	}
+}
+
+void CHudAnimatorManager::StartAnimator(const shared_str& section)
+{
+	if (m_bNeedActivated || m_bIsPlaying)
+		return;
+
+	m_section = section;
+
+	m_sLuaModifySect = READ_IF_EXISTS(pSettings, r_string, m_section, "modify_sect_lua_callback", "null");
+
+	if (m_sLuaModifySect != "null")
+	{
+		luabind::functor<const char*> lua_func;
+		if (ai().script_engine().functor(*m_sLuaModifySect, lua_func))
+		{
+			m_section = lua_func(m_section.c_str());
+			m_sLuaModifySect = "null";
+		}
+		else
+		{
+			Msg("Error to call section modify script [%s] in animator [%s]", *m_sLuaModifySect, *m_section);
+		}
+	}
+
+	m_sLuaPrecondFunc = READ_IF_EXISTS(pSettings, r_string, m_section, "precondition_functor", "null");
+
+	if (m_sLuaPrecondFunc != "null")
+	{
+		luabind::functor<bool> precondition;
+		if (ai().script_engine().functor(*m_sLuaPrecondFunc, precondition))
+		{
+			m_sLuaPrecondFunc = "null";
+			if (!precondition())
+			{
+				return;
+			}
+		}
+		else
+		{
+			Msg("Error to call precondition script [%s] in animator [%s]", *m_sLuaPrecondFunc, *m_section);
+		}
+	}
+
+	Load();
+
+	m_bNeedActivated = true;
+	m_dwActivationStartTm = Device.dwTimeGlobal;
+
+	// COP_ENGINE_PATCH: COP-ENG-100 - nonmodal sections only animate the HUD;
+	// they never hide the active dialog or change inventory/PDA input locks.
+	if (!m_bNonmodalUi)
+	{
+		m_bInventoryDisabledBeforeStart = m_actor->inventory_disabled();
+		m_bPdaDisabledBeforeStart = m_actor->pda_disabled();
+		m_bOwnsActorInputLocks = true;
+		if (CurrentGameUI() && CurrentGameUI()->TopInputReceiver())
+		{
+			CurrentGameUI()->TopInputReceiver()->HideDialog();
+		}
+		m_actor->set_inventory_disabled(true);
+		m_actor->set_pda_disabled(true);
+	}
+}
+
+void CHudAnimatorManager::PlayMotion()
+{
+	g_player_hud->create_animator_item(m_section);
+
+	u32 ret = g_player_hud->GetAnimator()->anim_play("anm_show", m_bBlend, m_current_motion_def);
+
+	m_bNeedActivated = false;
+	m_bIsPlaying = true;
+
+	CallStartCallback();
+
+	if (m_sounds.FindSoundItem("sndSnd", false))
+	{
+		m_sounds.PlaySound("sndSnd", m_actor->Position(), m_actor, !!m_actor->HUDview(), !!(ret == 0));
+	}
+
+	if (ret > 0)
+	{
+		m_dwMotionStartTm = Device.dwTimeGlobal;
+		m_dwMotionCurrTm = m_dwMotionStartTm;
+		m_dwMotionEndTm = m_dwMotionStartTm + ret;
+		m_bStopAtEndAnimIsRunning = true;
+	}
+	else
+	{
+		m_bStopAtEndAnimIsRunning = false;
+		// COP_ENGINE_PATCH: COP-ENG-082 - anim_play returning zero used to
+		// leave IsActive() and both actor input locks set forever.
+		Msg("! HUD animator [%s] has no playable anm_show; completing without motion", *m_section);
+		OnAnimationEnd();
+	}
+}
+
+// COP_ENGINE_PATCH: COP-ENG-101 - anm_hide uses the same animator_item and
+// hands as anm_show/anm_idle, avoiding a missing-model frame on inventory exit.
+bool CHudAnimatorManager::StartCloseMotion()
+{
+	if (!m_bIsPlaying || !m_bHoldAfterEnd || !g_player_hud->GetAnimator() ||
+		!pSettings->line_exist(m_section, "anm_hide"))
+		return false;
+
+	m_bHoldAfterEnd = false;
+	m_sounds.StopAllSounds();
+	const u32 duration = g_player_hud->GetAnimator()->anim_play("anm_hide", m_bBlend, m_current_motion_def);
+	if (duration == 0)
+	{
+		Msg("! HUD animator [%s] has no playable anm_hide", *m_section);
+		StopAnimator();
+		return false;
+	}
+
+	m_dwMotionStartTm = Device.dwTimeGlobal;
+	m_dwMotionCurrTm = m_dwMotionStartTm;
+	m_dwMotionEndTm = m_dwMotionStartTm + duration;
+	m_bStopAtEndAnimIsRunning = true;
+	if (m_sounds.FindSoundItem("sndHide", false))
+		m_sounds.PlaySound("sndHide", m_actor->Position(), m_actor, !!m_actor->HUDview(), false);
+	return true;
+}
+
+bool CHudAnimatorManager::QueueInventoryUse(u16 itemId)
+{
+	if (!CanQueueInventoryUse())
+		return false;
+	if (m_pendingInventoryUseItemId == u16(-1))
+		m_pendingInventoryUseItemId = itemId;
+	return true;
+}
+
+void CHudAnimatorManager::ProcessPendingInventoryUse()
+{
+	const u16 itemId = m_pendingInventoryUseItemId;
+	m_pendingInventoryUseItemId = u16(-1);
+	if (itemId == u16(-1) || !m_actor->g_Alive())
+		return;
+
+	PIItem item = m_actor->inventory().get_object_by_id(itemId);
+	if (item && !item->object().getDestroy() && item->object().H_Parent() == m_actor)
+		m_actor->inventory().Eat(item);
+}
+
+void CHudAnimatorManager::RestoreEquipment()
+{
+	if (m_iRestoreSlot > 0 && m_actor->inventory().ItemFromSlot(m_iRestoreSlot))
+	{
+		m_actor->inventory().Activate(m_iRestoreSlot);
+		m_iRestoreSlot = 0;
+	}
+	if (m_bRestoreDetector && m_actor->GetDevice(true))
+	{
+		m_actor->GetDevice(true)->ToggleDetector(true);
+		m_bRestoreDetector = false;
+	}
+}
+
+void CHudAnimatorManager::UpdateAnimation()
+{
+	if (m_current_motion_def)
+	{
+		if (m_bStopAtEndAnimIsRunning)
+		{
+			auto& marks = m_current_motion_def->marks;
+			if (!marks.empty())
+			{
+				float motion_prev_time = ((float)m_dwMotionCurrTm - (float)m_dwMotionStartTm) / 1000.0f;
+				float motion_curr_time = ((float)Device.dwTimeGlobal - (float)m_dwMotionStartTm) / 1000.0f;
+
+				for (auto& M : marks)
+				{
+					if (M.is_empty())
+						continue;
+
+					auto Iprev = M.pick_mark(motion_prev_time);
+					auto Icurr = M.pick_mark(motion_curr_time);
+					if (Iprev == nullptr && Icurr != nullptr)
+					{
+						OnMotionMark(M);
+					}
+				}
+
+			}
+
+			m_dwMotionCurrTm = Device.dwTimeGlobal;
+			if (m_dwMotionCurrTm > m_dwMotionEndTm)
+			{
+				m_current_motion_def = nullptr;
+				m_dwMotionStartTm = 0;
+				m_dwMotionEndTm = 0;
+				m_dwMotionCurrTm = 0;
+				m_bStopAtEndAnimIsRunning = false;
+				OnAnimationEnd();
+			}
+		}
+	}
+}
+
+void CHudAnimatorManager::OnMotionMark(const motion_marks& mark)
+{
+	if (mark.name == "Left")
+	{
+		CallLeftCallback();
+	}
+	else if (mark.name == "Left2")
+	{
+		CallLeft2Callback();
+	}
+	else if (mark.name == "Right")
+	{
+		CallRightCallback();
+	}
+	else if (mark.name == "Right2")
+	{
+		CallRight2Callback();
+	}
+}
+
+void CHudAnimatorManager::OnAnimationEnd()
+{
+	CallLeftCallback();
+	CallLeft2Callback();
+	CallRightCallback();
+	CallRight2Callback();
+	CallEndCallback();
+
+	// COP_ENGINE_PATCH: COP-ENG-100 - switch the already attached model to
+	// a cyclic idle without destroying it between opening and closing.
+	if (m_bHoldAfterEnd && m_bIsPlaying && g_player_hud->GetAnimator() &&
+		pSettings->line_exist(m_section, "anm_idle"))
+	{
+		g_player_hud->GetAnimator()->anim_play("anm_idle", m_bBlend, m_current_motion_def);
+		m_bStopAtEndAnimIsRunning = false;
+		return;
+	}
+
+	StopAnimator();
+	ProcessPendingInventoryUse();
+	if (!IsActive())
+		RestoreEquipment();
+}
+
+void CHudAnimatorManager::StopAnimator()
+{
+	m_bNeedActivated = false;
+	m_bIsPlaying = false;
+	m_dwActivationStartTm = 0;
+	m_dwMotionStartTm = 0;
+	m_dwMotionEndTm = 0;
+	m_dwMotionCurrTm = 0;
+	m_bStopAtEndAnimIsRunning = false;
+	m_current_motion_def = nullptr;
+	m_bNonmodalUi = false;
+	m_bHoldAfterEnd = false;
+	m_bDeferInventoryUse = false;
+	m_bForceHideItems = false; // COP_ENGINE_PATCH: COP-ENG-101
+	if (m_bOwnsActorInputLocks)
+	{
+		m_actor->set_inventory_disabled(m_bInventoryDisabledBeforeStart);
+		m_actor->set_pda_disabled(m_bPdaDisabledBeforeStart);
+		m_bOwnsActorInputLocks = false;
+	}
+	m_sounds.StopAllSounds();
+	g_player_hud->delete_animator_item();
+
+	m_left_callback = nullptr;
+	m_left2_callback = nullptr;
+	m_right_callback = nullptr;
+	m_right2_callback = nullptr;
+	m_start_callback = nullptr;
+	m_end_callback = nullptr;
+
+	m_sLuaLeftCallback = "null";
+	m_sLuaLeft2Callback = "null";
+	m_sLuaRightCallback = "null";
+	m_sLuaRight2Callback = "null";
+	m_sLuaStartCallback = "null";
+	m_sLuaEndCallback = "null";
+	m_sLuaModifySect = "null";
+}
+
+void CHudAnimatorManager::CallLeftCallback()
+{
+	if (m_left_callback)
+	{
+		m_left_callback();
+		m_left_callback = nullptr;
+	}
+
+	if (m_sLuaLeftCallback != "null")
+	{
+		luabind::functor<void> lua_func;
+		if (ai().script_engine().functor(*m_sLuaLeftCallback, lua_func))
+		{
+			lua_func();
+			m_sLuaLeftCallback = "null";
+		}
+		else
+		{
+			Msg("Error to call left script callback [%s] in animator [%s]", *m_sLuaLeftCallback, *m_section);
+		}
+	}
+}
+
+void CHudAnimatorManager::CallLeft2Callback()
+{
+	if (m_left2_callback)
+	{
+		m_left2_callback();
+		m_left2_callback = nullptr;
+	}
+
+	if (m_sLuaLeft2Callback != "null")
+	{
+		luabind::functor<void> lua_func;
+		if (ai().script_engine().functor(*m_sLuaLeft2Callback, lua_func))
+		{
+			lua_func();
+			m_sLuaLeft2Callback = "null";
+		}
+		else
+		{
+			Msg("Error to call left2 script callback [%s] in animator [%s]", *m_sLuaLeft2Callback, *m_section);
+		}
+	}
+}
+
+void CHudAnimatorManager::CallRightCallback()
+{
+	if (m_right_callback)
+	{
+		m_right_callback();
+		m_right_callback = nullptr;
+	}
+
+	if (m_sLuaRightCallback != "null")
+	{
+		luabind::functor<void> lua_func;
+		if (ai().script_engine().functor(*m_sLuaRightCallback, lua_func))
+		{
+			lua_func();
+			m_sLuaRightCallback = "null";
+		}
+		else
+		{
+			Msg("Error to call right script callback [%s] in animator [%s]", *m_sLuaRightCallback, *m_section);
+		}
+	}
+}
+
+void CHudAnimatorManager::CallRight2Callback()
+{
+	if (m_right2_callback)
+	{
+		m_right2_callback();
+		m_right2_callback = nullptr;
+	}
+
+	if (m_sLuaRight2Callback != "null")
+	{
+		luabind::functor<void> lua_func;
+		if (ai().script_engine().functor(*m_sLuaRight2Callback, lua_func))
+		{
+			lua_func();
+			m_sLuaRight2Callback = "null";
+		}
+		else
+		{
+			Msg("Error to call right2 script callback [%s] in animator [%s]", *m_sLuaRight2Callback, *m_section);
+		}
+	}
+}
+
+void CHudAnimatorManager::CallEndCallback()
+{
+	if (m_end_callback)
+	{
+		m_end_callback();
+		m_end_callback = nullptr;
+	}
+
+	if (m_sLuaEndCallback != "null")
+	{
+		luabind::functor<void> lua_func;
+		if (ai().script_engine().functor(*m_sLuaEndCallback, lua_func))
+		{
+			lua_func();
+			m_sLuaEndCallback = "null";
+		}
+		else
+		{
+			Msg("Error to call end script callback [%s] in animator [%s]", *m_sLuaEndCallback, *m_section);
+		}
+	}
+}
+
+void CHudAnimatorManager::CallStartCallback()
+{
+	if (m_start_callback)
+	{
+		m_start_callback();
+		m_start_callback = nullptr;
+	}
+
+	if (m_sLuaStartCallback != "null")
+	{
+		luabind::functor<void> lua_func;
+		if (ai().script_engine().functor(*m_sLuaStartCallback, lua_func))
+		{
+			lua_func();
+			m_sLuaStartCallback = "null";
+		}
+		else
+		{
+			Msg("Error to call start script callback [%s] in animator [%s]", *m_sLuaStartCallback, *m_section);
+		}
+	}
+}
+
+ENGINE_API extern float psHUD_FOV_def;
+
+float CHudAnimatorManager::GetHudFov() const
+{
+	if (!m_fHudFov || !m_bIsPlaying)
+	{
+		return psHUD_FOV_def * m_fHudFovFactor;
+	}
+
+	return m_fHudFov * m_fHudFovFactor;
+}

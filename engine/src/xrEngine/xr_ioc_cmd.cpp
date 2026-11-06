@@ -1,0 +1,903 @@
+#include "stdafx.h"
+#include "IGame_Level.h"
+
+//#include "xr_effgamma.h"
+#include "x_ray.h"
+#include "XR_IOConsole.h"
+#include "xr_ioc_cmd.h"
+//#include "fbasicvisual.h"
+#include "CameraManager.h"
+#include "Environment.h"
+#include "xr_input.h"
+#include "CustomHUD.h"
+
+#include "../Include/xrRender/RenderDeviceRender.h"
+
+#include "xr_object.h"
+
+xr_token* vid_quality_token = nullptr;
+
+ENGINE_API float devfloat1 = 1.0f;
+ENGINE_API float devfloat2 = 1.0f;
+ENGINE_API float devfloat3 = 1.0f;
+ENGINE_API float devfloat4 = 1.0f;
+float SheduleScaleDedicated = 0;
+ENGINE_API float ps_render_scale = 1.0f;
+ENGINE_API u32 ps_render_scale_preset = 0;
+
+xr_token vid_bpp_token[] =
+{
+	{ "16", 16 },
+	{ "32", 32 },
+	{ 0,	 0 }
+};
+
+xr_token vid_scale_preset_token[] = 
+{
+	{ "st_scale_native", 0 },
+	{ "st_scale_quality", 1 },
+	{ "st_scale_balanced", 2 },
+	{ "st_scale_performance", 3 },
+	{ "st_scale_ultraperformance", 4 },
+
+	{ "st_scale_custom", 5 },
+	{ 0, 0 }
+};
+
+ENGINE_API u32 ps_r_scale_mode = 1;
+ENGINE_API u32 ps_proxy_r_scale_mode = 1;
+xr_token qscale_mode_token[] =
+{
+#ifdef DEBUG_DRAW
+	{ "st_filter_point", 0},
+#endif
+	{ "st_filter_linear", 1},
+	{ "st_filter_dlss", 2},
+	{ "st_filter_fsr", 3},
+//	{ "st_filter_xess", 4},
+	{ 0, 0 }
+};
+
+// COP_ENGINE_PATCH: COP-ENG-009
+// Keep the optimized far-view mode extensible: the UI consumes this token
+// command, while the existing exported boolean remains the R4 culling switch.
+xr_token far_view_profile_token[] =
+{
+	{ "st_pf_far_view_standard", 0 },
+	// COP_ENGINE_PATCH: COP-ENG-014
+	// Keep this second in display order while assigning a new stable value so
+	// existing numeric profile semantics and saved tokens remain unchanged.
+	{ "st_pf_far_view_standard_performance", 5 },
+	// Keep the original token key so existing user.ltx files migrate without
+	// losing the selected increased profile; only its localized label changes.
+	{ "st_pf_far_view_increased_2000", 1 },
+	// COP_ENGINE_PATCH: COP-ENG-015
+	// COP_ENGINE_PATCH: COP-ENG-016
+	{ "st_pf_far_view_weather_plus_1024", 3 },
+	// COP_ENGINE_PATCH: COP-ENG-018
+	// COP_ENGINE_PATCH: COP-ENG-019
+	// Value 6 now names the replacement 2048 m profile.
+	{ "st_pf_far_view_extreme_plus_2048", 6 },
+	{ 0, 0 }
+};
+
+class CCC_FarViewProfile final : public CCC_Token
+{
+public:
+	CCC_FarViewProfile(LPCSTR name) : CCC_Token(name, &psFarViewProfile, far_view_profile_token) {}
+
+	void Execute(LPCSTR args) override
+	{
+		// COP_ENGINE_PATCH: COP-ENG-015
+		// Retired experimental ranges converge on the single current +1024
+		// baseline, preventing old user.ltx files from failing token parsing.
+		if (_stricmp(args, "st_pf_far_view_clear_plus_512") == 0 ||
+			_stricmp(args, "st_pf_far_view_weather_plus_512") == 0 ||
+			_stricmp(args, "st_pf_far_view_clear_plus_2048") == 0 ||
+			_stricmp(args, "st_pf_far_view_weather_plus_1536") == 0)
+		{
+			args = "st_pf_far_view_weather_plus_1024";
+		}
+		// COP_ENGINE_PATCH: COP-ENG-019
+		// Migrate the short-lived 3000 m token to its direct replacement.
+		else if (_stricmp(args, "st_pf_far_view_extreme_plus_3000") == 0)
+		{
+			args = "st_pf_far_view_extreme_plus_2048";
+		}
+		CCC_Token::Execute(args);
+		psExperimentalFarView = psFarViewProfile != 0;
+	}
+};
+
+class CCC_ExperimentalFarViewLegacy final : public CCC_Boolean
+{
+public:
+	CCC_ExperimentalFarViewLegacy(LPCSTR name) : CCC_Boolean(name, &psExperimentalFarView) {}
+
+	void Execute(LPCSTR args) override
+	{
+		CCC_Boolean::Execute(args);
+		psFarViewProfile = psExperimentalFarView ? 1 : 0;
+	}
+
+	// Existing user.ltx files still load this alias, but new saves contain only
+	// rs_far_view_profile so the two commands can never drift apart on disk.
+	void Save(IWriter*) override {}
+};
+
+//-----------------------------------------------------------------------
+
+void IConsole_Command::add_to_LRU(shared_str const& arg) {
+	if (arg.size() == 0 || bEmptyArgsHandled) {
+		return;
+	}
+	
+	bool dup = ( std::find( m_LRU.begin(), m_LRU.end(), arg ) != m_LRU.end() );
+	if (!dup) {
+		m_LRU.push_back( arg );
+		if (m_LRU.size() > LRU_MAX_COUNT) {
+			m_LRU.erase( m_LRU.begin() );
+		}
+	}
+}
+
+void  IConsole_Command::add_LRU_to_tips(vecTips& tips) {
+	vecLRU::reverse_iterator	it_rb = m_LRU.rbegin();
+	vecLRU::reverse_iterator	it_re = m_LRU.rend();
+	for (; it_rb != it_re; ++it_rb) {
+		tips.push_back( (*it_rb) );
+	}
+}
+
+// =======================================================
+
+class CCC_Quit : public IConsole_Command
+{
+public:
+	CCC_Quit(LPCSTR N) : IConsole_Command(N)  { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) 
+	{
+		if (Device.IsEditorMode())
+		{
+			Msg("This command cannot be executed in Editors.");
+			return;
+		}
+		Console->Hide();
+		g_pEventManager->Event.Defer("KERNEL:disconnect");
+		g_pEventManager->Event.Defer("KERNEL:quit");
+	}
+};
+//-----------------------------------------------------------------------
+class CCC_MotionsStat : public IConsole_Command
+{
+public:
+	CCC_MotionsStat(LPCSTR N) : IConsole_Command(N)  { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		//g_pMotionsContainer->dump();
+		//	TODO: move this console commant into renderer
+		VERIFY(0);
+	}
+};
+class CCC_TexturesStat : public IConsole_Command
+{
+public:
+	CCC_TexturesStat(LPCSTR N) : IConsole_Command(N)  { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) 
+	{
+		Device.DumpResourcesMemoryUsage();
+	}
+};
+//-----------------------------------------------------------------------
+class CCC_E_Dump : public IConsole_Command
+{
+public:
+	CCC_E_Dump(LPCSTR N) : IConsole_Command(N)  { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		g_pEventManager->Event.Dump();
+	}
+};
+class CCC_E_Signal : public IConsole_Command
+{
+public:
+	CCC_E_Signal(LPCSTR N) : IConsole_Command(N)  { };
+	virtual void Execute(LPCSTR args) {
+		char	Event[128],Param[128];
+		Event[0]=0; Param[0]=0;
+		sscanf	(args,"%[^,],%s",Event,Param);
+		g_pEventManager->Event.Signal	(Event,(u64)Param);
+	}
+};
+
+
+
+//-----------------------------------------------------------------------
+class CCC_Help : public IConsole_Command
+{
+public:
+	CCC_Help(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		Log("- --- Command listing: start ---");
+		CConsole::vecCMD_IT it;
+		for (it=Console->Commands.begin(); it!=Console->Commands.end(); it++)
+		{
+			IConsole_Command &C = *(it->second);
+			TStatus _S; C.Status(_S);
+			TInfo	_I;	C.Info	(_I);
+			
+			Msg("%-20s (%-10s) --- %s",	C.Name(), _S, _I);
+		}
+		Log("Key: Ctrl + A         === Select all ");
+		Log("Key: Ctrl + C         === Copy to clipboard ");
+		Log("Key: Ctrl + V         === Paste from clipboard ");
+		Log("Key: Ctrl + X         === Cut to clipboard ");
+		Log("Key: Ctrl + Z         === Undo ");
+		Log("Key: Ctrl + Insert    === Copy to clipboard ");
+		Log("Key: Shift + Insert   === Paste from clipboard ");
+		Log("Key: Shift + Delete   === Cut to clipboard ");
+		Log("Key: Insert           === Toggle mode <Insert> ");
+		Log("Key: Back / Delete          === Delete symbol left / right ");
+
+		Log("Key: Up   / Down            === Prev / Next command in tips list ");
+		Log("Key: Ctrl + Up / Ctrl + Down === Prev / Next executing command ");
+		Log("Key: Left, Right, Home, End {+Shift/+Ctrl}       === Navigation in text ");
+		Log("Key: PageUp / PageDown      === Scrolling history ");
+		Log("Key: Tab  / Shift + Tab     === Next / Prev possible command from list");
+		Log("Key: Enter  / NumEnter      === Execute current command ");
+		
+		Log("- --- Command listing: end ----");
+	}
+};
+
+//-----------------------------------------------------------------------
+class CCC_SaveCFG : public IConsole_Command
+{
+public:
+	CCC_SaveCFG(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) 
+	{
+		string_path			cfg_full_name;
+		xr_strcpy			(cfg_full_name, (xr_strlen(args)>0)?args:Console->ConfigFile);
+
+		bool b_abs_name = xr_strlen(cfg_full_name)>2 && cfg_full_name[1]==':';
+
+		if(!b_abs_name)
+			FS.update_path	(cfg_full_name, "$app_data_root$", cfg_full_name);
+
+		if (strext(cfg_full_name))	
+			*strext(cfg_full_name) = 0;
+		xr_strcat			(cfg_full_name,".ltx");
+		
+		BOOL b_allow = TRUE;
+		if ( FS.exist(cfg_full_name) )
+			b_allow = SetFileAttributes(Platform::ANSI_TO_TCHAR(cfg_full_name),FILE_ATTRIBUTE_NORMAL);
+
+		if ( b_allow ){
+			IWriter* F			= FS.w_open(cfg_full_name);
+				CConsole::vecCMD_IT it;
+				for (it=Console->Commands.begin(); it!=Console->Commands.end(); it++)
+					it->second->Save(F);
+				FS.w_close			(F);
+				Msg("Config-file [%s] saved successfully",cfg_full_name);
+		}else
+			Msg("!Cannot store config file [%s]", cfg_full_name);
+	}
+};
+CCC_LoadCFG::CCC_LoadCFG(LPCSTR N) : IConsole_Command(N) 
+{};
+
+void CCC_LoadCFG::Execute(LPCSTR args) 
+{
+		Msg("Executing config-script \"%s\"...",args);
+		string_path						cfg_name;
+
+		xr_strcpy							(cfg_name, args);
+		if (strext(cfg_name))			*strext(cfg_name) = 0;
+		xr_strcat							(cfg_name,".ltx");
+
+		string_path						cfg_full_name;
+
+		FS.update_path					(cfg_full_name, "$app_data_root$", cfg_name);
+			
+		if( nullptr == FS.exist(cfg_full_name) )
+			xr_strcpy						(cfg_full_name, cfg_name);
+		
+		IReader* F						= FS.r_open(cfg_full_name);
+		
+		string1024						str;
+		if (F!=nullptr) {
+			while (!F->eof()) {
+				F->r_string				(str,sizeof(str));
+				if(allow(str))
+					Console->Execute	(str);
+			}
+			FS.r_close(F);
+			Msg("[%s] successfully loaded.",cfg_full_name);
+		} else {
+			Msg("! Cannot open script file [%s]",cfg_full_name);
+		}
+}
+
+CCC_LoadCFG_custom::CCC_LoadCFG_custom(LPCSTR cmd)
+:CCC_LoadCFG(cmd)
+{
+	xr_strcpy(m_cmd, cmd);
+};
+bool CCC_LoadCFG_custom::allow(LPCSTR cmd)
+{
+	return (cmd == strstr(cmd, m_cmd) );
+};
+
+//-----------------------------------------------------------------------
+class CCC_Start : public IConsole_Command
+{
+	void	parse		(LPSTR dest, LPCSTR args, LPCSTR name)
+	{
+		dest[0]	= 0;
+		if (strstr(args,name))
+			sscanf(strstr(args,name)+xr_strlen(name),"(%[^)])",dest);
+	}
+
+	void	protect_Name_strlwr( LPSTR str )
+	{
+ 		string4096	out;
+		xr_strcpy( out, sizeof(out), str );
+		_strlwr( str );
+
+		LPCSTR name_str = "name=";
+		LPCSTR name1 = strstr( str, name_str );
+		if ( !name1 || !xr_strlen( name1 ) )
+		{
+			return;
+		}
+		int begin_p = xr_strlen( str ) - xr_strlen( name1 ) + xr_strlen( name_str );
+		if ( begin_p < 1 )
+		{
+			return;
+		}
+
+		LPCSTR name2 = strchr( name1, '/' );
+		int end_p = xr_strlen( str ) - ((name2)? xr_strlen(name2) : 0);
+		if ( begin_p >= end_p )
+		{
+			return;
+		}
+		for ( int i = begin_p; i < end_p;++i )
+		{
+			str[i] = out[i];
+		}
+	}
+public:
+	CCC_Start(LPCSTR N) : IConsole_Command(N)	{ 	  bLowerCaseArgs = false; };
+	virtual void Execute(LPCSTR args)
+	{
+/*		if (g_pGameLevel)	{
+			Log		("! Please disconnect/unload first");
+			return;
+		}
+*/
+		string4096	op_server,op_client,op_demo;
+		op_server[0] = 0;
+		op_client[0] = 0;
+		
+		parse		(op_server,args,"server");	// 1. server
+		parse		(op_client,args,"client");	// 2. client
+		parse		(op_demo, args,	"demo");	// 3. demo
+		
+		_strlwr( op_server );
+		protect_Name_strlwr( op_client );
+
+		if(!op_client[0] && strstr(op_server,"single"))
+			xr_strcpy(op_client, "localhost");
+
+		if ((0==xr_strlen(op_client)) && (0 == xr_strlen(op_demo)))
+		{
+			Msg("! Can't start game without client. Arguments: '%s'.",args);
+			return;
+		}
+		if (g_pGameLevel)
+			g_pEventManager->Event.Defer("KERNEL:disconnect");
+		
+		if (xr_strlen(op_demo))
+		{
+			g_pEventManager->Event.Defer	("KERNEL:start_mp_demo",u64(xr_strdup(op_demo)),0);
+		} else
+		{
+			g_pEventManager->Event.Defer	("KERNEL:start",u64(xr_strlen(op_server)?xr_strdup(op_server):0),u64(xr_strdup(op_client)));
+		}
+	}
+};
+
+class CCC_Disconnect : public IConsole_Command
+{
+public:
+	CCC_Disconnect(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		g_pEventManager->Event.Defer("KERNEL:disconnect");
+	}
+};
+//-----------------------------------------------------------------------
+class CCC_VID_Reset : public IConsole_Command
+{
+public:
+	CCC_VID_Reset(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		if (Device.b_is_Ready) {
+			Device.Reset	();
+		}
+	}
+};
+class CCC_VidMode : public CCC_Token
+{
+	u32		_dummy;
+public :
+					CCC_VidMode(LPCSTR N) : CCC_Token(N, &_dummy, nullptr) { bEmptyArgsHandled = FALSE; };
+	virtual void	Execute(LPCSTR args){
+		u32 _w, _h;
+		int cnt = sscanf		(args,"%dx%d",&_w,&_h);
+		if(cnt==2){
+			psCurrentVidMode[0] = _w;
+			psCurrentVidMode[1] = _h;
+		}else{
+			Msg("! Wrong video mode [%s]", args);
+			return;
+		}
+	}
+	virtual void	Status	(TStatus& S)	
+	{ 
+		xr_sprintf(S,sizeof(S),"%dx%d",psCurrentVidMode[0],psCurrentVidMode[1]); 
+	}
+	virtual xr_token* GetToken()				{return vid_mode_token;}
+	virtual void	Info	(TInfo& I)
+	{	
+		xr_strcpy(I,sizeof(I),"change screen resolution WxH");
+	}
+
+	virtual void fill_tips(vecTips& tips, u32 mode) {
+		TStatus  str, cur;
+		Status( cur );
+
+		bool res = false;
+		xr_token* tok = GetToken();
+		while (tok->name && !res) {
+			if (!xr_strcmp(tok->name, cur)) {
+				xr_sprintf(str, sizeof(str), "%s  (current)", tok->name);
+				tips.push_back( str );
+				res = true;
+			}
+			tok++;
+		}
+		if (!res) {
+			tips.push_back( "---  (current)" );
+		}
+		tok = GetToken();
+		while (tok->name) {
+			tips.push_back( tok->name );
+			tok++;
+		}
+	}
+
+};
+//-----------------------------------------------------------------------
+class CCC_SND_Restart : public IConsole_Command
+{
+public:
+	CCC_SND_Restart(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		Sound->_restart();
+	}
+};
+
+//-----------------------------------------------------------------------
+float	ps_gamma=1.f,ps_brightness=1.f,ps_contrast=1.f;
+class CCC_Gamma : public CCC_Float
+{
+public:
+	CCC_Gamma	(LPCSTR N, float* V) : CCC_Float(N,V,0.5f,1.5f)	{}
+
+	virtual void Execute(LPCSTR args)
+	{
+		if (Device.IsEditorMode())
+		{
+			Msg("This command cannot be used in Editors.");
+			return;
+		}
+		CCC_Float::Execute		(args);
+		//Device.Gamma.Gamma		(ps_gamma);
+		Device.m_pRender->setGamma(ps_gamma);
+		//Device.Gamma.Brightness	(ps_brightness);
+		Device.m_pRender->setBrightness(ps_brightness);
+		//Device.Gamma.Contrast	(ps_contrast);
+		Device.m_pRender->setContrast(ps_contrast);
+		//Device.Gamma.Update		();
+		Device.m_pRender->updateGamma();
+	}
+};
+
+//-----------------------------------------------------------------------
+/*
+#ifdef	DEBUG
+extern  INT	g_bDR_LM_UsePointsBBox;
+extern	INT	g_bDR_LM_4Steps;
+extern	INT g_iDR_LM_Step;
+extern	Fvector	g_DR_LM_Min, g_DR_LM_Max;
+
+class CCC_DR_ClearPoint : public IConsole_Command
+{
+public:
+	CCC_DR_ClearPoint(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		g_DR_LM_Min.x = 1000000.0f;
+		g_DR_LM_Min.z = 1000000.0f;
+
+		g_DR_LM_Max.x = -1000000.0f;
+		g_DR_LM_Max.z = -1000000.0f;
+
+		Msg("Local BBox (%f, %f) - (%f, %f)", g_DR_LM_Min.x, g_DR_LM_Min.z, g_DR_LM_Max.x, g_DR_LM_Max.z);
+	}
+};
+
+class CCC_DR_TakePoint : public IConsole_Command
+{
+public:
+	CCC_DR_TakePoint(LPCSTR N) : IConsole_Command(N)	{ bEmptyArgsHandled = TRUE; };
+	virtual void Execute(LPCSTR args) {
+		Fvector CamPos =  Device.vCameraPosition;
+
+		if (g_DR_LM_Min.x > CamPos.x)	g_DR_LM_Min.x = CamPos.x;
+		if (g_DR_LM_Min.z > CamPos.z)	g_DR_LM_Min.z = CamPos.z;
+
+		if (g_DR_LM_Max.x < CamPos.x)	g_DR_LM_Max.x = CamPos.x;
+		if (g_DR_LM_Max.z < CamPos.z)	g_DR_LM_Max.z = CamPos.z;
+
+		Msg("Local BBox (%f, %f) - (%f, %f)", g_DR_LM_Min.x, g_DR_LM_Min.z, g_DR_LM_Max.x, g_DR_LM_Max.z);
+	}
+};
+
+class CCC_DR_UsePoints : public CCC_Integer
+{
+public:
+	CCC_DR_UsePoints(LPCSTR N, int* V, int _min=0, int _max=999) : CCC_Integer(N, V, _min, _max)	{};
+	virtual void	Save	(IWriter *F)	{};
+};
+#endif
+*/
+
+ENGINE_API BOOL r2_sun_static = TRUE;
+
+u32	renderer_value	= 0;
+//void fill_render_mode_list();
+//void free_render_mode_list();
+
+class CCC_r2 : public CCC_Token
+{
+	typedef CCC_Token inherited;
+public:
+	CCC_r2(LPCSTR N) :inherited(N, &renderer_value, vid_quality_token)
+	{
+		// COP_ENGINE_PATCH: COP-ENG-038 - prefer the shipped DX11 renderer when
+		// no saved configuration or explicit command-line renderer overrides it.
+		// Keep the first available renderer as the fallback when R4 is absent.
+		renderer_value = 0;
+		for (xr_token* token = vid_quality_token; token && token->name; ++token)
+		{
+			if (xr_strcmp(token->name, "renderer_r4") == 0)
+			{
+				renderer_value = token->id;
+				break;
+			}
+		}
+	};
+	virtual			~CCC_r2	()
+	{
+		//free_render_mode_list();
+	}
+	virtual void	Execute	(LPCSTR args)
+	{
+		//fill_render_mode_list	();
+		//	vid_quality_token must be already created!
+		tokens					= vid_quality_token;
+
+		inherited::Execute		(args);
+		//	0 - r1
+		//	1..3 - r2
+		//	4 - r3
+		psDeviceFlags.set(rsR2, std::string("renderer_r2") == tokens[renderer_value].name);
+		psDeviceFlags.set(rsR4, std::string("renderer_r4") == tokens[renderer_value].name);
+	}
+
+	virtual void	Save	(IWriter *F)	
+	{
+		//fill_render_mode_list	();
+		tokens = vid_quality_token;
+		inherited::Save(F);
+	}
+
+	virtual xr_token* GetToken()
+	{
+		tokens = vid_quality_token;
+		return inherited::GetToken();
+	}
+
+};
+
+class CCC_soundDevice : public CCC_Token
+{
+	typedef CCC_Token inherited;
+public:
+	CCC_soundDevice(LPCSTR N) :inherited(N, &snd_device_id, nullptr){};
+	virtual			~CCC_soundDevice	()
+	{}
+
+	virtual void Execute(LPCSTR args)
+	{
+		GetToken				();
+		if(!tokens)				return;
+		inherited::Execute		(args);
+	}
+
+	virtual void	Status	(TStatus& S)
+	{
+		GetToken				();
+		if(!tokens)				return;
+		inherited::Status		(S);
+	}
+
+	virtual xr_token* GetToken()
+	{
+		tokens					= snd_devices_token;
+		return inherited::GetToken();
+	}
+
+	virtual void Save(IWriter *F)	
+	{
+		GetToken				();
+		if(!tokens)				return;
+		inherited::Save			(F);
+	}
+};
+
+//-----------------------------------------------------------------------
+class CCC_ExclusiveMode : public IConsole_Command {
+private:
+	typedef IConsole_Command inherited;
+
+public:
+					CCC_ExclusiveMode	(LPCSTR N) :
+		inherited	(N)
+	{
+	}
+
+	virtual void	Execute				(LPCSTR args)
+	{
+		bool		value = false;
+		if (!xr_strcmp(args,"on"))
+			value	= true;
+		else if (!xr_strcmp(args,"off"))
+			value	= false;
+		else if (!xr_strcmp(args,"true"))
+			value	= true;
+		else if (!xr_strcmp(args,"false"))
+			value	= false;
+		else if (!xr_strcmp(args,"1"))
+			value	= true;
+		else if (!xr_strcmp(args,"0"))
+			value	= false;
+		else InvalidSyntax();
+		
+		//pInput->exclusive_mode	(value);
+	}
+
+	virtual void	Save	(IWriter *F)	
+	{
+	}
+};
+
+class ENGINE_API CCC_HideConsole : public IConsole_Command
+{
+public		:
+	CCC_HideConsole(LPCSTR N) : IConsole_Command(N)
+	{
+		bEmptyArgsHandled	= true;
+	}
+
+	virtual void	Execute	(LPCSTR args)
+	{
+		Console->Hide	();
+	}
+	virtual void	Status	(TStatus& S)
+	{
+		S[0]			= 0;
+	}
+	virtual void	Info	(TInfo& I)
+	{	
+		xr_sprintf		(I,sizeof(I),"hide console");
+	}
+};
+
+
+ENGINE_API float psHUD_FOV_def = 33.75f;
+ENGINE_API float psHUD_FOV = psHUD_FOV_def;
+ENGINE_API bool g_3d_scopes = false;
+
+ENGINE_API int m_look_cam_fp_zoom = 0; // first-person aiming
+
+extern int			rsDVB_Size;
+extern int			rsDIB_Size;
+extern int			psNET_ClientUpdate;
+extern int			psNET_ClientPending;
+extern int			psNET_ServerUpdate;
+extern int			psNET_ServerPending;
+extern int			psNET_DedicatedSleep;
+extern char			psNET_Name[32];
+extern Flags32		psEnvFlags;
+extern int			g_ErrorLineCount;
+
+extern bool			dsEnableGamepad;
+extern int g_dwFPSlimit;
+extern bool IsFpsShow;
+
+extern bool use_smoothed_delta;
+
+void CCC_Register()
+{
+	CMD2(CCC_Boolean, "use_smoothed_delta", &use_smoothed_delta);
+
+	CMD2(CCC_Boolean, "ui_dbg_weather",		&Engine.External.EditorStates[(int)EditorUI::Weather]);
+	CMD2(CCC_Boolean, "ui_dbg_draw",		&Engine.External.EditorStates[(int)EditorUI::DebugDraw]);
+	CMD2(CCC_Boolean, "ui_dbg_cmd_vars",	&Engine.External.EditorStates[(int)EditorUI::CmdVars]);
+	CMD2(CCC_Boolean, "ui_dbg_cmd_console", &Engine.External.EditorStates[(int)EditorUI::CmdConsole]);
+
+	// General
+	CMD1(CCC_Help,		"help"					);
+	CMD1(CCC_Quit,		"quit"					);
+	CMD1(CCC_Start,		"start"					);
+	CMD1(CCC_Disconnect,"disconnect"			);
+	CMD1(CCC_SaveCFG,	"cfg_save"				);
+	CMD1(CCC_LoadCFG,	"cfg_load"				);
+	CMD3(CCC_Mask,		"mt_particles",			&psDeviceFlags,			mtParticles);
+#ifdef DEBUG
+	CMD1(CCC_MotionsStat,	"stat_motions"		);
+	CMD1(CCC_TexturesStat,	"stat_textures"		);
+#endif // DEBUG
+
+#ifdef DEBUG
+
+	CMD3(CCC_Mask,		"mt_sound",				&psDeviceFlags,			mtSound);
+	CMD3(CCC_Mask,		"mt_physics",			&psDeviceFlags,			mtPhysics);
+	CMD3(CCC_Mask,		"mt_network",			&psDeviceFlags,			mtNetwork);
+	
+	// Events
+	CMD1(CCC_E_Dump,	"e_list"				);
+	CMD1(CCC_E_Signal,	"e_signal"				);
+
+	CMD3(CCC_Mask,		"rs_wireframe",			&psDeviceFlags,		rsWireframe);
+	CMD3(CCC_Mask,		"rs_clear_bb",			&psDeviceFlags,		rsClearBB);
+	CMD3(CCC_Mask,		"rs_occlusion",			&psDeviceFlags,		rsOcclusion);
+#endif
+
+#ifndef MASTER_GOLD
+	CMD3(CCC_Mask,		"rs_render_details",	&psDeviceFlags,		rsDetails);
+	CMD3(CCC_Mask,		"rs_render_statics",	&psDeviceFlags,		rsDrawStatic);
+	CMD3(CCC_Mask,		"rs_render_dynamics",	&psDeviceFlags,		rsDrawDynamic);
+	CMD3(CCC_Mask,		"rs_render_portals",	&psGameFlags,		rsDrawPortals);
+#endif
+	// Render device states
+	CMD3(CCC_Mask, "rs_device_active", &psDeviceFlags, rsDeviceActive);
+	
+	CMD2(CCC_Boolean,	"rs_fps_show",			&IsFpsShow);
+	CMD4(CCC_Integer,	"rs_fps_limit",			&g_dwFPSlimit,		0, 1000);
+
+	CMD3(CCC_Mask,		"rs_v_sync",			&psDeviceFlags,		rsVSync				);
+	
+	// COP_ENGINE_PATCH: COP-ENG-033 - the options UI is present in every shipped
+	// build, so its fullscreen binding must not disappear from non-MASTER_GOLD.
+	CMD3(CCC_Mask, "rs_fullscreen", &psDeviceFlags, rsFullscreen);
+
+	//CMD3(CCC_Mask,		"rs_refresh_60hz",		&psDeviceFlags,		rsRefresh60hz			);
+	CMD3(CCC_Mask,		"rs_stats",				&psDeviceFlags,		rsStatistic				);
+	CMD4(CCC_Float,		"rs_vis_distance",		&psVisDistance,		0.4f,	1.0f			);
+	// COP_ENGINE_PATCH: COP-ENG-008
+	CMD1(CCC_ExperimentalFarViewLegacy, "rs_experimental_far_view");
+	// COP_ENGINE_PATCH: COP-ENG-009
+	CMD1(CCC_FarViewProfile, "rs_far_view_profile");
+	CMD3(CCC_Mask,		"r_actor_shadow",		&psGameFlags,		rsActorShadow			);
+
+	CMD3(CCC_Mask,		"rs_cam_pos",			&psDeviceFlags,		rsCameraPos				);
+#ifdef DEBUG_DRAW
+	CMD3(CCC_Mask,		"rs_occ_draw",			&psDeviceFlags,		rsOcclusionDraw			);
+	CMD3(CCC_Mask,		"rs_occ_stats",			&psDeviceFlags,		rsOcclusionStats		);
+#endif // DEBUG
+
+	CMD2(CCC_Gamma,		"rs_c_gamma"			,&ps_gamma			);
+	CMD2(CCC_Gamma,		"rs_c_brightness"		,&ps_brightness		);
+	CMD2(CCC_Gamma,		"rs_c_contrast"			,&ps_contrast		);
+
+	// Texture manager	
+	CMD4(CCC_Integer,	"texture_lod",			&psTextureLOD,				0,	4	);
+	CMD4(CCC_Integer,	"net_dedicated_sleep",	&psNET_DedicatedSleep,		0,	64	);
+
+	// General video control
+	CMD1(CCC_VidMode, "vid_mode");
+	CMD3(CCC_Token, "vid_scale_preset", &ps_render_scale_preset, vid_scale_preset_token);
+	CMD4(CCC_Float, "vid_scale", &ps_render_scale, 0.3f, 2.0f);
+	CMD3(CCC_Token, "vid_scale_mode", &ps_proxy_r_scale_mode, qscale_mode_token);
+
+#ifdef DEBUG
+	CMD3(CCC_Token,		"vid_bpp",				&psCurrentBPP,	vid_bpp_token );
+#endif // DEBUG
+
+	CMD1(CCC_VID_Reset, "vid_restart"			);
+	
+	// Sound
+	CMD2(CCC_Float,		"snd_volume_eff",		&psSoundVEffects);
+	CMD2(CCC_Float,		"snd_volume_music",		&psSoundVMusic);
+	CMD1(CCC_SND_Restart,"snd_restart"			);
+	CMD3(CCC_Mask,		"snd_acceleration",		&psSoundFlags,		ss_Hardware	);
+	CMD3(CCC_Mask,		"snd_efx",				&psSoundFlags,		ss_EFX		);
+
+#ifdef DEBUG
+	CMD3(CCC_Mask,		"snd_stats",			&g_stats_flags,		st_sound	);
+	CMD3(CCC_Mask,		"snd_stats_min_dist",	&g_stats_flags,		st_sound_min_dist );
+	CMD3(CCC_Mask,		"snd_stats_max_dist",	&g_stats_flags,		st_sound_max_dist );
+	CMD3(CCC_Mask,		"snd_stats_ai_dist",	&g_stats_flags,		st_sound_ai_dist );
+	CMD3(CCC_Mask,		"snd_stats_info_name",	&g_stats_flags,		st_sound_info_name );
+	CMD3(CCC_Mask,		"snd_stats_info_object",&g_stats_flags,		st_sound_info_object );
+
+	CMD4(CCC_Integer,	"error_line_count",		&g_ErrorLineCount,	6,	1024	);
+#endif // DEBUG
+
+	// Mouse
+	CMD3(CCC_Mask,		"mouse_invert",			&psMouseInvert,1);
+	psMouseSens			= 0.12f;
+	CMD4(CCC_Float,		"mouse_sens",			&psMouseSens,		0.001f, 0.6f);
+	CMD4(CCC_Float,		"mouse_sens_ui",		&psMouseUISens,		0.01f, 2.f);
+
+#ifndef MASTER_GOLD
+	// Other
+	CMD4(CCC_Float,		"developer_float_1",	&devfloat1, -100000.0f, 100000.0f);
+	CMD4(CCC_Float,		"developer_float_2",	&devfloat2, -100000.0f, 100000.0f);
+	CMD4(CCC_Float,		"developer_float_3",	&devfloat3, -100000.0f, 100000.0f);
+	CMD4(CCC_Float,		"developer_float_4",	&devfloat4, -100000.0f, 100000.0f);
+#endif
+
+	// Camera
+	CMD4(CCC_Float,		"cam_inert", &psCamInert, 0.0f, 0.9f);
+	CMD2(CCC_Float,		"cam_slide_inert",		&psCamSlideInert);
+
+	CMD4(CCC_Float, "cam_viewport_near", &Device.fViewportNear, EPS_S, 10.f);
+	CMD4(CCC_Float, "cam_hud_viewport_near", &Device.fHUDViewportNear, EPS_S, 10.f);
+
+	if(!Device.IsEditorMode()) {
+		CMD1(CCC_r2, "renderer");
+	}
+	else {
+		psDeviceFlags.set(rsR2, TRUE);
+		psDeviceFlags.set(rsR4, FALSE);
+	}
+
+	CMD1(CCC_soundDevice, "snd_device"			);
+
+	psSoundOcclusionScale	= pSettings->r_float	("sound","occlusion_scale");clamp(psSoundOcclusionScale,	0.1f,	.5f);
+
+	extern	int	g_Dump_Export_Obj;
+	extern	int	g_Dump_Import_Obj;
+	CMD4(CCC_Integer,	"net_dbg_dump_export_obj",	&g_Dump_Export_Obj, 0, 1);
+	CMD4(CCC_Integer,	"net_dbg_dump_import_obj",	&g_Dump_Import_Obj, 0, 1);
+
+	CMD1(CCC_ExclusiveMode,		"input_exclusive_mode");
+	CMD2(CCC_Boolean,		"input_enable_gamepad", &dsEnableGamepad);
+
+	extern int g_svDedicateServerUpdateReate;
+	CMD4(CCC_Integer, "sv_dedicated_server_update_rate", &g_svDedicateServerUpdateReate, 1, 1000);
+	
+	
+	CMD4(CCC_Float, "sv_shedule_scale", &SheduleScaleDedicated, 0, 5);
+
+	CMD1(CCC_HideConsole,		"hide");
+
+#ifdef	DEBUG
+	extern BOOL debug_destroy;
+	CMD4(CCC_Integer, "debug_destroy", &debug_destroy, FALSE, TRUE );
+#endif
+};
+ 

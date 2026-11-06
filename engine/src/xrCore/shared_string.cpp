@@ -1,0 +1,175 @@
+#include "stdafx.h"
+#include "shared_string.h"
+
+XRCORE_API str_container* g_pStringContainer = nullptr;
+
+shared_str& __cdecl shared_str::printf(const char* format, ...)
+{
+	string4096 	buf;
+	va_list		p;
+	va_start(p, format);
+	int vs_sz = _vsnprintf(buf, sizeof(buf) - 1, format, p); buf[sizeof(buf) - 1] = 0;
+	va_end(p);
+	if (vs_sz)	_set(buf);
+	return 		(shared_str&)*this;
+}
+
+struct str_container_impl
+{
+	static const u32 buffer_size = 1024 * 256;
+	str_value* buffer[buffer_size];
+	int              num_docs;
+	xrSRWLock rwlock;
+	str_container_impl()
+	{
+		num_docs = 0;
+		ZeroMemory(buffer, sizeof(buffer));
+	}
+
+	str_value* find(str_value* value, const char* str)
+	{
+		xrSRWLockGuard guard(&rwlock, true);
+		str_value* candidate = buffer[value->dwCRC % buffer_size];
+		while (candidate)
+		{
+			if (candidate->dwCRC == value->dwCRC &&
+				candidate->dwLength == value->dwLength &&
+				!memcmp(candidate->value, str, value->dwLength))
+			{
+				return candidate;
+			}
+
+			candidate = candidate->next;
+		}
+
+		return nullptr;
+	}
+
+	void insert(str_value* value)
+	{
+		xrSRWLockGuard guard(&rwlock, false);
+		str_value** element = &buffer[value->dwCRC % buffer_size];
+		value->next = *element;
+		*element = value;
+	}
+
+	void clean()
+	{
+		xrSRWLockGuard guard(&rwlock, false);
+		for (u32 i = 0; i < buffer_size; ++i)
+		{
+			str_value** current = &buffer[i];
+
+			while (*current != nullptr)
+			{
+				str_value* value = *current;
+				if (!value->dwReference)
+				{
+					*current = value->next;
+					xr_free(value);
+				}
+				else
+				{
+					current = &value->next;
+				}
+			}
+		}
+	}
+
+	int stat_economy()
+	{
+		xrSRWLockGuard guard(&rwlock, false);
+		int				counter = 0;
+		for (u32 i = 0; i < buffer_size; ++i)
+		{
+			str_value* value = buffer[i];
+			while (value)
+			{
+				counter -= sizeof(str_value);
+				counter += (value->dwReference - 1) * (value->dwLength + 1);
+				value = value->next;
+			}
+		}
+
+		return counter;
+	}
+};
+
+str_container::str_container()
+{
+	impl = new str_container_impl();
+}
+
+str_value* str_container::dock(str_c value)
+{
+	if (0 == value)				return 0;
+
+	str_value* result = 0;
+
+	// calc len
+	u32		s_len = xr_strlen(value);
+	u32		s_len_with_zero = (u32)s_len + 1;
+	VERIFY(sizeof(str_value) + s_len_with_zero < 4096);
+
+	// setup find structure
+	char	header[sizeof(str_value)];
+	str_value* sv = (str_value*)header;
+	sv->dwReference = 0;
+	sv->dwLength = s_len;
+	sv->dwCRC = crc32(value, s_len);
+
+	// search
+	result = impl->find(sv, value);
+
+#ifdef DEBUG
+	bool is_leaked_string = !xr_strcmp(value, "enter leaked string here");
+#endif //DEBUG
+
+	// it may be the case, string is not found or has "non-exact" match
+	if (0 == result
+#ifdef DEBUG
+		|| is_leaked_string
+#endif //DEBUG
+		) {
+
+		result = (str_value*)Memory.mem_alloc(sizeof(str_value) + s_len_with_zero);
+
+#ifdef DEBUG
+		static int num_leaked_string = 0;
+		if (is_leaked_string)
+		{
+			++num_leaked_string;
+			Msg("leaked_string: %d 0x%08x", num_leaked_string, result);
+		}
+#endif // DEBUG
+
+		result->dwReference = 0;
+		result->dwLength = sv->dwLength;
+		result->dwCRC = sv->dwCRC;
+		CopyMemory(result->value, value, s_len_with_zero);
+
+		impl->insert(result);
+	}
+
+	return	result;
+}
+
+void str_container::clean()
+{
+	impl->clean();
+}
+
+u32 str_container::stat_economy()
+{
+	int				counter = 0;
+	counter -= sizeof(*this);
+	counter += impl->stat_economy();
+	return			u32(counter);
+}
+
+str_container::~str_container()
+{
+	clean();
+	xr_delete(impl);
+}
+

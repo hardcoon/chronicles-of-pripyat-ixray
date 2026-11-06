@@ -1,0 +1,217 @@
+#pragma once
+#include "../Include/xrRender/FontRender.h"
+
+struct FT_FaceRec_;
+using FT_Face = FT_FaceRec_*;
+
+#ifndef IXR_WINDOWS
+struct ABC
+{
+    int abcA;
+    u32 abcB;
+    int abcC;
+};
+#endif
+
+class ENGINE_API CGameFont
+{
+	friend class dxFontRender;
+	friend class FontRender;
+
+	enum EStyle : u64
+	{
+		eBold = 4196692,
+		eStrike = 4196725,
+		eUnderline = 4196715,
+		eItalic = 4196708
+	};
+public:
+	enum EAligment
+	{
+		alLeft = 0,
+		alRight,
+		alCenter
+	};
+	enum EGradientMode
+	{
+		gm_vert = 0,
+		gm_horz = 1,
+		gm_back = 2,
+		gm_down = 3,
+		gm_count
+	};
+
+private:
+
+	struct String
+	{
+		string2048 string;
+		xr_string  string_utf8;
+		float x, y;
+		float height;
+		u32 c;
+		EAligment align;
+		bool gradient;
+		EGradientMode gradientMode;
+		u32 gradientColor;
+	};
+
+	struct BaseData
+	{
+		bool OpenType = false;
+		u16 Size;
+		const char* Name;
+		const char* Shader;
+		const char* Style;
+	};
+
+	BaseData Data;
+protected:
+	float fCurrentHeight = 0.0f;
+	float fCurrentX = 0.0f;
+	float fCurrentY = 0.0f;
+	bool fGradientEnabled = false;
+	EGradientMode fGradientMode = gm_vert;
+
+	u32 uFlags;
+	u32 dwCurrentColor;
+	u32 dwGradientColor;
+
+	EAligment eCurrentAlignment;
+	xrCriticalSection s_cs;
+	xr_vector<String> strings;
+	IFontRender* pFontRender;
+
+public:
+	enum
+	{
+		fsDeviceIndependent = (1 << 0), //#DELETE_ME deprecated
+		fsValid = (1 << 1),
+
+		fsMultibyte = (1 << 2),
+
+		fsForceDWORD = u32(-1)
+	};
+
+
+public:
+	CGameFont(const char* section, u32 flags = 0);
+	//CGameFont(const char* shader, const char* texture, u32 flags = 0);
+	~CGameFont();
+
+	void ReInit();
+	inline void SetColor(u32 C) { dwCurrentColor = C; };
+	inline void SetGradientColor(u32 C) { dwGradientColor = C; };
+
+	//inline void SetHeightI(float S);
+	inline void SetHeight(float S);
+
+	inline float GetHeight() { return fCurrentHeight; };
+	inline void SetAligment(EAligment aligment) { eCurrentAlignment = aligment; }
+
+	float SizeOf_(const char* s);
+	float SizeOf_(int cChar);
+
+	float CurrentHeight_();
+
+	void OutSetI(float x, float y);
+	void OutSet(float x, float y);
+
+	void MasterOut(BOOL bCheckDevice, BOOL bUseCoords, BOOL bScaleCoords, BOOL bUseSkip, float _x, float _y, float _skip, const char* fmt, va_list p);
+
+	BOOL IsMultibyte() {
+		return uFlags & fsMultibyte;
+	};
+	u16 SplitByWidth(u16* puBuffer, u16 uBufferSize, float fTargetWidth, const char* pszText);
+	u16 GetCutLengthPos(float fTargetWidth, const char* pszText);
+
+	void SetGradient(bool val) { fGradientEnabled = val; }
+	void SetGradientMode(EGradientMode mode) { fGradientMode = mode; }
+	void OutI(float _x, float _y, const char* fmt, ...);
+	void Out(float _x, float _y, const char* fmt, ...);
+	void OutNext(const char* fmt, ...);
+
+	void OutSkip(float val = 1.f);
+
+	void OnRender();
+
+	inline void Clear() { xrCriticalSectionGuard g(&s_cs); strings.clear(); };
+
+	//shared_str m_font_name;
+
+	struct Style
+	{
+		u32 bold : 1;
+		u32 italic : 1;
+		u32 underline : 1;
+		u32 strike : 1;
+	};
+
+	struct Glyph
+	{
+		RECT TextureCoord;
+		ABC Abc;
+		int yOffset;
+	};
+
+	inline u32 GetSize()
+	{
+		return Size;
+	}
+
+	inline float GetLetterSpacing()
+	{
+		return LetterSpacing;
+	}
+
+	inline void SetLetterSpacing(float spacing)
+	{
+		LetterSpacing = spacing;
+	}
+
+	inline float GetLineSpacing()
+	{
+		return LineSpacing;
+	}
+
+	inline void SetLineSpacing(float spacing)
+	{
+		LineSpacing = spacing;
+	}
+
+	inline Style GetStyle()
+	{
+		return Style;
+	}
+
+	inline const char* GetName()
+	{
+		return Name;
+	}
+
+	const Glyph* GetGlyphInfo(int ch);
+
+	// returns symbol width in pixels
+	float WidthOf(int ch);
+	float WidthOf(const char* str);
+
+private:
+	float LetterSpacing = 0; //that must be in CUIText from new font system
+	float LineSpacing = 0; //that must be in CUIText from new font system
+
+	const char* Name; //#TODO change type
+
+	u32 Size;
+	Style Style;
+	FT_Face OurFont;
+
+	xr_map<int, Glyph> GlyphData;
+
+	void Prepare(const char* name, const char* shader, const char* style, u32 size);
+	void Initialize(const char* name, const char* shader, const char* style, u32 size);
+	void Initialize2(const char* name, const char* shader, const char* style, u32 size);
+
+	static bool bFreetypeInitialized;
+
+	static void InitializeFreetype();
+};

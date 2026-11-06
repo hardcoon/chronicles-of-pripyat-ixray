@@ -1,0 +1,603 @@
+#include "stdafx.h"
+#include "game_sv_freemp.h"
+#include "Level.h"
+
+#include "alife_simulator.h"
+#include "alife_object_registry.h"
+#include "alife_graph_registry.h"
+#include "alife_time_manager.h"
+
+#include "restriction_space.h"
+#include "../xrServerEntities/clsid_game.h"
+#include "../../xrNetServer/SQLConnect.h"
+#include "../Actor.h"
+#include "../ActorCondition.h"
+#include <actor_mp_client.h>
+#include <Inventory.h>
+#include <Weapon.h>
+#include <WeaponMagazined.h>
+#include "../Car.h"
+
+game_sv_freemp::game_sv_freemp()
+	:pure_relcase(&game_sv_freemp::net_Relcase)
+{
+	m_type = eGameIDFreeMP;
+
+#ifdef IXR_MP_SQL
+	GSQLConnector = new DBService;
+	GSQLConnector->Connect();
+	GSQLConnector->Test();
+
+	map_items.clear();
+	map_items = GSQLConnector->LoadGame("game_items");
+	map_quest.clear();
+	map_quest = GSQLConnector->LoadGame("game_quests");
+#endif
+}
+
+game_sv_freemp::~game_sv_freemp()
+{
+#ifdef IXR_MP_SQL
+	xr_delete(GSQLConnector);
+#endif
+}
+
+void game_sv_freemp::SpawnItemToActor(u16 actorId, LPCSTR name)
+{
+	if (!name) return;
+
+	CSE_Abstract* E = spawn_begin(name);
+	E->ID_Parent = actorId;
+	E->s_flags.assign(M_SPAWN_OBJECT_LOCAL);	// flags
+
+	CSE_ALifeItemWeapon* pWeapon = smart_cast<CSE_ALifeItemWeapon*>(E);
+	if (pWeapon)
+	{
+		u16 ammo_magsize = pWeapon->get_ammo_magsize();
+		pWeapon->a_elapsed = ammo_magsize;
+	}
+
+	CSE_ALifeItemPDA* pPda = smart_cast<CSE_ALifeItemPDA*>(E);
+	if (pPda)
+	{
+		pPda->m_original_owner = actorId;
+	}
+
+	spawn_end(E, m_server->GetServerClient()->ID);
+}
+
+void game_sv_freemp::AddMoneyToPlayer(game_PlayerState* ps, s32 amount)
+{
+	if (!ps) return;
+
+	Msg("- Add money to player: [%u]%s, %d amount", ps->GameID, ps->getName(), amount);
+
+	s64 total_money = ps->money_for_round;
+	total_money += amount;
+
+	if (total_money < 0)
+		total_money = 0;
+
+	if (total_money > std::numeric_limits<s32>().max())
+	{
+		Msg("! The limit of the maximum amount of money has been exceeded.");
+		total_money = std::numeric_limits<s32>().max() - 1;
+	}
+
+	ps->money_for_round = s32(total_money);
+	signal_Syncronize();
+}
+
+void game_sv_freemp::OnTransferMoney(NET_Packet& P, ClientID const& clientID)
+{
+	ClientID to;
+	s32 money;
+
+	P.r_clientID(to);
+	P.r_s32(money);
+
+	Msg("* Try to transfer money from %u to %u. Amount: %d", clientID.value(), to.value(), money);
+
+	game_PlayerState* ps_from = get_id(clientID);
+	if (!ps_from)
+	{
+		Msg("! Can't find player state with id=%u", clientID.value());
+		return;
+	}
+
+	game_PlayerState* ps_to = get_id(to);
+	if (!ps_to)
+	{
+		Msg("! Can't find player state with id=%u", to.value());
+		return;
+	}
+
+	if (money <= 0 || ps_from->money_for_round < money) return;
+
+	AddMoneyToPlayer(ps_from, -money);
+	AddMoneyToPlayer(ps_to, money);
+}
+
+void game_sv_freemp::on_death(CSE_Abstract* e_dest, CSE_Abstract* e_src)
+{
+	inherited::on_death(e_dest, e_src);
+
+	if (!ai().get_alife())
+		return;
+
+	alife().on_death(e_dest, e_src);
+}
+
+
+void game_sv_freemp::Create(shared_str& options)
+{
+	inherited::Create(options);
+	R_ASSERT2(rpoints[0].size(), "rpoints for players not found");
+
+	switch_Phase(GAME_PHASE_PENDING);
+
+	::Random.seed(GetTickCount());
+	m_CorpseList.clear();
+}
+
+// player connect #1
+void game_sv_freemp::OnPlayerConnect(ClientID id_who)
+{
+	inherited::OnPlayerConnect(id_who);
+
+	xrClientData* xrCData = m_server->ID_to_client(id_who);
+	game_PlayerState* ps_who = get_id(id_who);
+
+	if (!xrCData->flags.bReconnect)
+	{
+		ps_who->clear();
+		ps_who->team = 0;
+		ps_who->skin = -1;
+	};
+	ps_who->setFlag(GAME_PLAYER_FLAG_SPECTATOR);
+
+	ps_who->resetFlag(GAME_PLAYER_FLAG_SKIP);
+
+	if (g_dedicated_server && (xrCData == m_server->GetServerClient()))
+	{
+		ps_who->setFlag(GAME_PLAYER_FLAG_SKIP);
+		return;
+	}
+}
+
+// player connect #2
+void game_sv_freemp::OnPlayerConnectFinished(ClientID id_who)
+{
+	xrClientData* xrCData = m_server->ID_to_client(id_who);
+	SpawnPlayer(id_who, "spectator");
+
+	if (xrCData)
+	{
+		R_ASSERT2(xrCData->ps, "Player state not created yet");
+		NET_Packet					P;
+		GenerateGameMessage(P);
+		P.w_u32(GAME_EVENT_PLAYER_CONNECTED);
+		P.w_clientID(id_who);
+		xrCData->ps->team = 0;
+		xrCData->ps->setFlag(GAME_PLAYER_FLAG_SPECTATOR);
+		xrCData->ps->setFlag(GAME_PLAYER_FLAG_READY);
+		xrCData->ps->net_Export(P, TRUE);
+		u_EventSend(P);
+		xrCData->net_Ready = TRUE;
+	};
+}
+
+void game_sv_freemp::SetSkin(CSE_Abstract* E, u16 Team, u16 ID)
+{
+	if (!E) return;
+	//-------------------------------------------
+	CSE_Visual* pV = smart_cast<CSE_Visual*>(E);
+	if (!pV) return;
+	//-------------------------------------------
+	string256 SkinName = {};
+
+	if (pSettings->section_exist("mp_skins_path") && pSettings->line_exist("mp_skins_path", "skin_path"))
+	{
+		xr_strcpy(SkinName, pSettings->r_string("mp_skins_path", "skin_path"));
+	}
+
+	//загружены ли скины для этой комманды
+//	if (SkinID != -1) ID = u16(SkinID);
+
+	if (!TeamList.empty() &&
+		TeamList.size() > Team &&
+		!TeamList[Team].aSkins.empty())
+	{
+		//загружено ли достаточно скинов для этой комманды
+		if (TeamList[Team].aSkins.size() > ID)
+		{
+			xr_strcat(SkinName, TeamList[Team].aSkins[ID].c_str());
+		}
+		else
+			xr_strcat(SkinName, TeamList[Team].aSkins[0].c_str());
+	}
+	else
+	{
+		//скины для такой комманды не загружены
+		switch (Team)
+		{
+		case 0:
+			xr_strcat(SkinName, "stalker_hood_multiplayer");
+			break;
+		case 1:
+			xr_strcat(SkinName, "soldat_beret");
+			break;
+		case 2:
+			xr_strcat(SkinName, "stalker_black_mask");
+			break;
+		default:
+			R_ASSERT2(0, "Unknown Team");
+			break;
+		};
+	};
+
+	xr_strcat(SkinName, ".ogf");
+	Msg("* Skin - %s", SkinName);
+	int len = xr_strlen(SkinName);
+	R_ASSERT2(len < 64, "Skin Name is too LONG!!!");
+	pV->set_visual(SkinName);
+	//-------------------------------------------
+}
+
+void game_sv_freemp::OnPlayerReady(ClientID id_who)
+{
+	switch (Phase())
+	{
+	case GAME_PHASE_INPROGRESS:
+	{
+		xrClientData* xrCData = (xrClientData*)m_server->ID_to_client(id_who);
+		game_PlayerState* ps = get_id(id_who);
+		if (ps->IsSkip())					break;
+
+		if (!(ps->testFlag(GAME_PLAYER_FLAG_VERY_VERY_DEAD)))	break;
+
+		xrClientData* xrSCData = (xrClientData*)m_server->GetServerClient();
+
+		CSE_Abstract* pOwner = xrCData->owner;
+		RespawnPlayer(id_who, false);
+		pOwner = xrCData->owner;
+
+	} break;
+
+	default:
+		break;
+	};
+}
+
+void game_sv_freemp::RespawnPlayer(ClientID id_who, bool NoSpectator)
+{
+	inherited::RespawnPlayer(id_who, NoSpectator);
+
+	xrClientData* xrCData = (xrClientData*)m_server->ID_to_client(id_who);
+	if (!xrCData) return;
+
+	game_PlayerState* ps = xrCData->ps;
+	if (!ps) return;
+
+	CSE_ALifeCreatureActor* pA = smart_cast<CSE_ALifeCreatureActor*>(xrCData->owner);
+	if (!pA) return;
+
+
+	string_path fname = {};
+	FS.update_path(fname, "$game_config$", "mp\\fmp_respawn_items.ltx");
+	CInifile Ini(fname, TRUE);
+
+	if (!Ini.section_exist("spawn"))
+	{
+		SpawnItemToActor(pA->ID, "mp_players_rukzak");
+		SpawnItemToActor(pA->ID, "device_pda");
+
+		return;
+	}
+
+	const char* N = nullptr;
+	const char* V = nullptr;
+
+	for (u32 k = 0; Ini.r_line("spawn", k, &N, &V); k++)
+	{
+		u32 Value = 1;
+
+		if (V && xr_strlen(V))
+		{
+			string64 buf;
+			Value = atoi(_GetItem(V, 0, buf));
+		}
+
+		for (u32 Iter = 0; Iter < Value; Iter++)
+		{
+			SpawnItemToActor(pA->ID, N);
+		}
+	}
+}
+
+void game_sv_freemp::OnDetach(u16 eid_who, u16 eid_what)
+{
+	CSE_ActorMP* e_who = smart_cast<CSE_ActorMP*>(m_server->ID_to_entity(eid_who));
+	if (!e_who)
+		return;
+
+	CSE_Abstract* e_entity = m_server->ID_to_entity(eid_what);
+	if (!e_entity)
+		return;
+
+	// drop players bag
+	if (!e_who->g_Alive())
+	{
+		if (e_entity->m_tClassID == CLSID_OBJECT_PLAYERS_BAG)
+		{
+			OnDetachPlayersBag(e_who, e_entity);
+		}
+	}
+}
+
+// player disconnect
+void game_sv_freemp::OnPlayerDisconnect(ClientID id_who, LPSTR Name, u16 GameID)
+{
+	CActorMP* actor = smart_cast<CActorMP*>(Level().Objects.net_Find(GameID));
+	if (!actor) return;
+
+#ifdef IXR_MP_SQL
+
+	if (actor)
+	{
+		int cur_user_id = GSQLConnector->GetUserIdByName(actor->Name());
+		if (cur_user_id > 0)
+		{
+			GSQLConnector->DeleteInventory(cur_user_id);
+			for (PIItem _item : actor->inventory().m_all)
+			{
+				auto item = _item->cast_game_object();
+				if (actor->is_alive()) {
+
+					u64 state = 0;
+
+					if (item->cNameSect() == "device_pda")
+						continue;
+					if (item->cNameSect() == "bolt")
+						continue;
+					if (item->cNameSect() == "mp_players_rukzak")
+						continue;
+					if (item->cNameSect() == "mp_wpn_binoc")
+						continue;
+					if (item->cNameSect() == "wpn_binoc")
+						continue;
+
+					CWeaponMagazined* wpn = smart_cast<CWeaponMagazined*>(item);
+
+					if (wpn != nullptr && wpn->WpnCanShoot())
+					{
+						DBService::ItemDBState dbState = {};
+						dbState.Condition = wpn->GetCondition() * 100;
+						dbState.AmmoType = wpn->GetAmmoType();
+						dbState.AmmoCount = wpn->GetAmmoElapsed();
+						if (wpn->IsScopeAttached() && wpn->get_ScopeStatus() != ALife::eAddonPermanent && wpn->get_ScopeStatus() != ALife::eAddonDisabled)
+							dbState.AddonScopeID = map_items[wpn->GetScopeName().c_str()];
+						if (wpn->IsSilencerAttached() && wpn->get_SilencerStatus() != ALife::eAddonPermanent && wpn->get_SilencerStatus() != ALife::eAddonDisabled)
+							dbState.AddonSilenceID = map_items[wpn->GetSilencerName().c_str()];
+						if(wpn->IsGrenadeLauncherAttached() && wpn->get_GrenadeLauncherStatus() != ALife::eAddonPermanent && wpn->get_GrenadeLauncherStatus() != ALife::eAddonDisabled)
+							dbState.AddonLauncherID = map_items[wpn->GetGrenadeLauncherName().c_str()];
+						state = dbState.dummy;
+					}
+
+					GSQLConnector->SaveInventory(cur_user_id, map_items[item->cNameSect().c_str()], state);
+				}
+			}
+			actor->inventory().Clear();
+			DBService::UserDBProperty g = 
+			{
+				cur_user_id,
+				actor->conditions().GetHealth(),
+				actor->conditions().GetPower(),
+				actor->conditions().GetRadiation(),
+				actor->conditions().GetPsy(),
+				actor->conditions().GetSleepiness(),
+				actor->conditions().GetSatiety(),
+				actor->conditions().GetThirst(), 
+				actor->conditions().BleedingSpeed(), 
+				(int)actor->get_money(),
+				actor->Community(),
+				actor->Position()
+			};
+
+			GSQLConnector->UpdateInsertProperty(g);
+		}
+		else
+		{
+			Msg("! SOSI DJOPU - %s", actor->Name());
+		}
+	}
+#endif
+
+	if (actor->g_Alive())
+	{
+		CSE_Abstract* e_entity = server().game->get_entity_from_eid(actor->ID());
+		Level().Server->entity_Destroy(e_entity);
+		inherited::OnPlayerDisconnect(id_who, Name, GameID);
+	}
+}
+
+void game_sv_freemp::OnPlayerKillPlayer(game_PlayerState* ps_killer, game_PlayerState* ps_killed, KILL_TYPE KillType, SPECIAL_KILL_TYPE SpecialKillType, CSE_Abstract* pWeaponA)
+{
+	if (ps_killed)
+	{
+		ps_killed->setFlag(GAME_PLAYER_FLAG_VERY_VERY_DEAD);
+		ps_killed->DeathTime = Device.dwTimeGlobal;
+	}
+	signal_Syncronize();
+}
+
+void game_sv_freemp::OnPlayerRepairItem(NET_Packet& P, ClientID const& clientID)
+{
+	game_PlayerState* ps = get_id(clientID);
+	if (!ps) return;
+	u16 itemId = P.r_u16();
+	s32 cost = P.r_s32();
+	PIItem item = smart_cast<CInventoryItem*>(Level().Objects.net_Find(itemId));
+	if (!item) return;
+	if (ps->money_for_round < cost) return;
+	AddMoneyToPlayer(ps, -cost);
+	NET_Packet NP;
+	CGameObject::u_EventGen(NP, GE_REPAIR_ITEM, itemId);
+	CGameObject::u_EventSend(NP);
+	GenerateGameMessage(NP);
+	NP.w_u32(GAME_EVENT_MP_REPAIR_SUCCESS);
+	NP.w_u16(itemId);
+	m_server->SendTo(clientID, NP);
+}
+
+void game_sv_freemp::OnEvent(NET_Packet& P, u16 type, u32 time, ClientID sender)
+{
+	switch (type)
+	{
+	case GAME_EVENT_PLAYER_KILL:
+	{
+		u16 ID = P.r_u16();
+		xrClientData* l_pC = (xrClientData*)get_client(ID);
+		if (l_pC)
+		{
+			KillPlayer(l_pC->ID, l_pC->ps->GameID);
+		}
+
+		break;
+	}
+	case GAME_EVENT_TRANSFER_MONEY:
+	{
+		OnTransferMoney(P, sender);
+		break;
+	}
+	case GAME_EVENT_MP_TRADE:
+	{
+		OnPlayerTrade(P, sender);
+		break;
+	}
+	case GAME_EVENT_MP_CAR_INPUT:
+	{
+		u16 CarID = P.r_u16();
+		u8 KeyEvent = P.r_u8();
+		bool IsHold = !!P.r_u8();
+
+		if (CCar* CarPtr = smart_cast<CCar*>(Level().Objects.net_Find(CarID)))
+		{
+			if (IsHold)
+			{
+				CarPtr->OnKeyboardPress(KeyEvent);
+			}
+			else
+			{
+				CarPtr->OnKeyboardRelease(KeyEvent);
+			}
+		}
+
+		break;
+	}
+	case GAME_EVENT_MP_REPAIR:
+	{
+		OnPlayerRepairItem(P, sender);
+		break;
+	}
+	case GAME_EVENT_MP_ACTOR_SPAWN:
+	{
+#ifdef IXR_MP_SQL
+		game_PlayerState* ps = nullptr;
+		if (xrClientData* xrCData = (xrClientData*)m_server->ID_to_client(sender))
+		{
+			ps = xrCData->ps;
+		}
+
+		if (!ps) return;
+
+		CActorMP* actor = smart_cast<CActorMP*>(Level().Objects.net_Find(ps->GameID));
+		if (!actor) return;
+
+		GSQLConnector->PushTask
+		(
+			[actor, ps, this]()
+			{
+				int cur_user_id = GSQLConnector->GetUserIdByName(ps->getName());
+
+				if (cur_user_id <= 0)
+				{
+					return;
+				}
+
+				DBService::UserDBProperty res_data = GSQLConnector->SelectProperty(cur_user_id);
+				if (res_data.health > 0)
+				{
+					actor->conditions().ChangeHealth(res_data.health);
+					actor->conditions().ChangePower(res_data.stamina);
+					actor->conditions().ChangeRadiation(res_data.radiation);
+					actor->conditions().ChangePsyHealth(res_data.psy);
+					actor->conditions().ChangeSleepiness(res_data.sleepiness);
+					actor->conditions().ChangeSatiety(res_data.hunger);
+					actor->conditions().ChangeThirst(res_data.thirst);
+					actor->conditions().ChangeBleeding(res_data.wounds);
+					ps->money_for_round = res_data.money;
+					ps->team = res_data.community;
+
+					xr_vector<int> items = GSQLConnector->LoadInventory(cur_user_id);
+					for (int itm : items)
+					{
+						auto it = std::find_if(map_items.begin(), map_items.end(), [itm](const auto& pair)
+						{
+							return pair.second == itm;
+						});
+
+						xrCriticalSectionGuard guard(SpawnGuard);
+						DoSpawnList[actor->ID()].push_back((*it).first.c_str());
+					}
+					actor->SetActorPosition(res_data.position);
+					signal_Syncronize();
+				}
+			}
+		);
+#endif
+		break;
+	}
+	default: inherited::OnEvent(P, type, time, sender);
+	}
+}
+
+void game_sv_freemp::Update()
+{
+	inherited::Update();
+
+	if (Phase() != GAME_PHASE_INPROGRESS)
+	{
+		OnRoundStart();
+	}
+
+	xrCriticalSectionGuard guard(SpawnGuard);
+	for (auto& [ID, Items] : DoSpawnList)
+	{
+		for (shared_str ItemName : Items)
+		{
+			SpawnItemToActor(ID, *ItemName);
+		}
+	}
+
+	DoSpawnList.clear();
+}
+
+BOOL game_sv_freemp::OnTouch(u16 eid_who, u16 eid_what, BOOL bForced)
+{
+	CSE_ActorMP* e_who = smart_cast<CSE_ActorMP*>(m_server->ID_to_entity(eid_who));
+	if (!e_who)
+		return TRUE;
+
+	CSE_Abstract* e_entity = m_server->ID_to_entity(eid_what);
+	if (!e_entity)
+		return FALSE;
+
+	// pick up players bag
+	if (e_entity->m_tClassID == CLSID_OBJECT_PLAYERS_BAG)
+	{
+		return OnTouchPlayersBag(e_who, e_entity);
+	}
+
+	return TRUE;
+}

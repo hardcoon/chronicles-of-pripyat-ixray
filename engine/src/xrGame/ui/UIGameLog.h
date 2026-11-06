@@ -1,0 +1,42 @@
+//=============================================================================
+//  Filename:   UIGameLog.h
+//	Created by Vitaly 'Mad Max' Maximov, mad-max@gsc-game.kiev.ua
+//	Copyright 2005. GSC Game World
+//	---------------------------------------------------------------------------
+//  Multiplayer game log window
+//=============================================================================
+
+#pragma once
+
+#include "../../xrUI/Widgets/UIScrollView.h"
+
+class CUIXml;
+class CUIPdaKillMessage;
+class CUIPdaMsgListItem;
+class CUIStatic;
+class CUITextWnd;
+struct KillMessageStruct;
+
+class CUIGameLog: public CUIScrollView
+{
+public:
+							CUIGameLog		();
+	CUITextWnd*				AddLogMessage	(LPCSTR msg);
+	CUIPdaKillMessage*		AddLogMessage	(KillMessageStruct& msg);
+	// Returns a detached item; AddIconedPdaMessage attaches it after text layout.
+	CUIPdaMsgListItem*		AddPdaMessage	();
+	void					AddChatMessage	(LPCSTR msg, LPCSTR author);
+	virtual void			Update			();
+
+	void					SetTextAtrib	(CGameFont* pFont, u32 color);
+	u32						GetTextColor	()								{return txt_color;}
+
+	virtual CUIWindow* ui_cast_window() { return this; }
+	virtual CUIScrollView* ui_cast_scroll_view() { return this; }
+
+private:
+	WINDOW_LIST				toDelList;
+	float					kill_msg_height;
+	u32						txt_color;
+	CGameFont*				m_pFont;
+};

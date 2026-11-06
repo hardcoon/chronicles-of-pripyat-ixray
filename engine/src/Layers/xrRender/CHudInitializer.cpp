@@ -1,0 +1,50 @@
+#include "stdafx.h"
+
+#include "CHudInitializer.h"
+
+CHudInitializer::CHudInitializer(bool setup)
+{
+	b_auto_setup = setup;
+
+	mView_saved = Device.mView;
+	mProject_saved = Device.mProject;
+	mFullTransform_saved = Device.mFullTransform;
+	m_hud_render_process_saved = Device.hudViewportData.isRenderProcess; // COP_ENGINE_PATCH: COP-ENG-011
+
+	if (!b_auto_setup) return;
+
+	SetHudMode();
+}
+
+CHudInitializer::~CHudInitializer()
+{
+	if (!b_auto_setup) return;
+
+	SetDefaultMode();
+}
+
+void CHudInitializer::SetHudMode()
+{
+	Device.hudViewportData.isRenderProcess = true; // COP_ENGINE_PATCH: COP-ENG-011
+	Device.mView.set(Device.mView_hud);
+	Device.mProject.set(Device.mProject_hud);
+	Device.mFullTransform.set(Device.mFullTransform_hud);
+
+	if(Device.m_pRender) {
+		Device.m_pRender->SetCacheXform(Device.mView, Device.mProject);
+		Device.m_pRender->SetCacheXformOld(Device.mView_hud_old, Device.mProject_hud_old);
+	}
+}
+
+void CHudInitializer::SetDefaultMode()
+{
+	Device.hudViewportData.isRenderProcess = m_hud_render_process_saved; // COP_ENGINE_PATCH: COP-ENG-011
+	Device.mView.set(mView_saved);
+	Device.mProject.set(mProject_saved);
+	Device.mFullTransform.set(mFullTransform_saved);
+
+	if(Device.m_pRender) {
+		Device.m_pRender->SetCacheXform(Device.mView, Device.mProject);
+		Device.m_pRender->SetCacheXformOld(Device.mView_old, Device.mProject_old);
+	}
+}

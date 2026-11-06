@@ -1,0 +1,240 @@
+project(xrCore)
+set(CORE_SRC_FILES)
+
+# Files import
+file(GLOB CORE_SOURCE_STL_FILES
+	"*_std*.*"
+	"*_stl*.*"
+	"buffer_vector*.*"
+	"RingBuffer.*"
+	"fastdelegate.*"
+	"intrusive_ptr*.*"
+	"associative_vector*.*"
+	"Fixed*.*"
+)
+
+file(GLOB CORE_SOURCE_MATH_FILES
+	"vector.h"
+	"_*.cpp"
+	"_*.h"
+)
+
+file(GLOB CORE_SOURCE_LZ_FILES
+	"LzHuf*.cpp"
+	"lzhuf.h"
+)
+
+file(GLOB CORE_SOURCE_XML_FILES "FormatParsers/XML/*.*")
+file(GLOB CORE_SOURCE_JSON_FILES "FormatParsers/json/*.*")
+file(GLOB CORE_SOURCE_YAML_FILES "FormatParsers/YAML/*.*")
+
+file(GLOB CORE_SOURCE_STACK_FILES
+	"StackTrace/*.h"
+)
+
+file(GLOB CORE_SOURCE_CRYPTO_FILES
+	"Crypto/*.cpp"
+	"Crypto/*.h"
+)
+
+file(GLOB CORE_SOURCE_MEMORY_FILES
+	"memory/*.*"
+)
+
+file(GLOB CORE_SOURCE_COLLSION_FILES
+	"Collision/*.*"
+)
+
+file(GLOB CORE_SOURCE_COLLSION_OPCODE_FILES
+	"Collision/override/*.*"
+)
+
+file(GLOB CORE_SOURCE_DEBUG_FILES
+    "xrDebug*.*"
+    "log.*"
+    "ChZ*.*"
+)
+
+file(GLOB CORE_SOURCE_STR_FILES
+	"xrstring*.*"
+	"shared_string.*"
+	"xr_trims.*"
+	"stack_string.h"
+)
+
+file(GLOB CORE_SOURCE_FS_FILES
+	"FS*.*"
+	"File*.*"
+	"file*.*"
+	"Locator*.*"
+)
+
+file(GLOB_RECURSE CORE_SOURCE_ALL_FILES CONFIGURE_DEPENDS
+	"*.cpp"
+	"*.c"
+	"*.h"
+)
+
+file(GLOB CORE_SOURCE_RT_FILES "rt_c*.*")
+file(GLOB CORE_SOURCE_PPMD_FILES "ppmd_*.*")
+file(GLOB_RECURSE CORE_SOURCE_DISCORD_FILES "discord/*.*")
+file(GLOB CORE_SOURCE_XR_API_FILES "API/*.*")
+file(GLOB CORE_SOURCE_XR_API_PLATF_FILES "Platform/*.*")
+file(GLOB CORE_SOURCE_XR_API_WIN_FILES "Platform/Windows/*.*")
+file(GLOB CORE_SOURCE_XR_API_LIN_FILES "Platform/Linux/*.*")
+file(GLOB_RECURSE CORE_SOURCE_MEMORY_P3_FILES "ptmalloc3/*.*")
+
+# NatVis config
+file(GLOB_RECURSE CORE_NATVIS_FILES "../ixray.natvis")
+file(GLOB_RECURSE CORE_NUGET_FILES "Packages.config")
+
+source_group("ungrouped" FILES ${CORE_SOURCE_ALL_FILES})
+source_group("core/api" FILES ${CORE_SOURCE_XR_API_FILES})
+source_group("core/math" FILES ${CORE_SOURCE_MATH_FILES})
+source_group("core/string" FILES ${CORE_SOURCE_STR_FILES})
+source_group("platform" FILES ${CORE_SOURCE_XR_API_PLATF_FILES})
+source_group("platform/windows" FILES ${CORE_SOURCE_XR_API_WIN_FILES})
+source_group("platform/linux" FILES ${CORE_SOURCE_XR_API_LIN_FILES})
+source_group("memory" FILES ${CORE_SOURCE_MEMORY_FILES})
+source_group("memory/p3malloc" FILES ${CORE_SOURCE_MEMORY_P3_FILES})
+source_group("debug" FILES ${CORE_SOURCE_DEBUG_FILES})
+source_group("collision/engine" FILES ${CORE_SOURCE_COLLSION_FILES})
+source_group("collision/opcode" FILES ${CORE_SOURCE_COLLSION_OPCODE_FILES})
+source_group("compressors/rt" FILES ${CORE_SOURCE_RT_FILES})
+source_group("compressors/lz" FILES ${CORE_SOURCE_LZ_FILES})
+source_group("compressors/ppmd" FILES ${CORE_SOURCE_PPMD_FILES})
+source_group("core/fs" FILES ${CORE_SOURCE_FS_FILES})
+source_group("core/stl" FILES ${CORE_SOURCE_STL_FILES})
+source_group("core/formats/YAML" FILES ${CORE_SOURCE_YAML_FILES})
+source_group("core/formats/XML" FILES ${CORE_SOURCE_XML_FILES})
+source_group("core/formats/json" FILES ${CORE_SOURCE_JSON_FILES})
+source_group("core/Crypto" FILES ${CORE_SOURCE_CRYPTO_FILES})
+source_group("core/StackTrace" FILES ${CORE_SOURCE_STACK_FILES})
+source_group("discord" FILES ${CORE_SOURCE_DISCORD_FILES})
+source_group("discord/api" FILES ${CORE_SOURCE_DISCORD_API_FILES})
+
+# Apply list
+list(APPEND CORE_SRC_FILES ${CORE_SOURCE_ALL_FILES})
+list(APPEND CORE_SRC_FILES ${CORE_NUGET_FILES})
+
+if (MSVC)
+	list(APPEND CORE_SRC_FILES ${CORE_NATVIS_FILES})
+endif()
+
+# Remove borlands files
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "ELocatorAPI.*")
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "LocatorAPI_Notifications.cpp$")
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "xrMemory_subst_borland.*")
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "FileSystem_borland.cpp")
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "blackbox/*")
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "ptmalloc3/t-test*.*")
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "ptmalloc3/ptmalloc3.c")
+list(FILTER CORE_SRC_FILES EXCLUDE REGEX "ptmalloc3/tst-independent-alloc.c")
+
+if (MSVC)
+	list(FILTER CORE_SRC_FILES EXCLUDE REGEX "Platform/Linux/")
+	list(FILTER CORE_SRC_FILES EXCLUDE REGEX "Platform/BSD/")
+else()
+	list(FILTER CORE_SRC_FILES EXCLUDE REGEX "Platform/Windows/")
+	list(FILTER CORE_SRC_FILES EXCLUDE REGEX "discord/api/")
+
+	if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+		list(FILTER CORE_SRC_FILES EXCLUDE REGEX "Platform/BSD/")
+	else()
+		list(FILTER CORE_SRC_FILES EXCLUDE REGEX "Platform/BSD/")
+	endif()
+endif()
+
+# xrCore project
+add_library(xrCore SHARED ${CORE_SRC_FILES})
+target_link_directories(xrCore PUBLIC ${IXRAY_SDK_LIB})
+
+if(IXRAY_ASAN)
+	target_compile_definitions(xrCore PRIVATE PURE_ONLY)
+endif()
+
+if (IXRAY_DISCORD_RPC)
+	target_compile_definitions(xrCore PRIVATE IXR_ENABLE_DISCORD)
+endif()
+
+# Includes 
+target_include_directories(xrCore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(xrCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../3rd-party/lzo/include")
+target_include_directories(xrCore PUBLIC ${IXRAY_SDK_INC})
+target_include_directories(xrCore PUBLIC ${CMAKE_BINARY_DIR}/dep)
+
+if (NOT WIN32)
+	target_include_directories(xrCore PUBLIC ${IXRAY_SDK_INC}/linux)
+endif()
+
+# Move precompiled header
+target_validate_pch(xrCore ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Project defines
+target_compile_definitions(xrCore PRIVATE XRCORE_EXPORTS)
+target_compile_definitions(xrCore PRIVATE _USRDLL)
+
+# Profiler
+if (IXRAY_PROFILER)
+	target_include_directories(xrCore PUBLIC "${CORE_OPT}build/native/include/")
+	target_link_directories(xrCore PUBLIC "${CORE_OPT}runtimes/win-${NUGET_PACKAGE_PLATFORM}/native/Release/")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CORE_OPT}runtimes/win-${NUGET_PACKAGE_PLATFORM}/native/Release/OptickCore.dll ${IXRAY_OUTPUT}
+	)
+	target_compile_definitions(xrCore PUBLIC "IXRAY_PROFILER")
+	target_link_libraries(xrCore PUBLIC "OptickCore")
+endif()
+
+# Linker list
+target_link_libraries(xrCore PUBLIC SDL3-shared)
+target_link_libraries(xrCore PRIVATE opcode-prosectors)
+
+if(WIN32)
+	if (NOT IXR_ARM_ENABLE)
+		target_link_libraries(xrCore PRIVATE dxerr)
+	endif()
+
+	target_link_libraries(xrCore PRIVATE "dbghelp.lib")
+	target_link_libraries(xrCore PRIVATE "winmm.lib")
+	target_link_libraries(xrCore PRIVATE "faultrep.lib")
+
+	target_link_libraries(xrCore PRIVATE ${CMAKE_BINARY_DIR}/dep/discord_gamesdk/lib/${NUGET_PACKAGE_PLATFORM_EX}/discord_game_sdk.dll.lib)
+endif()
+
+# Git Info
+include(gitver.cmake)
+
+## Platform specific (NEED REWORK!!!)
+if(WIN32)
+	target_include_directories(xrCore PUBLIC ${YAML_INCL})
+	target_link_libraries(xrCore PUBLIC ${YAML_LIB})
+
+	target_link_libraries(xrCore PUBLIC ${LZO_LIB})
+	target_include_directories(xrCore PUBLIC ${LZO}/build/native/include/)
+
+	target_link_libraries(xrCore PUBLIC ${IXR_TBB_LIB})
+	target_include_directories(xrCore PUBLIC ${IXR_TBB_INC})
+
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${IXR_TBB_SDK}/runtimes/win7-${NUGET_PACKAGE_PLATFORM}/native/Release/tbb12.dll ${IXRAY_OUTPUT}
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/dep/discord_gamesdk/lib/${NUGET_PACKAGE_PLATFORM_EX}/discord_game_sdk.dll ${IXRAY_OUTPUT}
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LZO}/runtimes/win-${NUGET_PACKAGE_PLATFORM}/native/Release/lzo2.dll ${IXRAY_OUTPUT}
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${YAML_BIN} ${IXRAY_OUTPUT}/${YAML_LIB_NAME}
+	)
+else()
+	target_include_directories(xrCore PUBLIC ${LZO_INCLUDE_DIR})
+	target_link_libraries(xrCore PUBLIC TBB::tbb)
+	target_link_libraries(xrCore PUBLIC ${LZO_LIBRARY})
+	target_link_libraries(xrCore PUBLIC yaml-cpp)
+endif()
+
+# Set relative runpath
+if(NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+	set_target_properties(${PROJECT_NAME} PROPERTIES
+		BUILD_RPATH ""
+		BUILD_RPATH_USE_ORIGIN ON
+	)
+	set_target_properties(${PROJECT_NAME} PROPERTIES
+		BUILD_RPATH "$ORIGIN"
+	)
+endif()

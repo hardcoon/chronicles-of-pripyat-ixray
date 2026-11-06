@@ -1,0 +1,332 @@
+// BlenderDefault.cpp: implementation of the CBlender_BmmD class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#include "stdafx.h"
+
+
+#include "Blender_BmmD.h"
+#include "uber_deffer.h"
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+CBlender_BmmD::CBlender_BmmD	()
+{
+	description.CLS		= B_BmmD;
+	xr_strcpy				(oT2_Name,	"$null");
+	xr_strcpy				(oT2_xform,	"$null");
+	description.version	= 3;
+	xr_strcpy				(oR_Name,	"detail\\detail_grnd_grass");	//"$null");
+	xr_strcpy				(oG_Name,	"detail\\detail_grnd_asphalt");	//"$null");
+	xr_strcpy				(oB_Name,	"detail\\detail_grnd_earth");	//"$null");
+	xr_strcpy				(oA_Name,	"detail\\detail_grnd_yantar");	//"$null");
+}
+
+CBlender_BmmD::~CBlender_BmmD	()
+{
+}
+
+void	CBlender_BmmD::Save		(IWriter& fs )
+{
+	IBlender::Save	(fs);
+	xrPWRITE_MARKER	(fs,"Detail map");
+	xrPWRITE_PROP	(fs,"Name",				xrPID_TEXTURE,	oT2_Name);
+	xrPWRITE_PROP	(fs,"Transform",		xrPID_MATRIX,	oT2_xform);
+	xrPWRITE_PROP	(fs,"R2-R",				xrPID_TEXTURE,	oR_Name);
+	xrPWRITE_PROP	(fs,"R2-G",				xrPID_TEXTURE,	oG_Name);
+	xrPWRITE_PROP	(fs,"R2-B",				xrPID_TEXTURE,	oB_Name);
+	xrPWRITE_PROP	(fs,"R2-A",				xrPID_TEXTURE,	oA_Name);
+}
+
+void	CBlender_BmmD::Load		(IReader& fs, u16 version )
+{
+	IBlender::Load	(fs,version);
+	if (version<3)	{
+		xrPREAD_MARKER	(fs);
+		xrPREAD_PROP	(fs,xrPID_TEXTURE,	oT2_Name);
+		xrPREAD_PROP	(fs,xrPID_MATRIX,	oT2_xform);
+	} else {
+		xrPREAD_MARKER	(fs);
+		xrPREAD_PROP	(fs,xrPID_TEXTURE,	oT2_Name);
+		xrPREAD_PROP	(fs,xrPID_MATRIX,	oT2_xform);
+		xrPREAD_PROP	(fs,xrPID_TEXTURE,	oR_Name);
+		xrPREAD_PROP	(fs,xrPID_TEXTURE,	oG_Name);
+		xrPREAD_PROP	(fs,xrPID_TEXTURE,	oB_Name);
+		xrPREAD_PROP	(fs,xrPID_TEXTURE,	oA_Name);
+	}
+}
+
+#if RENDER==R_R1
+//////////////////////////////////////////////////////////////////////////
+// R1
+//////////////////////////////////////////////////////////////////////////
+void	CBlender_BmmD::Compile	(CBlender_Compile& C)
+{
+	IBlender::Compile		(C);
+	if (C.bEditor)	{
+		string256 mask;
+		xr_strconcat(mask, C.L_textures[0].c_str(), "_mask");
+
+	//	C.r_Pass("impl_dt", "impl_dt", TRUE);
+		uber_deffer(C, true, "deffer_base", "deffer_impl", false, oT2_Name[0] ? oT2_Name : 0, true);
+		C.r_Sampler("s_mask", mask);
+
+		C.r_Sampler_waf("s_dt_r", oR_Name, false);
+		C.r_Sampler_waf("s_dt_g", oG_Name, false);
+		C.r_Sampler_waf("s_dt_b", oB_Name, false);
+		C.r_Sampler_waf("s_dt_a", oA_Name, false);
+
+		C.r_Sampler("s_dn_r", xr_strconcat(mask, oR_Name, "_bump"));
+		C.r_Sampler("s_dn_g", xr_strconcat(mask, oG_Name, "_bump"));
+		C.r_Sampler("s_dn_b", xr_strconcat(mask, oB_Name, "_bump"));
+		C.r_Sampler("s_dn_a", xr_strconcat(mask, oA_Name, "_bump"));
+		C.r_Sampler("s_detail", oT2_Name);
+
+		C.r_End();
+		//C.PassBegin		();
+		//{
+		//	C.PassSET_ZB		(TRUE,TRUE);
+		//	C.PassSET_Blend_SET	();
+		//	C.PassSET_LightFog	(TRUE,TRUE);
+		//	
+		//	// Stage1 - Base texture
+		//	C.StageBegin		();
+		//	C.StageSET_Color	(D3DTA_TEXTURE,	  D3DTOP_MODULATE,		D3DTA_DIFFUSE);   
+		//	C.StageSET_Alpha	(D3DTA_TEXTURE,	  D3DTOP_MODULATE,		D3DTA_DIFFUSE);
+		//	C.StageSET_TMC		(oT_Name,oT_xform,"$null",0);
+		//	C.StageEnd			();
+		//	
+		//	// Stage2 - Second texture
+		//	C.StageBegin		();
+		//	C.StageSET_Color	(D3DTA_TEXTURE,	  D3DTOP_MODULATE2X,	D3DTA_CURRENT);
+		//	C.StageSET_Alpha	(D3DTA_TEXTURE,	  D3DTOP_SELECTARG2,	D3DTA_CURRENT);
+		//	C.StageSET_TMC		(oT2_Name,oT2_xform,"$null",0);
+		//	C.StageEnd			();
+		//}
+		//C.PassEnd			();
+	} else {
+		if (C.L_textures.size()<2)	Debug.fatal	(DEBUG_INFO,"Not enought textures for shader, base tex: %s",*C.L_textures[0]);
+		switch (C.iElement)
+		{
+		case SE_R1_NORMAL_HQ:
+#ifndef _EDITOR
+			if (ps_r1_flags.test(R1FLAG_TERRAIN_MASK)) {
+				string256 mask;
+				xr_strconcat(mask, C.L_textures[0].c_str(), "_mask");
+
+				C.r_Pass("impl_dt", "impl_dt_hq", TRUE);
+				C.r_Sampler("s_mask", mask);
+				C.r_Sampler("s_dt_r", oR_Name, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+				C.r_Sampler("s_dt_g", oG_Name, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+				C.r_Sampler("s_dt_b", oB_Name, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+				C.r_Sampler("s_dt_a", oA_Name, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+			} 
+			else
+#endif 
+			{
+				C.r_Pass("impl_dt", "impl_dt", TRUE);
+			}
+			C.r_Sampler		("s_base",	C.L_textures[0]);
+			C.r_Sampler		("s_lmap",	C.L_textures[1]);
+			C.r_Sampler		("s_detail",oT2_Name);
+			C.r_End			();
+			break;
+		case SE_R1_NORMAL_LQ:
+			C.r_Pass		("impl_dt",	"impl_dt",TRUE);
+			C.r_Sampler		("s_base",	C.L_textures[0]);
+			C.r_Sampler		("s_lmap",	C.L_textures[1]);
+			C.r_Sampler		("s_detail",oT2_Name);
+			C.r_End			();
+			break;
+		case SE_R1_LPOINT:
+			C.r_Pass		("impl_point","add_point",FALSE,TRUE,FALSE,TRUE,D3DBLEND_ONE,D3DBLEND_ONE,TRUE);
+			C.r_Sampler		("s_base",	C.L_textures[0]);
+			C.r_Sampler_clf	("s_lmap",	TEX_POINT_ATT		);
+			C.r_Sampler_clf	("s_att",	TEX_POINT_ATT		);
+			C.r_End			();
+			break;
+		case SE_R1_LSPOT:
+			C.r_Pass		("impl_spot","add_spot",FALSE,TRUE,FALSE,TRUE,D3DBLEND_ONE,D3DBLEND_ONE,TRUE);
+			C.r_Sampler		("s_base",	C.L_textures[0]);
+			C.r_Sampler_clf	("s_lmap",	"internal\\internal_light_att",		true);
+			C.r_Sampler_clf	("s_att",	TEX_SPOT_ATT		);
+			C.r_End			();
+			break;
+		case SE_R1_LMODELS:
+			C.r_Pass		("impl_l","impl_l",FALSE);
+			C.r_Sampler		("s_base",C.L_textures[0]);
+			C.r_Sampler		("s_lmap",C.L_textures[1]);
+			C.r_End			();
+			break;
+		}
+	}
+}
+#elif RENDER==R_R2
+
+//////////////////////////////////////////////////////////////////////////
+// R2
+//////////////////////////////////////////////////////////////////////////
+#include "uber_deffer.h"
+void	CBlender_BmmD::Compile	(CBlender_Compile& C)
+{
+	IBlender::Compile(C);
+	// codepath is the same, only the shaders differ
+	// ***only pixel shaders differ***
+	string256				mask;
+	xr_strconcat(mask, C.L_textures[0].c_str(), "_mask");
+	switch(C.iElement)
+	{
+	case SE_R2_NORMAL_HQ:
+	case SE_R2_NORMAL_LQ:
+		uber_deffer(C, true, "deffer_base", "deffer_impl", false, oT2_Name[0] ? oT2_Name : 0, true);
+		C.r_Sampler("s_mask", mask);
+		C.r_Sampler("s_lmap", C.L_textures[1]);
+
+		C.r_Sampler_waf("s_dt_r", oR_Name, false);
+		C.r_Sampler_waf("s_dt_g", oG_Name, false);
+		C.r_Sampler_waf("s_dt_b", oB_Name, false);
+		C.r_Sampler_waf("s_dt_a", oA_Name, false);
+
+		C.r_Sampler("s_dn_r", xr_strconcat(mask, oR_Name, "_bump"));
+		C.r_Sampler("s_dn_g", xr_strconcat(mask, oG_Name, "_bump"));
+		C.r_Sampler("s_dn_b", xr_strconcat(mask, oB_Name, "_bump"));
+		C.r_Sampler("s_dn_a", xr_strconcat(mask, oA_Name, "_bump"));
+
+		C.r_End();
+		break;
+	case SE_R2_SHADOW:
+		C.r_Pass("shadow_base", "shadow_base", FALSE);
+		C.r_Sampler("s_base", C.L_textures[0]);
+		C.r_End();
+		break;
+	}
+}
+#else
+//////////////////////////////////////////////////////////////////////////
+// R3
+//////////////////////////////////////////////////////////////////////////
+#include "dxRenderDeviceRender.h"
+void	CBlender_BmmD::Compile	(CBlender_Compile& C)
+{
+	IBlender::Compile(C);
+	// codepath is the same, only the shaders differ
+	// ***only pixel shaders differ***
+	string256 mask;
+	xr_strconcat(mask, C.L_textures[0].c_str(), "_mask");
+
+	RImplementation.addShaderOption("USE_LM_HEMI", "1");
+	RImplementation.addShaderOption("USE_TDETAIL_BUMP", "1");
+
+	switch(C.iElement) {
+	case SE_R2_NORMAL_HQ:
+	case SE_R2_NORMAL_LQ:
+		C.SH->flags.bLandscape = true;
+		C.r_Pass("deffer_base", "dumb", FALSE, TRUE, TRUE);
+		C.r_ColorWriteEnable(false, false, false, false);
+		C.r_End(false);
+
+		C.bDetail_Bump = C.bDetail_Diffuse;
+		if(C.iElement == SE_R2_NORMAL_HQ) {
+			RImplementation.addShaderOption("USE_4_BUMP", "");
+		}
+
+		uber_deffer(C, true, "deffer_base", "deffer_impl", false, oT2_Name[0] ? oT2_Name : 0, true);
+		C.RS.SetRS(D3DRS_ZFUNC, D3D11_COMPARISON_EQUAL);
+
+        { // COP_ENGINE_PATCH: COP-ENG-128 - SSS original terrain masks, safe white fallback.
+        string256 puddles;
+        xr_strconcat(puddles, "pf_sss\\", C.L_textures[0].c_str(), "_puddles_mask");
+        string_path puddlesPath;
+        xr_strconcat(puddlesPath, puddles, ".dds");
+        C.r_dx10Texture("pf_sss_puddle_mask", FS.exist("$game_textures$", puddlesPath) ? puddles : "pf_sss\\fx\\pf_sss_mask_white");
+        C.r_dx10Texture("pf_sss_perlin", "pf_sss\\fx\\puddles_perlin");
+        C.r_dx10Texture("pf_sss_water_normal", "pf_sss\\fx\\water_normal");
+        C.r_dx10Texture("pf_sss_rain_splash", "pf_sss\\fx\\water_sbumpvolume");
+        }
+		C.r_dx10Texture("s_lmap", C.L_textures[1]);
+
+		if(C.iElement == SE_R2_NORMAL_HQ) {
+			C.r_dx10Texture("s_mask", mask);
+
+            // COP_ENGINE_PATCH: COP-ENG-128 - SSS owns its height/normal/LOD assets; native OFF textures stay bound.
+            auto sssLayer=[&](LPCSTR heightName,LPCSTR normalName,LPCSTR diffuse) {
+                string256 name;string_path file;
+                xr_strconcat(name,"pf_sss\\",diffuse,"_height");xr_strconcat(file,name,".dds");
+                C.r_dx10Texture(heightName,FS.exist("$game_textures$",file)?name:"pf_sss\\fx\\terrain_height_flat");
+                xr_strconcat(name,"pf_sss\\",diffuse,"_bump");xr_strconcat(file,name,".dds");
+                if(FS.exist("$game_textures$",file))C.r_dx10Texture(normalName,name);
+                else C.r_dx10Texture(normalName,xr_strconcat(name,diffuse,"_bump"));
+            };
+            sssLayer("pf_sss_height_r","pf_sss_terrain_normal_r",oR_Name);
+            sssLayer("pf_sss_height_g","pf_sss_terrain_normal_g",oG_Name);
+            sssLayer("pf_sss_height_b","pf_sss_terrain_normal_b",oB_Name);
+            sssLayer("pf_sss_height_a","pf_sss_terrain_normal_a",oA_Name);
+            string256 lod;string_path lodFile;
+            xr_strconcat(lod,"pf_sss\\",C.L_textures[0].c_str(),"_lod_textures");xr_strconcat(lodFile,lod,".dds");
+            C.r_dx10Texture("pf_sss_terrain_lod",FS.exist("$game_textures$",lodFile)?lod:"pf_sss\\terrain\\default_lod_textures");
+			C.r_dx10Texture("s_dt_r", oR_Name);
+			C.r_dx10Texture("s_dt_g", oG_Name);
+			C.r_dx10Texture("s_dt_b", oB_Name);
+			C.r_dx10Texture("s_dt_a", oA_Name);
+
+			C.r_dx10Texture("s_dn_r", xr_strconcat(mask, oR_Name, "_bump"));
+			C.r_dx10Texture("s_dn_g", xr_strconcat(mask, oG_Name, "_bump"));
+			C.r_dx10Texture("s_dn_b", xr_strconcat(mask, oB_Name, "_bump"));
+			C.r_dx10Texture("s_dn_a", xr_strconcat(mask, oA_Name, "_bump"));
+
+			//LVutner: Maybe load these only when PBR flag is detected?
+			C.r_dx10Texture("s_dn_rX", xr_strconcat(mask, oR_Name, "_bump#"));
+			C.r_dx10Texture("s_dn_gX", xr_strconcat(mask, oG_Name, "_bump#"));
+			C.r_dx10Texture("s_dn_bX", xr_strconcat(mask, oB_Name, "_bump#"));
+			C.r_dx10Texture("s_dn_aX", xr_strconcat(mask, oA_Name, "_bump#"));
+		}
+
+		C.r_Stencil(TRUE, D3DCMP_ALWAYS, 0xff, 0x7f, D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+		C.r_StencilRef(0x01);
+
+		C.r_End ();
+		break;
+	case SE_R2_SHADOW:
+		C.r_Pass("shadow_base", "shadow_base", FALSE);
+		C.r_dx10Texture("s_base", C.L_textures[0]);
+		C.r_dx10Sampler("smp_base");
+		C.r_dx10Sampler("smp_linear");
+		C.r_ColorWriteEnable(false, false, false, false);
+		C.r_End();
+		break;
+	case SE_R2_REFLECTIONS:
+		C.SH->flags.bLandscape = false;
+		C.bDetail = !!DEV->m_textures_description.GetDetailTexture(C.L_textures[0], C.detail_texture, C.detail_scaler);
+		C.bDetail_Bump = C.bDetail_Diffuse = C.bDetail;
+
+		RImplementation.addShaderOption("USE_LENGTH_BUFFER", "1");
+		uber_deffer(C, true, "deffer_base", "deffer_impl", false, oT2_Name[0] ? oT2_Name : 0, true);
+
+        { // COP_ENGINE_PATCH: COP-ENG-128 - SSS original terrain masks, safe white fallback.
+        string256 puddles;
+        xr_strconcat(puddles, "pf_sss\\", C.L_textures[0].c_str(), "_puddles_mask");
+        string_path puddlesPath;
+        xr_strconcat(puddlesPath, puddles, ".dds");
+        C.r_dx10Texture("pf_sss_puddle_mask", FS.exist("$game_textures$", puddlesPath) ? puddles : "pf_sss\\fx\\pf_sss_mask_white");
+        C.r_dx10Texture("pf_sss_perlin", "pf_sss\\fx\\puddles_perlin");
+        C.r_dx10Texture("pf_sss_water_normal", "pf_sss\\fx\\water_normal");
+        C.r_dx10Texture("pf_sss_rain_splash", "pf_sss\\fx\\water_sbumpvolume");
+        }
+		C.r_dx10Texture("s_lmap", C.L_textures[1]);
+
+		C.r_dx10Texture("s_material", r2_material);
+		C.r_dx10Texture("env_s0", r2_T_envs0);
+		C.r_dx10Texture("env_s1", r2_T_envs1);
+		C.r_dx10Texture("sky_s0", r2_T_sky0);
+		C.r_dx10Texture("sky_s1", r2_T_sky1);
+
+		C.r_dx10Sampler("smp_material");
+		C.r_End();
+		break;
+	}
+
+	RImplementation.clearAllShaderOptions();
+}
+#endif

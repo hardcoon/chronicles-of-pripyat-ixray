@@ -1,0 +1,493 @@
+#include "stdafx.h"
+#include "UITalkWnd.h"
+
+#include "UITalkDialogWnd.h"
+
+#include "../Actor.h"
+#include "../trade.h"
+#include "UIGameSP.h"
+#include "../PDA.h"
+#include "../../xrServerEntities/character_info.h"
+#include "../Level.h"
+
+#include "../PhraseDialog.h"
+#include "../PhraseDialogManager.h"
+
+#include "../game_cl_base.h"
+#include "../../xrEngine/string_table.h"
+#include "../../xrEngine/CameraBase.h"
+#include "../../xrUI/UIXmlInit.h"
+#include "../../xrUI/Widgets/UI3tButton.h"
+
+#include "EffectorDOF.h"
+#include "ActorEffector.h"
+#include "GamePersistent.h"
+
+BOOL EnableTalkDof = true;
+
+CUITalkWnd::CUITalkWnd()
+{
+	m_pActor				= nullptr;
+
+	m_pOurInvOwner			= nullptr;
+	m_pOthersInvOwner		= nullptr;
+
+	m_pOurDialogManager		= nullptr;
+	m_pOthersDialogManager	= nullptr;
+
+	ToTopicMode				();
+
+	const static Fvector4 talkDof = EngineExternal().GetTalkDof();
+	m_TalkDof.set(talkDof);
+
+	const static float fovScale = EngineExternal().GetTalkFovScale();
+	m_talkFovScale = fovScale;
+	clamp(m_talkFovScale, 0.2f, 1.0f);
+
+	InitTalkWnd				();
+	m_bNeedToUpdateQuestions = false;
+	b_disable_break			= false;
+}
+
+CUITalkWnd::~CUITalkWnd()
+{
+}
+
+void CUITalkWnd::InitTalkWnd()
+{
+	inherited::SetWndRect(Frect().set(0, 0, UI_BASE_WIDTH, UI_BASE_HEIGHT));
+
+	UITalkDialogWnd			= new CUITalkDialogWnd();
+	UITalkDialogWnd->SetAutoDelete(true);
+	AttachChild				(UITalkDialogWnd);
+	UITalkDialogWnd->m_pParent = this;
+	UITalkDialogWnd->InitTalkDialogWnd();
+}
+
+void CUITalkWnd::InitTalkDialog()
+{
+	m_pActor = Actor();
+	if (m_pActor != nullptr && !m_pActor->IsTalking())
+	{
+		return;
+	}
+
+	m_pOurInvOwner = m_pActor->cast_inventory_owner();
+	m_pOthersInvOwner = m_pActor->GetTalkPartner();
+
+	m_pOurDialogManager = m_pOurInvOwner->cast_phrase_dialog_manager();
+	m_pOthersDialogManager = m_pOthersInvOwner->cast_phrase_dialog_manager();
+
+	//имена собеседников
+	UITalkDialogWnd->UICharacterInfoLeft.InitCharacter(m_pOurInvOwner);
+	UITalkDialogWnd->UICharacterInfoRight.InitCharacter(m_pOthersInvOwner);
+
+
+	//очистить лог сообщений
+	UITalkDialogWnd->ClearAll();
+
+	InitOthersStartDialog();
+	NeedUpdateQuestions();
+	Update();
+
+	UITalkDialogWnd->mechanic_mode = m_pOthersInvOwner->SpecificCharacter().upgrade_mechanic();
+	UITalkDialogWnd->SetOsoznanieMode(m_pOthersInvOwner->NeedOsoznanieMode());
+	UITalkDialogWnd->Show();
+	UITalkDialogWnd->UpdateButtonsLayout(b_disable_break, m_pOthersInvOwner->IsTradeEnabled());
+}
+
+void CUITalkWnd::InitOthersStartDialog()
+{
+	m_pOthersDialogManager->UpdateAvailableDialogs(m_pOurDialogManager);
+	if(!m_pOthersDialogManager->AvailableDialogs().empty())
+	{
+		m_pCurrentDialog = m_pOthersDialogManager->AvailableDialogs().front();
+		m_pOthersDialogManager->InitDialog(m_pOurDialogManager, m_pCurrentDialog);
+		
+		//сказать фразу
+		AddAnswer(m_pCurrentDialog->GetPhraseText("0"), m_pOthersInvOwner->Name());
+		m_pOthersDialogManager->SayPhrase(m_pCurrentDialog, "0");
+
+		//если диалог завершился, перейти в режим выбора темы
+		if(!m_pCurrentDialog || m_pCurrentDialog->IsFinished()) ToTopicMode();
+	}
+}
+
+void CUITalkWnd::NeedUpdateQuestions()
+{
+	m_bNeedToUpdateQuestions = true;
+}
+
+void CUITalkWnd::UpdateQuestions()
+{
+	UITalkDialogWnd->ClearQuestions();
+
+	//если нет активного диалога, то
+	//режима выбора темы
+	if(!m_pCurrentDialog)
+	{
+		m_pOurDialogManager->UpdateAvailableDialogs(m_pOthersDialogManager);
+		for(u32 i=0; i< m_pOurDialogManager->AvailableDialogs().size(); ++i)
+		{
+			const DIALOG_SHARED_PTR& phrase_dialog	= m_pOurDialogManager->AvailableDialogs()[i];
+			//if (phrase_dialog->GetPhraseCount() > 0)
+			{
+				SPhraseInfo phInfo;
+				phInfo.sIconName = (phrase_dialog->GetPhrase("0"))->GetIconName();
+				phInfo.bUseIconLtx = (phrase_dialog->GetPhrase("0"))->GetIconUsingLTX();
+				phInfo.bFinalizer = (phrase_dialog->GetPhrase("0"))->IsFinalizer();
+
+				AddQuestion(phrase_dialog->DialogCaption(), phrase_dialog->GetDialogID(), i, phInfo);
+			}
+		}
+	}
+	else
+	{
+		if(m_pCurrentDialog->IsWeSpeaking(m_pOurDialogManager))
+		{
+			//если в списке допустимых фраз только одна фраза пустышка, то просто
+			//сказать (игрок сам не производит никаких действий)
+			if( !m_pCurrentDialog->PhraseList().empty() && m_pCurrentDialog->allIsDummy() ){
+				CPhrase* phrase = m_pCurrentDialog->PhraseList()[Random.randI(m_pCurrentDialog->PhraseList().size())];
+				SayPhrase(phrase->GetID());
+			};
+
+			//выбор доступных фраз из активного диалога
+			if( m_pCurrentDialog && !m_pCurrentDialog->allIsDummy() )
+			{			
+				int number = 0;
+				for(PHRASE_VECTOR::const_iterator   it = m_pCurrentDialog->PhraseList().begin();
+					it != m_pCurrentDialog->PhraseList().end();
+					++it, ++number)
+				{
+					SPhraseInfo phInfo;
+					CPhrase* phrase = *it;
+					phInfo.bFinalizer = phrase->IsFinalizer();
+					phInfo.sIconName = phrase->GetIconName();
+					phInfo.bUseIconLtx = phrase->GetIconUsingLTX();
+					AddQuestion(m_pCurrentDialog->GetPhraseText(phrase->GetID() ), phrase->GetID(), number, phInfo);
+				}
+			}
+			else
+				UpdateQuestions();
+		}
+	}
+	m_bNeedToUpdateQuestions = false;
+
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+void CUITalkWnd::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
+{
+	if(pWnd == UITalkDialogWnd && msg == TALK_DIALOG_TRADE_BUTTON_CLICKED)
+	{
+		SwitchToTrade();
+	}
+	else if(pWnd == UITalkDialogWnd && msg == TALK_DIALOG_UPGRADE_BUTTON_CLICKED)
+	{
+		SwitchToUpgrade();
+	}
+	else if(pWnd == UITalkDialogWnd && msg == TALK_DIALOG_QUESTION_CLICKED)
+	{
+		AskQuestion();
+	}
+	inherited::SendMessage(pWnd, msg, pData);
+}
+
+//////////////////////////////////////////////////////////////////////////
+void UpdateCameraDirection(CGameObject* pTo, bool isFocus)
+{
+	CCameraBase* cam = Actor()->cam_Active();
+
+	Fvector target_pos;
+	if (pTo->cast_inventory_owner()->GetFocusingOnNpc())
+	{
+		if (IKinematics* pk = PKinematics(pTo->Visual()))
+			pk->LL_GetBoneWorldPosition(pk->LL_BoneID("bip01_head"), pTo->XFORM(), target_pos);
+	}
+	else
+	{
+		pTo->Center(target_pos);
+		target_pos.y += pTo->Radius() * 0.5f;
+	}
+
+	Fvector target_dir;
+	target_dir.sub(target_pos, cam->vPosition);
+	target_dir.normalize();
+	float p, h;
+	target_dir.getHP(h, p);
+
+	Fvector targ_angles = EulerYawPitchRollInertion({ cam->pitch , cam->yaw, 0.f }, { -p, -h, 0.f }, 0.5f, Device.fTimeDelta);
+	cam->pitch = targ_angles.x;
+	cam->yaw = targ_angles.y;
+}
+
+void CUITalkWnd::Update()
+{
+	//остановить разговор, если нужно
+	if (g_actor && m_pActor && !m_pActor->IsTalking())
+	{
+		StopTalk();
+	}
+	else
+	{
+		CGameObject* pOurGO = m_pOurInvOwner != nullptr ? m_pOurInvOwner->cast_game_object() : nullptr;
+		CGameObject* pOtherGO = m_pOthersInvOwner != nullptr ? m_pOthersInvOwner->cast_game_object() : nullptr;
+
+		if (nullptr == pOurGO || nullptr == pOtherGO)
+		{
+			HideDialog();
+		}
+	}
+
+	if (m_bNeedToUpdateQuestions)
+	{
+		UpdateQuestions();
+	}
+
+	inherited::Update();
+	UpdateCameraDirection(m_pOthersInvOwner->cast_game_object(), m_pOthersInvOwner->GetFocusingOnNpc());
+	UITalkDialogWnd->UpdateButtonsLayout(b_disable_break, m_pOthersInvOwner->IsTradeEnabled());
+
+	if (playing_sound())
+	{
+		CGameObject* pOtherGO = m_pOthersInvOwner != nullptr ? m_pOthersInvOwner->cast_game_object() : nullptr;
+		Fvector P = pOtherGO->Position();
+		P.y += 1.8f;
+		m_sound.set_position(P);
+	}
+}
+
+void CUITalkWnd::Draw()
+{
+	inherited::Draw				();
+}
+
+void CUITalkWnd::Show(bool status)
+{
+	inherited::Show					(status);
+	if(status)
+	{
+		InitTalkDialog				();
+
+		if (m_pOthersInvOwner->GetFocusingOnNpc())
+		{
+			if (EnableTalkDof && !fsimilar(m_TalkDof.w, -1.0f))
+			{
+				m_pActor->Cameras().AddCamEffector(new CEffectorDOF(m_TalkDof, 0.0f));
+			}
+
+			g_fov = g_fov * m_talkFovScale;
+		}
+	}
+	else
+	{
+		StopSnd						();
+		UITalkDialogWnd->Hide		();
+
+		if(m_pActor)
+		{
+			if (m_pOthersInvOwner->GetFocusingOnNpc())
+			{
+				g_fov = g_fov / m_talkFovScale;
+
+				GamePersistent().RestoreEffectorDOF();
+				m_pActor->Cameras().RemoveCamEffector(eCEDOF);
+			}
+
+			ToTopicMode					();
+
+			if (m_pActor->IsTalking()) 
+				m_pActor->StopTalk();
+
+			m_pActor = nullptr;
+		}
+	}
+}
+
+bool  CUITalkWnd::TopicMode			() 
+{
+	return nullptr == m_pCurrentDialog.get();
+}
+
+void  CUITalkWnd::ToTopicMode		() 
+{
+	m_pCurrentDialog.reset();// = DIALOG_SHARED_PTR((CPhraseDialog*)nullptr);
+}
+
+void CUITalkWnd::AskQuestion()
+{
+	if(m_bNeedToUpdateQuestions) return;//quick dblclick:(
+	shared_str					phrase_id;
+
+	//игрок выбрал тему разговора
+	if(TopicMode())
+	{
+		if ( (UITalkDialogWnd->m_ClickedQuestionID =="") ||
+			(!m_pOurDialogManager->HaveAvailableDialog(UITalkDialogWnd->m_ClickedQuestionID)) ) 
+		{
+
+			string128	s;
+			xr_sprintf		(s,"ID = [%s] of selected question is out of range of available dialogs ",UITalkDialogWnd->m_ClickedQuestionID.c_str());
+			VERIFY2(FALSE, s);
+		}
+
+		m_pCurrentDialog = m_pOurDialogManager->GetDialogByID( UITalkDialogWnd->m_ClickedQuestionID);
+		
+		m_pOurDialogManager->InitDialog(m_pOthersDialogManager, m_pCurrentDialog);
+		phrase_id = "0";
+	}
+	else
+	{
+		phrase_id = UITalkDialogWnd->m_ClickedQuestionID;
+	}
+
+	SayPhrase				(phrase_id);
+	NeedUpdateQuestions		();
+}
+
+void CUITalkWnd::SayPhrase(const shared_str& phrase_id)
+{
+
+	AddAnswer(m_pCurrentDialog->GetPhraseText(phrase_id), m_pOurInvOwner->Name());
+	m_pOurDialogManager->SayPhrase(m_pCurrentDialog, phrase_id);
+	//если диалог завершился, перейти в режим выбора темы
+	if(m_pCurrentDialog->IsFinished()) ToTopicMode();
+}
+
+void CUITalkWnd::AddQuestion(const shared_str& text, const shared_str& value, int number, SPhraseInfo phInfo)
+{
+	if(text.size() == 0)
+		return;
+
+	UITalkDialogWnd->AddQuestion(g_pStringTable->translate(text).c_str(), value.c_str(), number, phInfo);
+}
+
+void CUITalkWnd::AddAnswer(const shared_str& text, LPCSTR SpeakerName)
+{
+	//для пустой фразы вообще ничего не выводим
+	if(text.size() == 0)
+	{
+		return;
+	}
+	PlaySnd			(text.c_str());
+
+	bool i_am = (0 == xr_strcmp(SpeakerName, m_pOurInvOwner->Name()));
+	UITalkDialogWnd->AddAnswer(SpeakerName,*g_pStringTable->translate(text),i_am);
+}
+
+void CUITalkWnd::SwitchToTrade()
+{
+	if ( m_pOurInvOwner->IsTradeEnabled() && m_pOthersInvOwner->IsTradeEnabled() )
+	{
+		UITalkDialogWnd->Hide();
+		if (CurrentGameUI())
+		{
+			CurrentGameUI()->StartTrade	(m_pOurInvOwner, m_pOthersInvOwner);
+		}
+		StopSnd();
+	}
+}
+
+void CUITalkWnd::SwitchToUpgrade()
+{
+	if (CurrentGameUI() && m_pOurInvOwner->IsTradeEnabled() && m_pOthersInvOwner->IsTradeEnabled())
+	{
+		UITalkDialogWnd->Hide();
+		CurrentGameUI()->StartUpgrade(m_pOurInvOwner, m_pOthersInvOwner);
+	}
+}
+
+bool CUITalkWnd::OnKeyboardAction(int dik, EUIMessages keyboard_action)
+{
+
+	if (keyboard_action==WINDOW_KEY_PRESSED)
+	{
+		if(is_binded(kUSE, dik) || is_binded(kQUIT, dik))
+		{
+			if(!b_disable_break)
+			{
+				HideDialog();
+				return true;
+			}
+		}
+		else if(is_binded(kSPRINT_TOGGLE, dik))
+		{
+            if (!m_pOthersInvOwner->NeedOsoznanieMode())
+            {
+                if (UITalkDialogWnd->mechanic_mode)
+                    SwitchToUpgrade();
+                else
+                    SwitchToTrade();
+                return true;
+            }
+		}
+	}
+
+	return inherited::OnKeyboardAction(dik,keyboard_action);
+}
+
+void CUITalkWnd::PlaySnd(LPCSTR text)
+{
+	u32 text_len = xr_strlen(text);
+	
+	// Very crude hack with check for maximum path size
+	// Script result passes here not the text ID, but the fully localized variant
+	if ( text_len == 0 || text_len >= _MAX_PATH)
+	{
+		return;
+	}
+	
+	string_path	fn;
+	
+	LPCSTR path = "characters_voice\\dialogs\\";
+	LPCSTR ext  = ".ogg";
+	u32 tsize   = sizeof(fn) - xr_strlen(path) - xr_strlen(ext) - 1;
+	if ( text_len > tsize )
+	{
+		text_len = tsize;
+	}
+
+	strncpy_s( fn, sizeof(fn), path, xr_strlen(path) );
+	strncat_s( fn, sizeof(fn), text, text_len );
+	strncat_s( fn, sizeof(fn), ext,  xr_strlen(ext) );
+
+	//	strconcat( sizeof(fn), fn, "characters_voice\\dialogs\\", text2, ".ogg" );
+
+	StopSnd();
+	if (FS.exist("$game_sounds$", fn))
+	{
+		VERIFY(m_pActor);
+		if (!m_pActor->OnDialogSoundHandlerStart(m_pOthersInvOwner, fn))
+		{
+			CGameObject* pOtherGO = m_pOthersInvOwner->cast_game_object();
+			Fvector P = pOtherGO->Position();
+			P.y += 1.8f;
+			m_sound.create(fn, st_Effect, sg_SourceType);
+			m_sound.play_at_pos(0, P);
+		}
+	}
+}
+
+void CUITalkWnd::StopSnd()
+{
+	if (m_pActor && m_pActor->OnDialogSoundHandlerStop(m_pOthersInvOwner)) return;
+
+	if(m_sound._feedback()) 
+		m_sound.stop	();
+}
+
+void CUITalkWnd::AddIconedMessage(LPCSTR caption, LPCSTR text, LPCSTR texture_name, LPCSTR templ_name)
+{
+	UITalkDialogWnd->AddIconedAnswer(caption, text, texture_name, templ_name);
+}
+
+void CUITalkWnd::StopTalk()
+{
+	HideDialog();
+}
+
+void CUITalkWnd::Stop()
+{
+}

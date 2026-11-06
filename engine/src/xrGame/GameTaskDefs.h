@@ -1,0 +1,96 @@
+#pragma once
+#include "alife_abstract_registry.h"
+
+enum ETaskState{
+	eTaskStateFail			= 0,
+	eTaskStateInProgress,
+	eTaskStateCompleted,
+	eTaskStateDummy			= u16(-1)
+};
+
+// all task has `storyline`-type now (10.10.2008)(sea)
+enum ETaskType{
+	eTaskTypeStoryline		= 0,
+	eTaskTypeAdditional,
+	eTaskTypeInsignificant,
+	eTaskTypeCount,
+	eTaskTypeDummy	= u16(-1)
+};
+
+
+constexpr pcstr g_active_task_no_task___internal = "__xr_no_task_-_nullptr__";
+
+// COP_ENGINE_PATCH: COP-ENG-106 - reserved identity for player-created GPS tasks.
+constexpr pcstr g_user_map_task_prefix = "pf_user_gps_";
+constexpr pcstr g_user_map_task_location = "pf_user_gps_task_location";
+extern shared_str g_active_task_id[eTaskTypeCount];
+class CGameTask;
+
+struct SGameTaskKey : public IPureSerializeObject<IReader,IWriter>,public IPureDestroyableObject 
+{
+	shared_str		task_id;
+
+	SGameTaskKey	(const shared_str& t_id):task_id(t_id),game_task(NULL)	{};
+	SGameTaskKey	():task_id(NULL),game_task(NULL)						{};
+
+
+	virtual void 	save								(IWriter &stream);
+	virtual void 	load								(IReader &stream);
+	virtual void 	destroy								();
+
+	IC CGameTask* getGameTask(void) const { return game_task; }
+	void setGameTask(CGameTask* pTask) { game_task = pTask; }
+
+private:
+	CGameTask* game_task;
+};
+
+using vGameTasks = xr_vector<SGameTaskKey>;
+using vGameTasks_it = vGameTasks::iterator;
+
+struct CGameTaskRegistry : public CALifeAbstractRegistry<u16, vGameTasks> 
+{
+	virtual void save(IWriter &stream)
+	{
+		CALifeAbstractRegistry<u16, vGameTasks>::save(stream);
+		for (auto& taskId : g_active_task_id)
+		{
+			// valid taskId should contain task name
+			// or at least g_active_task_no_task___internal
+			if (!taskId.size())
+				taskId = g_active_task_no_task___internal;
+
+			save_data(taskId, stream);
+		}
+	};
+	virtual void load(IReader &stream)
+	{
+		CALifeAbstractRegistry<u16, vGameTasks>::load(stream);
+
+		auto prevPos = stream.tell();
+
+		for (auto& taskId : g_active_task_id)
+		{
+			// valid taskId should contain task name
+			// or at least g_active_task_no_task___internal
+
+			load_data(taskId, stream);
+
+			// if it doesn't fit terms above, then it's not valid
+			// probably save file is old. We can try to
+			// preserve compatibility with just stream rollback.
+			// additionally, if we loaded eTaskTypeAdditional
+			// eTaskTypeInsignificant can be empty and it's normal
+			if (taskId.size() || taskId == g_active_task_id[eTaskTypeInsignificant])
+			{
+				prevPos = stream.tell(); // it's valid, remember new pos
+			}
+			else 
+			{
+				taskId = g_active_task_no_task___internal;
+				stream.seek(prevPos); // rollback
+				break; // there's no point to continue
+			}
+		}
+	};
+};

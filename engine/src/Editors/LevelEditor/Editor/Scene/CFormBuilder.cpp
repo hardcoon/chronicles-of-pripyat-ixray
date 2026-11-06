@@ -1,0 +1,83 @@
+#include "stdafx.h"
+#include "mesh_data.h"
+#include "../../xrPhysics/IPHWorld.h"
+#include "../../xrCore/Collision/xr_area.h"
+
+CFormBuilder::CFormBuilder()
+{
+	m_Box.invalidate();
+}
+
+CFormBuilder::~CFormBuilder()
+{
+}
+
+bool CFormBuilder::build()
+{
+	clear();
+	auto GetBox = [](Fbox& box, const Fvector* verts, u32 cnt)
+	{
+		box.invalidate();
+		for (u32 i = 0; i < cnt; ++i)
+			box.modify(verts[i]);
+	};
+
+	mesh_build_data build_data = {};
+	auto t_it = Scene->FirstTool();
+	auto t_end = Scene->LastTool();
+	for (; t_it != t_end; ++t_it)
+	{
+		ESceneToolBase* mt = t_it->second;
+		if (mt)
+			mt->GetStaticDesc(build_data.l_vert_cnt, build_data.l_face_cnt, false, true);
+
+	}
+	m_Faces.resize(build_data.l_face_cnt);
+	m_Vertex.resize(build_data.l_vert_cnt);
+
+	build_data.l_faces = m_Faces.data();
+	build_data.l_verts = m_Vertex.data();
+
+	t_it = Scene->FirstTool();
+	t_end = Scene->LastTool();
+
+	// Build level CForm
+	Scene->GetTool(OBJCLASS_SCENEOBJECT)->GetStaticCformData(build_data, false);
+	Scene->GetTool(OBJCLASS_TERRAIN)->GetStaticCformData(build_data, false);
+
+	if (build_data.l_face_it == 0)
+	{
+		build_data.l_faces = 0;
+		build_data.l_verts = 0;
+		return false;
+	}
+	m_Faces.resize(build_data.l_face_it);
+	m_Vertex.resize(build_data.l_vert_it);
+	m_Box.invalidate();
+	GetBox(m_Box, build_data.l_verts, build_data.l_vert_it);
+	build_data.l_faces = 0;
+	build_data.l_verts = 0;
+	return true;
+}
+
+bool CFormBuilder::empty() const
+{
+    return m_Faces.empty();
+}
+
+void CFormBuilder::clear()
+{
+	m_Box.invalidate();
+	m_Vertex.clear();
+	m_Faces.clear();
+}
+
+void CFormBuilder::Load(CObjectSpace* To, CDB::build_callback cb)
+{
+	hdrCFORM H = {};
+	H.vertcount = m_Vertex.size();
+	H.facecount = m_Faces.size();
+	H.version = CFORM_CURRENT_VERSION;
+	H.aabb = m_Box;
+	To->Create(m_Vertex.data(),m_Faces.data(), H, cb,nullptr,false);
+}

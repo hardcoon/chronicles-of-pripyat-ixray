@@ -1,0 +1,49 @@
+#pragma once
+
+#include "PhraseDialogDefs.h"
+
+class CInventoryOwner;
+class CAI_PhraseDialogManager;
+
+class CPhraseDialogManager
+{
+public:
+									CPhraseDialogManager			(void);
+	virtual							~CPhraseDialogManager			(void);
+
+	virtual void					InitDialog			(CPhraseDialogManager* dialog_partner, DIALOG_SHARED_PTR& phrase_dialog);
+	virtual void					AddDialog			(DIALOG_SHARED_PTR& phrase_dialog);
+
+	//получение фразы, виртуальная функция, 
+	//должна быть переопределена для сталкеров и актера
+	virtual void					ReceivePhrase		(DIALOG_SHARED_PTR& phrase_dialog);
+	//ответить на сказанную фразу в диалоге
+	virtual void					SayPhrase			(DIALOG_SHARED_PTR& phrase_dialog, const shared_str& phrase_id);
+
+	//виртуальная функция, заполняет массив, тем диалогами, которые
+	//персонаж может инициировать в данный момент
+	virtual void					UpdateAvailableDialogs(CPhraseDialogManager* partner);
+
+	using DIALOG_VECTOR = xr_vector<DIALOG_SHARED_PTR>;
+	using DIALOG_VECTOR_IT = DIALOG_VECTOR::iterator;
+
+	const DIALOG_VECTOR&			AvailableDialogs	() {return m_AvailableDialogs;}
+	const DIALOG_SHARED_PTR&		GetDialogByID		(const shared_str& dialog_id) const;
+	bool							HaveAvailableDialog	(const shared_str& dialog_id) const;
+
+	virtual CPhraseDialogManager* cast_phrase_dialog_manager() { return this; }
+	virtual CInventoryOwner* cast_inventory_owner() { return nullptr; }
+	virtual CAI_PhraseDialogManager* cast_ai_phrase_dialog_manager() { return nullptr; }
+
+protected:
+	virtual bool					AddAvailableDialog	(shared_str dialog_id, CPhraseDialogManager* partner);
+	
+	//буфферный список диалогов, которые были проверены
+	//во время UpdateAvailableDialogs
+	DIALOG_ID_VECTOR				m_CheckedDialogs;
+
+	//список активных диалогов
+	DIALOG_VECTOR					m_ActiveDialogs;
+	//список доступных диалогов
+	DIALOG_VECTOR					m_AvailableDialogs;
+};

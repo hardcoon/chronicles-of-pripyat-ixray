@@ -1,0 +1,317 @@
+#include "StdAfx.h"
+#include "EliteDetector.h"
+#include "player_hud.h"
+#include "../Include/xrRender/UIRender.h"
+#include "../../xrUI/UIXmlInit.h"
+#include "../../xrUI/xrUIXmlParser.h"
+#include "../../xrUI/Widgets/UIStatic.h"
+#include "ui/ArtefactDetectorUI.h"
+
+CEliteDetector::CEliteDetector()
+{
+	m_artefacts.m_af_rank = 3;
+	m_ui_xml_tag = "elite";
+}
+
+void CEliteDetector::Load(LPCSTR section)
+{
+	inherited::Load(section);
+	m_ui_xml_tag = READ_IF_EXISTS(pSettings, r_string, section, "ui_xml_tag", m_ui_xml_tag);
+}
+
+void CEliteDetector::CreateUI()
+{
+	R_ASSERT(nullptr == m_ui);
+
+	m_ui = new CUIArtefactDetectorElite();
+	ui().construct(this);
+}
+
+CUIArtefactDetectorElite& CEliteDetector::ui()
+{
+	return *((CUIArtefactDetectorElite*)m_ui);
+}
+
+void CEliteDetector::UpdateAf()
+{
+	ui().Clear();
+
+	if (m_artefacts.m_ItemInfos.empty())
+	{
+		return;
+	}
+
+	CAfList::ItemsMapIt it_b = m_artefacts.m_ItemInfos.begin();
+	CAfList::ItemsMapIt it_e = m_artefacts.m_ItemInfos.end();
+	CAfList::ItemsMapIt it = it_b;
+
+	Fvector	detector_pos = Position();
+
+	for (; it_b != it_e; ++it_b)
+	{
+		CArtefact* pAf = it_b->first;
+
+		if (pAf->H_Parent())
+		{
+			continue;
+		}
+
+		ui().RegisterItemToDraw(pAf->Position(), "af_sign");
+
+		if (pAf->CanBeInvisible())
+		{
+			float d = detector_pos.distance_to(pAf->Position());
+			if (d < AfVisibleRadius())
+			{
+				pAf->SwitchVisibility(true);
+			}
+		}
+	}
+}
+
+bool CEliteDetector::render_item_3d_ui_query()
+{
+	return IsWorking();
+}
+
+void CEliteDetector::render_item_3d_ui()
+{
+	R_ASSERT(HudItemData());
+	inherited::render_item_3d_ui();
+	ui().Draw();
+	//	Restore cull mode
+	UIRender->CacheSetCullMode(IUIRender::cmCCW);
+}
+
+void fix_ws_wnd_size(CUIWindow* w, float kx)
+{
+	Fvector2 p = w->GetWndSize();
+	p.x /= kx;
+	w->SetWndSize(p);
+
+	p = w->GetWndPos();
+	p.x /= kx;
+	w->SetWndPos(p);
+
+	xrCriticalSectionGuard guard(w->csUi);
+
+	for (auto& child : w->GetChildWndList())
+	{
+		fix_ws_wnd_size(child, kx);
+	}
+}
+
+void CUIArtefactDetectorElite::construct(CEliteDetector* p)
+{
+	m_parent = p;
+	CUIXml uiXml;
+	uiXml.Load(CONFIG_PATH, UI_PATH, "ui_detector_artefact.xml");
+
+	CUIXmlInit xml_init;
+	string512 buff = {};
+	xr_strcpy(buff, p->ui_xml_tag());
+
+	xml_init.InitWindow(uiXml, buff, 0, this);
+
+	m_wrk_area = new CUIWindow();
+
+	xr_sprintf(buff, "%s:wrk_area", p->ui_xml_tag());
+
+	xml_init.InitWindow(uiXml, buff, 0, m_wrk_area);
+	m_wrk_area->SetAutoDelete(true);
+	AttachChild(m_wrk_area);
+
+	xr_sprintf(buff, "%s", p->ui_xml_tag());
+	int num = uiXml.GetNodesNum(buff, 0, "palette");
+	XML_NODE* pStoredRoot = uiXml.GetLocalRoot();
+	uiXml.SetLocalRoot(uiXml.NavigateToNode(buff, 0));
+	for (int idx = 0; idx < num; ++idx)
+	{
+		CUIStatic* S = new CUIStatic();
+		shared_str name = uiXml.ReadAttrib("palette", idx, "id");
+		m_palette[name] = S;
+		xml_init.InitStatic(uiXml, "palette", idx, S);
+		S->SetAutoDelete(true);
+		m_wrk_area->AttachChild(S);
+		S->SetCustomDraw(true);
+	}
+	uiXml.SetLocalRoot(pStoredRoot);
+
+	Fvector _map_attach_p = pSettings->r_fvector3(m_parent->cNameSect(), "ui_p");
+	Fvector _map_attach_r = pSettings->r_fvector3(m_parent->cNameSect(), "ui_r");
+
+	_map_attach_r.mul(PI / 180.f);
+	m_map_attach_offset.setHPB(_map_attach_r.x, _map_attach_r.y, _map_attach_r.z);
+	m_map_attach_offset.translate_over(_map_attach_p);
+}
+
+void CUIArtefactDetectorElite::update()
+{
+	inherited::update();
+	CUIWindow::Update();
+}
+
+void CUIArtefactDetectorElite::Draw()
+{
+	Fmatrix	LM;
+	GetUILocatorMatrix(LM);
+
+	IUIRender::ePointType bk = UI().m_currentPointType;
+
+	UI().m_currentPointType = IUIRender::pttLIT;
+
+	UIRender->CacheSetXformWorld(LM);
+	UIRender->CacheSetCullMode(IUIRender::cmNONE);
+
+	CUIWindow::Draw();
+
+	Fvector2 wrk_sz = m_wrk_area->GetWndSize();
+	Fvector2 rp;
+	m_wrk_area->GetAbsolutePos(rp);
+
+	Fmatrix	M, Mc;
+	float h = 0.0f, p = 0.0f;
+
+	Device.vCameraDirection.getHP(h, p);
+	Mc.setHPB(h, 0.0f, 0.0f);
+	Mc.c.set(Device.vCameraPosition);
+	M.invert(Mc);
+
+	UI().ScreenFrustumLIT().CreateFromRect(Frect().set(rp.x, rp.y, wrk_sz.x, wrk_sz.y));
+
+	for (const auto& item : m_items_to_draw)
+	{
+		Fvector	p_ = item.pos;
+		Fvector	pt3d;
+		M.transform_tiny(pt3d, p_);
+		float kz = wrk_sz.y / m_parent->AfDetectRadius();
+		pt3d.x *= kz;
+		pt3d.z *= kz;
+
+		pt3d.x += wrk_sz.x / 2.0f;
+		pt3d.z -= wrk_sz.y;
+
+		Fvector2 pos;
+		pos.set(pt3d.x, -pt3d.z);
+		pos.sub(rp);
+
+		item.pStatic->SetWndPos(pos);
+		item.pStatic->Draw();
+	}
+
+	UI().m_currentPointType = bk;
+}
+
+void CUIArtefactDetectorElite::GetUILocatorMatrix(Fmatrix& _m)
+{
+	attachable_hud_item* hid = m_parent->HudItemData();
+	IKinematics* kin = hid->m_model;
+
+	Fmatrix	trans = hid->m_item_transform;
+	u16 bid = kin->LL_BoneID("cover");
+	Fmatrix cover_bone = kin->LL_GetTransform(bid);
+	_m.mul(trans, cover_bone);
+	_m.mulB_43(m_map_attach_offset);
+}
+
+void CUIArtefactDetectorElite::Clear()
+{
+	m_items_to_draw.clear();
+}
+
+void CUIArtefactDetectorElite::RegisterItemToDraw(const Fvector& p, const shared_str& palette_idx)
+{
+	xr_map<shared_str, CUIStatic*>::iterator it = m_palette.find(palette_idx);
+	if (it == m_palette.end())
+	{
+		Msg("! RegisterItemToDraw. static not found for [%s]", palette_idx.c_str());
+		return;
+	}
+
+	CUIStatic* S = m_palette[palette_idx];
+	SDrawOneItem itm(S, p);
+	m_items_to_draw.push_back(itm);
+}
+
+CScientificDetector::CScientificDetector()
+{
+	m_artefacts.m_af_rank = 3;
+	m_ui_xml_tag = "scientific";
+}
+
+CScientificDetector::~CScientificDetector()
+{
+	m_zones.destroy();
+}
+
+void  CScientificDetector::Load(LPCSTR section)
+{
+	inherited::Load(section);
+	m_zones.load(section, "zone");
+}
+
+void CScientificDetector::UpdateWork()
+{
+	ui().Clear();
+
+	CAfList::ItemsMapIt ait_b = m_artefacts.m_ItemInfos.begin();
+	CAfList::ItemsMapIt ait_e = m_artefacts.m_ItemInfos.end();
+	CAfList::ItemsMapIt ait = ait_b;
+	Fvector	detector_pos = Position();
+
+	for (; ait_b != ait_e; ++ait_b)
+	{
+		CArtefact* pAf = ait_b->first;
+
+		if (pAf->H_Parent())
+		{
+			continue;
+		}
+
+		ui().RegisterItemToDraw(pAf->Position(), pAf->cNameSect());
+
+		if (pAf->CanBeInvisible())
+		{
+			float d = detector_pos.distance_to(pAf->Position());
+			if (d < AfVisibleRadius())
+			{
+				pAf->SwitchVisibility(true);
+			}
+		}
+	}
+
+	CZoneList::ItemsMapIt zit_b = m_zones.m_ItemInfos.begin();
+	CZoneList::ItemsMapIt zit_e = m_zones.m_ItemInfos.end();
+	CZoneList::ItemsMapIt zit = zit_b;
+
+	for (; zit_b != zit_e; ++zit_b)
+	{
+		CCustomZone* pZone = zit_b->first;
+		ui().RegisterItemToDraw(pZone->Position(), pZone->cNameSect());
+	}
+
+	m_ui->update();
+}
+
+void CScientificDetector::shedule_Update(u32 dt)
+{
+	inherited::shedule_Update(dt);
+
+	if (!H_Parent())
+	{
+		return;
+	}
+
+	Fvector P;
+	P.set(H_Parent()->Position());
+	m_zones.feel_touch_update(P, AfDetectRadius());
+}
+
+void CScientificDetector::OnH_B_Independent(bool just_before_destroy)
+{
+	inherited::OnH_B_Independent(just_before_destroy);
+
+	m_zones.clear();
+}
+
+

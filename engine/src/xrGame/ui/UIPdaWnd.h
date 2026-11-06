@@ -1,0 +1,100 @@
+#pragma once
+
+#include "../../xrUI/Widgets/UIDialogWnd.h"
+#include "../encyclopedia_article_defs.h"
+
+class CInventoryOwner;
+class CUIFrameLineWnd;
+class CUI3tButton;
+class CUITabControl;
+class CUIStatic;
+class CUITextWnd;
+class CUIXml;
+class CUIFrameWindow;
+class UIHint;
+
+class CUITaskWnd;
+class CUIFactionWarWnd;
+class CUIRankingWnd;
+class CUILogsWnd;
+class CUIAnimatedStatic;
+class UIHint;
+class CMapSpot;
+class CUIPdaContactsWnd;
+
+class CUIPdaWnd: public CUIDialogWnd
+{
+	typedef CUIDialogWnd	inherited;
+protected:
+	CUITabControl*			UITabControl;
+	CUI3tButton*			m_btn_close;
+
+	CUIStatic*				UIMainPdaFrame;
+	CUIStatic*				UINoice;
+	
+	CUIStatic*				m_caption;
+	shared_str				m_caption_const;
+	CUIAnimatedStatic*		m_anim_static;
+	CUITextWnd*				m_clock;
+
+	// Текущий активный диалог
+	CUIWindow*				m_pActiveDialog;
+	shared_str				m_sActiveSection;
+
+	UIHint*					m_hint_wnd;
+
+private:
+	bool m_isSetActiveSubdialog = false;
+	const char* m_onSetActiveSubdialog = {};
+
+public:
+	CUITaskWnd*				pUITaskWnd;
+	CUIFactionWarWnd*		pUIFactionWarWnd;
+	CUIRankingWnd*			pUIRankingWnd;
+	CUILogsWnd*				pUILogsWnd;
+	CUIPdaContactsWnd*		UIPdaContactsWnd;
+
+	CMapSpot*				pSelectedMapSpot;
+
+	virtual void			Reset				();
+	virtual CUIWindow* ui_cast_window() { return this; }
+
+public:
+							CUIPdaWnd			();
+	virtual					~CUIPdaWnd			();
+
+	virtual void 			Init				();
+
+	virtual void 			SendMessage			(CUIWindow* pWnd, s16 msg, void* pData = NULL);
+
+	virtual void 			Draw				();
+	virtual void 			Update				();
+	virtual void 			Show				(bool status);
+	virtual bool			OnMouseAction				(float x, float y, EUIMessages mouse_action) {CUIDialogWnd::OnMouseAction(x,y,mouse_action);return true;} //always true because StopAnyMove() == false
+	virtual bool			OnKeyboardAction			(int dik, EUIMessages keyboard_action);
+		
+			UIHint*			get_hint_wnd		() const { return m_hint_wnd; }
+			void			DrawHint			();
+
+			void			SetActiveCaption	();
+			void			SetCaption			(LPCSTR text);
+			void			Show_SecondTaskWnd	(bool status);
+			void			Show_MapLegendWnd	(bool status);
+
+			void 			SetActiveDialog		(CUIWindow* pUI) 	{ m_pActiveDialog = pUI; };
+			CUIWindow*		GetActiveDialog		();
+			LPCSTR			GetActiveSection	()					{return m_sActiveSection.c_str();};
+			CUITabControl*	GetTabControl		()					{return UITabControl;};
+	
+
+			void			SetActiveSubdialog	(const shared_str& section);
+			void			SetActiveSubdialog_script(LPCSTR section)				{ SetActiveSubdialog((const shared_str&)section); };
+	virtual bool			StopAnyMove			(){return false;}
+
+	// COP_ENGINE_PATCH: COP-ENG-153 - focus an existing marker without adding a highlight.
+	bool FocusMapSpot(u16 object_id, LPCSTR spot_type);
+
+			void			UpdatePda			();
+			void			UpdateRankingWnd	();
+			DECLARE_SCRIPT_REGISTER_FUNCTION
+};

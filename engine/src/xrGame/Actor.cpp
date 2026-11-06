@@ -1,0 +1,3158 @@
+#include "StdAfx.h"
+#include "pch_script.h"
+#include "Actor_Flags.h"
+#include "HUDManager.h"
+#ifdef DEBUG
+
+#	include "PHDebug.h"
+#endif // DEBUG
+#include "alife_space.h"
+#include "Hit.h"
+#include "PHDestroyable.h"
+#include "Car.h"
+#include "xrServer_Objects_ALife_Monsters.h"
+#include "cameralook.h"
+#include "CameraFirstEye.h"
+#include "EffectorBobbing.h"
+#include "ActorEffector.h"
+#include "EffectorZoomInertion.h"
+#include "SleepEffector.h"
+#include "character_info.h"
+#include "CustomOutfit.h"
+#include "ActorCondition.h"
+#include "UIGameCustom.h"
+#include "../xrPhysics/matrix_utils.h"
+#include "clsid_game.h"
+#include "game_cl_base_weapon_usage_statistic.h"
+#include "Grenade.h"
+#include "Torch.h"
+#include "../xrScripts/script_callback_ex.h"
+
+// breakpoints
+#include "../xrEngine/xr_input.h"
+//
+#include "Actor.h"
+#include "SleepTimelapse.h"
+#include "SSSGameEffects.h"
+#include "ActorAnimation.h"
+#include "actor_anim_defs.h"
+#include "HudItem.h"
+#include "ai_space.h"
+#include "trade.h"
+#include "Inventory.h"
+//#include "Physics.h"
+#include "Level.h"
+#include "GamePersistent.h"
+#include "game_cl_base.h"
+#include "game_cl_single.h"
+#include "xrMessages.h"
+#include "../xrEngine/string_table.h"
+#include "UsableScriptObject.h"
+#include "../xrCore/Collision/cl_intersect.h"
+//#include "ExtendedGeom.h"
+#include "alife_registry_wrappers.h"
+#include "../Include/xrRender/Kinematics.h"
+#include "Artefact.h"
+#include "CharacterPhysicsSupport.h"
+#include "material_manager.h"
+#include "../xrPhysics/IColisiondamageInfo.h"
+#include "ui/UIMainIngameWnd.h"
+#include "map_manager.h"
+#include "GametaskManager.h"
+#include "actor_memory.h"
+#include "script_game_object.h"
+#include "game_object_space.h"
+#include "InventoryBox.h"
+#include "location_manager.h"
+#include "player_hud.h"
+#include "ai/monsters/basemonster/base_monster.h"
+
+#include "../Include/xrRender/UIRender.h"
+
+#include "ai_object_location.h"
+#include "ui/UIMotionIcon.h"
+#include "ui/UIActorMenu.h"
+#include "ActorHelmet.h"
+#include "ActorBackpack.h"
+#include "ui/UIDragDropReferenceList.h"
+#include "../../xrUI/UIFontDefines.h"
+#include "PickupManager.h"
+#include "../xrEngine/Rain.h"
+#include "script_hit.h"
+#include "../../xrScripts/script_engine.h"
+
+using namespace luabind;
+
+const u32		patch_frames	= 50;
+const float		respawn_delay	= 1.f;
+const float		respawn_auto	= 7.f;
+
+static float IReceived = 0;
+static float ICoincidenced = 0;
+extern float cammera_into_collision_shift ;
+
+string32		ACTOR_DEFS::g_quick_use_slots[4]={0, 0, 0, 0};
+//skeleton
+
+
+
+static Fbox		bbStandBox;
+static Fbox		bbCrouchBox;
+static Fvector	vFootCenter;
+static Fvector	vFootExt;
+
+Flags32			psActorFlags={AF_DISABLE_CONDITION_TEST|AF_AUTOPICKUP|AF_RUN_BACKWARD|AF_IMPORTANT_SAVE|AF_DISPLAY_VOICE_ICON| AF_HIT_SLOWMO };
+
+ENGINE_API extern float		psHUD_FOV;
+ENGINE_API extern bool g_3d_scopes;
+
+
+CActor::CActor() : CEntityAlive(),current_ik_cam_shift(0)
+{
+	LoadCallbackGlobals(m_isBeforeHitCallback, m_onBeforeHitCallback, "OnBeforeHit");
+	game_news_registry		= new CGameNewsRegistryWrapper();
+	// Cameras
+	cameras[eacFirstEye] = new CCameraFirstEye(this, CCameraBase::flKeepPitch);
+	cameras[eacFirstEye]->Load("actor_firsteye_cam");
+
+	cameras[eacLookAt] = new CCameraLook2(this);
+	cameras[eacLookAt]->Load("actor_look_cam_psp");
+
+	cameras[eacFreeLook]	= new CCameraLook					(this);
+	cameras[eacFreeLook]->Load("actor_free_cam");
+	cameras[eacFixedLookAt]	= new CCameraFixedLook				(this);
+	cameras[eacFixedLookAt]->Load("actor_look_cam");
+
+	m_night_vision = new CNightVisionEffector(this);
+
+	cam_active				= eacFirstEye;
+	fPrevCamPos				= 0.0f;
+	vPrevCamDir.set			(0.f,0.f,1.f);
+	fCurAVelocity			= 0.0f;
+	fFPCamYawMagnitude = 0.0f; //--#SM+#--
+	fFPCamPitchMagnitude = 0.0f; //--#SM+#--
+	// эффекторы
+	pCamBobbing				= 0;
+
+
+	r_torso.yaw				= 0;
+	r_torso.pitch			= 0;
+	r_torso.roll			= 0;
+	r_torso_tgt_roll		= 0;
+	r_model_yaw				= 0;
+	r_model_yaw_delta		= 0;
+	r_model_yaw_dest		= 0;
+
+	b_DropActivated			= 0;
+	f_DropPower				= 0.f;
+
+	m_fRunFactor			= 2.f;
+	m_fCrouchFactor			= 0.2f;
+	m_fClimbFactor			= 1.f;
+	m_fCamHeightFactor		= 0.87f;
+
+	m_fFallTime				=	s_fFallTime;
+	m_bAnimTorsoPlayed		=	false;
+
+	m_pPhysicsShell			=	nullptr;
+
+	m_fFeelGrenadeRadius	=	10.0f;
+	m_fFeelGrenadeTime      =	1.0f;
+	
+	m_holder				=	nullptr;
+	m_holderID				=	u16(-1);
+
+
+#ifdef DEBUG
+	Device.seqRender.Add	(this,REG_PRIORITY_LOW);
+#endif
+
+	//разрешить использование пояса в inventory
+	inventory().SetBeltUseful(true);
+
+	m_pPersonWeLookingAt	= nullptr;
+	m_pVehicleWeLookingAt	= nullptr;
+	m_pObjectWeLookingAt	= nullptr;
+	pPickup = new CPickUpManager(this);
+
+	pStatGraph				= nullptr;
+
+	m_pActorEffector		= nullptr;
+
+	SetZoomAimingMode		(false);
+
+	m_sDefaultObjAction		= nullptr;
+
+	m_fSprintFactor			= 4.f;
+
+	//hFriendlyIndicator.create(FVF::F_LIT,RCache.Vertex.Buffer(),RCache.QuadIB);
+
+	m_pUsableObject			= nullptr;
+
+
+	m_anims					= new SActorMotions();
+	m_vehicle_anims			= new SActorVehicleAnims();
+	m_entity_condition		= nullptr;
+	m_iLastHitterID			= u16(-1);
+	m_iLastHittingWeaponID	= u16(-1);
+	m_statistic_manager		= nullptr;
+	//-----------------------------------------------------------------------------------
+	m_memory				= new CActorMemory(this);
+	m_bOutBorder			= false;
+	m_hit_probability		= 1.f;
+	m_feel_touch_characters = 0;
+	//-----------------------------------------------------------------------------------
+	m_dwILastUpdateTime		= 0;
+
+	m_location_manager		= new CLocationManager(this);
+	m_block_sprint_counter	= 0;
+
+	m_disabled_hitmarks		= false;
+	m_inventory_disabled	= false;
+	m_pda_disabled			= false;
+
+	m_hud_animator			= new CHudAnimatorManager(this);
+
+	// Alex ADD: for smooth crouch
+	CurrentHeight = -1.f;
+	bBlockSprint = false;
+
+	string_path rainOnHelmet = {};
+	FS.update_path(rainOnHelmet, "$game_sounds$", R"(ambient\rain_on_helmet.ogg)");
+	if (FS.exist(rainOnHelmet))
+	{
+		m_rainOnHelmetSnd.create(R"(ambient\rain_on_helmet)", st_Effect, sg_Undefined);
+	}
+
+	const static float fovFactor = EngineExternal().GetSprintFovFactor();
+	m_SprintFovFactor = fovFactor;
+}
+
+CActor::~CActor()
+{
+    ResetSSSRainSounds();
+    ResetSSSGrassEvents();
+	xr_delete				(m_location_manager);
+	xr_delete				(m_memory);
+	xr_delete				(game_news_registry);
+#ifdef DEBUG
+	Device.seqRender.Remove(this);
+#endif
+	//xr_delete(Weapons);
+	for (int i=0; i<eacMaxCam; ++i) xr_delete(cameras[i]);
+
+	m_HeavyBreathSnd.destroy();
+	m_BloodSnd.destroy		();
+	m_DangerSnd.destroy		();
+
+	xr_delete				(m_pActorEffector);
+
+	xr_delete				(m_pPhysics_support);
+
+	xr_delete				(m_anims);
+	xr_delete				(pPickup);
+	xr_delete				(m_vehicle_anims);
+	xr_delete				(m_night_vision);
+	xr_delete				(m_hud_animator);
+	m_rainOnHelmetSnd.destroy();
+}
+
+void CActor::reinit	()
+{
+	character_physics_support()->movement()->CreateCharacter		();
+	character_physics_support()->movement()->SetPhysicsRefObject	(this);
+	CEntityAlive::reinit						();
+	CInventoryOwner::reinit						();
+
+	character_physics_support()->in_Init		();
+	material().reinit							();
+
+	m_pUsableObject								= nullptr;
+	if (!g_dedicated_server)
+		memory().reinit							();
+	
+	set_input_external_handler					(0);
+	m_time_lock_accel							= 0;
+}
+
+void CActor::reload	(LPCSTR section)
+{
+	CEntityAlive::reload		(section);
+	CInventoryOwner::reload		(section);
+	material().reload			(section);
+	CStepManager::reload		(section);
+	if (!g_dedicated_server)
+		memory().reload			(section);
+	m_location_manager->reload	(section);
+}
+void set_box(LPCSTR section, CPHMovementControl &mc, u32 box_num )
+{
+	Fbox	bb;Fvector	vBOX_center,vBOX_size;
+	// m_PhysicMovementControl: BOX
+	string64 buff, buff1;
+	xr_strconcat(buff, "ph_box",_itoa( box_num, buff1, 10 ),"_center" );
+	vBOX_center= pSettings->r_fvector3	(section, buff	);
+	xr_strconcat(buff, "ph_box",_itoa( box_num, buff1, 10 ),"_size" );
+	vBOX_size	= pSettings->r_fvector3	(section, buff);
+	vBOX_size.y += cammera_into_collision_shift/2.f;
+	bb.set	(vBOX_center,vBOX_center); bb.grow(vBOX_size);
+	mc.SetBox		(box_num,bb);
+}
+
+xr_vector<xr_string> CActor::GetKnowedPortions() const
+{
+	static xr_vector<xr_string> SafeVector;
+	SafeVector.clear();
+
+	auto KnownInfos = m_known_info_registry->registry().objects_ptr();
+
+	if (KnownInfos == nullptr) {
+		return {};
+	}
+
+	for (const shared_str& Info : *KnownInfos)
+	{
+		SafeVector.push_back(Info.c_str());
+	}
+
+	return SafeVector;
+}
+
+void CActor::GiveInfoPortion(const char* infoPortion) {
+	this->TransferInfo(infoPortion, true);
+}
+
+void CActor::DisableInfoPortion(const char* infoPortion) {
+	this->TransferInfo(infoPortion, false);
+}
+
+void CActor::SetActorPosition(Fvector pos)
+{
+	CHolderCustom* holder = Holder();
+	if (CCar* car = holder != nullptr ? holder->cast_car() : nullptr)
+	{
+		car->DoExit();
+	}
+
+	Fmatrix F = XFORM();
+	F.c = pos;
+	ForceTransform(F);
+}
+
+void CActor::SetActorDirection(float dir)
+{
+	this->cam_Active()->Set(dir, 0.0f, 0.0f);
+}
+
+void CActor::Load	(LPCSTR section )
+{
+	// Msg						("Loading actor: %s",section);
+	inherited::Load				(section);
+	material().Load				(section);
+	CInventoryOwner::Load		(section);
+	m_location_manager->Load	(section);
+
+	if (IsGameTypeSingle())
+		OnDifficultyChanged		();
+	//////////////////////////////////////////////////////////////////////////
+	
+	SpatialComponent->spatial.type	|=	STYPE_VISIBLEFORAI;
+	SpatialComponent->spatial.type	&= ~STYPE_REACTTOSOUND;
+	
+	//////////////////////////////////////////////////////////////////////////
+
+	// m_PhysicMovementControl: General
+	//m_PhysicMovementControl->SetParent		(this);
+
+
+	/*
+	Fbox	bb;Fvector	vBOX_center,vBOX_size;
+	// m_PhysicMovementControl: BOX
+	vBOX_center= pSettings->r_fvector3	(section,"ph_box2_center"	);
+	vBOX_size	= pSettings->r_fvector3	(section,"ph_box2_size"		);
+	bb.set	(vBOX_center,vBOX_center); bb.grow(vBOX_size);
+	character_physics_support()->movement()->SetBox		(2,bb);
+
+	// m_PhysicMovementControl: BOX
+	vBOX_center= pSettings->r_fvector3	(section,"ph_box1_center"	);
+	vBOX_size	= pSettings->r_fvector3	(section,"ph_box1_size"		);
+	bb.set	(vBOX_center,vBOX_center); bb.grow(vBOX_size);
+	character_physics_support()->movement()->SetBox		(1,bb);
+
+	// m_PhysicMovementControl: BOX
+	vBOX_center= pSettings->r_fvector3	(section,"ph_box0_center"	);
+	vBOX_size	= pSettings->r_fvector3	(section,"ph_box0_size"		);
+	bb.set	(vBOX_center,vBOX_center); bb.grow(vBOX_size);
+	character_physics_support()->movement()->SetBox		(0,bb);
+	*/
+	
+
+
+	
+	
+	
+	
+	//// m_PhysicMovementControl: Foots
+	//Fvector	vFOOT_center= pSettings->r_fvector3	(section,"ph_foot_center"	);
+	//Fvector	vFOOT_size	= pSettings->r_fvector3	(section,"ph_foot_size"		);
+	//bb.set	(vFOOT_center,vFOOT_center); bb.grow(vFOOT_size);
+	////m_PhysicMovementControl->SetFoots	(vFOOT_center,vFOOT_size);
+
+	// m_PhysicMovementControl: Crash speed and mass
+	float	cs_min		= pSettings->r_float	(section,"ph_crash_speed_min"	);
+	float	cs_max		= pSettings->r_float	(section,"ph_crash_speed_max"	);
+	float	mass		= pSettings->r_float	(section,"ph_mass"				);
+	character_physics_support()->movement()->SetCrashSpeeds	(cs_min,cs_max);
+	character_physics_support()->movement()->SetMass		(mass);
+	if(pSettings->line_exist(section,"stalker_restrictor_radius"))
+		character_physics_support()->movement()->SetActorRestrictorRadius(rtStalker,pSettings->r_float(section,"stalker_restrictor_radius"));
+	if(pSettings->line_exist(section,"stalker_small_restrictor_radius"))
+		character_physics_support()->movement()->SetActorRestrictorRadius(rtStalkerSmall,pSettings->r_float(section,"stalker_small_restrictor_radius"));
+	if(pSettings->line_exist(section,"medium_monster_restrictor_radius"))
+		character_physics_support()->movement()->SetActorRestrictorRadius(rtMonsterMedium,pSettings->r_float(section,"medium_monster_restrictor_radius"));
+	character_physics_support()->movement()->Load(section);
+
+	set_box( section, *character_physics_support()->movement(), 2 );
+	set_box( section, *character_physics_support()->movement(), 1 );
+	set_box( section, *character_physics_support()->movement(), 0 );
+
+	m_fWalkAccel				= pSettings->r_float(section,"walk_accel");	
+	m_fJumpSpeed				= pSettings->r_float(section,"jump_speed");
+	m_fRunFactor				= pSettings->r_float(section,"run_coef");
+	m_fRunBackFactor			= pSettings->r_float(section,"run_back_coef");
+	m_fWalkBackFactor			= pSettings->r_float(section,"walk_back_coef");
+	m_fCrouchFactor				= pSettings->r_float(section,"crouch_coef");
+	m_fClimbFactor				= pSettings->r_float(section,"climb_coef");
+	m_fSprintFactor				= pSettings->r_float(section,"sprint_koef");
+
+	m_fWalk_StrafeFactor		= READ_IF_EXISTS(pSettings, r_float, section, "walk_strafe_coef", 1.0f);
+	m_fRun_StrafeFactor			= READ_IF_EXISTS(pSettings, r_float, section, "run_strafe_coef", 1.0f);
+
+
+	m_fCamHeightFactor			= pSettings->r_float(section,"camera_height_factor");
+	character_physics_support()->movement()->SetJumpUpVelocity(m_fJumpSpeed);
+	float AirControlParam		= pSettings->r_float(section,"air_control_param"	);
+	character_physics_support()->movement()->SetAirControlParam(AirControlParam);
+
+	pPickup->SetPickupRadius(pSettings->r_float(section,"pickup_info_radius"));
+
+	m_fFeelGrenadeRadius		= pSettings->r_float(section,"feel_grenade_radius");
+	m_fFeelGrenadeTime			= pSettings->r_float(section,"feel_grenade_time");
+	m_fFeelGrenadeTime			*= 1000.0f;
+	
+	character_physics_support()->in_Load		(section);
+	
+
+if(!g_dedicated_server)
+{
+	LPCSTR hit_snd_sect = pSettings->r_string(section,"hit_sounds");
+	for(int hit_type=0; hit_type<(int)ALife::eHitTypeMax; ++hit_type)
+	{
+		LPCSTR hit_name = ALife::g_cafHitType2String((ALife::EHitType)hit_type);
+		LPCSTR hit_snds = READ_IF_EXISTS(pSettings, r_string, hit_snd_sect, hit_name, "");
+		int cnt = _GetItemCount(hit_snds);
+		string128		tmp;
+		if (hit_type != (int)ALife::eHitTypeLightBurn)
+			VERIFY			(cnt!=0);
+		for(int i=0; i<cnt;++i)
+		{
+			sndHit[hit_type].push_back		(ref_sound());
+			sndHit[hit_type].back().create	(_GetItem(hit_snds,i,tmp),st_Effect,sg_SourceType);
+		}
+		char buf[256];
+
+		::Sound->create		(sndDie[0],			xr_strconcat(buf,*cName(),"\\die0"), st_Effect,SOUND_TYPE_MONSTER_DYING);
+		::Sound->create		(sndDie[1],			xr_strconcat(buf,*cName(),"\\die1"), st_Effect,SOUND_TYPE_MONSTER_DYING);
+		::Sound->create		(sndDie[2],			xr_strconcat(buf,*cName(),"\\die2"), st_Effect,SOUND_TYPE_MONSTER_DYING);
+		::Sound->create		(sndDie[3],			xr_strconcat(buf,*cName(),"\\die3"), st_Effect,SOUND_TYPE_MONSTER_DYING);
+
+		m_HeavyBreathSnd.create	(pSettings->r_string(section,"heavy_breath_snd"), st_Effect,SOUND_TYPE_MONSTER_INJURING);
+		m_BloodSnd.create		(pSettings->r_string(section,"heavy_blood_snd"), st_Effect,SOUND_TYPE_MONSTER_INJURING);
+		m_DangerSnd.create		(pSettings->r_string(section,"heavy_danger_snd"), st_Effect,SOUND_TYPE_MONSTER_INJURING);
+	}
+}
+
+	cam_Set(eacFirstEye);
+
+	// sheduler
+	shedule.t_min				= shedule.t_max = 1;
+
+	// настройки дисперсии стрельбы
+	m_fDispBase					= pSettings->r_float		(section,"disp_base"		 );
+	m_fDispBase					= deg2rad(m_fDispBase);
+
+	m_fDispAim					= pSettings->r_float		(section,"disp_aim"		 );
+	m_fDispAim					= deg2rad(m_fDispAim);
+
+	m_fDispVelFactor			= pSettings->r_float		(section,"disp_vel_factor"	 );
+	m_fDispAccelFactor			= pSettings->r_float		(section,"disp_accel_factor" );
+	m_fDispCrouchFactor			= pSettings->r_float		(section,"disp_crouch_factor");
+	m_fDispCrouchNoAccelFactor	= pSettings->r_float		(section,"disp_crouch_no_acc_factor");
+
+	LPCSTR							default_outfit = READ_IF_EXISTS(pSettings,r_string,section,"default_outfit",0);
+	SetDefaultVisualOutfit			(default_outfit);
+
+	invincibility_fire_shield_1st	= READ_IF_EXISTS(pSettings,r_string,section,"Invincibility_Shield_1st",0);
+	invincibility_fire_shield_3rd	= READ_IF_EXISTS(pSettings,r_string,section,"Invincibility_Shield_3rd",0);
+//-----------------------------------------
+	m_AutoPickUp_AABB				= READ_IF_EXISTS(pSettings,r_fvector3,section,"AutoPickUp_AABB",Fvector().set(0.02f, 0.02f, 0.02f));
+	m_AutoPickUp_AABB_Offset		= READ_IF_EXISTS(pSettings,r_fvector3,section,"AutoPickUp_AABB_offs",Fvector().set(0, 0, 0));
+
+	m_sCharacterUseAction			= "character_use";
+	m_sDeadCharacterUseAction		= "dead_character_use";
+	m_sDeadCharacterUseOrDragAction	= "dead_character_use_or_drag";
+	m_sDeadCharacterDontUseAction	= "dead_character_dont_use";
+	m_sCarTrunk						= "car_trunk_use";
+	m_sCarUse						= "car_use";
+	m_sCarCharacterUseAction		= "car_character_use";
+	m_sInventoryItemUseAction		= "inventory_item_use";
+	m_sInventoryBoxUseAction		= "inventory_box_use";
+	//---------------------------------------------------------------------
+	m_sHeadShotParticle	= READ_IF_EXISTS(pSettings,r_string,section,"HeadShotParticle",0);
+	m_fLegs_shift = READ_IF_EXISTS(pSettings, r_float, "actor_hud", "legs_shift_delta", -0.55f);
+
+	m_fActorCameraLanding2Time = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing2_time", 0.5f);
+	m_fActorCameraLandingTime = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing_time", 0.5f);
+	m_fActorCameraSpeedPow = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_speed_pow", 1.0f);
+	m_fDefaultActorCameraSpeed = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "default_actor_camera_speed", 10.0f);
+	m_fActorCameraLandingOffset = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing_offset", 0.0f);
+	m_fActorCameraLandingSpeedFactor = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing_speed_factor", 1.0f);
+	m_fActorCameraLandingSpeedPowFactor = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing_speed_pow_factor", 1.0f);
+	m_fActorCameraLanding2Offset = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing2_offset", 0.0f);
+	m_fActorCameraLanding2SpeedFactor = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing2_speed_factor", 1.0f);
+	m_fActorCameraLanding2SpeedPowFactor = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_landing2_speed_pow_factor", 1.0f);
+	m_fActorCameraFinishLandingSpeedFactor = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_finish_landing_speed_factor", 1.0f);
+	m_fActorCameraFinishLandingSpeedPowFactor = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_finish_landing_speed_pow_factor", 1.0f);
+	m_fActorCameraFinishLandingTime = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "actor_camera_finish_landing_time", 0.5f);
+
+	m_fLookOutSpeed = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "lookout_speed", 6.0f);
+	m_fLookOutAmplK = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "lookout_ampl_k", 1.0f);
+	m_fLookOutSpeedAmplDXPow = READ_IF_EXISTS(pSettings, r_float, "gunslinger_base", "lookout_ampl_dx_pow", 1.0f);
+
+	if (pGameGlobals->line_exist("night_vision", "night_vision_animator"))
+	{
+		LPCSTR nvg_animator = pGameGlobals->r_string("night_vision", "night_vision_animator");
+		if (pSettings->section_exist(nvg_animator))
+		{
+			m_sNVGAnimator = nvg_animator;
+		}
+	}
+
+	if (pGameGlobals->line_exist("headlamp", "headlamp_animator"))
+	{
+		LPCSTR headlamp_animator = pGameGlobals->r_string("headlamp", "headlamp_animator");
+		if (pSettings->section_exist(headlamp_animator))
+		{
+			m_sHeadlampAnimator = headlamp_animator;
+		}
+	}
+
+	if (pGameGlobals->line_exist("glass_mask", "clearmask_animator"))
+	{
+		LPCSTR clearmask_animator = pGameGlobals->r_string("glass_mask", "clearmask_animator");
+		if (pSettings->section_exist(clearmask_animator))
+		{
+			m_sClearMaskAnimator = clearmask_animator;
+		}
+	}
+
+	if (pGameGlobals->line_exist("quick_kick", "quick_kick_animator"))
+	{
+		LPCSTR quick_kick_animator = pGameGlobals->r_string("quick_kick", "quick_kick_animator");
+		if (pSettings->section_exist(quick_kick_animator))
+		{
+			m_sQuickKickAnimator = quick_kick_animator;
+		}
+	}
+
+	if (pGameGlobals->line_exist("mutant_kicks", "burer_kick_animator"))
+	{
+		LPCSTR burer_kick_animator = pGameGlobals->r_string("mutant_kicks", "burer_kick_animator");
+		if (pSettings->section_exist(burer_kick_animator))
+		{
+			m_sBurerKickAnimator = burer_kick_animator;
+		}
+	}
+
+	if (pGameGlobals->line_exist("mutant_kicks", "front_kick_animator"))
+	{
+		LPCSTR front_kick_animator = pGameGlobals->r_string("mutant_kicks", "front_kick_animator");
+		if (pSettings->section_exist(front_kick_animator))
+		{
+			m_sFrontKickAnimator = front_kick_animator;
+		}
+	}
+
+	if (pGameGlobals->line_exist("mutant_kicks", "back_kick_animator"))
+	{
+		LPCSTR back_kick_animator = pGameGlobals->r_string("mutant_kicks", "back_kick_animator");
+		if (pSettings->section_exist(back_kick_animator))
+		{
+			m_sBackKickAnimator = back_kick_animator;
+		}
+	}
+}
+
+void CActor::PHHit(SHit &H)
+{
+	m_pPhysics_support->in_Hit( H, false );
+}
+
+struct playing_pred
+{
+	IC	bool	operator()			(ref_sound &s)
+	{
+		return	(nullptr != s._feedback() );
+	}
+};
+
+void	CActor::Hit(SHit* pHDS)
+{
+    // COP_ENGINE_PATCH: COP-ENG-185 - stop accelerated simulation before incoming damage.
+    if (this == Actor() && pHDS->power > 0.f && cop_sleep::active()) cop_sleep::clear();
+	bool b_initiated = pHDS->aim_bullet; // physics strike by poltergeist
+
+	pHDS->aim_bullet = false;
+
+	SHit& HDS	= *pHDS;
+	if( HDS.hit_type<ALife::eHitTypeBurn || HDS.hit_type >= ALife::eHitTypeMax )
+	{
+		string256	err;
+		xr_sprintf		(err, "Unknown/unregistered hit type [%d]", HDS.hit_type);
+		R_ASSERT2	(0, err );
+	
+	}
+#ifdef DEBUG
+	if(ph_dbg_draw_mask.test(phDbgCharacterControl)) {
+		DBG_OpenCashedDraw();
+		Fvector to;to.add(Position(),Fvector().mul(HDS.dir,HDS.phys_impulse()));
+		DBG_DrawLine(Position(), to, color_xrgb(124, 124, 0));
+		DBG_ClosedCashedDraw(500);
+	}
+#endif // DEBUG
+
+	bool bPlaySound = true;
+	if (!g_Alive()) bPlaySound = false;
+
+	if (!IsGameTypeSingle() && !g_dedicated_server)
+	{
+		game_PlayerState* ps = Game().GetPlayerByGameID(ID());
+		if (ps && ps->testFlag(GAME_PLAYER_FLAG_INVINCIBLE))
+		{
+			bPlaySound = false;
+			if (Device.dwFrame != last_hit_frame &&
+				HDS.bone() != BI_NONE)
+			{		
+				// вычислить позицию и направленность партикла
+				Fmatrix pos; 
+
+				CParticlesPlayer::MakeXFORM(this,HDS.bone(),HDS.dir,HDS.p_in_bone_space,pos);
+
+				// установить particles
+				xr_shared_ptr<CParticlesObject> ps_ = nullptr;
+#if 0
+				if (eacFirstEye == cam_active && this == Level().CurrentEntity())
+					ps_ = Particles::Details::Create(invincibility_fire_shield_1st,TRUE);
+				else
+					ps_ = Particles::Details::Create(invincibility_fire_shield_3rd,TRUE);
+#endif 
+				if (ps_ != nullptr)
+				{
+					ps_->UpdateParent(pos, Fvector().set(0.f, 0.f, 0.f));
+					GamePersistent().ps_needtoplay.push_back(ps_);
+				}
+				
+			};
+		};
+		 
+
+		last_hit_frame = Device.dwFrame;
+	};
+
+	if(	!g_dedicated_server				&& 
+		!sndHit[HDS.hit_type].empty()	&&
+		conditions().PlayHitSound(pHDS)	)
+	{
+		ref_sound& S			= sndHit[HDS.hit_type][Random.randI((u32)sndHit[HDS.hit_type].size())];
+		bool b_snd_hit_playing	= sndHit[HDS.hit_type].end() != std::find_if(sndHit[HDS.hit_type].begin(), sndHit[HDS.hit_type].end(), playing_pred());
+
+		if(ALife::eHitTypeExplosion == HDS.hit_type)
+		{
+			if (this == Level().CurrentControlEntity())
+			{
+				S.set_volume(10.0f);
+				if(!m_sndShockEffector){
+					m_sndShockEffector = new SndShockEffector();
+					m_sndShockEffector->Start(this, float(S.get_length_sec()*1000.0f), HDS.damage() );
+				}
+			}
+			else
+				bPlaySound = false;
+		}
+		if (bPlaySound && !b_snd_hit_playing) 
+		{
+			Fvector point		= Position();
+			point.y				+= CameraHeight();
+			S.play_at_pos		(this, point);
+		}
+	}
+
+	
+	//slow actor, only when he gets hit
+	m_hit_slowmo = conditions().HitSlowmo(pHDS);
+
+#if 0
+	if (g_pGamePersistent->GameType() == eGameIDFreeMP)
+	{
+		IsWaunded = conditions().GetHealth() < 0.5f;
+
+		if (IsWaunded)
+		{
+			cam_Set(eacFreeLook);
+
+			if (IKinematicsAnimated* K = Visual()->dcast_PKinematicsAnimated())
+			{
+				K->PlayCycle("waunded_1_idle_0");
+			}
+		}
+	}
+#endif
+
+	//---------------------------------------------------------------
+	if(		(Level().CurrentViewEntity()==this) && 
+			!g_dedicated_server && 
+			(HDS.hit_type == ALife::eHitTypeFireWound) )
+	{
+		CObject* pLastHitter			= Level().Objects.net_Find(m_iLastHitterID);
+		CObject* pLastHittingWeapon		= Level().Objects.net_Find(m_iLastHittingWeaponID);
+		HitSector						(pLastHitter, pLastHittingWeapon);
+	}
+
+	if( (mstate_real&mcSprint) && Level().CurrentControlEntity() == this && conditions().DisableSprint(pHDS) && psActorFlags.test(AF_HIT_SLOWMO))
+	{
+		bool const is_special_burn_hit_2_self	=	(pHDS->who == this) && (pHDS->boneID == BI_NONE) && 
+													((pHDS->hit_type==ALife::eHitTypeBurn)||(pHDS->hit_type==ALife::eHitTypeLightBurn));
+		if ( !is_special_burn_hit_2_self )
+		{
+			mstate_wishful	&=~mcSprint;
+		}
+	}
+	if(!g_dedicated_server && !m_disabled_hitmarks)
+	{
+		bool b_fireWound = (pHDS->hit_type==ALife::eHitTypeFireWound || pHDS->hit_type==ALife::eHitTypeWound_2);
+		b_initiated		 = b_initiated && (pHDS->hit_type==ALife::eHitTypeStrike);
+	
+		if(b_fireWound || b_initiated)
+			HitMark			(HDS.damage(), HDS.dir, HDS.who, HDS.bone(), HDS.p_in_bone_space, HDS.impulse, HDS.hit_type);
+	}
+
+	if (IsGameTypeSingle())
+	{
+		if (GodMode())
+		{
+			HDS.power = 0.0f;
+			inherited::Hit(&HDS);
+			return;
+		}
+		else
+		{
+			float hit_power = HitArtefactsOnBelt(HDS.damage(), HDS.hit_type);
+			HDS.power = hit_power;
+			HDS.add_wound = true;
+			if (m_isBeforeHitCallback)
+			{
+				if (g_Alive())
+				{
+
+					CScriptHit tLuaHit;
+
+					tLuaHit.m_fPower = HDS.power;
+					tLuaHit.m_fImpulse = HDS.impulse;
+					tLuaHit.m_tDirection = HDS.direction();
+					tLuaHit.m_tHitType = HDS.hit_type;
+					tLuaHit.m_tpDraftsman = HDS.who != nullptr ? HDS.who->cast_game_object()->lua_game_object() : nullptr;
+
+					luabind::functor<bool>	funct;
+					R_ASSERT2(ai().script_engine().functor(m_onBeforeHitCallback, funct), "failed to get OnBeforeHitCallback functor");
+					if (!funct(lua_game_object()->cast_GameObject(), &tLuaHit, HDS.boneID))
+						return;
+					
+					HDS.power = tLuaHit.m_fPower;
+					HDS.impulse = tLuaHit.m_fImpulse;
+					HDS.dir = tLuaHit.m_tDirection;
+					HDS.hit_type = (ALife::EHitType)(tLuaHit.m_tHitType);
+				}
+			}
+
+			/* AVO: send script callback*/
+			callback(GameObject::eHit)(lua_game_object(), HDS.damage(), HDS.direction(), HDS.who != nullptr ? HDS.who->cast_game_object()->lua_game_object() : nullptr, HDS.boneID);
+
+			HitArtefactsCondition(HDS);
+			inherited::Hit(&HDS);
+		}
+	}
+	else
+	{
+		m_bWasBackStabbed			= false;
+		if (HDS.hit_type == ALife::eHitTypeWound_2 && Check_for_BackStab_Bone(HDS.bone()))
+		{
+			// convert impulse into local coordinate system
+			Fmatrix					mInvXForm;
+			mInvXForm.invert		(XFORM());
+			Fvector					vLocalDir;
+			mInvXForm.transform_dir	(vLocalDir,HDS.dir);
+			vLocalDir.invert		();
+
+			Fvector a				= {0,0,1};
+			float res				= a.dotproduct(vLocalDir);
+			if (res < -0.707)
+			{
+				game_PlayerState* ps = Game().GetPlayerByGameID(ID());
+				
+				if (!ps || !ps->testFlag(GAME_PLAYER_FLAG_INVINCIBLE))						
+					m_bWasBackStabbed = true;
+			}
+		};
+		
+		float hit_power				= 0.0f;
+
+		if (m_bWasBackStabbed) 
+			hit_power				= (HDS.damage() == 0) ? 0 : 100000.0f;
+		else 
+			hit_power				= HitArtefactsOnBelt(HDS.damage(), HDS.hit_type);
+
+		HDS.power					= hit_power;
+		HDS.add_wound				= true;
+		inherited::Hit				(&HDS);
+
+		if(OnServer() && !g_Alive() && HDS.hit_type==ALife::eHitTypeExplosion)
+		{
+			game_PlayerState* ps							= Game().GetPlayerByGameID(ID());
+			Game().m_WeaponUsageStatistic->OnExplosionKill	(ps, HDS);
+		}
+	}
+}
+
+void CActor::HitMark	(float P, 
+						 Fvector dir,			
+						 CObject* who_object, 
+						 s16 element, 
+						 Fvector position_in_bone_space, 
+						 float impulse,  
+						 ALife::EHitType hit_type_)
+{
+	// hit marker
+	if ( /*(hit_type==ALife::eHitTypeFireWound||hit_type==ALife::eHitTypeWound_2) && */
+			g_Alive() && Local() && (Level().CurrentEntity()==this) )	
+	{
+		HUD().HitMarked				(0, P, dir);
+
+		CEffectorCam* ce			= Cameras().GetCamEffector((ECamEffectorType)effFireHit);
+		if( ce )					return;
+
+		int id						= -1;
+		Fvector						cam_pos,cam_dir,cam_norm;
+		cam_Active()->Get			(cam_pos,cam_dir,cam_norm);
+		cam_dir.normalize_safe		();
+		dir.normalize_safe			();
+
+		float ang_diff				= angle_difference	(cam_dir.getH(), dir.getH());
+		Fvector						cp;
+		cp.crossproduct				(cam_dir,dir);
+		bool bUp					=(cp.y>0.0f);
+
+		Fvector cross;
+		cross.crossproduct			(cam_dir, dir);
+		VERIFY						(ang_diff>=0.0f && ang_diff<=PI);
+
+		float _s1 = PI_DIV_8;
+		float _s2 = _s1 + PI_DIV_4;
+		float _s3 = _s2 + PI_DIV_4;
+		float _s4 = _s3 + PI_DIV_4;
+
+		if ( ang_diff <= _s1 )
+		{
+			id = 2;
+		}
+		else if ( ang_diff > _s1 && ang_diff <= _s2 )
+		{
+			id = (bUp)?5:7;
+		}
+		else if ( ang_diff > _s2 && ang_diff <= _s3 )
+		{
+			id = (bUp)?3:1;
+		}
+		else if ( ang_diff > _s3 && ang_diff <= _s4 )
+		{
+			id = (bUp)?4:6;
+		}
+		else if( ang_diff > _s4 )
+		{
+			id = 0;
+		}
+		else
+		{
+			VERIFY(0);
+		}
+
+		string64 sect_name;
+		xr_sprintf( sect_name, "effector_fire_hit_%d", id );
+		AddEffector( this, effFireHit, sect_name, P * 0.001f );
+
+	}
+}
+
+void CActor::FootStepCallback(float power, bool b_play, bool b_on_ground, bool b_hud_view)
+{
+	static bool EnableStepWallmarks = EngineExternal()[EEngineExternalGame::EnableActorStepWallmarks];
+	if (EnableStepWallmarks)
+	{
+		u16 mtl_idx = Actor()->material().last_material_idx();
+		if (mtl_idx != GAMEMTL_NONE_IDX)
+		{
+			static CWalmarkManager m_wallmark_r;
+			static CWalmarkManager m_wallmark_l;
+			static bool inited = false;
+			static bool left_step = false;
+			
+			static shared_str RightSect = EngineExternal().WallmarkRight().c_str();
+			static shared_str LeftSect = EngineExternal().WallmarkLeft().c_str();
+			if (!inited)
+			{
+				m_wallmark_r.m_owner = this;
+				m_wallmark_l.m_owner = this;
+				m_wallmark_r.Load(RightSect.c_str());
+				m_wallmark_l.Load(LeftSect.c_str());
+				inited = true;
+			}
+
+			auto GetBonePos = [this](shared_str bone_name)
+			{
+				u16 bone_id = PKinematics(Visual())->LL_BoneID(bone_name);
+
+				Fmatrix matrix;
+				matrix.mul_43(XFORM(), PKinematics(Visual())->LL_GetBoneInstance(bone_id).mTransform);
+				return (matrix.c);
+			};
+
+			const SGameMtl* mtl = GMLib.GetMaterialByIdx(mtl_idx);
+			static auto MaterialsList = EngineExternal().StepWallmarksMaterials();
+			for (const shared_str& MaterialName : MaterialsList)
+			{
+				if (MaterialName == mtl->m_Name)
+				{
+					if (left_step)
+					{
+						m_wallmark_r.PlaceWallmarks(GetBonePos("bip01_r_toe0"), RightSect);
+						left_step = false;
+					}
+					else
+					{
+						m_wallmark_l.PlaceWallmarks(GetBonePos("bip01_l_toe0"), LeftSect);
+						left_step = true;
+					}
+					
+					break;
+				}
+			}
+		}
+	}
+
+	CGameObject::FootStepCallback(power, b_play, b_on_ground, b_hud_view);
+}
+
+void CActor::HitSignal(float perc, Fvector& vLocalDir, CObject* who, s16 element)
+{
+	if (g_Alive()) 
+	{
+
+		// check damage bone
+		Fvector D;
+		XFORM().transform_dir(D,vLocalDir);
+
+		float	yaw, pitch;
+		D.getHP(yaw,pitch);
+		IRenderVisual* pV = Visual();
+		IKinematicsAnimated* tpKinematics = pV->dcast_PKinematicsAnimated();
+		IKinematics* pK = PKinematics(pV);
+		VERIFY(tpKinematics);
+#pragma todo("Dima to Dima : forward-back bone impulse direction has been determined incorrectly!")
+		MotionID motion_ID = m_anims->m_normal.m_damage[iFloor(pK->LL_GetBoneInstance(element).get_param(1) + (angle_difference(r_model_yaw + r_model_yaw_delta,yaw) <= PI_DIV_2 ? 0 : 1))];
+		float power_factor = perc/100.f; clamp(power_factor,0.f,1.f);
+		VERIFY(motion_ID.valid());
+		tpKinematics->PlayFX(motion_ID,power_factor);
+	}
+}
+void start_tutorial(LPCSTR name);
+void CActor::Die	(CObject* who)
+{
+#ifdef DEBUG
+	Msg("--- Actor [%s] dies !", this->Name());
+#endif // #ifdef DEBUG
+	inherited::Die		(who);
+
+	if (OnServer())
+	{	
+		u16 I = inventory().FirstSlot();
+		u16 E = inventory().LastSlot();
+
+		for (; I <= E; ++I)
+		{
+			PIItem item_in_slot = inventory().ItemFromSlot(I);
+			if (I == inventory().GetActiveSlot()) 
+			{
+				if (item_in_slot != nullptr)
+				{
+					if (IsGameTypeSingle())
+					{
+						if (CGrenade* grenade = item_in_slot->cast_grenade())
+						{
+							grenade->DropGrenade();
+						}
+						else
+						{
+							item_in_slot->SetDropManual(TRUE);
+						}
+					}
+					else
+					{
+						//This logic we do on a server site
+						/*
+						if ((*I).m_pIItem->object().CLS_ID != CLSID_OBJECT_W_KNIFE)
+						{
+							(*I).m_pIItem->SetDropManual(TRUE);
+						}*/							
+					}
+				};
+			continue;
+			}
+			else
+			{
+				CCustomOutfit *pOutfit = item_in_slot ? item_in_slot->cast_outfit() : nullptr;
+				if (pOutfit)
+				{
+					continue;
+				}
+			};
+			if (item_in_slot) 
+			{
+				inventory().Ruck(item_in_slot);
+			}
+		};
+
+
+		///!!! чистка пояса
+		TIItemContainer &l_blist = inventory().m_belt;
+		while (!l_blist.empty())	
+			inventory().Ruck(l_blist.front());
+
+		if (!IsGameTypeSingle())
+		{
+			//if we are on server and actor has PDA - destroy PDA
+			for (PIItem item : inventory().m_ruck)
+			{
+				if (GameID() & eGameIDArtefactHunt)
+				{
+					if (CArtefact* pArtefact = item->cast_artefact())
+					{
+						item->SetDropManual(TRUE);
+						continue;
+					};
+				};
+
+				if (item->object().CLS_ID == CLSID_OBJECT_PLAYERS_BAG)
+				{
+					item->SetDropManual(TRUE);
+					continue;
+				};
+			};
+		};
+	};
+
+	if(!g_dedicated_server)
+	{
+		::Sound->play_at_pos	(sndDie[Random.randI(SND_DIE_COUNT)],this,Position());
+
+		m_HeavyBreathSnd.stop	();
+		m_BloodSnd.stop			();		
+		m_DangerSnd.stop		();		
+	}
+
+	if (HudAnimator()->IsActive())
+	{
+		HudAnimator()->StopAnimator();
+	}
+
+	if	(IsGameTypeSingle())
+	{
+		cam_Set				(eacFreeLook);
+		CurrentGameUI()->HideShownDialogs();
+		start_tutorial		("game_over");
+	} else
+	{
+		cam_Set				(eacFixedLookAt);
+	}
+	
+	mstate_wishful	&=		~mcAnyMove;
+	mstate_real		&=		~mcAnyMove;
+
+	xr_delete				(m_sndShockEffector);
+}
+
+void	CActor::SwitchOutBorder(bool new_border_state)
+{
+	if(new_border_state)
+	{
+		callback(GameObject::eExitLevelBorder)(lua_game_object());
+	}
+	else 
+	{
+//.		Msg("enter level border");
+		callback(GameObject::eEnterLevelBorder)(lua_game_object());
+	}
+	m_bOutBorder=new_border_state;
+}
+
+void CActor::g_Physics			(Fvector& _accel, float jump, float dt)
+{
+	// Correct accel
+	Fvector		accel;
+	accel.set					(_accel);
+	m_hit_slowmo				-=	dt;
+	if(m_hit_slowmo<0)			m_hit_slowmo = 0.f;
+
+	accel.mul					(1.f-m_hit_slowmo);
+
+	if(g_Alive())
+	{
+		if(mstate_real&mcClimb&&!cameras[eacFirstEye]->bClampYaw)
+				accel.set(0.f,0.f,0.f);
+
+		Fvector Pos = Position();
+		Fvector PosTo = Position();
+
+		// Позиция до начала расчёта физики
+		character_physics_support()->movement()->GetPosition(Pos);
+
+		// Позиция после расчёта физики
+		character_physics_support()->movement()->Calculate(accel, cameras[cam_active]->vDirection, 0, jump, dt, false);
+		character_physics_support()->movement()->GetPosition(PosTo);
+
+		if (!IsGameTypeSingle())
+		{
+			// Проверка на телепортацию актёра
+			if (IsFocused() && PosTo.distance_to_sqr(Pos) > 16.0f)
+			{
+				character_physics_support()->movement()->SetPosition(Pos);
+			}
+		}
+
+		bool new_border_state=character_physics_support()->movement()->isOutBorder();
+		if(m_bOutBorder!=new_border_state && Level().CurrentControlEntity() == this)
+		{
+			SwitchOutBorder(new_border_state);
+		}
+#ifndef MASTER_GOLD
+		if (psActorFlags.test(AF_NO_CLIP))
+		{
+			character_physics_support()->movement()->SetNonInteractive(true);
+			character_physics_support()->movement()->SetVelocity(Fvector().set(0.f,0.f,0.f));
+			mstate_wishful = mcNoMove;
+			mstate_real = mcNoMove;
+		}
+		else if(character_physics_support()->movement()->bNonInteractiveMode)
+				character_physics_support()->movement()->SetNonInteractive(false);
+		else
+			character_physics_support()->movement()->GetPosition		(Position());
+#else //DEBUG
+		character_physics_support()->movement()->GetPosition		(Position());
+#endif //DEBUG
+		character_physics_support()->movement()->bSleep				=false;
+	}
+
+	if (Local() && g_Alive())
+	{
+		if (!fis_zero(character_physics_support()->movement()->gcontact_HealthLost))	
+		{
+			VERIFY( character_physics_support() );
+			VERIFY( character_physics_support()->movement() );
+			ICollisionDamageInfo* di=character_physics_support()->movement()->CollisionDamageInfo();
+			VERIFY( di );
+			bool b_hit_initiated =  di->GetAndResetInitiated();
+			Fvector hdir;di->HitDir(hdir);
+			SetHitInfo(this, nullptr, 0, Fvector().set(0, 0, 0), hdir);
+			//				Hit	(m_PhysicMovementControl->gcontact_HealthLost,hdir,di->DamageInitiator(),m_PhysicMovementControl->ContactBone(),di->HitPos(),0.f,ALife::eHitTypeStrike);//s16(6 + 2*::Random.randI(0,2))
+			if (Level().CurrentControlEntity() == this)
+			{
+				
+				SHit HDS = SHit(character_physics_support()->movement()->gcontact_HealthLost,
+//.								0.0f,
+								hdir,
+								di->DamageInitiator(),
+								character_physics_support()->movement()->ContactBone(),
+								di->HitPos(),
+								0.f,
+								di->HitType(),
+								0.0f, 
+								b_hit_initiated);
+//				Hit(&HDS);
+
+				NET_Packet	l_P;
+				HDS.GenHeader(GE_HIT, ID());
+				HDS.whoID = di->DamageInitiator()->ID();
+				HDS.weaponID = di->DamageInitiator()->ID();
+				HDS.Write_Packet(l_P);
+
+				u_EventSend	(l_P);
+			}
+		}
+	}
+}
+
+float g_base_fov = 67.5f;
+float g_fov = g_base_fov;
+
+float CActor::currentFOV()
+{
+	if (IsTalking()) 
+	{
+		return g_fov;
+	}
+
+	const float SprintFov = m_SprintFovFactor * fSprintFactor;
+	g_fov = g_base_fov + SprintFov;
+
+	if (!psHUD_Flags.is(HUD_WEAPON | HUD_WEAPON_RT | HUD_WEAPON_RT2))
+	{
+		return g_fov;
+	}
+	
+	CWeapon* pWeapon = inventory().ActiveItem() ? inventory().ActiveItem()->cast_weapon() : nullptr;
+
+	if (eacFreeLook != cam_active && pWeapon && pWeapon->IsZoomed() && (!pWeapon->ZoomTexture() || (!pWeapon->IsRotatingToZoom() && pWeapon->ZoomTexture())))
+	{
+		static const bool isAltFovCalc = EngineExternal()[EEngineExternalGame::EnableAlternateZoomFovCalc];
+		if (isAltFovCalc)
+		{
+			float fov = (g_fov / 2.f) * PI / 180.f;
+			return (2.f * atan(tan(fov) / pWeapon->GetZoomFactor()) * 180.f / PI);
+		}
+		else
+		{
+			return pWeapon->GetZoomFactor() * (0.75f) + SprintFov;
+		}
+	}
+	else
+	{
+		return g_fov;
+	}
+}
+
+float	NET_Jump = 0;
+static bool bLook_cam_fp_zoom = false;
+extern ENGINE_API int m_look_cam_fp_zoom;
+u16 old_slot = 0;
+bool need_restore_detector = false;
+
+void CActor::PlayRainOnHelmetSound()
+{
+	const float factor = g_pGamePersistent->Environment().CurrentEnv->rain_density;
+	if (factor < EPS_L)
+	{
+		m_rainOnHelmetSnd.stop();
+		return;
+	}
+
+	if (!m_rainOnHelmetSnd._handle())
+	{
+		return;
+	}
+
+	float distance = 5.f;
+	constexpr Fvector direction(0, 1, 0);
+	const Fvector position = Device.vCameraPosition;
+
+	if (g_pGamePersistent->Environment().eff_Rain->RayPick(position, direction, distance, collide::rqtBoth))
+	{
+		m_rainOnHelmetSnd.stop();
+		return;
+	}
+
+	if (factor > EPS_L && g_Alive())
+	{
+		const float* hemiCube = g_pGamePersistent->Environment().eff_Rain->Rain_ROS ? g_pGamePersistent->Environment().eff_Rain->Rain_ROS->get_luminocity_hemi_cube() : renderable_ROS()->get_luminocity_hemi_cube();
+		float hemiValue = std::max(hemiCube[0], hemiCube[1]);
+		hemiValue = std::max(hemiValue, hemiCube[2]);
+		hemiValue = std::max(hemiValue, hemiCube[3]);
+		hemiValue = std::max(hemiValue, hemiCube[5]);
+
+		if (m_rainOnHelmetSnd._feedback())
+		{
+			m_rainOnHelmetSnd.set_volume(hemiValue <= 0.3f ? 0.0f : 1.0f);
+		}
+		else
+		{
+			m_rainOnHelmetSnd.play(nullptr, sm_Looped | sm_2D);
+			m_rainOnHelmetSnd.set_position(Fvector().set(0, 0, 0));
+			m_rainOnHelmetSnd.set_volume(0.f);
+		}
+	}
+	else
+	{
+		m_rainOnHelmetSnd.stop();
+	}
+}
+
+#include "ClimableObject.h"
+
+bool hovering_checker(CActor* who)
+{
+	for (u32 I = 0; I < Level().Objects.o_count(); I++)
+	{
+		if (!who)
+			continue;
+
+		CObject* _O = Level().Objects.o_get_by_iterator(I);
+
+		if (!_O)
+			continue;
+
+		CClimableObject* climable = smart_cast<CClimableObject*>	(_O);
+
+		if (!climable)
+			continue;
+
+		Fvector ladder_up;
+		climable->UpperPoint(ladder_up);
+
+		if (ladder_up.distance_to(who->Position()) < 3.f)
+			return false;
+	}
+
+	Fvector Vel_y = who->character_physics_support()->movement()->GetVelocity();
+	float abs_ = _abs(Vel_y.x) + _abs(Vel_y.z);
+
+	if (who && Vel_y.y > 0.1f && abs_ < 0.1f && !(who->mstate_real & mcClimb))
+	{
+		Fvector point0, point1, point2, point3;
+		Fvector tmp0, tmp1, tmp2, tmp3;
+		collide::rq_result RQ, RQ0, RQ1, RQ2, RQ3;
+
+		Fbox box;
+		box.set(who->character_physics_support()->movement()->Box());
+		box.scale(-.1f);
+
+		box.getpoint(0, point0);
+		who->XFORM().transform(tmp0, Fvector(point0));
+		Level().ObjectSpace.RayPick(tmp0, Fvector().set(0.f, -1.f, 0.f), 1000.f, collide::rqtBoth, RQ0, who);
+
+		box.getpoint(1, point1);
+		who->XFORM().transform(tmp1, Fvector(point1));
+		Level().ObjectSpace.RayPick(tmp1, Fvector().set(0.f, -1.f, 0.f), 1000.f, collide::rqtBoth, RQ1, who);
+
+		box.getpoint(2, point2);
+		who->XFORM().transform(tmp2, Fvector(point2));
+		Level().ObjectSpace.RayPick(tmp2, Fvector().set(0.f, -1.f, 0.f), 1000.f, collide::rqtBoth, RQ2, who);
+
+		box.getpoint(3, point3);
+		who->XFORM().transform(tmp3, Fvector(point3));
+		Level().ObjectSpace.RayPick(tmp3, Fvector().set(0.f, -1.f, 0.f), 1000.f, collide::rqtBoth, RQ3, who);
+
+		Level().ObjectSpace.RayPick(who->Position(), Fvector().set(0.f, -1.f, 0.f), 1000.f, collide::rqtBoth, RQ, who);
+
+		const float JumpHeight = 1.6f;
+
+		return RQ0.range >= JumpHeight && RQ1.range >= JumpHeight && RQ2.range >= JumpHeight && RQ3.range >= JumpHeight && RQ.range >= JumpHeight;
+	}
+
+	return false;
+}
+
+void CActor::UpdateLensFOV(CWeapon* wpn, float value)
+{
+	if (wpn == nullptr)
+	{
+		return;
+	}
+
+	if (!g_3d_scopes)
+	{
+		if (wpn->GetAimFactor() > 0.999f && !wpn->IsGrenadeMode() && wpn->IsLensedScopeInstalled()/* && !IsAlterZoomMode()*/)
+		{
+			value = wpn->GetLensFOV();
+		}
+	}
+
+	Cameras().SetCameraFov(value);
+}
+
+#include "game_sv_mp.h"
+void CActor::UpdateCL()
+{
+	PROF_EVENT("CActor UpdateCL");
+
+	if (g_dedicated_server && g_Alive())
+	{
+		CheckFlyhack();
+	}
+
+	PIItem active_item = inventory().ActiveItem();
+	CHudItem* item = active_item != nullptr ? active_item->cast_hud_item() : nullptr;
+
+	u32 ct = Device.dwTimeGlobal;
+	u32 dt = 0;
+	if (_last_update_time != 0)
+	{
+		dt = Device.GetTimeDeltaSafe(_last_update_time, ct);
+	}
+
+	_last_update_time = ct;
+	clamp(dt, 0u, 1000u);
+
+	UpdateElectronicsProblemsCnt(dt);
+	g_player_hud->UpdateWeaponOffset(dt);
+	ProcessKeys(item);
+
+	if (_jitter_time_remains > dt)
+	{
+		_jitter_time_remains = _jitter_time_remains - dt;
+	}
+	else
+	{
+		_jitter_time_remains = 0;
+	}
+
+	CCustomDevice* dev = GetDevice();
+
+	if (!g_player_hud->m_need_reload && !HudAnimator()->IsActive())
+	{
+	
+		if (item != nullptr || dev != nullptr)
+		{
+			if (dev != nullptr)
+			{
+				need_restore_detector = true;
+				if (dev->GetState() == CHUDState::eIdle)
+				{
+					dev->HideDetector(true, true);
+				}
+			}
+	
+			if (item != nullptr)
+			{
+				if (old_slot == 0)
+				{
+					old_slot = inventory().GetActiveSlot();
+				}
+	
+				if (item->GetState() == CHUDState::eIdle)
+				{
+					inventory().Activate(0);
+				}
+			}
+		}
+		else if (g_player_hud->attached_item(0) == nullptr && g_player_hud->attached_item(1) == nullptr)
+		{
+			g_player_hud->m_need_reload = true;
+			if (g_player_hud->NextHUDSect.size() > 0)
+			{
+				g_player_hud->load(g_player_hud->NextHUDSect);
+				g_player_hud->NextHUDSect = 0;
+			}
+			else
+			{
+				g_player_hud->load_default();
+			}
+	
+			u16 saved_old_slot = NO_ACTIVE_SLOT;
+	
+			if (old_slot > 0 && inventory().ItemFromSlot(old_slot) != nullptr)
+			{
+				saved_old_slot = inventory().ItemFromSlot(old_slot)->BaseSlot();
+				inventory().Activate(old_slot);
+				old_slot = 0;
+			}
+
+			bool bres = (saved_old_slot == NO_ACTIVE_SLOT || saved_old_slot == INV_SLOT_2 || saved_old_slot == KNIFE_SLOT || saved_old_slot == BOLT_SLOT);
+
+			if (bres && need_restore_detector && GetDevice(true) != nullptr)
+			{
+				need_restore_detector = false;
+				GetDevice(true)->switch_device();
+			}
+	
+		}
+	}
+
+	if(g_Alive() && Level().CurrentViewEntity() == this)
+	{
+		if(CurrentGameUI() && nullptr==CurrentGameUI()->TopInputReceiver())
+		{
+			int dik = get_action_dik(kUSE, 0);
+			if(dik && pInput->iGetAsyncKeyState(dik))
+				pPickup->SetPickupMode(true);
+			
+			dik = get_action_dik(kUSE, 1);
+			if(dik && pInput->iGetAsyncKeyState(dik))
+				pPickup->SetPickupMode(true);
+		}
+	}
+
+	UpdateInventoryOwner(Device.dwTimeDelta);
+
+	if (m_feel_touch_characters > 0)
+	{
+		for (CObject* object : feel_touch)
+		{
+			CPhysicsShellHolder* sh = object->cast_physics_shell_holder();
+			if (sh != nullptr && sh->character_physics_support())
+			{
+				sh->character_physics_support()->movement()->UpdateObjectBox(character_physics_support()->movement()->PHCharacter());
+			}
+		}
+	}
+
+	float current_fov = currentFOV();
+
+	if (g_Alive() && m_holder == nullptr)
+	{
+		UpdatePlayerView();
+	}
+
+	m_snd_noise -= 0.3f*Device.fTimeDelta;
+
+	inherited::UpdateCL();
+	// COP_ENGINE_PATCH: COP-ENG-095
+	ProcessAccessibilitySoundEvents();
+	m_pPhysics_support->in_UpdateCL();
+
+
+	if (g_Alive())
+		PickupModeUpdate();
+
+	PickupModeUpdate_COD();
+
+	SetZoomAimingMode		(false);
+	CWeapon* pWeapon = item != nullptr ? item->cast_weapon() : nullptr;
+	CMissile* pMissile = item != nullptr ? item->cast_missile() : nullptr;
+
+	cam_Update(float(Device.dwTimeDelta)/1000.0f, current_fov);
+
+	if (Level().CurrentEntity() && this->ID() == Level().CurrentEntity()->ID())
+	{
+		psHUD_Flags.set(HUD_CROSSHAIR_RT2, true);
+		psHUD_Flags.set(HUD_DRAW_RT, true);
+	}
+
+	if (HudAnimator())
+	{
+		HudAnimator()->Update();
+	}
+
+	Device.hudViewportData.IsElectronicsProblemsDecreasing = IsElectronicsProblemsDecreasing();
+	Device.hudViewportData.CurrentElectronicsProblemsCnt = CurrentElectronicsProblemsCnt();
+	Device.hudViewportData.TargetElectronicsProblemsCnt = TargetElectronicsProblemsCnt();
+
+	Device.hudViewportData.ActorHealth = GetfHealth();
+	Device.hudViewportData.ActorOutfitCondition = GetOutfit() != nullptr ? GetOutfit()->GetCondition() : -1.0f;
+
+	const static bool isDelayedWeaponActions = EngineExternal()[EEngineExternalGame::EnableDelayedWeaponActions];
+
+	bBlockSprint = isDelayedWeaponActions && m_iKeyFlags != 0 || pWeapon != nullptr && pWeapon->NeedBlockSprint() || dev != nullptr && dev->NeedBlockSprint() || pMissile != nullptr && pMissile->NeedBlockSprint();
+
+	if (pWeapon)
+	{
+
+		if(pWeapon->IsZoomed())
+		{
+			float full_fire_disp = pWeapon->GetFireDispersion(true);
+
+			if (CEffectorZoomInertion* S = smart_cast<CEffectorZoomInertion*>(Cameras().GetCamEffector(eCEZoom)))
+			{
+				S->SetParams(full_fire_disp);
+			}
+
+			SetZoomAimingMode		(true);
+			// Force switch to first-person for zooming
+			if (m_look_cam_fp_zoom == 1 && !bLook_cam_fp_zoom && cam_active == eacLookAt) {
+				cam_Set(eacFirstEye);
+				bLook_cam_fp_zoom = true;
+			}
+		}
+		else {
+			// Switch back to third-person if was forced
+			if (bLook_cam_fp_zoom && cam_active == eacFirstEye) {
+				cam_Set(eacLookAt);
+				bLook_cam_fp_zoom = false;
+			}
+		}
+
+		if(Level().CurrentEntity() && this->ID()==Level().CurrentEntity()->ID() )
+		{
+			float fire_disp_full = pWeapon->GetFireDispersion(true, true);
+			m_fdisp_controller.SetDispertion(fire_disp_full);
+			
+			fire_disp_full = m_fdisp_controller.GetCurrentDispertion();
+
+			HUD().SetCrosshairDisp(fire_disp_full, 0.02f);
+			HUD().ShowCrosshair(pWeapon->use_crosshair() && !psHUD_Flags.test(HUD_CROSSHAIR_POINT));
+#ifdef DEBUG
+			HUD().SetFirstBulletCrosshairDisp(pWeapon->GetFirstBulletDisp());
+#endif
+			
+			BOOL B = ! ((mstate_real & mcLookout) && !IsGameTypeSingleCompatible());
+
+			psHUD_Flags.set( HUD_WEAPON_RT, B );
+			B = B && pWeapon->show_crosshair();
+
+			psHUD_Flags.set( HUD_CROSSHAIR_RT2, B );
+			psHUD_Flags.set( HUD_DRAW_RT,		pWeapon->show_indicators() );
+			Device.hudViewportData.renderZoomFactor = pWeapon->GetZoomFactor();
+			Device.hudViewportData.renderZoomRotateFactor = pWeapon->GetAimFactor();
+			Device.hudViewportData.isRenderActive = pWeapon->IsScopeAttached() && (pWeapon->GetAimFactor() > 0.0f) && (pWeapon->GetZoomFactor() > 0.0f);
+			Device.hudViewportData.ActorWeaponCondition = pWeapon->GetCondition();
+			Device.hudViewportData.ActorWeaponLoading = 1.0f;
+			Device.hudViewportData.renderScopeBrightnessValue = pWeapon->m_lens_night_brightness.cur_value;
+			Device.hudViewportData.renderScopeBrightnessJitterValue = pWeapon->m_lens_night_brightness.jitter;
+		}
+	}
+	else
+	{
+		if(Level().CurrentEntity() && this->ID()==Level().CurrentEntity()->ID() )
+		{
+			HUD().SetCrosshairDisp(0.f);
+			HUD().ShowCrosshair(false);
+
+			Device.hudViewportData.renderZoomFactor = 1.0f;
+			Device.hudViewportData.renderZoomRotateFactor = 0.0f;
+			Device.hudViewportData.isRenderActive = false;
+			Device.hudViewportData.ActorWeaponCondition = -1.0f;
+			Device.hudViewportData.ActorWeaponLoading = 1.0f;
+			Device.hudViewportData.renderScopeBrightnessValue = 0.0f;
+			Device.hudViewportData.renderScopeBrightnessJitterValue = 0.0f;
+
+			// Switch back to third-person if was forced
+			if (bLook_cam_fp_zoom && cam_active == eacFirstEye) {
+				cam_Set(eacLookAt);
+				bLook_cam_fp_zoom = false;
+			}
+		}
+	}
+	CHelmet* pHelmet = GetHelmet();
+	CCustomOutfit* pOutfit = GetOutfit();
+	bool shouldPlayHelmetSound = pHelmet != nullptr || (pOutfit != nullptr && !pOutfit->bIsHelmetAvaliable);
+
+	if (shouldPlayHelmetSound)
+	{
+		PlayRainOnHelmetSound();
+	}
+	else
+	{
+		m_rainOnHelmetSnd.stop();
+	}
+
+	UpdateDefferedMessages();
+	UpdateConditionArtefacts();
+
+	if (g_Alive()) 
+		CStepManager::update(this==Level().CurrentViewEntity());
+
+	SpatialComponent->spatial.type |=STYPE_REACTTOSOUND;
+
+	if(m_sndShockEffector)
+	{
+		if (this == Level().CurrentViewEntity())
+		{
+			m_sndShockEffector->Update();
+
+			if(!m_sndShockEffector->InWork() || !g_Alive())
+				xr_delete(m_sndShockEffector);
+		}
+		else
+			xr_delete(m_sndShockEffector);
+	}
+	Fmatrix							trans;
+	Cameras().hud_camera_Matrix(trans);
+
+	if(IsFocused())
+		g_player_hud->update			(trans);
+
+	pPickup->SetPickupMode(false);
+
+
+	if (mstate_real & mcSprint)
+		fSprintFactor += Device.fTimeDelta / 0.5f;
+	else
+		fSprintFactor -= Device.fTimeDelta / 0.1f;
+	clamp(fSprintFactor, 0.0f, 1.0f);
+}
+
+void CActor::UpdatePlayerHud()
+{
+	if (IsFocused())
+	{
+		CInventoryItem* pInvItem = inventory().ActiveItem();
+		if (pInvItem)
+		{
+			CHudItem* pHudItem = smart_cast<CHudItem*>(pInvItem);
+			if (pHudItem)
+			{
+				if (pHudItem->IsHidden())
+				{
+					g_player_hud->detach_item(pHudItem);
+				}
+				else
+				{
+					g_player_hud->attach_item(pHudItem);
+				}
+			}
+		}
+		else
+		{
+			g_player_hud->detach_item_idx(0);
+		}
+	}
+}
+
+void CActor::CheckFlyhack()
+{
+	if ((mstate_real & (mcFall)) && !(mstate_real & (mcJump | mcLanding | mcLanding2)))
+	{
+		mstate_real &= ~mcFall;
+		mstate_wishful &= ~mcFall;
+	}
+
+	Fvector Vel_ = character_physics_support()->movement()->GetVelocity();
+	float Vel_xz_abs = _abs(Vel_.x) + _abs(Vel_.z);
+
+	game_PlayerState* ps = Game().GetPlayerByGameID(ID());
+
+	if (ps && (Vel_.y >= 15 || Vel_xz_abs >= 50 || hovering_checker(this)))
+	{
+		game_sv_mp* sv_game = smart_cast<game_sv_mp*>(Level().Server->game);
+
+		if (sv_game)
+		{
+			xrClientData* l_pC = (xrClientData*)sv_game->get_client(ps->GameID);
+
+			if (l_pC)
+			{
+				collide::rq_result RQ;
+				Fvector result, dir;
+				dir = Fvector().set(0, -1, 0);
+				result = XFORM().c;
+
+				if (Level().ObjectSpace.RayPick(result, dir, 1000.f, collide::rqtBoth, RQ, this))
+				{
+					if (RQ.range > .05f)
+					{
+						result.add(Fvector(dir).mul(RQ.range));
+
+						NET_Packet	P;
+						sv_game->u_EventGen(P, GE_MOVE_ACTOR, ps->GameID);
+						P.w_vec3(result);
+						P.w_vec3(Fvector().set(-r_torso.pitch, r_model_yaw, 0));
+						Level().Server->SendTo(l_pC->ID, P, net_flags(TRUE, TRUE));
+
+						NET_Packet Pa;
+						Pa.w_begin(M_GAMEMESSAGE);
+						Pa.w_u32(GAME_EVENT_SERVER_STRING_MESSAGE);
+						Pa.w_stringZ("Warning: Ошибка передвижения, возможно плохое соединение с сервером.");
+						Level().Server->SendTo(l_pC->ID, Pa, net_flags(TRUE, TRUE));
+
+						Msg("%s Warning: Ошибка передвижения, возможно плохое соединение с сервером.", Name());
+					}
+				}
+			}
+		}
+	}
+}
+
+void CActor::UpdatePlayerView()
+{
+	//если в режиме HUD, то сама модель актера не рисуется
+	BOOL has_visible = 1;
+	BOOL has_shadow_only = 0;
+	if (character_physics_support()->IsRemoved())
+		has_visible = 0;
+	if (HUDview())
+	{
+		has_visible = 0;
+		has_shadow_only = psGameFlags.test(rsActorShadow) && Render->get_generation() != IRender_interface::GENERATION_R1;
+	}
+	else if (IsGameTypeSingle())
+	{
+		Fvector cent;
+		Center(cent);
+		CWeapon* pWeapon = inventory().ActiveItem() ? inventory().ActiveItem()->cast_weapon() : nullptr;
+		CCameraLook* pCam = smart_cast<CCameraLook*>(cam_Active());
+		has_visible = pCam && pCam->GetDist() >= 0.43f && (!pWeapon || !pWeapon->render_item_ui_query());
+		has_shadow_only = psGameFlags.test(rsActorShadow) && Render->get_generation() != IRender_interface::GENERATION_R1;
+	}
+
+	if (m_pActorEffector != nullptr && m_pActorEffector->AbsolutePositioning())
+	{
+		has_shadow_only = false;
+	}
+
+	setVisible(has_visible, has_shadow_only);
+
+	float dt = Device.fTimeDelta;
+
+	// Check controls, create accel, prelimitary setup "mstate_real"
+	//----------- for E3 -----------------------------
+	if (Level().CurrentControlEntity() == this && !Level().IsDemoPlay())
+		//------------------------------------------------
+	{
+		g_cl_CheckControls(mstate_wishful, NET_SavedAccel, NET_Jump, dt);
+		g_cl_Orientate(mstate_real, dt);
+		g_Orientate(mstate_real, dt);
+
+		g_Physics(NET_SavedAccel, NET_Jump, dt);
+
+		g_cl_ValidateMState(dt, mstate_wishful);
+		g_SetAnimation(mstate_real);
+
+		// Check for game-contacts
+		Fvector C;
+		Center(C);
+		float R = Radius();
+
+		feel_touch_update(C, R);
+		Feel_Grenade_Update(m_fFeelGrenadeRadius);
+
+		// Dropping
+		if (b_DropActivated) 
+		{
+			f_DropPower += dt * 0.1f;
+			clamp(f_DropPower, 0.f, 1.f);
+		}
+		else 
+		{
+			f_DropPower = 0.f;
+		}
+		if (!Level().IsDemoPlay())
+		{
+			mstate_wishful &= ~mcAccel;
+			mstate_wishful &= ~mcLStrafe;
+			mstate_wishful &= ~mcRStrafe;
+			mstate_wishful &= ~mcLLookout;
+			mstate_wishful &= ~mcRLookout;
+			mstate_wishful &= ~mcFwd;
+			mstate_wishful &= ~mcBack;
+			if (!psActorFlags.test(AF_CROUCH_TOGGLE))
+				mstate_wishful &= ~mcCrouch;
+		}
+	}
+	else
+	{
+		make_Interpolation();
+
+		if (NET.size())
+		{
+			g_sv_Orientate(mstate_real, dt);
+			g_Orientate(mstate_real, dt);
+			g_Physics(NET_SavedAccel, NET_Jump, dt);
+			if (!m_bInInterpolation)
+				g_cl_ValidateMState(dt, mstate_wishful);
+			g_SetAnimation(mstate_real);
+
+			set_state_box(NET_Last.mstate);
+
+
+		}
+		mstate_old = mstate_real;
+	}
+
+	NET_Jump = 0;
+
+	if (this == Level().CurrentViewEntity())
+	{
+		UpdateMotionIcon(mstate_real);
+	};
+}
+void CActor::UpdateConditionArtefacts()
+{
+	static u32 _tmr = 0;
+
+	if (_tmr && Device.dwTimeGlobal < _tmr)
+		return;
+
+	_tmr = Device.dwTimeGlobal + 2000;
+
+	for (PIItem item : inventory().m_belt)
+	{
+		CArtefact* artefact = item->cast_artefact();
+		if (artefact && artefact->DegradationRate())
+		{
+			float cond_loss = 0.0f;
+			float val = 0.0f;
+
+			if (conditions().GetHealth() < 1.0f)
+			{
+				val = artefact->m_fHealthRestoreSpeed;
+				if (val > 0.0f)
+					cond_loss += val * 0.2f;
+			}
+
+			if (conditions().GetRadiation() > 0.0f)
+			{
+				val = artefact->m_fRadiationRestoreSpeed;
+				if (val < 0.0f)
+					cond_loss += abs(val) * 0.2f;
+			}
+
+			if (conditions().GetSatiety() < 1.0f)
+			{
+				val = artefact->m_fSatietyRestoreSpeed;
+				if (val > 0.0f)
+					cond_loss += val * 0.2f;
+			}
+
+			if (conditions().GetThirst() < 1.0f)
+			{
+				val = artefact->m_fThirstRestoreSpeed;
+				if (val > 0.0f)
+					cond_loss += val * 0.2f;
+			}
+
+			if (conditions().GetPower() < 1.0f)
+			{
+				val = artefact->m_fPowerRestoreSpeed;
+				if (val > 0.0f)
+					cond_loss += val * 0.2f;
+			}
+
+			if (conditions().BleedingSpeed() > 0.0f)
+			{
+				val = artefact->m_fBleedingRestoreSpeed;
+				if (val > 0.0f)
+					cond_loss += val * 0.2f;
+			}
+
+			val = artefact->AdditionalInventoryWeight();
+			if (val > 0.0f)
+			{
+				float diff = inventory().TotalWeight() - conditions().MaxWalkWeight() - (GetOutfit() ? GetOutfit()->m_additional_weight2 : 0.0f) - (GetBackpack() ? GetBackpack()->m_additional_weight2 : 0.0f);
+				if (diff > 0.0f)
+					cond_loss += ((diff * 0.0001f) / val);
+			}
+
+			if (cond_loss > 0.0f)
+			{
+				val = artefact->GetCondition() - (cond_loss * artefact->DegradationRate());
+				val -= artefact->GetCondition();
+				artefact->ChangeCondition(val);
+			}
+		}
+	}
+}
+
+xr_map<shared_str, float> imm_mul =
+{
+	{"light_burn_immunity", 1.2f},
+	{"burn_immunity", 1.2f},
+	{"strike_immunity", 1.2f},
+	{"shock_immunity", 1.2f},
+	{"wound_immunity", 1.2f},
+	{"radiation_immunity", 1.2f},
+	{"telepatic_immunity", 1.2f},
+	{"chemical_burn_immunity", 1.2f},
+	{"explosion_immunity", 1.2f},
+	{"fire_wound_immunity", 1.2f}
+};
+
+xr_map<ALife::EHitType, shared_str> hit_to_section =
+{
+	{ALife::EHitType::eHitTypeLightBurn , "light_burn_immunity"},
+	{ALife::EHitType::eHitTypeBurn, "burn_immunity"},
+	{ALife::EHitType::eHitTypeStrike, "strike_immunity"},
+	{ALife::EHitType::eHitTypeShock, "shock_immunity"},
+	{ALife::EHitType::eHitTypeWound, "wound_immunity"},
+	{ALife::EHitType::eHitTypeRadiation, "radiation_immunity"},
+	{ALife::EHitType::eHitTypeTelepatic, "telepatic_immunity"},
+	{ALife::EHitType::eHitTypeChemicalBurn, "chemical_burn_immunity"},
+	{ALife::EHitType::eHitTypeExplosion, "explosion_immunity"},
+	{ALife::EHitType::eHitTypeFireWound, "fire_wound_immunity"}
+};
+
+void CActor::HitArtefactsCondition(SHit& hit)
+{
+	if (hit.power <= 0.0f)
+		return;
+
+	for (PIItem item : inventory().m_belt)
+	{
+		CArtefact* artefact = item->cast_artefact();
+		if (artefact && artefact->DegradationRate())
+		{
+			shared_str hit_absorbation_sect = READ_IF_EXISTS(pSettings, r_string, artefact->m_section_id.c_str(), "hit_absorbation_sect", "");
+
+			if (hit_absorbation_sect.size() > 0)
+			{
+				shared_str imm_sect = hit_to_section[hit.hit_type];
+				float cond_loss = pSettings->line_exist(hit_absorbation_sect, imm_sect.c_str()) ? pSettings->r_float(hit_absorbation_sect, imm_sect.c_str()) : 0.0f;
+				if (cond_loss > 0.0f)
+				{
+					cond_loss = (hit.power * imm_mul[imm_sect] * cond_loss);
+
+					float val = artefact->GetCondition() - (cond_loss * artefact->DegradationRate());
+					val -= artefact->GetCondition();
+					artefact->ChangeCondition(val);
+				}
+			}
+		}
+	}
+}
+
+void CActor::set_state_box(u32	mstate)
+{
+		if ( mstate & mcCrouch)
+	{
+		if (isActorAccelerated(mstate_real, IsZoomAimingMode()))
+			character_physics_support()->movement()->ActivateBox(1, true);
+		else
+			character_physics_support()->movement()->ActivateBox(2, true);
+	}
+	else 
+		character_physics_support()->movement()->ActivateBox(0, true);
+}
+
+void CActor::shedule_Update	(u32 DT)
+{
+	PROF_EVENT("CActor shedule_Update");
+	setSVU							(OnServer());
+//.	UpdateInventoryOwner			(DT);
+
+	if(m_holder || !getEnabled() || !Ready())
+	{
+		m_sDefaultObjAction				= nullptr;
+		inherited::shedule_Update		(DT);
+		return;
+	}
+
+	inherited::shedule_Update	(DT);
+
+	//эффектор включаемый при ходьбе
+	if (!pCamBobbing)
+	{
+		pCamBobbing = new CEffectorBobbing	();
+		Cameras().AddCamEffector			(pCamBobbing);
+	}
+	pCamBobbing->SetState						(mstate_real, conditions().IsLimping(), IsZoomAimingMode());
+
+	//звук тяжелого дыхания при уталости и хромании
+	if(this==Level().CurrentControlEntity() && !g_dedicated_server && Holder() == nullptr)
+	{
+		if(conditions().IsLimping() && g_Alive() && !psActorFlags.test(AF_DISABLE_CONDITION_TEST))
+		{
+			if(!m_HeavyBreathSnd._feedback()){
+				m_HeavyBreathSnd.play_at_pos(this, Fvector().set(0,ACTOR_HEIGHT,0), sm_Looped | sm_2D);
+			}else{
+				m_HeavyBreathSnd.set_position(Fvector().set(0,ACTOR_HEIGHT,0));
+			}
+		}else if(m_HeavyBreathSnd._feedback()){
+			m_HeavyBreathSnd.stop		();
+		}
+
+		// -------------------------------
+		float bs = conditions().BleedingSpeed();
+		if(bs>0.6f)
+		{
+			Fvector snd_pos;
+			snd_pos.set(0,ACTOR_HEIGHT,0);
+			if(!m_BloodSnd._feedback())
+				m_BloodSnd.play_at_pos(this, snd_pos, sm_Looped | sm_2D);
+			else
+				m_BloodSnd.set_position(snd_pos);
+
+			float v = bs+0.25f;
+
+			m_BloodSnd.set_volume	(v);
+		}else{
+			if(m_BloodSnd._feedback())
+				m_BloodSnd.stop();
+		}
+
+		if(!g_Alive()&&m_BloodSnd._feedback())
+				m_BloodSnd.stop();
+		// -------------------------------
+		bs = conditions().GetZoneDanger();
+		if ( bs > 0.1f )
+		{
+			Fvector snd_pos;
+			snd_pos.set(0,ACTOR_HEIGHT,0);
+			if(!m_DangerSnd._feedback())
+				m_DangerSnd.play_at_pos(this, snd_pos, sm_Looped | sm_2D);
+			else
+				m_DangerSnd.set_position(snd_pos);
+
+			float v = bs+0.25f;
+//			Msg( "bs            = %.2f", bs );
+
+			m_DangerSnd.set_volume	(v);
+		}
+		else
+		{
+			if(m_DangerSnd._feedback())
+				m_DangerSnd.stop();
+		}
+
+		if(!g_Alive()&&m_DangerSnd._feedback())
+			m_DangerSnd.stop();
+	}
+	
+	if (!g_Alive())
+	{
+		UpdatePlayerView();
+	}
+
+	//что актер видит перед собой
+	collide::rq_result& RQ				= HUD().GetCurrentRayQuery();
+	
+	Fvector ActorPos, PickPos = { 0.0f, 0.0f, 0.0f };
+	//Center(ActorPos);
+	ActorPos = Position();
+	ActorPos.y += ACTOR_HEIGHT * 0.5f;
+
+	PickPos.mad(Device.vCameraPosition, Device.vCameraDirection, RQ.range);
+	if (RQ.O)
+	{
+		//PickPos = RQ.O->Position();
+		RQ.O->Center(PickPos);
+	}
+	const static bool isMonstersInventory = EngineExternal()[EEngineExternalGame::EnableMonstersInventory];
+
+	if (!input_external_handler_installed() && RQ.O && RQ.O->getVisible() && ActorPos.distance_to_sqr(PickPos) < 6.0f)
+	{
+		m_pObjectWeLookingAt = RQ.O->cast_game_object();
+
+		CGameObject* game_object = RQ.O->cast_game_object();
+		m_pUsableObject = game_object ? game_object->cast_usable_script_object() : nullptr;
+		m_pInvBoxWeLookingAt = game_object ? game_object->cast_inventory_box() : nullptr;
+		m_pPersonWeLookingAt = game_object ? game_object->cast_inventory_owner() : nullptr;
+		m_pVehicleWeLookingAt = game_object ? game_object->cast_holder_custom() : nullptr;
+		CEntityAlive* pEntityAlive = game_object ? game_object->cast_entity_alive() : nullptr;
+
+		CActor* IsPlayerPtr = pEntityAlive ? pEntityAlive->cast_actor() : nullptr;
+		
+		if (m_pVehicleWeLookingAt != nullptr)
+		{
+			m_pPersonWeLookingAt = nullptr;
+		}
+
+		if (IsGameTypeSingleCompatible())
+		{
+			if (IsPlayerPtr != nullptr)
+			{
+				if (!IsPlayerPtr->IsWaunded)
+				{
+					m_pPersonWeLookingAt = nullptr;
+				}
+			}
+			else if (m_pUsableObject && m_pUsableObject->tip_text())
+			{
+				m_sDefaultObjAction = g_pStringTable->translate( m_pUsableObject->tip_text() );
+			}
+			else
+			{
+				if (m_pPersonWeLookingAt && pEntityAlive != nullptr && pEntityAlive->g_Alive() && m_pPersonWeLookingAt->IsTalkEnabled() && !pEntityAlive->cast_actor())
+				{
+					m_sDefaultObjAction = m_sCharacterUseAction;
+				}
+				else if ( pEntityAlive && !pEntityAlive->g_Alive() )
+				{
+					if ( m_pPersonWeLookingAt && m_pPersonWeLookingAt->deadbody_closed_status() )
+					{
+						m_sDefaultObjAction = m_sDeadCharacterDontUseAction;
+					}
+					else
+					{
+						if (CBaseMonster* pMonster = m_pPersonWeLookingAt != nullptr ? m_pPersonWeLookingAt->cast_base_monster() : nullptr)
+						{
+							if (isMonstersInventory)
+							{
+								bool b_allow_drag = !!pSettings->line_exist("ph_capture_visuals", pEntityAlive->cNameVisual());
+								if (b_allow_drag)
+								{
+									m_sDefaultObjAction = m_sDeadCharacterUseOrDragAction;
+								}
+								else
+								{
+									m_sDefaultObjAction = m_sDeadCharacterUseAction;
+								}
+							}
+							else
+							{
+								m_pPersonWeLookingAt = nullptr;
+							}
+						}
+						else
+						{
+							bool b_allow_drag = !!pSettings->line_exist("ph_capture_visuals", pEntityAlive->cNameVisual());
+							if (b_allow_drag)
+							{
+								m_sDefaultObjAction = m_sDeadCharacterUseOrDragAction;
+							}
+							else if (pEntityAlive->cast_inventory_owner())
+							{
+								m_sDefaultObjAction = m_sDeadCharacterUseAction;
+							}
+						}
+					}
+				}
+				else if (m_pVehicleWeLookingAt)
+				{
+					m_sDefaultObjAction = m_pVehicleWeLookingAt->m_sUseAction == 0 ? m_sCarCharacterUseAction : m_pVehicleWeLookingAt->m_sUseAction;
+
+					if (CCar* pCar = m_pVehicleWeLookingAt->cast_car())
+					{
+						if (pCar->TryTrunk())
+						{
+							m_sDefaultObjAction = m_sCarTrunk;
+						}
+						else if (pCar->TryUsableBones())
+						{
+							m_sDefaultObjAction = m_sCarUse;
+						}
+					}
+				}
+				else if (m_pObjectWeLookingAt && m_pObjectWeLookingAt->cast_inventory_item() && m_pObjectWeLookingAt->cast_inventory_item()->CanTake())
+				{
+					m_sDefaultObjAction = m_sInventoryItemUseAction;
+				}
+				else 
+				{
+					m_sDefaultObjAction = nullptr;
+				}
+			}
+		}
+	}
+	else
+	{
+		m_pPersonWeLookingAt	= nullptr;
+		m_sDefaultObjAction		= nullptr;
+		m_pUsableObject			= nullptr;
+		m_pObjectWeLookingAt	= nullptr;
+		m_pVehicleWeLookingAt	= nullptr;
+		m_pInvBoxWeLookingAt	= nullptr;
+	}
+
+	// COP_ENGINE_PATCH: COP-ENG-051 - a visual hatch can extend beyond the
+	// physics pick shape used by the generic HUD ray. Query only nearby
+	// profile cars and let their bone-attached interaction OBB select the
+	// closest hatch under the crosshair. Non-profile vehicles are untouched.
+	if (!input_external_handler_installed() && IsGameTypeSingleCompatible() && m_pVehicleWeLookingAt == nullptr)
+	{
+		xr_vector<ISpatialShared> nearby_objects;
+		g_SpatialSpace->q_sphere(nearby_objects, 0, STYPE_COLLIDEABLE, Device.vCameraPosition, 8.f);
+
+		CCar* selected_car = nullptr;
+		float selected_range = flt_max;
+		for (const ISpatialShared& spatial : nearby_objects)
+		{
+			CObject* object = spatial->dcast_CObject();
+			CCar* car = object != nullptr ? object->cast_car() : nullptr;
+			if (car == nullptr || car->getDestroy() || !car->getVisible() || car->H_Parent())
+				continue;
+
+			float hit_range = flt_max;
+			if (car->TryProfileTrunk(Device.vCameraPosition, Device.vCameraDirection, &hit_range) &&
+				hit_range < selected_range)
+			{
+				selected_car = car;
+				selected_range = hit_range;
+			}
+		}
+
+		if (selected_car != nullptr)
+		{
+			m_pObjectWeLookingAt = selected_car;
+			m_pUsableObject = nullptr;
+			m_pInvBoxWeLookingAt = nullptr;
+			m_pPersonWeLookingAt = nullptr;
+			m_pVehicleWeLookingAt = selected_car;
+			m_sDefaultObjAction = m_sCarTrunk;
+		}
+	}
+
+//	UpdateSleep									();
+
+	//для свойст артефактов, находящихся на поясе
+	UpdateArtefactsOnBeltAndOutfit				();
+	m_pPhysics_support->in_shedule_Update		(DT);
+	Check_for_AutoPickUp						();
+}
+
+#include "debug_renderer.h"
+void CActor::renderable_Render()
+{
+	VERIFY(_valid(XFORM()));
+	inherited::renderable_Render();
+	CInventoryOwner::renderable_Render();
+	VERIFY(_valid(XFORM()));
+}
+
+BOOL CActor::renderable_ShadowGenerate	() 
+{
+	if(m_holder)
+		return FALSE;
+	
+	return inherited::renderable_ShadowGenerate();
+}
+
+void CActor::g_PerformDrop()
+{
+	b_DropActivated	= FALSE;
+
+	if (PIItem pItem = inventory().ActiveItem())
+	{
+		if (pItem->IsQuestItem())
+		{
+			return;
+		}
+
+		if (inventory().SlotIsPersistent(inventory().GetActiveSlot()))
+		{
+			return;
+		}
+
+		pItem->SetDropManual(TRUE);
+	}
+}
+
+bool CActor::use_default_throw_force()
+{
+	if (!g_Alive())
+		return false;
+	
+	return true;
+}
+
+float CActor::missile_throw_force()
+{
+	return 0.f;
+}
+
+#ifdef DEBUG
+extern	BOOL	g_ShowAnimationInfo		;
+#endif // DEBUG
+// HUD
+
+void CActor::OnHUDDraw(CCustomHUD* Z)
+{
+	R_ASSERT(IsFocused());
+
+	if (!((mstate_real & mcLookout) && !IsGameTypeSingleCompatible()))
+		g_player_hud->render_hud();
+
+	if (CGameObject* pGameObject = Holder() != nullptr ? Holder()->cast_game_object() : nullptr)
+	{
+		pGameObject->OnHUDDraw(Z);
+	}
+#if 0//ndef NDEBUG
+	if (Level().CurrentControlEntity() == this && g_ShowAnimationInfo)
+	{
+		string128 buf;
+		UI().Font().pFontStat->SetColor	(0xffffffff);
+		UI().Font().pFontStat->OutSet		(170,530);
+		UI().Font().pFontStat->OutNext	("Position:      [%3.2f, %3.2f, %3.2f]",VPUSH(Position()));
+		UI().Font().pFontStat->OutNext	("Velocity:      [%3.2f, %3.2f, %3.2f]",VPUSH(m_PhysicMovementControl->GetVelocity()));
+		UI().Font().pFontStat->OutNext	("Vel Magnitude: [%3.2f]",m_PhysicMovementControl->GetVelocityMagnitude());
+		UI().Font().pFontStat->OutNext	("Vel Actual:    [%3.2f]",m_PhysicMovementControl->GetVelocityActual());
+		switch (m_PhysicMovementControl->Environment())
+		{
+		case CPHMovementControl::peOnGround:	xr_strcpy(buf,"ground");			break;
+		case CPHMovementControl::peInAir:		xr_strcpy(buf,"air");				break;
+		case CPHMovementControl::peAtWall:		xr_strcpy(buf,"wall");				break;
+		}
+		UI().Font().pFontStat->OutNext	(buf);
+
+		if (IReceived != 0)
+		{
+			float Size = 0;
+			Size = UI().Font().pFontStat->GetSize();
+			UI().Font().pFontStat->SetSize(Size*2);
+			UI().Font().pFontStat->SetColor	(0xffff0000);
+			UI().Font().pFontStat->OutNext ("Input :		[%3.2f]", ICoincidenced/IReceived * 100.0f);
+			UI().Font().pFontStat->SetSize(Size);
+		};
+	};
+#endif
+}
+
+void CActor::RenderIndicator(Fvector dpos, float r1, float r2, const ui_shader &IndShader)
+{
+	if (!g_Alive())
+	{
+		return;
+	}
+
+	UIRender->StartPrimitive(4, IUIRender::ptTriStrip, IUIRender::pttLIT);
+
+	CBoneInstance& BI = PKinematics(Visual())->LL_GetBoneInstance(u16(m_head));
+	Fmatrix M;
+	PKinematics(Visual())->CalculateBones();
+	M.mul						(XFORM(),BI.mTransform);
+
+	Fvector pos = M.c; pos.add(dpos);
+	const Fvector& T        = Device.vCameraTop;
+	const Fvector& R        = Device.vCameraRight;
+	Fvector Vr, Vt;
+	Vr.x            = R.x*r1;
+	Vr.y            = R.y*r1;
+	Vr.z            = R.z*r1;
+	Vt.x            = T.x*r2;
+	Vt.y            = T.y*r2;
+	Vt.z            = T.z*r2;
+
+	Fvector         a,b,c,d;
+	a.sub           (Vt,Vr);
+	b.add           (Vt,Vr);
+	c.invert        (a);
+	d.invert        (b);
+
+	UIRender->PushPoint(d.x+pos.x,d.y+pos.y,d.z+pos.z, 0xffffffff, 0.f,1.f);
+	UIRender->PushPoint(a.x+pos.x,a.y+pos.y,a.z+pos.z, 0xffffffff, 0.f,0.f);
+	UIRender->PushPoint(c.x+pos.x,c.y+pos.y,c.z+pos.z, 0xffffffff, 1.f,1.f);
+	UIRender->PushPoint(b.x+pos.x,b.y+pos.y,b.z+pos.z, 0xffffffff, 1.f,0.f);
+	//pv->set         (d.x+pos.x,d.y+pos.y,d.z+pos.z, 0xffffffff, 0.f,1.f);        pv++;
+	//pv->set         (a.x+pos.x,a.y+pos.y,a.z+pos.z, 0xffffffff, 0.f,0.f);        pv++;
+	//pv->set         (c.x+pos.x,c.y+pos.y,c.z+pos.z, 0xffffffff, 1.f,1.f);        pv++;
+	//pv->set         (b.x+pos.x,b.y+pos.y,b.z+pos.z, 0xffffffff, 1.f,0.f);        pv++;
+	// render	
+	//dwCount 				= u32(pv-pv_start);
+	//RCache.Vertex.Unlock	(dwCount,hFriendlyIndicator->vb_stride);
+
+	UIRender->CacheSetXformWorld(Fidentity);
+	//RCache.set_xform_world		(Fidentity);
+	UIRender->SetShader(*IndShader);
+	//RCache.set_Shader			(IndShader);
+	//RCache.set_Geometry			(hFriendlyIndicator);
+	//RCache.Render	   			(D3DPT_TRIANGLESTRIP,dwOffset,0, dwCount, 0, 2);
+	UIRender->FlushPrimitive();
+};
+
+static float mid_size = 0.097f;
+static float fontsize = 15.0f;
+static float upsize	= 0.33f;
+void CActor::RenderText(LPCSTR Text, Fvector dpos, float* pdup, u32 color)
+{
+	if (!g_Alive())
+	{
+		return;
+	}
+	
+	CBoneInstance& BI = PKinematics(Visual())->LL_GetBoneInstance(u16(m_head));
+	Fmatrix M;
+	PKinematics(Visual())->CalculateBones	();
+	M.mul						(XFORM(),BI.mTransform);
+	//------------------------------------------------
+	Fvector v0, v1;
+	v0.set(M.c); v1.set(M.c);
+	Fvector T        = Device.vCameraTop;
+	v1.add(T);
+
+	Fvector v0r, v1r;
+	Device.mFullTransform.transform(v0r,v0);
+	Device.mFullTransform.transform(v1r,v1);
+	float size = v1r.distance_to(v0r);
+	CGameFont* pFont = UI().Font().GetFont(ARIAL14_FONT_NAME);
+	if (!pFont) return;
+//	float OldFontSize = pFont->GetHeight	();	
+	float delta_up = 0.0f;
+	if (size < mid_size) delta_up = upsize;
+	else delta_up = upsize*(mid_size/size);
+	dpos.y += delta_up;
+	if (size > mid_size) size = mid_size;
+//	float NewFontSize = size/mid_size * fontsize;
+	//------------------------------------------------
+	M.c.y += dpos.y;
+
+	Fvector4 v_res;	
+	Device.mFullTransform.transform(v_res,M.c);
+
+	if (v_res.z < 0 || v_res.w < 0)	return;
+	if (v_res.x < -1.f || v_res.x > 1.f || v_res.y<-1.f || v_res.y>1.f) return;
+
+	float x = (1.f + v_res.x)/2.f * (Device.TargetWidth);
+	float y = (1.f - v_res.y)/2.f * (Device.TargetHeight);
+
+	pFont->SetAligment	(CGameFont::alCenter);
+	pFont->SetColor		(color);
+//	pFont->SetHeight	(NewFontSize);
+	pFont->Out			(x,y,Text);
+	//-------------------------------------------------
+//	pFont->SetHeight(OldFontSize);
+	*pdup = delta_up;
+};
+
+void CActor::SetPhPosition(const Fmatrix &transform)
+{
+	if(!m_pPhysicsShell){ 
+		character_physics_support()->movement()->SetPosition(transform.c);
+	}
+	//else m_phSkeleton->S
+}
+
+void CActor::ForceTransform(const Fmatrix& m)
+{
+	//if( !g_Alive() )
+	//			return;
+	//VERIFY(_valid(m));
+	//XFORM().set( m );
+	//if( character_physics_support()->movement()->CharacterExist() )
+	//		character_physics_support()->movement()->EnableCharacter();
+	//character_physics_support()->set_movement_position( m.c );
+	//character_physics_support()->movement()->SetVelocity( 0, 0, 0 );
+
+	character_physics_support()->ForceTransform( m );
+	const float block_damage_time_seconds = 2.f;
+	if(!IsGameTypeSingle())
+		character_physics_support()->movement()->BlockDamageSet( u64( block_damage_time_seconds/fixed_step ) );
+}
+
+float CActor::Radius()const
+{ 
+	float R		= inherited::Radius();
+	CWeapon* W	= inventory().ActiveItem() ? inventory().ActiveItem()->cast_weapon() : nullptr;
+	if (W) R	+= W->Radius();
+	//	if (HUDview()) R *= 1.f/psHUD_FOV;
+	return R;
+}
+
+bool		CActor::use_bolts				() const
+{
+	if (!IsGameTypeSingleCompatible()) return false;
+	return CInventoryOwner::use_bolts();
+};
+
+int		g_iCorpseRemove = 1;
+
+bool  CActor::NeedToDestroyObject() const
+{
+	if(IsGameTypeSingle())
+	{
+		return false;
+	}
+	else 
+	{
+		if (g_Alive()) return false;
+		if (g_iCorpseRemove == -1) return false;
+		if (g_iCorpseRemove == 0 && m_bAllowDeathRemove) return true;
+		if(TimePassedAfterDeath()>m_dwBodyRemoveTime && m_bAllowDeathRemove)
+			return true;
+		else
+			return false;
+	}
+}
+
+ALife::_TIME_ID	 CActor::TimePassedAfterDeath()	const
+{
+	if(!g_Alive())
+		return Level().timeServer() - GetLevelDeathTime();
+	else
+		return 0;
+}
+
+
+void CActor::OnItemTake(CInventoryItem *inventory_item)
+{
+	CInventoryOwner::OnItemTake(inventory_item);
+	if (OnClient()) return;
+}
+
+void CActor::OnItemDrop(CInventoryItem *inventory_item, bool just_before_destroy)
+{
+	CInventoryOwner::OnItemDrop(inventory_item, just_before_destroy);
+
+	CCustomOutfit* outfit = inventory_item->cast_outfit();
+	if (outfit && inventory_item->m_ItemCurrPlace.type == eItemPlaceSlot)
+	{
+		outfit->ApplySkinModel(this, false, false);
+
+		if (GetNightVisionEffector() && GetNightVisionEffector()->GetStatus() && !outfit->bIsHelmetAvaliable)
+		{
+			GetNightVisionEffector()->SwitchNightVision(false);
+		}
+	}
+
+	CHelmet* helmet = inventory_item->cast_helmet();
+	if (helmet && inventory_item->m_ItemCurrPlace.type == eItemPlaceSlot)
+	{
+		if (GetNightVisionEffector() && GetNightVisionEffector()->GetStatus())
+		{
+			GetNightVisionEffector()->SwitchNightVision(false);
+		}
+	}
+
+	CWeapon* weapon	= inventory_item->cast_weapon();
+	if(weapon && inventory_item->m_ItemCurrPlace.type==eItemPlaceSlot)
+	{
+		weapon->OnZoomOut();
+	}
+
+	// Pavel: при продаже в МП граната удаляется у игрока
+    // И после этого нельзя достать новую
+    // Поэтому закомментировал проверку на just_before_destroy
+	if(		//!just_before_destroy && 
+		    inventory_item &&
+			inventory_item->BaseSlot()==GRENADE_SLOT && 
+			nullptr==inventory().ItemFromSlot(GRENADE_SLOT) )
+	{
+		PIItem grenade =  inventory().SameSlot(GRENADE_SLOT, inventory_item, true);
+		
+		if(grenade)
+			inventory().Slot(GRENADE_SLOT, grenade, true, true);
+	}
+}
+
+
+void CActor::OnItemDropUpdate()
+{
+	CInventoryOwner::OnItemDropUpdate();
+
+	for (const PIItem item : inventory().m_all)
+	{
+		if (!item->IsInvalid() && !attached(item))
+		{
+			attach(item);
+		}
+	}
+}
+
+
+void CActor::OnItemRuck		(CInventoryItem *inventory_item, const SInvItemPlace& previous_place)
+{
+	CInventoryOwner::OnItemRuck(inventory_item, previous_place);
+}
+
+void CActor::OnItemBelt		(CInventoryItem *inventory_item, const SInvItemPlace& previous_place)
+{
+	CInventoryOwner::OnItemBelt(inventory_item, previous_place);
+}
+
+#define ARTEFACTS_UPDATE_TIME 0.100f
+
+void CActor::UpdateArtefactsOnBeltAndOutfit()
+{
+	static float update_time = 0;
+
+	float f_update_time = 0;
+
+	if(update_time<ARTEFACTS_UPDATE_TIME)
+	{
+		update_time += conditions().fdelta_time();
+		return;
+	}
+	else
+	{
+		f_update_time	= update_time;
+		update_time		= 0.0f;
+	}
+
+	for (const PIItem item : inventory().m_belt)
+	{
+		if (CArtefact* artefact = item->cast_artefact())
+		{
+			float art_cond = artefact->GetCondition();
+			conditions().ChangeBleeding((artefact->m_fBleedingRestoreSpeed * art_cond) * f_update_time);
+			conditions().ChangeHealth((artefact->m_fHealthRestoreSpeed * art_cond) * f_update_time);
+			conditions().ChangePower((artefact->m_fPowerRestoreSpeed * art_cond) * f_update_time);
+			conditions().ChangeSatiety((artefact->m_fSatietyRestoreSpeed * art_cond) * f_update_time);
+			conditions().ChangeThirst((artefact->m_fThirstRestoreSpeed * art_cond) * f_update_time);
+
+			if ((artefact->m_fRadiationRestoreSpeed * art_cond) > 0.0f)
+			{
+				float val = (artefact->m_fRadiationRestoreSpeed * art_cond) - conditions().GetBoostRadiationImmunity();
+				clamp(val, 0.0f, val);
+				conditions().ChangeRadiation(val * f_update_time);
+			}
+			else
+			{
+				conditions().ChangeRadiation((artefact->m_fRadiationRestoreSpeed * art_cond) * f_update_time);
+			}
+		}
+	}
+
+	if (CCustomOutfit* outfit = GetOutfit())
+	{
+		conditions().ChangeBleeding		(outfit->m_fBleedingRestoreSpeed  * f_update_time);
+		conditions().ChangeHealth		(outfit->m_fHealthRestoreSpeed    * f_update_time);
+		conditions().ChangePower		(outfit->m_fPowerRestoreSpeed     * f_update_time);
+		conditions().ChangeSatiety		(outfit->m_fSatietyRestoreSpeed   * f_update_time);
+		conditions().ChangeThirst		(outfit->m_fThirstRestoreSpeed   * f_update_time);
+		conditions().ChangeRadiation	(outfit->m_fRadiationRestoreSpeed * f_update_time);
+	}
+}
+
+float CActor::HitArtefactsOnBelt(float hit_power, ALife::EHitType hit_type)
+{
+	float sum = 0.0f;
+
+	for (const PIItem item : inventory().m_belt)
+	{
+		if (CArtefact* artefact = item->cast_artefact())
+		{
+			sum += (artefact->m_ArtefactHitImmunities.AffectHit(1.0f, hit_type) * artefact->GetCondition());
+		}
+	}
+
+	if (sum == 0.0f)
+		return hit_power;
+
+	clamp(sum, -0.99f, 0.99f);
+
+	if (sum > 0.0f)
+	{
+		sum = 1.5f * pow(0.9f, (4.0f / sum));
+		hit_power = hit_power * (1.0f - sum);
+		return hit_power;
+	}
+	else
+	{
+		sum = 1.5f * pow(0.9f, (4.0f / (-1.0f * sum)));
+		hit_power = hit_power * (1.0f + sum);
+		return hit_power;
+	}
+}
+
+float CActor::GetProtection_ArtefactsOnBelt(ALife::EHitType hit_type)
+{
+	float sum = 0.0f;
+
+	for (const PIItem item : inventory().m_belt)
+	{
+		if (CArtefact* artefact = item->cast_artefact())
+		{
+			sum += (artefact->m_ArtefactHitImmunities.AffectHit(1.0f, hit_type) * artefact->GetCondition());
+		}
+	}
+
+	return sum;
+}
+
+void	CActor::SetZoomRndSeed		(s32 Seed)
+{
+	if (0 != Seed) m_ZoomRndSeed = Seed;
+	else m_ZoomRndSeed = s32(Level().timeServer_Async());
+};
+
+void	CActor::SetShotRndSeed		(s32 Seed)
+{
+	if (0 != Seed) m_ShotRndSeed = Seed;
+	else m_ShotRndSeed = s32(Level().timeServer_Async());
+};
+
+void CActor::spawn_supplies			()
+{
+	inherited::spawn_supplies		();
+	CInventoryOwner::spawn_supplies	();
+}
+
+
+void CActor::AnimTorsoPlayCallBack(CBlend* B)
+{
+	CActor* actor		= (CActor*)B->CallbackParam;
+	actor->m_bAnimTorsoPlayed = FALSE;
+}
+
+
+
+void CActor::UpdateMotionIcon(u32 mstate_rl)
+{
+	if (g_dedicated_server)
+		return;
+
+	CUIMotionIcon*	motion_icon=CurrentGameUI()->UIMainIngameWnd->MotionIcon();
+	if(mstate_rl&mcClimb)
+	{
+		motion_icon->ShowState(CUIMotionIcon::stClimb);
+	}
+	else
+	{
+		if(mstate_rl&mcCrouch)
+		{
+			if (!isActorAccelerated(mstate_rl, IsZoomAimingMode()))
+				motion_icon->ShowState(CUIMotionIcon::stCreep);
+			else
+				motion_icon->ShowState(CUIMotionIcon::stCrouch);
+		}
+		else
+		if(mstate_rl&mcSprint)
+				motion_icon->ShowState(CUIMotionIcon::stSprint);
+		else
+		if(mstate_rl&mcAnyMove && isActorAccelerated(mstate_rl, IsZoomAimingMode()))
+			motion_icon->ShowState(CUIMotionIcon::stRun);
+		else
+			motion_icon->ShowState(CUIMotionIcon::stNormal);
+	}
+}
+
+CPHDestroyable*	CActor::ph_destroyable()
+{
+	return smart_cast<CPHDestroyable*>(character_physics_support());
+}
+
+CEntityConditionSimple *CActor::create_entity_condition(CEntityConditionSimple* ec)
+{
+	if(!ec)
+	{
+		m_entity_condition = new CActorCondition(this);
+	}
+	else
+	{
+		m_entity_condition = smart_cast<CActorCondition*>(ec);
+	}
+	
+	return inherited::create_entity_condition(m_entity_condition);
+}
+
+DLL_Pure *CActor::_construct			()
+{
+	m_pPhysics_support				=	new CCharacterPhysicsSupport(CCharacterPhysicsSupport::etActor,this);
+	CEntityAlive::_construct		();
+	CInventoryOwner::_construct		();
+	CStepManager::_construct		();
+	
+	return							(this);
+}
+
+bool CActor::use_center_to_aim			() const
+{
+	return							(!!(mstate_real&mcCrouch));
+}
+
+bool CActor::can_attach(const CInventoryItem* inventory_item) const
+{
+	const CAttachableItem* item = smart_cast<const CAttachableItem*>(inventory_item);
+	if (!item || !item->can_be_attached())
+		return false;
+
+	//можно ли присоединять объекты такого типа
+	if (m_attach_item_sections.end() == std::find(m_attach_item_sections.begin(), m_attach_item_sections.end(), inventory_item->object().cNameSect()))
+	{
+		return false;
+	}
+
+	//если уже есть присоединненый объет такого типа 
+	if (attached(inventory_item->object().cNameSect()))
+	{
+		return false;
+	}
+
+	return true;
+}
+
+void CActor::OnDifficultyChanged	()
+{
+	// immunities
+	VERIFY(g_SingleGameDifficulty>=egdNovice && g_SingleGameDifficulty<=egdMaster); 
+	LPCSTR diff_name				= get_token_name(difficulty_type_token, g_SingleGameDifficulty);
+	string128						tmp;
+	xr_strconcat(tmp,"actor_immunities_",diff_name);
+	conditions().LoadImmunities		(tmp,pSettings);
+	// hit probability
+	xr_strconcat(tmp,"hit_probability_",diff_name);
+	m_hit_probability				= pSettings->r_float(*cNameSect(),tmp);
+	// two hits death parameters
+	xr_strconcat(tmp,"actor_thd_",diff_name);
+	conditions().LoadTwoHitsDeathParams(tmp);
+}
+
+CVisualMemoryManager	*CActor::visual_memory	() const
+{
+	return							(&memory().visual());
+}
+
+float		CActor::GetMass				()
+{
+	return g_Alive()?character_physics_support()->movement()->GetMass():m_pPhysicsShell?m_pPhysicsShell->getMass():0; 
+}
+
+bool CActor::is_on_ground()
+{
+	return (character_physics_support()->movement()->Environment() != CPHMovementControl::peInAir);
+}
+
+
+bool CActor::is_ai_obstacle				() const
+{
+	return							(false);//true);
+}
+
+float CActor::GetRestoreSpeed( ALife::EConditionRestoreType const& type )
+{
+	float res = 0.0f;
+	switch ( type )
+	{
+	case ALife::eHealthRestoreSpeed:
+	{
+		res = conditions().change_v().m_fV_HealthRestore;
+		res += conditions().V_SatietyHealth() * ( (conditions().GetSatiety() > 0.0f) ? 1.0f : -1.0f );
+		res += conditions().V_ThirstHealth() * ( (conditions().GetThirst() > 0.0f) ? 1.0f : -1.0f );
+
+		for (const PIItem item : inventory().m_belt)
+		{
+			if (CArtefact* artefact = item->cast_artefact())
+			{
+				res += (artefact->m_fHealthRestoreSpeed * artefact->GetCondition());
+			}
+		}
+
+		if (CCustomOutfit* outfit = GetOutfit())
+		{
+			res += outfit->m_fHealthRestoreSpeed;
+		}
+		break;
+	}
+	case ALife::eRadiationRestoreSpeed:
+	{	
+		for (const PIItem item : inventory().m_belt)
+		{
+			if (CArtefact* artefact = item->cast_artefact())
+			{
+				res += (artefact->m_fRadiationRestoreSpeed * artefact->GetCondition());
+			}
+		}
+
+		if (CCustomOutfit* outfit = GetOutfit())
+		{
+			res += outfit->m_fRadiationRestoreSpeed;
+		}
+		break;
+	}
+	case ALife::eSatietyRestoreSpeed:
+	{
+		res = conditions().V_Satiety();
+
+		for (const PIItem item : inventory().m_belt)
+		{
+			if (CArtefact* artefact = item->cast_artefact())
+			{
+				res += (artefact->m_fSatietyRestoreSpeed * artefact->GetCondition());
+			}
+		}
+
+		if (CCustomOutfit* outfit = GetOutfit())
+		{
+			res += outfit->m_fSatietyRestoreSpeed;
+		}
+		break;
+	}
+	case ALife::eThirstRestoreSpeed:
+	{
+		res = conditions().V_Thirst();
+
+		for (const PIItem item : inventory().m_belt)
+		{
+			if (CArtefact* artefact = item->cast_artefact())
+			{
+				res += (artefact->m_fThirstRestoreSpeed * artefact->GetCondition());
+			}
+		}
+
+		if (CCustomOutfit* outfit = GetOutfit())
+		{
+			res += outfit->m_fThirstRestoreSpeed;
+		}
+		break;
+	}
+	case ALife::ePowerRestoreSpeed:
+	{
+		res = conditions().GetSatietyPower();
+
+		for (const PIItem item : inventory().m_belt)
+		{
+			if (CArtefact* artefact = item->cast_artefact())
+			{
+				res += (artefact->m_fPowerRestoreSpeed * artefact->GetCondition());
+			}
+		}
+
+		if (CCustomOutfit* outfit = GetOutfit())
+		{
+			res += outfit->m_fPowerRestoreSpeed;
+			VERIFY(outfit->m_fPowerLoss!=0.0f);
+			res /= outfit->m_fPowerLoss;
+		}
+		else
+		{
+			res /= 0.5f;
+		}
+		break;
+	}
+	case ALife::eBleedingRestoreSpeed:
+	{
+		res = conditions().change_v().m_fV_WoundIncarnation;
+	
+		for (const PIItem item : inventory().m_belt) 
+		{
+			if (CArtefact* artefact = item->cast_artefact())
+			{
+				res += (artefact->m_fBleedingRestoreSpeed * artefact->GetCondition());
+			}
+		}
+
+		if (CCustomOutfit* outfit = GetOutfit())
+		{
+			res += outfit->m_fBleedingRestoreSpeed;
+		}
+		break;
+	}
+	}//switch
+
+	return res;
+}
+
+
+void CActor::On_SetEntity()
+{
+	CCustomOutfit* pOutfit = GetOutfit();
+	if (!pOutfit)
+	{
+		//g_player_hud->load_default();
+		g_player_hud->m_need_reload = false;
+	}
+	else
+		pOutfit->ApplySkinModel(this, true, true);
+}
+
+bool CActor::unlimited_ammo()
+{
+	return !!psActorFlags.test(AF_UNLIMITEDAMMO);
+}
+
+CCustomDevice* CActor::GetDevice(bool in_slot)
+{
+	if (in_slot)
+	{
+		PIItem device_item = inventory().ItemFromSlot(DEVICE_SLOT);
+		return device_item != nullptr ? device_item->cast_custom_device() : nullptr;
+	}
+	else
+	{
+		if (g_player_hud != nullptr && g_player_hud->attached_item(1) != nullptr)
+		{
+			attachable_hud_item* i1 = g_player_hud->attached_item(1);
+			return i1->m_parent_hud_item != nullptr ? i1->m_parent_hud_item->cast_custom_device() : nullptr;
+		}
+	}
+
+	return nullptr;
+}
+
+bool CActor::infinite_fire()
+{
+	return !!psActorFlags.test(AF_INFINITEFIRE);
+}
+
+
+void CActor::ResetElectronicsProblems()
+{
+	target_electronics_problems_counter = 0.0f;
+}
+
+void CActor::ResetElectronicsProblems_Full()
+{
+	ResetElectronicsProblems();
+	current_electronics_problems_counter = 0.0f;
+	previous_electronics_problems_counter = 0.0f;
+	last_problems_update_was_decrease = false;
+}
+
+float CActor::PreviousElectronicsProblemsCnt() const
+{
+	return previous_electronics_problems_counter;
+}
+
+bool CActor::ElectronicsProblemsImmediateApply()
+{
+	current_electronics_problems_counter = target_electronics_problems_counter;
+	return true;
+}
+
+bool CActor::ElectronicsProblemsInc()
+{
+	target_electronics_problems_counter += 1.0f;
+	return true;
+}
+
+float CActor::TargetElectronicsProblemsCnt() const
+{
+	return target_electronics_problems_counter;
+}
+
+float CActor::CurrentElectronicsProblemsCnt() const
+{
+	return current_electronics_problems_counter;
+}
+
+bool CActor::ElectronicsProblemsDec()
+{
+	if (target_electronics_problems_counter > 0.0f)
+	{
+		target_electronics_problems_counter -= 1.0f;
+		return true;
+	}
+	else
+		return false;
+}
+
+bool CActor::IsElectronicsProblemsDecreasing() const
+{
+	return last_problems_update_was_decrease;
+}
+
+void CActor::UpdateElectronicsProblemsCnt(u32 dt)
+{
+	float max_delta = static_cast<float>(dt) / 2000.0f;
+	float delta = target_electronics_problems_counter - current_electronics_problems_counter;
+
+	previous_electronics_problems_counter = current_electronics_problems_counter;
+
+	if (target_electronics_problems_counter == current_electronics_problems_counter)
+	{
+		return;
+	}
+
+	if (abs(delta) <= abs(max_delta))
+	{
+		current_electronics_problems_counter = target_electronics_problems_counter;
+	}
+	else
+	{
+		current_electronics_problems_counter += copysign(max_delta, delta);
+		last_problems_update_was_decrease = (delta < 0.0f);
+	}
+}
+
+float CActor::GetHandJitterScale(CHudItem* itm) const
+{
+	u32 restore_time = itm->GetCurJitterParams().stop_time;
+
+	/*if (IsActorControlled() || itm->IsSuicideAnimPlaying() || IsControllerPreparing() || (_jitter_time_remains > restore_time))
+		return 1.0f;
+	else */if (_jitter_time_remains == 0)
+		return 0.0f;
+	else
+		return _jitter_time_remains / restore_time;
+}
+
+void CActor::SetBestEnemy(CScriptGameObject* enemy)
+{
+	m_pBestEnemy = enemy;
+}
+
+CScriptGameObject* CActor::GetBestEnemy()
+{
+	return m_pBestEnemy;
+}
+
+void CScriptGameObject::SetCharacterMaxWeight(float value)
+{
+	if (CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object()))
+		pInventoryOwner->inventory().SetMaxWeight(value);
+	else
+		Msg("! SetCharacterMaxWeight(...): pInventoryOwner is nullptr!");
+}
