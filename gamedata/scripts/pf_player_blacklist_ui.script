@@ -2,17 +2,19 @@
 -- The statistics owner supplies records and commits transfer requests.
 local impl = {}
 
-class "pf_player_blacklist_item" (CUIListBoxItem)
-function pf_player_blacklist_item:__init(record, width) super(28)
+function impl.add_row(list, record)
+    -- The ranking window can outlive this Lua state after a save is loaded.
+    local item = list:AddTextItem("")
+    local width = list:GetWidth() - 5
     local status_x = math.floor(width * 0.4)
-    local text = self:GetTextItem()
+    local text = item:GetTextItem()
     text:SetWndPos(vector2():set(9, 0))
     text:SetWndSize(vector2():set(status_x - 18, 28))
     text:SetFont(GetFontLetterica16Russian())
     text:SetText(pf_irc_text_codec.escape_markup(record.nick))
     text:SetEllipsis(true)
-    self:SetTextColor(GetARGB(255, 205, 205, 195))
-    local rank = self:AddTextField(record.rank and string.format("%.0f", record.rank) or "-", 120)
+    item:SetTextColor(GetARGB(255, 205, 205, 195))
+    local rank = item:AddTextField(record.rank and string.format("%.0f", record.rank) or "-", 120)
     rank:SetWndPos(vector2():set(width - 132, 0))
     rank:SetWndSize(vector2():set(110, 28))
     rank:SetTextAlignment(2)
@@ -21,7 +23,7 @@ function pf_player_blacklist_item:__init(record, width) super(28)
     rank:SetEllipsis(true)
     -- AWAY is a connected IRC peer too; missing cached presence is offline.
     local online = record.presence == "online" or record.presence == "away"
-    local status = self:AddTextField(game.translate_string(online and
+    local status = item:AddTextField(game.translate_string(online and
         "pf_pda_blacklist_online" or "pf_pda_blacklist_offline"), 100)
     status:SetWndPos(vector2():set(status_x, 0))
     status:SetWndSize(vector2():set(100, 28))
@@ -30,7 +32,6 @@ function pf_player_blacklist_item:__init(record, width) super(28)
     status:SetTextColor(online and GetARGB(255, 74, 186, 94) or GetARGB(255, 205, 65, 55))
     status:SetEllipsis(true)
 end
-function pf_player_blacklist_item:__finalize() end
 
 function impl.selected(self, side)
     local index = self.lists[side]:GetSelectedIndex()
@@ -46,7 +47,7 @@ function impl.fill(self, side, records)
     self.rows[side] = records
     local next_index = -1
     for index, record in ipairs(records) do
-        list:AddExistingItem(pf_player_blacklist_item(record, list:GetWidth() - 5))
+        impl.add_row(list, record)
         if record.identity == selected then next_index = index - 1 end
     end
     if next_index < 0 and #records > 0 then next_index = 0 end
