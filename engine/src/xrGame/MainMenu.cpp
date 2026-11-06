@@ -1,4 +1,6 @@
-#include "StdAfx.h"
+#include "stdafx.h"
+#include "PDA.h"
+#include "Actor.h"
 #include "MainMenu.h"
 #include "../../xrUI/Widgets/UIDialogWnd.h"
 #include "ui/UIMessageBoxEx.h"
@@ -165,6 +167,10 @@ void CMainMenu::Activate	(bool bActivate)
 
 	if(bActivate)
 	{
+        // COP_ENGINE_PATCH: COP-ENG-212 - restore the normal cursor before pausing.
+        if (g_pGameLevel && Actor() && Actor()->GetPDA()) {
+            Actor()->GetPDA()->Close3D();
+        }
 		b_shniaganeed_pp			= true;
 		Device.Pause				(TRUE, FALSE, TRUE, "mm_activate1");
 		m_Flags.set					(flActive|flNeedChangeCapture,TRUE);
@@ -494,7 +500,8 @@ void CMainMenu::OnRenderPPUI_main	()
 	// COP_ENGINE_PATCH: COP-ENG-205 - armored operator views and overhead hatch headroom.
 	// COP_ENGINE_PATCH: COP-ENG-209 - optional client-selected transparent inventory layouts.
 	// COP_ENGINE_PATCH: COP-ENG-210 - configurable fast-transfer keys.
-	pCGameFont->Out(Device.TargetWidth - pCGameFont->GetHeight(), (Device.TargetHeight - pCGameFont->GetHeight()), "IX-Ray Modified [eng-210]");
+	// COP_ENGINE_PATCH: COP-ENG-214 - PDA reading zoom.
+	pCGameFont->Out(Device.TargetWidth - pCGameFont->GetHeight(), (Device.TargetHeight - pCGameFont->GetHeight()), "IX-Ray Modified [eng-223]"); // COP_ENGINE_PATCH: COP-ENG-215 COP-ENG-216 COP-ENG-217
 	pCGameFont->OnRender();
 }
 

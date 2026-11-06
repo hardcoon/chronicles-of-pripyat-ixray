@@ -938,6 +938,11 @@ static class cl_affects : public R_constant_setup
 
 // COP_ENGINE_PATCH: COP-ENG-168 - late HDR bodycam, outside menu and scope viewports.
 #ifdef USE_DX11
+// COP_ENGINE_PATCH: COP-ENG-212
+extern Fvector4 pf_pda_params;
+static class cl_pf_pda : public R_constant_setup {
+    void setup(R_constant* C) override { RCache.set_c(C, pf_pda_params); }
+} binder_pf_pda;
 static class cl_bodycam_control : public R_constant_setup {
     void setup(R_constant* C) override {
         const bool active=ps_r4_bodycam.test(1) && ps_r4_bodycam_state.x>0 && g_pGameLevel &&
@@ -1193,6 +1198,7 @@ void	CBlender_Compile::SetMapping()
 	r_Constant("watch_color_params", &watchColor172);
 #ifdef USE_DX11
     // COP_ENGINE_PATCH: COP-ENG-168
+    r_Constant("pf_pda_params", &binder_pf_pda);
     r_Constant("pf_bodycam_control", &binder_bodycam_control);
     r_Constant("pf_bodycam_state", &binder_bodycam_state);
 #endif

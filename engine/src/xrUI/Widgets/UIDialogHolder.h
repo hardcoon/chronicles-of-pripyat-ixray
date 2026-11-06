@@ -27,8 +27,11 @@ class UI_API CDialogHolder :
 {
 	//dialogs
 	xr_vector<recvItem>										m_input_receivers;
+protected:
+    // COP_ENGINE_PATCH: COP-ENG-223 - derived holders route active draws and can cancel a queued modal.
 	xr_vector<dlgItem>										m_dialogsToRender;
 	xr_vector<dlgItem>										m_dialogsToRender_new;
+private:
 	bool													m_b_in_update;
 
 	void					StartMenu						(CUIDialogWnd* pDialog, bool bDoHideIndicators);

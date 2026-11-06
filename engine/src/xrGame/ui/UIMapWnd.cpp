@@ -227,7 +227,9 @@ void CUIMapWnd::Init(LPCSTR xml_name, LPCSTR start_from)
 void CUIMapWnd::Show(bool status)
 {
 	inherited::Show(status);
-	Activated();
+	// COP_ENGINE_PATCH: COP-ENG-212 - hiding during teardown must not recenter on a deleted actor.
+	if (status)
+		Activated();
 	if ( GlobalMap() )
 	{
 		m_GlobalMap->DetachAll();

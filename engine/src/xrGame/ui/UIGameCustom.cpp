@@ -1,10 +1,12 @@
-#include "StdAfx.h"
+#include "stdafx.h"
+#include "../PDA.h"
 #include "pch_script.h"
 #include "UIGameCustom.h"
 #include "Level.h"
 #include "UIHelperGame.h"
 #include "../xrUI/Widgets/UIStatic.h"
 #include "../xrUI/Widgets/UIDialogWnd.h"
+#include "../xrUI/UICursor.h"
 
 #include "object_broker.h"
 #include "../xrEngine/string_table.h"
@@ -108,6 +110,14 @@ void CUIGameCustom::OnFrame()
 void CUIGameCustom::Render()
 {
 	PROF_EVENT("CUIGameCustom::Render");
+	// COP_ENGINE_PATCH: COP-ENG-215 - leave dialogs available without painting HUD overlays over the PDA.
+	CActor* viewer = g_pGameLevel ? smart_cast<CActor*>(g_pGameLevel->CurrentViewEntity()) : nullptr;
+	const CPda* pda = viewer ? viewer->GetPDA() : nullptr;
+	if (pda && pda->Is3DActive() && pda->IsReading())
+	{
+		DrawDesktopDialogs();
+		return;
+	}
 
 	{
 		xrCriticalSectionGuard guard(ui_lock);
@@ -149,7 +159,7 @@ void CUIGameCustom::Render()
 	if (psHUD_Flags.is(HUD_DRAW))
 		m_pMessagesWnd->Draw();
 
-	DoRenderDialogs();
+	DrawDesktopDialogs();
 }
 
 SDrawStaticStruct* CUIGameCustom::AddCustomStatic(LPCSTR id, bool bSingleInstance, float ttlDefault)
@@ -315,6 +325,10 @@ void CUIGameCustom::ShowMessagesWindow()
 bool CUIGameCustom::ShowPdaMenu()
 {
 	HideActorMenu();
+    if (Actor() && Actor()->GetPDA() && Actor()->GetPDA()->CanUse3D()) {
+        Actor()->GetPDA()->Toggle3D();
+        return true;
+    }
 	m_PdaMenu->ShowDialog(true);
 	return true;
 }
@@ -376,9 +390,214 @@ void CUIGameCustom::HideShownDialogs()
 	}
 }
 
+// COP_ENGINE_PATCH: COP-ENG-222 - mouse clicks in reading mode belong to the UI, including map double-clicks.
+bool CUIGameCustom::HasPdaInput()
+{
+    return IsPdaWindow(TopInputReceiver());
+}
+
+// COP_ENGINE_PATCH: COP-ENG-223 - keep native input stacking, but compose PDA windows on the device.
+bool CUIGameCustom::IsPdaWindow(const CUIWindow* window) const
+{
+    if (!window) return false;
+    if (window == m_PdaMenu) return true;
+    return std::any_of(m_pdaPopups.begin(), m_pdaPopups.end(),
+        [window](const PdaPopup& popup) { return popup.window == window; });
+}
+
+void CUIGameCustom::DrawDesktopDialogs()
+{
+    if (m_pdaPopups.empty())
+    {
+        DoRenderDialogs();
+        return;
+    }
+    for (const auto& item : m_dialogsToRender)
+    {
+        if (item.enabled && item.wnd && !IsPdaWindow(item.wnd) && item.wnd->IsShown())
+            item.wnd->Draw();
+    }
+}
+
+void CUIGameCustom::DrawPdaPopups()
+{
+    for (const auto& popup : m_pdaPopups)
+    {
+        if (!popup.window->IsShown()) continue;
+        UI().RenderFont(); // Finish the underlying page before covering it with the next modal.
+        popup.window->Draw();
+    }
+}
+
+bool CUIGameCustom::IsReadingPdaInput()
+{
+    if (!g_actor || !HasPdaInput()) return false;
+    const auto* pda = g_actor->GetPDA();
+    return pda && pda->IsReading();
+}
+
+static bool SendPdaMouseAction(CUIDialogWnd* receiver, EUIMessages action)
+{
+    auto pos = GetUICursor().GetCursorPosition();
+    // A modal is called directly by its holder. Attached windows normally receive local
+    // coordinates from their parent, whereas a standalone window subtracts its own origin.
+    if (receiver->GetParent())
+    {
+        Fvector2 origin;
+        receiver->GetAbsolutePos(origin);
+        pos.sub(origin);
+    }
+    return receiver->OnMouseAction(pos.x, pos.y, action);
+}
+
+bool CUIGameCustom::IR_UIOnMouseMove(int dx, int dy)
+{
+    if (!IsReadingPdaInput() || !TopInputReceiver()->IR_process() || !GetUICursor().IsVisible())
+        return CDialogHolder::IR_UIOnMouseMove(dx, dy);
+    GetUICursor().UpdateCursorPosition(dx, dy);
+    SendPdaMouseAction(TopInputReceiver(), WINDOW_MOUSE_MOVE);
+    return true;
+}
+
+bool CUIGameCustom::IR_UIOnMouseWheel(int direction)
+{
+    if (!IsReadingPdaInput() || !TopInputReceiver()->IR_process())
+        return CDialogHolder::IR_UIOnMouseWheel(direction);
+    SendPdaMouseAction(TopInputReceiver(), direction > 0 ? WINDOW_MOUSE_WHEEL_UP : WINDOW_MOUSE_WHEEL_DOWN);
+    return true;
+}
+
+bool CUIGameCustom::DispatchPdaMouseButton(int dik, bool pressed)
+{
+    if (dik != MOUSE_1 && dik != MOUSE_2 && dik != MOUSE_3) return false;
+    const bool left = dik == MOUSE_1;
+    auto* pressReceiver = left ? m_pdaLeftPressReceiver : nullptr;
+    if (left) m_pdaLeftPressReceiver = nullptr;
+    if (!IsReadingPdaInput() || !TopInputReceiver()->IR_process()) return !pressed && pressReceiver;
+    auto* receiver = TopInputReceiver();
+    // The release that follows zoom-in (or a popup opened on mouse-down) belongs to the old target.
+    if (left && !pressed && pressReceiver != receiver) return true;
+    if (left && pressed) m_pdaLeftPressReceiver = receiver;
+
+    EUIMessages action = pressed ? WINDOW_LBUTTON_DOWN : WINDOW_LBUTTON_UP;
+    if (dik == MOUSE_2) action = pressed ? WINDOW_RBUTTON_DOWN : WINDOW_RBUTTON_UP;
+    if (dik == MOUSE_3) action = pressed ? WINDOW_CBUTTON_DOWN : WINDOW_CBUTTON_UP;
+    const bool previous = m_dispatchingPdaClick;
+    m_dispatchingPdaClick = true;
+    if (!SendPdaMouseAction(receiver, action) &&
+        TopInputReceiver() == receiver)
+        receiver->OnKeyboardAction(dik, pressed ? WINDOW_KEY_PRESSED : WINDOW_KEY_RELEASED);
+    m_dispatchingPdaClick = previous;
+    return true;
+}
+
+bool CUIGameCustom::IR_UIOnKeyboardPress(int dik)
+{
+    return DispatchPdaMouseButton(dik, true) || CDialogHolder::IR_UIOnKeyboardPress(dik);
+}
+
+bool CUIGameCustom::IR_UIOnKeyboardRelease(int dik)
+{
+    return DispatchPdaMouseButton(dik, false) || CDialogHolder::IR_UIOnKeyboardRelease(dik);
+}
+
+bool CUIGameCustom::IR_UIOnKeyboardHold(int dik)
+{
+    if (dik == MOUSE_1 && IsReadingPdaInput() && TopInputReceiver()->IR_process())
+    {
+        if (m_pdaLeftPressReceiver == TopInputReceiver()) TopInputReceiver()->OnKeyboardHold(dik);
+        return true;
+    }
+    return CDialogHolder::IR_UIOnKeyboardHold(dik);
+}
+
+void CUIGameCustom::StartDialog(CUIDialogWnd* dialog, bool hideIndicators)
+{
+    if (IsReadingPdaInput() && dialog != m_PdaMenu &&
+        dialog != m_ActorMenu && dialog != TalkMenu && dialog != UIChangeLevelWnd)
+    {
+        // Map markers are attached to the map. Lua confirmations usually register a message target.
+        // A Lua click callback can also open a standalone dialog without either relationship.
+        auto* target = dialog->GetMessageTarget();
+        if (m_dispatchingPdaClick || IsPdaWindow(dialog->GetTop()) || (target && IsPdaWindow(target->GetTop())))
+        {
+            ShowPdaDialog(dialog, hideIndicators);
+            return;
+        }
+    }
+    CDialogHolder::StartDialog(dialog, hideIndicators);
+}
+
+void CUIGameCustom::ShowPdaDialog(CUIDialogWnd* dialog, bool hideIndicators)
+{
+    if (!dialog || dialog->IsShown()) return;
+    const auto* pda = g_actor ? g_actor->GetPDA() : nullptr;
+    if (pda && pda->Is3DActive())
+    {
+        // A polling script can observe its button after reading was interrupted.
+        if (!IsReadingPdaInput()) return;
+        m_pdaPopups.push_back({dialog, dialog->GetCustomDraw()});
+        dialog->SetCustomDraw(true); // Suppress a second draw through the parent page.
+    }
+    // Keep the pointer on the same pixel of the device across a modal change.
+    const auto cursor = GetUICursor().GetCursorPosition();
+    CDialogHolder::StartStopMenu(dialog, hideIndicators);
+    GetUICursor().SetUICursorPosition(cursor);
+}
+
+void CUIGameCustom::ClosePdaPopups()
+{
+    while (!m_pdaPopups.empty()) StopDialog(m_pdaPopups.back().window);
+}
+
+void CUIGameCustom::StopDialog(CUIDialogWnd* dialog)
+{
+    if (m_pdaLeftPressReceiver == dialog) m_pdaLeftPressReceiver = nullptr;
+    if (dialog == m_PdaMenu)
+    {
+        // Close in stack order on forced holster, death or a menu switch.
+        ClosePdaPopups();
+    }
+    const auto it = std::find_if(m_pdaPopups.begin(), m_pdaPopups.end(),
+        [dialog](const PdaPopup& popup) { return popup.window == dialog; });
+    bool wasQueued = false;
+    if (it != m_pdaPopups.end())
+    {
+        while (m_pdaPopups.back().window != dialog) StopDialog(m_pdaPopups.back().window);
+        dialog->SetCustomDraw(m_pdaPopups.back().previousCustomDraw);
+        m_pdaPopups.pop_back();
+
+        // StartMenu queues dialogs opened during OnFrame. StopMenu only visits the active list.
+        const auto queued = std::find_if(m_dialogsToRender_new.begin(), m_dialogsToRender_new.end(),
+            [dialog](const dlgItem& item) { return item.wnd == dialog; });
+        if (queued != m_dialogsToRender_new.end())
+        {
+            m_dialogsToRender_new.erase(queued);
+            wasQueued = true;
+        }
+    }
+    CDialogHolder::StopDialog(dialog);
+    if (wasQueued) dialog->Show(false);
+}
+
+// COP_ENGINE_PATCH: COP-ENG-220 - the disabled 3D display can sit underneath a loot dialog.
+bool CUIGameCustom::CanStartCarBody()
+{
+    auto* receiver = TopInputReceiver();
+    if (!receiver) return true;
+    if (receiver != m_PdaMenu || m_PdaMenu->IsEnabled()) return false;
+    auto* pda = Actor() ? Actor()->GetPDA() : nullptr;
+    return pda && pda->Is3DActive() && !pda->IsReading();
+}
+
+bool CUIGameCustom::IsSearchingContainer()
+{
+    return m_ActorMenu && TopInputReceiver() == m_ActorMenu && m_ActorMenu->GetMenuMode() == mmDeadBodySearch;
+}
+
 void CUIGameCustom::StartCarBody(CInventoryOwner* pActorInv, CInventoryOwner* pOtherOwner) //Deadbody search
 {
-	if (TopInputReceiver())		return;
+	if (!CanStartCarBody()) return;
 
 	m_ActorMenu->SetActor(pActorInv);
 	m_ActorMenu->SetPartner(pOtherOwner);
@@ -389,7 +608,7 @@ void CUIGameCustom::StartCarBody(CInventoryOwner* pActorInv, CInventoryOwner* pO
 
 void CUIGameCustom::StartCarBody(CInventoryOwner* pActorInv, CInventoryBox* pBox) //Deadbody search
 {
-	if (TopInputReceiver())		return;
+	if (!CanStartCarBody()) return;
 
 	m_ActorMenu->SetActor(pActorInv);
 	m_ActorMenu->SetInvBox(pBox);
@@ -406,6 +625,8 @@ void CUIGameCustom::SetClGame(game_cl_GameState* g)
 
 void CUIGameCustom::UnLoad()
 {
+    m_pdaLeftPressReceiver = nullptr;
+    ClosePdaPopups();
 	xr_delete					(m_msgs_xml);
 	xr_delete					(m_ActorMenu);
 	xr_delete					(m_PdaMenu);

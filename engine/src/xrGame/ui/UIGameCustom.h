@@ -119,6 +119,15 @@ class CUIGameCustom :
 {
 private:
 	xrCriticalSection ui_lock;
+    // COP_ENGINE_PATCH: COP-ENG-222 - auxiliary windows still use the native modal stack.
+    struct PdaPopup { CUIDialogWnd* window; bool previousCustomDraw; };
+    xr_vector<PdaPopup> m_pdaPopups;
+    bool m_dispatchingPdaClick = false;
+    CUIDialogWnd* m_pdaLeftPressReceiver = nullptr;
+    bool IsPdaWindow(const CUIWindow* window) const;
+    bool IsReadingPdaInput();
+    bool DispatchPdaMouseButton(int dik, bool pressed);
+    void DrawDesktopDialogs();
 protected:
 	CUIWindow*			m_window;
 	CUIXml*				m_msgs_xml;
@@ -141,6 +150,20 @@ public:
 	
 						CUIGameCustom			();
 	virtual				~CUIGameCustom			();
+
+    bool HasPdaInput();
+    void ShowPdaDialog(CUIDialogWnd* dialog, bool hideIndicators);
+    void DrawPdaPopups();
+    void ClosePdaPopups();
+    bool IR_UIOnMouseMove(int dx, int dy) override;
+    bool IR_UIOnMouseWheel(int direction) override;
+    bool IR_UIOnKeyboardPress(int dik) override;
+    bool IR_UIOnKeyboardRelease(int dik) override;
+    bool IR_UIOnKeyboardHold(int dik) override;
+    void StartDialog(CUIDialogWnd* dialog, bool hideIndicators) override;
+    void StopDialog(CUIDialogWnd* dialog) override;
+    bool CanStartCarBody();
+    bool IsSearchingContainer();
 
 	bool				HasShownDialogs			() const;
 

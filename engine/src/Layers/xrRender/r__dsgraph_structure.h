@@ -43,6 +43,10 @@ public:
 	R_dsgraph::mapLOD_T											mapLOD;
 	R_dsgraph::mapSorted_T										mapDistort;
 	R_dsgraph::mapHUD_T											mapHUDSorted;
+#if RENDER==R_R4
+	// COP_ENGINE_PATCH: COP-ENG-216 - only the PDA display is drawn after scene AA.
+	R_dsgraph::mapHUD_T mapHUDPda;
+#endif
 
 #if RENDER!=R_R1
 	R_dsgraph::mapSorted_T										mapWmark;			// sorted
@@ -113,6 +117,9 @@ public:
 		mapLOD.destroy			();
 		mapDistort.destroy		();
 		mapHUDSorted.destroy();
+#if RENDER==R_R4
+		mapHUDPda.destroy();
+#endif
 		mapHUDDistort.destroy();
 
 #if RENDER!=R_R1
@@ -133,6 +140,9 @@ public:
 	void		r_dsgraph_render_lods							(bool	_setup_zb,	bool _clear);
 	void		r_dsgraph_render_sorted							(bool hud_render = true);
 	void		r_dsgraph_render_sorted_hud						();
+#if RENDER==R_R4
+	void r_dsgraph_render_pda();
+#endif
 	void		r_dsgraph_render_emissive						();
 	void		r_dsgraph_render_scope							();
 	void		r_dsgraph_render_wmarks							();

@@ -159,6 +159,17 @@ void R_dsgraph_structure::r_dsgraph_insert_dynamic	(dxRender_Visual *pVisual, Fv
 	{
 		if (sh->flags.bStrictB2F)	
 		{
+#if RENDER==R_R4
+			// COP_ENGINE_PATCH: COP-ENG-216 - defer the screen, keeping hands/body in native AA.
+			const char* pixelShader = !sh->passes.empty() && sh->passes[0]->ps ? sh->passes[0]->ps->cName.c_str() : nullptr;
+			// Compiled shader resources may append an underscore and an options CRC.
+			if (pixelShader && strncmp(pixelShader, "pf_pda_screen", 13) == 0 &&
+				(pixelShader[13] == '\0' || pixelShader[13] == '_'))
+			{
+				mapHUDPda.insertInAnyWay(distSQ, { SSA, RI.val_pObject, pVisual, *RI.val_pTransform, sh });
+				return;
+			}
+#endif
 			mapHUDSorted.insertInAnyWay(distSQ, { SSA, RI.val_pObject, pVisual, *RI.val_pTransform, sh });
 			return;
 		} 

@@ -2,6 +2,7 @@
 #include "HUDManager.h"
 #include "HUDTarget.h"
 #include "Actor.h"
+#include "PDA.h"
 #include "../xrEngine/IGame_Level.h"
 #include "../xrEngine/xr_input.h"
 #include "GamePersistent.h"
@@ -172,9 +173,14 @@ void  CHUDManager::RenderUI()
 
 	if(!b_online)					return;
 	PROF_EVENT("CHUDManager::RenderUI");
+	// COP_ENGINE_PATCH: COP-ENG-215 - suppress overlays only while reading the PDA.
+	// Leave saved HUD flags and dialog-holder state intact for exact restoration.
+	CActor* actor = g_pGameLevel ? smart_cast<CActor*>(g_pGameLevel->CurrentViewEntity()) : nullptr;
+	const CPda* pda = actor ? actor->GetPDA() : nullptr;
+	const bool readingPda = pda && pda->Is3DActive() && pda->IsReading();
 	if (true /*|| psHUD_Flags.is(HUD_DRAW | HUD_DRAW_RT)*/)
 	{
-		HitMarker.Render			();
+		if (!readingPda) HitMarker.Render();
 		if(pUIGame)
 		{
 			xrCriticalSectionGuard guard(&ui_lock);
@@ -184,7 +190,7 @@ void  CHUDManager::RenderUI()
 		UI().RenderFont				();
 	}
 
-		m_pHUDTarget->Render();
+		if (!readingPda) m_pHUDTarget->Render();
 
 
 	if( Device.Paused() && bShowPauseString){

@@ -233,6 +233,10 @@ void  xrSkin4W_x86(vertRender*		D,
 }
 
 
+#if RENDER==R_R4 && defined(USE_DX11)
+void ApplyPdaHudPose(IKinematics* model, const Fmatrix* bone, const Fmatrix* oldBone);
+#endif
+
 shared_str	s_bones_array_const;
 
 #ifdef USE_DX11
@@ -280,6 +284,9 @@ void CSkeletonX::_Render	(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 
 		if(RenderMode != RM_SINGLE) {
 			RCache.set_xform_world_old(Parent->mOldWorldMartrix);
+#if RENDER==R_R4
+            ApplyPdaHudPose(Parent, nullptr, nullptr);
+#endif
 		}
 	}
 #endif
@@ -302,6 +309,11 @@ void CSkeletonX::_Render	(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 			if(RImplementation.phase == RImplementation.PHASE_NORMAL) {
 				Fmatrix	O; O.mul_43(Parent->mOldWorldMartrix, Parent->LL_GetTransform_R_old(u16(RMS_boneid)));
 				RCache.set_xform_world_old(O);
+#if RENDER==R_R4
+                // Rigid mesh parts bake their bone into the draw transform instead of the skin palette.
+                if (Device.hudViewportData.isRenderProcess)
+                    ApplyPdaHudPose(Parent, &Parent->LL_GetTransform_R(u16(RMS_boneid)), &Parent->LL_GetTransform_R_old(u16(RMS_boneid)));
+#endif
 			}
 #endif
 

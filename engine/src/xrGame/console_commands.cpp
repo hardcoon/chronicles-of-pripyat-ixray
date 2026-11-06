@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "SleepTimelapse.h"
 #include "pch_script.h"
 #include "../xrEngine/XR_IOConsole.h"
@@ -58,6 +58,8 @@
 #include "ai_object_location.h"
 #include "xrServer_Objects_ALife_Monsters.h"
 
+extern Flags32 psPda3D; // COP_ENGINE_PATCH: COP-ENG-212
+extern float psPdaReadZoom; // COP_ENGINE_PATCH: COP-ENG-214
 string_path		g_last_saved_game;
 
 #ifdef DEBUG
@@ -2411,6 +2413,9 @@ void CCC_RegisterCommands()
 	// options
 	g_OptConCom.Init();
 	CMD1(CCC_ChangeLanguage, "language");
+	// COP_ENGINE_PATCH: COP-ENG-212 - client setting is available in MASTER_GOLD too.
+	CMD3(CCC_Mask, "g_3d_pda", &psPda3D, 1);
+    CMD4(CCC_Float, "g_pda_zoom", &psPdaReadZoom, 1.f, 2.f); // COP_ENGINE_PATCH: COP-ENG-215
 
 #ifndef MASTER_GOLD
 	CMD1(CCC_SetActorPosition, "set_actor_position");

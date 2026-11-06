@@ -10,6 +10,23 @@ extern int SM_FOR_SEND_WIDTH;
 extern int SM_FOR_SEND_HEIGHT;
 
 void CRender::ScreenshotImpl(ScreenshotMode mode, LPCSTR name, CMemoryWriter* memory_writer) {
+    // COP_ENGINE_PATCH: COP-ENG-213 - script/UI updates run on the game worker.
+    // The immediate D3D context belongs to the main thread. Normal captures
+    // have no synchronous output, so schedule them at the next frame boundary.
+    // CAppInfo stores a Windows pseudo-handle, identical on every thread, so
+    // IsPrimaryThread cannot identify the caller here. Queue normal captures
+    // unconditionally; only the frame callback may execute their GPU readback.
+    static thread_local bool executingQueuedCapture = false;
+    if (mode == SM_NORMAL && !executingQueuedCapture)
+    {
+        const xr_string requestedName = name ? name : "";
+        Device.callback(0, [requestedName]() {
+            executingQueuedCapture = true;
+            RImplementation.Screenshot(SM_NORMAL, requestedName.empty() ? nullptr : requestedName.c_str());
+            executingQueuedCapture = false;
+        });
+        return;
+    }
     ID3DResource* pSrcTexture = nullptr;
     RTarget->GetResource(&pSrcTexture);
 

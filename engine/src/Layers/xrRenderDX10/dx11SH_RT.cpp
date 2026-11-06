@@ -92,13 +92,16 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, DxgiFormat f, u32 SampleCount, CRT::
 	}
 
 	if(!bUseAsDepth) {
-		if(CreationFlags & CRTCreationFlags::MIPPED_RT_FLAG) {
+		if(CreationFlags & (CRTCreationFlags::MIPPED_RT_FLAG | CRTCreationFlags::AUTOGEN_MIPS_RT_FLAG)) {
 			auto dwSize = std::min(dwWidth, dwHeight);
 
 			while((dwSize /= 2) >= 4) {
 				++desc.MipLevels;
 			}
 		}
+		// COP_ENGINE_PATCH: COP-ENG-216 - leave existing manually filled mip chains alone.
+		if (SampleCount == 1 && (CreationFlags & CRTCreationFlags::AUTOGEN_MIPS_RT_FLAG))
+			desc.MiscFlags |= D3D11_RESOURCE_MISC_GENERATE_MIPS;
 
 		if(SampleCount == 1 && CreationFlags & CRTCreationFlags::USE_UAV_FLAG) {
 			desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;

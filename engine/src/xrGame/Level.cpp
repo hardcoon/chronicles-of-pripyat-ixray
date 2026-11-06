@@ -1,4 +1,5 @@
-#include "StdAfx.h"
+#include "stdafx.h"
+#include "PDA.h"
 #include "pch_script.h"
 #include "../xrEngine/FDemoRecord.h"
 #include "../xrEngine/FDemoPlay.h"
@@ -758,6 +759,8 @@ extern UI_API void draw_wnds_rects();
 
 void CLevel::OnRender()
 {
+    // COP_ENGINE_PATCH: COP-ENG-212 - generate the PDA screen before world/HUD rendering.
+    if (game && Actor() && Actor()->GetPDA()) Actor()->GetPDA()->Render3DUI();
 	inherited::OnRender	();
 
 	if (!game)

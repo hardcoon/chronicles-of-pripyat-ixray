@@ -259,6 +259,18 @@ void R_dsgraph_structure::r_dsgraph_render_sorted_hud()
 	rmNormal();
 }
 
+#if RENDER==R_R4
+// COP_ENGINE_PATCH: COP-ENG-216 - same HUD projection and depth test, after native AA.
+void R_dsgraph_structure::r_dsgraph_render_pda()
+{
+	CHudInitializer initializer(true);
+	rmNear();
+	mapHUDPda.traverseRL(sorted_L1);
+	mapHUDPda.clear();
+	rmNormal();
+}
+#endif
+
 //////////////////////////////////////////////////////////////////////////
 // strict-sorted render
 void	R_dsgraph_structure::r_dsgraph_render_emissive	()

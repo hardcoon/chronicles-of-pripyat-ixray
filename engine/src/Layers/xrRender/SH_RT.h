@@ -9,7 +9,8 @@ public:
 	enum CRTCreationFlags
 	{
 		USE_UAV_FLAG = u32(1 << 0),
-		MIPPED_RT_FLAG = u32(1 << 1)
+		MIPPED_RT_FLAG = u32(1 << 1),
+		AUTOGEN_MIPS_RT_FLAG = u32(1 << 2) // COP_ENGINE_PATCH: COP-ENG-216 - opt-in only.
 	};
 	void	create(LPCSTR Name, u32 w, u32 h, DxgiFormat f, u32 SampleCount = 1, CRT::CRTCreationFlags CreationFlags = (CRT::CRTCreationFlags)NULL);
 #else

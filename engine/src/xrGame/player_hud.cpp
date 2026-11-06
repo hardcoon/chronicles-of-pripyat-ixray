@@ -9,6 +9,7 @@
 #include "InertionData.h"
 #include "Inventory.h"
 #include "WeaponBinoculars.h"
+#include "PDA.h"
 
 player_hud* g_player_hud = nullptr;
 player_hud* g_player_hud2 = nullptr;
@@ -1586,6 +1587,17 @@ void player_hud::render_hud()
 	bool b_r0 = (m_attached_items[0] && m_attached_items[0]->need_renderable());
 	bool b_r1 = (m_attached_items[1] && m_attached_items[1]->need_renderable());
 
+    if (b_r0 && !m_attached_items[1] && !m_animator_item)
+    {
+        auto* pda = m_attached_items[0]->m_parent_hud_item->object().cast_pda();
+        if (pda && pda->IsReading())
+        {
+            auto* hands = m_model->dcast_PKinematics();
+            auto* watch = m_watch_visible && m_watch_anchor_valid && m_watch_visual ? m_watch_visual->dcast_PKinematics() : nullptr;
+            pda->SubmitReadPose(hands, watch, m_attach_offsetr, hands->LL_GetTransform(m_ancors[0]));
+        }
+    }
+
 	if(b_r0 || b_r1 || m_animator_item && m_animator_item->IsPlaying || m_bhands_visible)
 	{
 		::Render->set_Transform(&m_transform);
@@ -1764,10 +1776,21 @@ void player_hud::update(const Fmatrix& cam_trans)
 	update_inertion					(trans);
 	update_additional				(trans);
 
+	// COP_ENGINE_PATCH: COP-ENG-217 - keep the reading anchor independent of procedural hand offsets.
+	// The ordinary carrying offsets keep updating, so leaving reading restores them smoothly.
+	Fvector attachPosition = attach_pos(), attachRotation = attach_rot();
+	const CPda* readingPda = !m_animator_item && m_attached_items[0] ?
+		m_attached_items[0]->m_parent_hud_item->object().cast_pda() : nullptr;
+	if (readingPda && readingPda->ReadPoseFactor() > 0.f)
+	{
+		const auto& positions = m_attached_items[0]->m_measures.m_hands_positions;
+		attachPosition.lerp(attachPosition, positions.hands_offsets_tune[0][0], readingPda->ReadPoseFactor());
+		attachRotation.lerp(attachRotation, positions.hands_offsets_tune[1][0], readingPda->ReadPoseFactor());
+	}
 
 	{
-		m_attach_offsetr.setHPB(VPUSH(Fvector(attach_rot()).mul(PI / 180.f)));//generate and set Euler angles
-		m_attach_offsetr.c.set(attach_pos());
+		m_attach_offsetr.setHPB(VPUSH(Fvector(attachRotation).mul(PI / 180.f)));//generate and set Euler angles
+		m_attach_offsetr.c.set(attachPosition);
 		m_transform.mul(trans, m_attach_offsetr);
 	}
 
@@ -1775,8 +1798,8 @@ void player_hud::update(const Fmatrix& cam_trans)
 		bool left_hand_active = m_attached_items[1];
 
 		Fmatrix attach_offset;
-		attach_offset.setHPB(VPUSH(Fvector(left_hand_active ? m_attached_items[1]->hands_attach_rot() : attach_rot()).mul(PI / 180.f)));//generate and set Euler angles
-		attach_offset.c.set(left_hand_active ? m_attached_items[1]->hands_attach_pos() : attach_pos());
+		attach_offset.setHPB(VPUSH(Fvector(left_hand_active ? m_attached_items[1]->hands_attach_rot() : attachRotation).mul(PI / 180.f)));//generate and set Euler angles
+		attach_offset.c.set(left_hand_active ? m_attached_items[1]->hands_attach_pos() : attachPosition);
 		m_transformL.mul(trans, left_hand_active ? m_attach_offsetl.set(attach_offset) : m_attach_offsetl.inertion(attach_offset, 1 - Device.fTimeDelta * 10.f));
 	}
 
@@ -1856,6 +1879,9 @@ void player_hud::update_inertion(Fmatrix& trans)
 	if (hi)
 	{
 		auto& inertion = hi->m_parent_hud_item->CurrentInertionData();
+		// COP_ENGINE_PATCH: COP-ENG-217 - preserve tracking/carry inertia, but remove pitch/lag from reading.
+		const CPda* pda = hi->m_parent_hud_item->object().cast_pda();
+		const float weight = pda ? 1.f - pda->ReadPoseFactor() : 1.f;
 
 		Fmatrix								xform;
 		Fvector& origin						= trans.c; 
@@ -1879,13 +1905,13 @@ void player_hud::update_inertion(Fmatrix& trans)
 
 		// tend to forward
 		st_last_dir.mad						(diff_dir, inertion.TendtoSpeed*Device.fTimeDelta);
-		origin.mad							(diff_dir, inertion.OriginOffset);
+		origin.mad							(diff_dir, inertion.OriginOffset * weight);
 
 		// pitch compensation
 		float pitch							= angle_normalize_signed(xform.k.getP());
-		origin.mad							(xform.k,	-pitch * inertion.PitchOffsetD);
-		origin.mad							(xform.i,	-pitch * inertion.PitchOffsetR);
-		origin.mad							(xform.j,	-pitch * inertion.PitchOffsetN);
+		origin.mad							(xform.k,	-pitch * inertion.PitchOffsetD * weight);
+		origin.mad							(xform.i,	-pitch * inertion.PitchOffsetR * weight);
+		origin.mad							(xform.j,	-pitch * inertion.PitchOffsetN * weight);
 	}
 }
 

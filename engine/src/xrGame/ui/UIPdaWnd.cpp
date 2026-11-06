@@ -1,6 +1,9 @@
 #include "stdafx.h"
-#include "UIPdaWnd.h"
 #include "../PDA.h"
+#include "UIPdaWnd.h"
+#include "../Actor.h"
+#include "../../xrUI/UICursor.h"
+#include "../../xrEngine/xr_input.h"
 
 #include "../../xrUI/xrUIXmlParser.h"
 #include "../../xrUI/UIXmlInit.h"
@@ -179,6 +182,7 @@ void CUIPdaWnd::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
 
 void CUIPdaWnd::Show(bool status)
 {
+    if (!status && Actor() && Actor()->GetPDA()) Actor()->GetPDA()->Close3D();
 	inherited::Show						(status);
 	if(status)
 	{
@@ -238,6 +242,15 @@ void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
         previous->Show(false);
         if (UIMainPdaFrame->IsChild(previous))
             UIMainPdaFrame->DetachChild(previous);
+    }
+
+    // COP_ENGINE_PATCH: COP-ENG-212 - script pages still need detaching during
+    // actor net_destroy, but the map and task managers can no longer be refreshed.
+    if (!g_pGameLevel || !Level().CurrentEntity())
+    {
+        m_pActiveDialog = pUITaskWnd;
+        m_sActiveSection = "eptTasks";
+        return;
     }
 
 	if ( section == "eptTasks" )
@@ -337,6 +350,8 @@ void CUIPdaWnd::Show_MapLegendWnd( bool status )
 
 void CUIPdaWnd::Draw()
 {
+    // COP_ENGINE_PATCH: COP-ENG-212 - only the texture pass draws a physical PDA.
+    if (!m_drawing3D && Actor() && Actor()->GetPDA() && Actor()->GetPDA()->Is3DActive()) return;
 	inherited::Draw();
 //.	DrawUpdatedSections();
 	DrawHint();
@@ -462,6 +477,12 @@ void RearrangeTabButtons(CUITabControl* pTab)
 
 bool CUIPdaWnd::OnKeyboardAction(int dik, EUIMessages keyboard_action)
 {
+    // COP_ENGINE_PATCH: COP-ENG-214 - leave reading without putting the PDA away.
+    if (keyboard_action == WINDOW_KEY_PRESSED && Actor() && Actor()->GetPDA() && Actor()->GetPDA()->IsReading() &&
+        (is_binded(kQUIT, dik) || is_binded(kWPN_RELOAD, dik))) {
+        Actor()->GetPDA()->SetReadMode(false);
+        return true;
+    }
 	if ( is_binded(kACTIVE_JOBS, dik) )
 	{
 		if ( WINDOW_KEY_PRESSED == keyboard_action )
@@ -470,5 +491,24 @@ bool CUIPdaWnd::OnKeyboardAction(int dik, EUIMessages keyboard_action)
 		return true;
 	}	
 
-	return inherited::OnKeyboardAction(dik,keyboard_action);
+	if (inherited::OnKeyboardAction(dik, keyboard_action)) return true;
+	// COP_ENGINE_PATCH: COP-ENG-215 - preserve editable-field handling, then allow the headlamp in reading mode.
+	if (keyboard_action == WINDOW_KEY_PRESSED && is_binded(kTORCH, dik) &&
+		Actor() && Actor()->GetPDA() && Actor()->GetPDA()->Is3DActive())
+	{
+		Actor()->SwitchTorch();
+		return true;
+	}
+	return false;
+}
+
+bool CUIPdaWnd::OnMouseAction(float x, float y, EUIMessages action)
+{
+    if (Actor() && Actor()->GetPDA() && Actor()->GetPDA()->Is3DActive()) {
+        const Fvector2 delta = GetUICursor().GetCursorPositionDelta();
+        Actor()->GetPDA()->PdaMouse(action == WINDOW_MOUSE_MOVE ? delta.x : 0.f,
+            action == WINDOW_MOUSE_MOVE ? delta.y : 0.f, pInput->iGetAsyncKeyState(MOUSE_1) || pInput->iGetAsyncKeyState(MOUSE_2));
+    }
+    inherited::OnMouseAction(x, y, action);
+    return true;
 }

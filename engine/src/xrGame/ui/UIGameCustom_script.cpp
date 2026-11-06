@@ -39,6 +39,8 @@ void CUIGameCustom::script_register(lua_State *L)
 			.def("UpdateActorMenu",			&CUIGameCustom::UpdateActorMenu)
 			.def("CurrentItemAtCell",		&CUIGameCustom::CurrentItemAtCell)
 			//-Alundaio
+            .def("ShowPdaDialog", &CUIGameCustom::ShowPdaDialog) // COP_ENGINE_PATCH: COP-ENG-223
+            .def("ShowPdaMenu", &CUIGameCustom::ShowPdaMenu) // COP_ENGINE_PATCH: COP-ENG-212
 			.def("HidePdaMenu",				&CUIGameCustom::HidePdaMenu)
 			.def("show_messages",			&CUIGameCustom::ShowMessagesWindow)
 			.def("hide_messages",			&CUIGameCustom::HideMessagesWindow)

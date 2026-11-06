@@ -307,6 +307,13 @@ void CRenderTarget::phase_combine()
 		}
 	}
 
+	// COP_ENGINE_PATCH: COP-ENG-216 - bypass FXAA/SMAA/TAA only for the physical PDA screen.
+	// Keep the original depth buffer and all downstream scaling/color processing.
+	if (RImplementation.mapHUDPda.size() != 0)
+	{
+		u_setrt(rt_Generic_0, 0, 0, RDepth);
+		RImplementation.r_dsgraph_render_pda();
+	}
 	u_setrt(get_width(), get_height(), 0, 0, 0, 0);
 	RImplementation.rmNormal();
 

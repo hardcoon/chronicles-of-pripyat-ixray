@@ -19,10 +19,12 @@ CPda::CPda(void)
 	m_idOriginalOwner		= u16(-1);
 	m_SpecificChracterOwner = nullptr;
 	TurnOff					();
+    m_current_motion_def = nullptr;
+    SetPending(FALSE);
 }
 
 CPda::~CPda() 
-{}
+{ Capture3DCursor(false); }
 
 BOOL CPda::net_Spawn(CSE_Abstract* DC) 
 {
@@ -38,6 +40,7 @@ BOOL CPda::net_Spawn(CSE_Abstract* DC)
 
 void CPda::net_Destroy() 
 {
+    Cleanup3D();
 	inherited::net_Destroy		();
 	TurnOff						();
 	feel_touch.clear			();
@@ -46,7 +49,16 @@ void CPda::net_Destroy()
 
 void CPda::Load(LPCSTR section) 
 {
-	inherited::Load(section);
+    m_has3D = xr_strcmp(section, "device_pda") == 0 && pSettings->line_exist(section, "hud");
+    if (m_has3D) {
+        inherited::Load(section);
+        m_sounds.LoadSound(section, "snd_draw", "sndShow", true);
+        m_sounds.LoadSound(section, "snd_holster", "sndHide", true);
+        m_sounds.LoadSound(section, "snd_btn_press", "sndButtonPress");
+        m_sounds.LoadSound(section, "snd_btn_release", "sndButtonRelease");
+        m_screenOnDelay = READ_IF_EXISTS(pSettings, r_float, section, "screen_on_delay", .68f);
+        m_screenOffDelay = READ_IF_EXISTS(pSettings, r_float, section, "screen_off_delay", .67f);
+    } else CInventoryItemObject::Load(section);
 
 	m_fRadius = pSettings->r_float(section,"radius");
 	m_functor_str = READ_IF_EXISTS(pSettings,r_string,section,"play_function",""); 
@@ -159,6 +171,7 @@ void CPda::OnH_A_Chield()
 
 void CPda::OnH_B_Independent(bool just_before_destroy) 
 {
+    Cleanup3D();
 	inherited::OnH_B_Independent(just_before_destroy);
 	
 	//âûêëþ÷èòü
@@ -192,13 +205,13 @@ void CPda::ActivePDAContacts(xr_vector<CInventoryOwner*>& res)
 
 void CPda::save(NET_Packet &output_packet)
 {
-	inherited::save	(output_packet);
+	CInventoryItemObject::save	(output_packet);
 	save_data		(m_sFullName, output_packet);
 }
 
 void CPda::load(IReader &input_packet)
 {
-	inherited::load	(input_packet);
+	CInventoryItemObject::load	(input_packet);
 	load_data		(m_sFullName, input_packet);
 }
 

@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "Actor.h"
+#include "PDA.h"
 #include "Torch.h"
 #include "trade.h"
 #include "../xrEngine/CameraBase.h"
@@ -22,6 +23,7 @@
 #include "../xrEngine/string_table.h"
 #include "../../xrUI/Widgets/UIStatic.h"
 #include "ui/UIActorMenu.h"
+#include "ui/UIPdaWnd.h"
 #include "ui/UIDragDropReferenceList.h"
 #include "CharacterPhysicsSupport.h"
 #include "InventoryBox.h"
@@ -825,6 +827,8 @@ bool CActor::use_Holder(CHolderCustom* holder)
 
 void CActor::ActorUse()
 {
+    // COP_ENGINE_PATCH: COP-ENG-214 - carrying leaves actor control available.
+    if (GetPDA() && GetPDA()->IsReading()) return;
 	if (HudAnimator() && HudAnimator()->IsActive())
 	{
 		return;
@@ -1161,7 +1165,10 @@ void CActor::SwitchNightVision()
 
 void CActor::SwitchTorch()
 { 
-	if (CurrentGameUI() && CurrentGameUI()->TopInputReceiver())
+	// COP_ENGINE_PATCH: COP-ENG-215 - a physical PDA is not a blocking fullscreen menu.
+	const bool pdaActive = GetPDA() && GetPDA()->Is3DActive();
+	if (CurrentGameUI() && CurrentGameUI()->TopInputReceiver() &&
+		!(pdaActive && CurrentGameUI()->TopInputReceiver() == &CurrentGameUI()->PdaMenu()))
 	{
 		return;
 	}
@@ -1170,6 +1177,12 @@ void CActor::SwitchTorch()
 
 	if (CTorch* torch = item_from_slot ? item_from_slot->cast_torch() : nullptr)
 	{
+		if (pdaActive)
+		{
+			// Both hands are occupied; keep the PDA pose and toggle the headlamp directly.
+			torch->Switch();
+			return;
+		}
 		PIItem active_item = inventory().ActiveItem();
 		CHudItem* itm = active_item != nullptr ? active_item->cast_hud_item() : nullptr;
 		CWeapon* wpn = itm != nullptr ? itm->cast_weapon() : nullptr;

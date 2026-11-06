@@ -98,6 +98,8 @@ public:
     Fvector4 pf_sss_last_ao = {};
     Fvector4 pf_sss_last_ao2 = {};
     u32 pf_sss_last_revision = 0;
+    // COP_ENGINE_PATCH: COP-ENG-212 - live PDA interface.
+    ref_rt rt_pf_pda;
 	IBlender*					b_taa;
 	IBlender*					b_gamma;
 

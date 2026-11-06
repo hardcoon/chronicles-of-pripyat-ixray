@@ -48,6 +48,9 @@ list(APPEND XRR4_SRC_FILES ${XRR4_SOURCE_INCL_FILES})
 
 # xrRender_R4 project
 add_library(xrRender_R4 SHARED ${XRR4_SRC_FILES})
+if (MSVC)
+    target_sources(xrRender_R4 PRIVATE "xrRender_R4.def")
+endif()
 target_precompile_headers(xrRender_R4 PRIVATE "stdafx.h")
 
 # Include directories
