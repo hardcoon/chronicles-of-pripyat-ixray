@@ -1398,11 +1398,14 @@ function update()
 		not db.actor:has_info("pf_story_preacher_dead") then
 		on_final_document_found()
 	end
-	-- Save migration and safety net: document eleven is unlocked by #10, not
-	-- by the pendant. Recreate its cyan hand-off if an older build removed it.
+	-- Restore either guaranteed hand-off after a failed spawn or an older save.
+	-- Document eleven is unlocked by #10, not by the pendant.
 	if db.actor:has_info("pf_story_doc_10_found") and
 		not db.actor:has_info("pf_story_doc_11_found") then
 		pf_dynamic_stashes.grant_story_document_hint(11)
+	elseif db.actor:has_info("pf_story_doc_11_found") and
+		not db.actor:has_info("pf_story_doc_12_found") then
+		pf_dynamic_stashes.grant_story_document_hint(12)
 	end
 
 	if db.actor:has_info("pf_story_doc_10_found") and

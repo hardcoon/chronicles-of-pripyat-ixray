@@ -3785,26 +3785,82 @@ function impl.try_spawn_lore_note(slot)
 	return false
 end
 
+function impl.story_document_pending_in_slot(slot)
+	local index = slot and slot.state and slot.state.story_doc
+	local info = index and pf_story_documents.document_info(index)
+	return info ~= nil and (db.actor == nil or not db.actor:has_info(info))
+end
+
+function impl.restore_pending_story_slot(slot)
+	if slot and slot.state and slot.state.depleted and
+		impl.story_document_pending_in_slot(slot) then
+		-- An old empty box may already be gone. Restore only its owed document,
+		-- including direct hint/open paths, never its already collected manifest.
+		slot.state.story_doc_recovery_only = true
+		slot.state.depleted = false
+		slot.loot_materialized = true
+	end
+end
+
 function impl.spawn_story_document(slot)
-	if not slot or not slot.id or not slot.state.story_doc then return false end
-	local section = pf_story_documents.document_section(slot.state.story_doc)
-	if not section then return false end
-	return impl.spawn_item({ section = section }, slot.id)
+	local box = slot and slot.id and alife():object(slot.id, true) or nil
+	return impl.ensure_story_document(slot, box)
 end
 
 function impl.ensure_story_document(slot, box)
-	if not slot or not box or not slot.state.story_doc then return false end
+	if not slot or not slot.state or not slot.state.story_doc then return false end
+	if not db.actor then return false end
+	if not impl.story_document_pending_in_slot(slot) then
+		slot.state.story_doc = nil
+		slot.story_document_created = nil
+		slot.story_document_retry_after = nil
+		slot.story_document_spawn_error = nil
+		return true
+	end
+	if not box or box.id ~= slot.id or not stash_sections[box:section_name()] then return false end
 	local section = pf_story_documents.document_section(slot.state.story_doc)
-	if not section then return false end
 	if impl.stash_contains_section(box, section) then return true end
-	return impl.spawn_story_document(slot)
+	-- A native child list can lag behind create/transfer. Remember only this
+	-- newly created object's identity; never spawn a second copy in that gap.
+	local created = slot.story_document_created
+	if created then
+		local item = alife():object(created.id, true)
+		if created.box_id == box.id and created.section == section and item and
+			item:name() == created.name and item:section_name() == section then
+			if tonumber(item.parent_id) == box.id then return true end
+			if tonumber(item.parent_id) == db.actor:id() then return false end
+		end
+		slot.story_document_created = nil
+	end
+	local now = time_global()
+	if now < (slot.story_document_retry_after or 0) then return false end
+	local created_ids = {}
+	local ok, spawned = pcall(impl.spawn_item, { section = section }, box.id, created_ids)
+	if not ok or not spawned then
+		impl.rollback_spawned_items(created_ids)
+		slot.story_document_retry_after = now + CHECK_INTERVAL_MS
+		if not slot.story_document_spawn_error then
+			printf("[PF STORY] document %02d delivery pending in slot %s: %s",
+				slot.state.story_doc, tostring(slot.index), tostring(ok and "spawn failed" or spawned))
+			slot.story_document_spawn_error = true
+		end
+		return false
+	end
+	local item = created_ids[1] and alife():object(created_ids[1], true) or nil
+	if item then
+		slot.story_document_created = {
+			id = item.id, name = item:name(), box_id = box.id, section = section
+		}
+	end
+	slot.spawned_at = now
+	slot.story_document_retry_after = nil
+	slot.story_document_spawn_error = nil
+	return true
 end
 
 function impl.story_document_pending()
 	for _, candidate in ipairs(slots) do
-		local index = candidate.state and candidate.state.story_doc
-		local info = index and pf_story_documents.document_info(index)
-		if info and not db.actor:has_info(info) then return true end
+		if impl.story_document_pending_in_slot(candidate) then return true end
 	end
 	return false
 end
@@ -3833,7 +3889,7 @@ function impl.try_assign_random_story_document(slot)
 		printf("[PF STORY] assigned document %02d to dynamic stash slot %d", next_index, slot.index or 0)
 		return true
 	end
-	slot.state.story_doc = nil
+	-- Delivery will resume in the same slot without another story roll.
 	return false
 end
 
@@ -4015,8 +4071,10 @@ function impl.update_vertex_search()
 end
 
 function impl.spawn_slot(slot)
+	impl.restore_pending_story_slot(slot)
 	local point = slot.point
-	local loot = impl.build_slot_loot(slot)
+	local document_only = slot.state.story_doc_recovery_only == true
+	local loot = not document_only and impl.build_slot_loot(slot) or nil
 	local section = point.model
 	if point.curated then
 		section = slot.state.container_model
@@ -4038,7 +4096,10 @@ function impl.spawn_slot(slot)
 	box.angle = vector():set(0, math.rad(tonumber(point.yaw) or 0), 0)
 	-- Keep the streamed container and its deterministic contents atomic: an
 	-- incomplete child spawn is rolled back and retried from the saved manifest.
-	local materialized, spawn_error = impl.try_spawn_complete_slot_loot(box.id, slot, loot)
+	local materialized, spawn_error = true, nil
+	if not document_only then
+		materialized, spawn_error = impl.try_spawn_complete_slot_loot(box.id, slot, loot)
+	end
 	if not materialized then
 		impl.release_object(box.id)
 		if spawn_error then error(spawn_error) end
@@ -4054,10 +4115,12 @@ function impl.spawn_slot(slot)
 	slot.state.defer_loot = nil
 	slot.state.workbench_resources_pending = nil
 	impl.add_tier_marker(slot)
-	impl.ensure_hacking_usb(slot, box)
-	impl.ensure_ghost_city_note(slot, box)
-	impl.ensure_pripyat_city_note(slot, box)
-	impl.ensure_photo_card(slot, box)
+	if not document_only then
+		impl.ensure_hacking_usb(slot, box)
+		impl.ensure_ghost_city_note(slot, box)
+		impl.ensure_pripyat_city_note(slot, box)
+		impl.ensure_photo_card(slot, box)
+	end
 	if slot.state.story_doc then impl.spawn_story_document(slot) end
 	return true
 end
@@ -4083,6 +4146,7 @@ function impl.deplete_slot(slot)
 end
 
 function impl.retire_empty_slot(slot)
+	if impl.story_document_pending_in_slot(slot) then return false end
 	-- A failed supplemental spawn remains owed to this searched cache.
 	if slot and slot.state and slot.state.ordinary_detector_pending then return false end
 	if impl.photo_card_pending(slot) then return false end
@@ -4105,6 +4169,7 @@ end
 
 function impl.reconcile_legacy_box_state(slot, box)
 	if not slot or not slot.state or not box then return box end
+	if slot.state.story_doc then impl.ensure_story_document(slot, box) end
 	if slot.state.ordinary_detector_pending then
 		impl.materialize_ordinary_detector_rewards(slot, box)
 		if slot.state.ordinary_detector_pending then return box end
@@ -4113,6 +4178,9 @@ function impl.reconcile_legacy_box_state(slot, box)
 		impl.ensure_photo_card(slot, box)
 		if impl.photo_card_pending(slot) then return box end
 	end
+	-- An undelivered story document is still owed even when ordinary loot
+	-- has already left this box. Other supplemental rewards above keep working.
+	if impl.story_document_pending_in_slot(slot) then return box end
 	if slot.state.depleted then
 		if impl.has_items(box) then
 			-- Repair saves made by a broken detector version which committed the
@@ -5037,39 +5105,37 @@ function grant_story_document_hint(index)
 	if not db.actor or level.name() ~= LEVEL_NAME or (index ~= 11 and index ~= 12) then return false end
 	impl.build_candidate_indexes()
 	if #slots == 0 then impl.initialize_slots() end
+	local slot, newly_assigned
 	for _, candidate in ipairs(slots) do
-		if candidate.state.story_doc == index then return true end
-	end
-	local eligible = impl.collect_or_allocate_hint_slots("cyan")
-	if #eligible == 0 then return false end
-	local slot = eligible[math.random(1, #eligible)]
-	slot.state.hinted = true
-	slot.state.discovered = true
-	slot.state.story_roll_checked = true
-	slot.state.story_doc = index
-	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
-	if not slot.id then
-		slot.state.story_doc = nil
-		slot.state.discovered = false
-		slot.state.hinted = false
-		return false
-	end
-	local server_box = alife():object(slot.id, true)
-	if not server_box then return false end
-	impl.add_tier_marker(slot)
-	local expected_section = pf_story_documents.document_section(index)
-	local has_story_item = false
-	for child_id in alife():get_children(server_box) do
-		local child = alife():object(child_id, true)
-		if child and child:section_name() == expected_section then
-			has_story_item = true
+		if candidate.state.story_doc == index then
+			slot = candidate
 			break
 		end
 	end
-	-- Existing boxes did not pass through spawn_slot after story_doc was set.
-	if not has_story_item then impl.spawn_story_document(slot) end
-	news_manager.send_tip(db.actor, "pf_story_archive_stash_revealed", nil, "pf_stash", nil, nil)
-	printf("[PF STORY] guaranteed document %02d assigned to cyan slot %d", index, slot.index or 0)
+	if not slot then
+		local eligible = impl.collect_or_allocate_hint_slots("cyan")
+		if #eligible == 0 then return false end
+		slot = eligible[math.random(1, #eligible)]
+		slot.state.hinted = true
+		slot.state.discovered = true
+		slot.state.story_roll_checked = true
+		slot.state.story_doc = index
+		newly_assigned = true
+	end
+	-- The saved reservation survives a pending AI-vertex search, a full physical
+	-- budget or a failed spawn. Retrying must keep the same cyan slot and loot.
+	if not slot.id and impl.reserve_physical_slot_for_hint() then impl.spawn_slot(slot) end
+	if slot.id then
+		local server_box = alife():object(slot.id, true)
+		if server_box then
+			impl.add_tier_marker(slot)
+			impl.ensure_story_document(slot, server_box)
+		end
+	end
+	if newly_assigned then
+		news_manager.send_tip(db.actor, "pf_story_archive_stash_revealed", nil, "pf_stash", nil, nil)
+		printf("[PF STORY] guaranteed document %02d assigned to cyan slot %d", index, slot.index or 0)
+	end
 	return true
 end
 
@@ -5502,10 +5568,12 @@ end
 -- between the two search paths. Orange/red ambushes wait for completed pickup.
 function impl.prepare_stash_search(slot, server_box)
 	if not slot or not server_box then return false end
+	impl.restore_pending_story_slot(slot)
 	if not impl.materialize_slot_loot(slot, server_box) then return false end
 	server_box = impl.reconcile_legacy_box_state(slot, server_box)
 	if not server_box then return false end
 	impl.discover_slot(slot, server_box)
+	impl.ensure_story_document(slot, server_box)
 	impl.ensure_purple_discovery_reward(slot, server_box)
 	impl.ensure_hacking_usb(slot, server_box)
 	impl.ensure_ghost_city_note(slot, server_box)
@@ -5574,8 +5642,13 @@ function on_actor_item_take(item, previous_owner_id)
 		end
 		local story_index = pf_story_documents.document_index(section)
 		if story_index and slot.state.story_doc == story_index then
-			slot.state.story_doc = nil
 			pf_story_documents.on_document_taken(item)
+			if db.actor:has_info(pf_story_documents.document_info(story_index)) then
+				slot.state.story_doc = nil
+				slot.story_document_created = nil
+				slot.story_document_retry_after = nil
+				slot.story_document_spawn_error = nil
+			end
 		end
 		impl.process_stash_search(slot)
 		-- Take-all and scripted transfers can reach the generic actor
@@ -5703,6 +5776,7 @@ function impl.remember_history(slot, old_point_id)
 end
 
 function impl.rotate_slot(slot)
+	if impl.story_document_pending_in_slot(slot) then return false end
 	if impl.keep_medkit_help_reservation(slot) then return false end
 	local hacking = rawget(_G, "lz_pda_hacking")
 	if slot.state.usb_reserved_level and hacking and
@@ -5743,6 +5817,10 @@ function impl.rotate_slot(slot)
 	slot.ordinary_detector_spawn_error = nil
 	slot.state.ambush_checked = nil
 	slot.state.story_roll_checked = nil
+	slot.state.story_doc_recovery_only = nil
+	slot.story_document_created = nil
+	slot.story_document_retry_after = nil
+	slot.story_document_spawn_error = nil
 	slot.state.story_roll_chapter = nil
 	slot.state.story_doc = nil
 	slot.state.ghost_city_note = nil
@@ -5773,6 +5851,7 @@ end
 
 function impl.update_slot(slot, actor_position, allow_materialize)
 	if not slot.point then return false, false end
+	impl.restore_pending_story_slot(slot)
 	if slot.state.medkit_help_owner then impl.keep_medkit_help_reservation(slot) end
 	local point_distance_sqr = impl.position_distance_sqr(actor_position, slot.point)
 	local materialized = false
