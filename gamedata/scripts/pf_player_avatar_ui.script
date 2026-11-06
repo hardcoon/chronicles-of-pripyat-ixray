@@ -1,4 +1,4 @@
--- Native modal: its render/input layer sits above PDA achievement hints.
+-- Modal input keeps the avatar grid above the ranking page and its achievement hints.
 local impl = {}
 
 class "pf_player_avatar_dialog" (CUIScriptWnd)
@@ -118,8 +118,13 @@ function create(xml, parent, entries, roots)
             if self.open and not previous then
                 local cursor = GetCursorPosition()
                 self.window:Enable(true)
-                -- This holder path does not warp the OS cursor; PDA already owns it.
-                ActorMenu.get_pda_menu():GetHolder():start_stop_menu(self.window, false)
+                -- The ranking page polls this button after its mouse callback has returned.
+                local hud = get_hud()
+                if hud.ShowPdaDialog then
+                    hud:ShowPdaDialog(self.window, false)
+                else
+                    ActorMenu.get_pda_menu():GetHolder():start_stop_menu(self.window, false)
+                end
                 SetCursorPosition(cursor)
             elseif not self.open and previous then self.window:HideDialog() end
             if self.open then impl.select(self, current) end
@@ -134,6 +139,7 @@ function create(xml, parent, entries, roots)
         self.open = false
     end
     function self:poll(current, blocked)
+        if self.open and not self.window:IsShown() then self:set_open(false) end
         self.button:Enable(not blocked)
         if blocked and (self.open or self.button:GetCheck()) then self:set_open(false) end
         if not blocked and self.button:GetCheck() ~= self.open then

@@ -1,0 +1,55 @@
+![inventory]
+slot_active_8 = true
+
+![device_pda]
+hud = pf_pda_hud
+animation_slot = 2
+snd_draw = device\pda\pda_draw
+snd_holster = device\pda\pda_holster
+snd_btn_press = device\pda\pda_btn_press
+snd_btn_release = device\pda\pda_btn_release
+screen_on_delay = 0.68
+screen_off_delay = 0.67
+
+[pf_pda_hud]
+attach_place_idx = 0
+item_visual = dynamics\devices\dev_pda\dev_pda_hud.ogf
+item_position = 0, 0, 0
+item_orientation = 0, 0, 0
+hands_position = 0.007, -0.008988, 0.0859
+hands_orientation = 1.939999, 0.787091, 0.8045
+hands_position_16x9 = 0.007, -0.008988, 0.0859
+hands_orientation_16x9 = 1.939999, 0.787091, 0.8045
+aim_hud_offset_pos = 0, -0.059932, -0.164388
+aim_hud_offset_rot = -0.30958, 0, 0
+aim_hud_offset_pos_16x9 = 0, -0.059932, -0.164388
+aim_hud_offset_rot_16x9 = -0.30958, 0, 0
+gl_hud_offset_pos = 0, 0, 0
+gl_hud_offset_rot = 0, 0, 0
+gl_hud_offset_pos_16x9 = 0, 0, 0
+gl_hud_offset_rot_16x9 = 0, 0, 0
+fire_point = 0, 0, 0
+fire_bone = joystick
+; IX-Ray expects degrees, while the donor uses a camera FOV multiplier.
+hud_fov = 40.5
+hud_collision_enabled = false
+disable_bore = true
+inertion_origin_offset = 0.03
+inertion_tendto_speed = 16
+inertion_tendto_speed_aim = 16
+inertion_tendto_ret_speed = 8
+inertion_tendto_ret_speed_aim = 8
+anm_show = pda_draw
+anm_hide = pda_holster
+; COP-ENG-221: both stationary hand poses hold their first frame.
+anm_idle = pda_idle,,0
+anm_idle_aim = pda_idle_aim,,0
+anm_idle_moving = pda_walk
+anm_idle_moving_slow = pda_walk,,0.8
+anm_idle_moving_crouch = pda_walk,,0.7
+anm_idle_moving_crouch_slow = pda_walk,,0.5
+anm_idle_aim_moving = pda_walk_aim
+anm_idle_aim_moving_slow = pda_walk_aim,,0.8
+anm_idle_aim_moving_crouch = pda_walk_aim,,0.7
+anm_idle_aim_moving_crouch_slow = pda_walk_aim,,0.5
+anm_idle_sprint = pda_sprint

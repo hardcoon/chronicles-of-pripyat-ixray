@@ -49,6 +49,9 @@ function opt_mod:InitControls(x, y, xml, handler)
         pf_stash_settings.set_green_stash_spawning_disabled)
     addRow("pf_mod_opt_spawn_vehicles", "check", pf_vehicle_settings.is_discoverable_vehicle_spawning_enabled,
         pf_vehicle_settings.set_discoverable_vehicle_spawning_enabled)
+    if get_console():get_string("g_3d_pda") ~= nil then
+        addRow("pf_mod_opt_pda3d", "check_pda3d")
+    end
     if get_console():get_string("r4_bodycam") ~= nil then
         addRow("pf_mod_opt_bodycam", "check_bodycam")
     end
