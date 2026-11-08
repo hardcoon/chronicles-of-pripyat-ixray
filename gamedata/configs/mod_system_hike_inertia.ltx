@@ -1,0 +1,23 @@
+; COP-ENG-224: camera-driven motion from Hike, for every firearm and launcher.
+; Angles are degrees; distances are metres; separate hip / aimed presets.
+; This section is read by CWeapon, so device/PDA HUD sections are unaffected.
+; IX-Ray response calibration: faster follow/return, unchanged Hike angle/offset limits.
+[hike_weapon_inertia]
+enabled = true
+inertion_origin_offset = -0.0001
+inertion_zoom_origin_offset = 0
+inertion_tendto_speed = 6
+inertion_zoom_tendto_speed = 6
+inertion_offset_LRUD = -0.008, 0.008, 0.005, 0.005
+inertion_offset_LRUD_aim = 0.005, 0.005, 0.005, 0.005
+inertion_rot_LRUD = 4, 4, -2, -2
+inertion_rot_LRUD_aim = 2.5, 2.5, -1.5, -1.5
+inertion_rot_FB = 6, 6
+inertion_rot_FB_aim = 3, 3
+inertion_min_angle = 0.05
+inertion_min_angle_aim = 0.05
+inertion_tendto_speed_swm = 2.0
+inertion_aim_tendto_speed_swm = 2.0
+inertion_tendto_ret_speed = 7.2
+inertion_tendto_ret_aim_speed = 7.6
+inertion_transition_time = 0.075
