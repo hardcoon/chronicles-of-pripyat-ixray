@@ -145,24 +145,6 @@ local function nick_color(nick)
     return NICK_COLORS[(hash % #NICK_COLORS) + 1]
 end
 
-local function signature_field(value)
-    value = tostring(value or "")
-    return tostring(#value) .. ":" .. value
-end
-
-local function message_list_signature(messages)
-    local parts = { tostring(#messages) }
-    for _, message in ipairs(messages) do
-        parts[#parts + 1] = table.concat({
-            signature_field(message.kind), signature_field(message.nick),
-            signature_field(message.identity), signature_field(message.text),
-            message.own == true and "1" or "0", message.mentioned == true and "1" or "0",
-            signature_field(message.time), signature_field(message.date)
-        }, "|")
-    end
-    return table.concat(parts, "\30")
-end
-
 local MAX_MESSAGE_VIEW_CACHE = 4
 
 class "pf_irc_message_row" (CUIScriptWnd)
@@ -177,6 +159,13 @@ local function cursor_over_with_left_padding(window, padding)
         cursor.y >= rect.y1 and cursor.y <= rect.y2
 end
 
+local function translate_button_width(height)
+    local screen = device and device()
+    if not screen or screen.width <= 0 or screen.height <= 0 then return height end
+    -- IX-Ray scales each UI axis independently from the 1024x768 layout.
+    return math.min(18, height * screen.height / screen.width * (1024 / 768))
+end
+
 local function same_message_group(previous, current)
     if not previous or previous.kind ~= "chat" or current.kind ~= "chat" then return false end
     local previous_nick = tostring(previous.nick or ""):lower()
@@ -187,10 +176,12 @@ local function same_message_group(previous, current)
     return previous_identity == "" or current_identity == "" or previous_identity == current_identity
 end
 
-function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_height, shared_xml, group_gap) super()
+function pf_irc_message_row:__init(owner, message, grouped, group_gap, text, action) super()
     self.owner = owner
-    local xml = shared_xml or CScriptXmlInit()
-    if not shared_xml then xml:ParseFile("pda_irc_chat.xml") end
+    self.message = message
+    self.grouped, self.group_gap = grouped, group_gap
+    self.display_text, self.translation_action = text, action
+    local xml = owner.row_xml
     xml:InitWindow("message_row", 0, self)
     self.time = xml:InitTextWnd("message_row:time", self)
     self.nick = xml:InitTextWnd("message_row:nick", self)
@@ -208,7 +199,6 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
     self.mention_nick = show_header and not message.own and tostring(message.nick or "") or ""
     self.mention_available = self.mention_nick ~= ""
     self.mention_button:Show(false)
-    self.mention_button:Enable(self.mention_available)
     if self.mention_available then
         self:Register(self.mention_button, "mention_user")
         self:AddCallback("mention_user", ui_events.BUTTON_CLICKED, self.Mention, self)
@@ -232,7 +222,7 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
     self.nick:SetWndSize(vector2():set(nick_width, 18))
     self.body:SetWndPos(vector2():set(body_x, body_y))
     self.body:SetWndSize(vector2():set(body_width, 20))
-    local raw_text = tostring(message.text or "")
+    local raw_text = tostring(text or "")
     -- Preserve complete numeric/default colors in message bodies. Escape bad
     -- tags before native forced parsing; nickname fields remain fully literal.
     local needs_icons = pf_irc_emoji.plain_text(raw_text) ~= raw_text
@@ -266,8 +256,8 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
         self.rich_body:SetWndSize(vector2():set(body_width, 20))
         self.rich_body:Enable(false)
         -- Match native text pitch; emoji must fit the same font cell.
-        local icon_height = math.min(emoji_height or 14, line_height)
-        local icon_width = (emoji_width or 14) * icon_height / (emoji_height or 14)
+        local icon_height = math.min(owner.emoji_height or 14, line_height)
+        local icon_width = (owner.emoji_width or 14) * icon_height / (owner.emoji_height or 14)
         self.rich_renderer = pf_irc_emoji_view.create(self.rich_body, GetFontLetterica16Russian(),
             icon_width, icon_height, line_height)
         body_height = self.rich_renderer:render(raw_text, body_width, color, { center = false, allow_colors = true })
@@ -275,25 +265,67 @@ function pf_irc_message_row:__init(owner, message, grouped, emoji_width, emoji_h
         self:SetWndSize(vector2():set(row_width, body_y + body_height))
     end
     self:SetAutoDelete(false)
-    self:Show(true)
-    self:Enable(true)
+    self:Show(false)
 end
 
 function pf_irc_message_row:__finalize()
 end
 
+function pf_irc_message_row:InitTranslationButton()
+    local button = self.owner.row_xml:Init3tButton("message_row:translate", self)
+    local width = translate_button_width(button:GetHeight())
+    local left = self.mention_button:GetWndPos().x + (self.mention_button:GetWidth() - width) / 2
+    button:SetWidth(width)
+    button:SetWndPos(vector2():set(left, self.body:GetWndPos().y))
+    self:Register(button, "translate_message")
+    self:AddCallback("translate_message", ui_events.BUTTON_CLICKED, self.Translate, self)
+    self.translate_button = button
+end
+
+function pf_irc_message_row:SetViewportVisible(visible)
+    self:Show(visible)
+    if not visible then
+        self.mention_button:Show(false)
+        if self.translate_button then self.translate_button:Show(false) end
+    end
+end
+
 function pf_irc_message_row:Update()
     CUIScriptWnd.Update(self)
-    if not self.mention_available then return end
-    self.mention_button:Show(cursor_over_with_left_padding(self.nick,
-        self.nick:GetWndPos().x - self.mention_button:GetWndPos().x) or
-        self.mention_button:IsCursorOverWindow())
+    local hovered = self:IsCursorOverWindow() and self.owner.messages:IsCursorOverWindow()
+    if self.mention_available then
+        local show_mention = hovered and (self.mention_button:IsCursorOverWindow() or
+            cursor_over_with_left_padding(self.nick, self.nick:GetWndPos().x - self.mention_button:GetWndPos().x))
+        if self.mention_button:IsShown() ~= show_mention then self.mention_button:Show(show_mention) end
+    end
+    local action = self.translation_action
+    local show_translation = hovered and action ~= nil and self.owner:CanTranslateRows()
+    if show_translation and action == "translate" then
+        if self.checked_translation_text ~= self.message.text then
+            self.can_translate = pf_irc_chat_translate.can_translate(self.message)
+            self.checked_translation_text = self.message.text
+        end
+        show_translation = self.can_translate
+    end
+    if show_translation and not self.translate_button then self:InitTranslationButton() end
+    local button = self.translate_button
+    if button then
+        if button:IsShown() ~= show_translation then button:Show(show_translation) end
+        if show_translation then
+            local enabled = action ~= "pending" and action ~= "same_language"
+            if button:IsEnabled() ~= enabled then button:Enable(enabled) end
+        end
+    end
 end
 
 function pf_irc_message_row:Mention()
     if self.owner and self.mention_nick ~= "" then
         self.owner:InsertMention(self.mention_nick)
     end
+end
+
+function pf_irc_message_row:Translate()
+    if self.owner:CanTranslateRows() then self.owner:TranslateMessage(self.message, self.translation_action) end
 end
 
 class "pf_irc_dialog_row" (CUIScriptWnd)
@@ -466,12 +498,12 @@ end
 
 class "pf_irc_profile_item" (CUIListBoxItem)
 
-function pf_irc_profile_item:__init(profile_name, text_width) super(27)
+function pf_irc_profile_item:__init(profile_name, text_width, item_height) super(item_height or 27)
     self.profile_name = tostring(profile_name or "")
     local text = self:GetTextItem()
     text_width = math.max(24, tonumber(text_width) or 120)
     text:SetWndPos(vector2():set(8, 0))
-    text:SetWndSize(vector2():set(text_width - 12, 27))
+    text:SetWndSize(vector2():set(text_width - 12, item_height or 27))
     text:SetFont(GetFontLetterica16Russian())
     text:SetText(pf_irc_text_codec.to_ui_literal(self.profile_name))
     self:SetTextColor(GetARGB(255, 195, 198, 192))
@@ -489,13 +521,14 @@ function pf_irc_chat_tab:__init() super()
     self.last_layout = ""
     self.login_initialized = false
     self.message_rows = {}
+    self.visible_message_first, self.visible_message_last = 1, 0
+    self.message_viewport, self.message_bounds = Frect(), Frect()
     self.message_view_cache = {}
     self.message_view_clock = 0
     self.active_message_view = nil
     self.history_edge_direction = nil
     self.history_edge_conversation = nil
-    self.history_scroll_anchor = nil
-    self.pending_message_scroll_frames = 0
+    self.translation_poll_at = 0
     self.user_rows = {}
     self.dialog_rows = {}
     self.user_action_target = nil
@@ -516,6 +549,15 @@ function pf_irc_chat_tab:__init() super()
     local xml = CScriptXmlInit()
     xml:ParseFile("pda_irc_chat.xml")
     self.row_xml = xml
+    self.localized_texts = {}
+    local function label(path, parent)
+        return self:BindLocalizedText(path, xml:InitTextWnd(path, parent))
+    end
+    local function text_button(path, parent, id)
+        local button = xml:Init3tButton(path, parent)
+        self:BindLocalizedText(path, button:TextControl(), id)
+        return button
+    end
     -- Use the same stock PDA frame hierarchy as the Direction Finder tab.
     -- Keeping the background as frames also preserves the native 4:3/16:9
     -- border geometry instead of stretching one add-on-owned bitmap.
@@ -524,15 +566,15 @@ function pf_irc_chat_tab:__init() super()
     xml:InitFrame("border", self)
 
     self.login = xml:InitStatic("login", self)
-    xml:InitTextWnd("login:hint", self.login)
-    self.auto_login_label = xml:InitTextWnd("login:auto_login_label", self.login)
+    label("login:hint", self.login)
+    self.auto_login_label = label("login:auto_login_label", self.login)
     -- Text fields are deliberately CUIStatic displays. A native CUIEditBox in
     -- this nested PDA tab leaves a stale parent keyboard-capture pointer after
     -- F9. The add-on-owned hitbox and pf_irc_input_field edit the same visible
     -- field without entering the engine capture chain.
     self.login_input = xml:InitStatic("login:nick", self.login)
     self.login_input_hitbox = xml:Init3tButton("login:nick_hitbox", self.login)
-    self.authorize_button = xml:Init3tButton("login:authorize", self.login)
+    self.authorize_button = text_button("login:authorize", self.login)
     self.auto_login = xml:InitCheck("login:auto_login", self.login)
     self.login_result = xml:InitTextWnd("login:result", self.login)
     self:Register(self.login_input_hitbox, "login_input_hitbox")
@@ -550,7 +592,7 @@ function pf_irc_chat_tab:__init() super()
         "chat:conversation_notifications_off", self.chat)
     self.conversation_delete_button = xml:Init3tButton("chat:conversation_delete", self.chat)
     self.disconnect_button = xml:Init3tButton("chat:disconnect", self.chat)
-    xml:InitTextWnd("chat:status_label", self.chat)
+    label("chat:status_label", self.chat)
     self.status_value = xml:InitTextWnd("chat:status_value", self.chat)
     self.status_value:SetEllipsis(true)
     self.actual_nick = xml:InitTextWnd("chat:actual_nick", self.chat)
@@ -561,7 +603,7 @@ function pf_irc_chat_tab:__init() super()
     xml:InitFrameLine("chat:users_divider", self.chat)
     xml:InitFrameLine("chat:input_divider", self.chat)
     xml:InitStatic("chat:private_panel", self.chat)
-    xml:InitTextWnd("chat:private_caption", self.chat)
+    label("chat:private_caption", self.chat)
     self.private_dialogs = xml:InitScrollView("chat:private_dialogs", self.chat)
     xml:InitStatic("chat:message_panel", self.chat)
     self.messages = xml:InitScrollView("chat:messages", self.chat)
@@ -573,7 +615,7 @@ function pf_irc_chat_tab:__init() super()
     self.layout = xml:InitTextWnd("chat:layout", self.chat)
     self.layout_hitbox = xml:Init3tButton("chat:layout_hitbox", self.chat)
     self.send_button = xml:Init3tButton("chat:send", self.chat)
-    self.commands_button = xml:Init3tButton("chat:commands", self.chat)
+    self.commands_button = text_button("chat:commands", self.chat)
     self:Register(self.quick_channel_button, "quick_channel")
     self:Register(self.conversation_notifications_on_button, "conversation_notifications_on")
     self:Register(self.conversation_notifications_off_button, "conversation_notifications_off")
@@ -597,7 +639,6 @@ function pf_irc_chat_tab:__init() super()
     self:AddCallback("chat_commands", ui_events.BUTTON_CLICKED, self.ShowCommandsFromButton, self)
 
     self.emoji_toggle = xml:Init3tButton("chat:emoji_toggle", self.chat)
-    self:CenterAutoLogin()
     self.emoji_panel = xml:InitStatic("chat:emoji_panel", self.chat)
     self.emoji_metrics = xml:InitStatic("emoji_inline", self.chat)
     self.emoji_width, self.emoji_height = self.emoji_metrics:GetWidth(), self.emoji_metrics:GetHeight()
@@ -648,7 +689,7 @@ function pf_irc_chat_tab:__init() super()
 
     self.settings_shade = xml:InitStatic("settings_shade", self)
     self.settings = xml:InitStatic("settings", self)
-    xml:InitTextWnd("settings:caption", self.settings)
+    label("settings:caption", self.settings)
     xml:InitFrameLine("settings:caption_line", self.settings)
     xml:InitFrameLine("settings:nav_divider", self.settings)
     -- ui_noise is a regular single texture, not a nine-slice frame texture.
@@ -665,7 +706,7 @@ function pf_irc_chat_tab:__init() super()
         "channels_caption", "channel_help" }
     self.settings_labels = {}
     for _, name in ipairs(labels) do
-        self.settings_labels[name] = xml:InitTextWnd("settings:" .. name, self.settings)
+        self.settings_labels[name] = label("settings:" .. name, self.settings)
     end
     local notification_labels = {
         "public_notifications_caption", "private_notifications_caption",
@@ -673,12 +714,14 @@ function pf_irc_chat_tab:__init() super()
         "channel_show_label", "key_show_label"
     }
     for _, name in ipairs(notification_labels) do
-        self.settings_labels[name] = xml:InitTextWnd("settings:" .. name, self.settings)
+        self.settings_labels[name] = label("settings:" .. name, self.settings)
     end
     self.profile = xml:InitStatic("settings:profile", self.settings)
-    self.settings_tab_connection = xml:Init3tButton("settings:tab_connection", self.settings)
-    self.settings_tab_channels = xml:Init3tButton("settings:tab_channels", self.settings)
-    self.settings_tab_notifications = xml:Init3tButton("settings:tab_notifications", self.settings)
+    self.settings_tab_connection = text_button("settings:tab_connection", self.settings,
+        "pf_irc_settings_tab_profile")
+    self.settings_tab_channels = text_button("settings:tab_channels", self.settings)
+    self.settings_tab_notifications = text_button("settings:tab_notifications", self.settings)
+    self:InitTranslationSettings(xml)
     self.address = xml:InitStatic("settings:address", self.settings)
     self.channel = xml:InitStatic("settings:channel", self.settings)
     self.channel_mask = xml:InitStatic("settings:channel_mask", self.settings)
@@ -697,12 +740,12 @@ function pf_irc_chat_tab:__init() super()
     self.channel_show = xml:InitCheck("settings:channel_show", self.settings)
     self.key_show = xml:InitCheck("settings:key_show", self.settings)
     self.profile_hitbox = xml:Init3tButton("settings:profile_hitbox", self.settings)
-    self.profile_list_toggle = xml:Init3tButton("settings:profile_list_toggle", self.settings)
-    self.profile_delete = xml:Init3tButton("settings:profile_delete", self.settings)
+    self.profile_list_toggle = text_button("settings:profile_list_toggle", self.settings)
+    self.profile_delete = text_button("settings:profile_delete", self.settings)
     self.settings_channel_list = xml:InitListBox("settings:channels_list", self.settings)
     self.settings_channel_list:ShowSelectedItem(true)
-    self.settings_channel_add = xml:Init3tButton("settings:channel_add", self.settings)
-    self.settings_channel_delete = xml:Init3tButton("settings:channel_delete", self.settings)
+    self.settings_channel_add = text_button("settings:channel_add", self.settings)
+    self.settings_channel_delete = text_button("settings:channel_delete", self.settings)
     self.address_hitbox = xml:Init3tButton("settings:address_hitbox", self.settings)
     self.channel_hitbox = xml:Init3tButton("settings:channel_hitbox", self.settings)
     self.port_hitbox = xml:Init3tButton("settings:port_hitbox", self.settings)
@@ -711,13 +754,9 @@ function pf_irc_chat_tab:__init() super()
     self.nick_hitbox = xml:Init3tButton("settings:nick_hitbox", self.settings)
     self.modes_hitbox = xml:Init3tButton("settings:modes_hitbox", self.settings)
     self.settings_result = xml:InitTextWnd("settings:result", self.settings)
-    self.settings_save = xml:Init3tButton("settings:save", self.settings)
-    self.settings_reset = xml:Init3tButton("settings:reset", self.settings)
-    self.settings_close = xml:Init3tButton("settings:close", self.settings)
-    self.settings_tab_connection:TextControl():SetText(
-        translated_utf8("pf_irc_settings_tab_profile"))
-    self.settings_reset:TextControl():SetText(
-        translated_utf8("pf_irc_reset_settings_compact"))
+    self.settings_save = text_button("settings:save", self.settings, "pf_irc_save_compact")
+    self.settings_reset = text_button("settings:reset", self.settings, "pf_irc_reset_settings_compact")
+    self.settings_close = text_button("settings:close", self.settings)
     local setting_fields = {
         { "settings_profile", self.profile, self.profile_hitbox, 32, 46, self.FocusSettingsProfile },
         { "settings_address", self.address, self.address_hitbox, 253, 46, self.FocusSettingsAddress },
@@ -792,20 +831,16 @@ function pf_irc_chat_tab:__init() super()
     xml:InitFrameLine("delete_conversation_popup:right", self.pda_confirmation_popup)
     self.pda_confirmation_message = xml:InitTextWnd(
         "delete_conversation_popup:message", self.pda_confirmation_popup)
-    self.pda_confirmation_confirm = xml:Init3tButton(
-        "delete_conversation_popup:confirm", self.pda_confirmation_popup)
-    self.pda_confirmation_cancel = xml:Init3tButton(
-        "delete_conversation_popup:cancel", self.pda_confirmation_popup)
+    self.pda_confirmation_confirm = text_button(
+        "delete_conversation_popup:confirm", self.pda_confirmation_popup, "pf_irc_confirm_yes")
+    self.pda_confirmation_cancel = text_button(
+        "delete_conversation_popup:cancel", self.pda_confirmation_popup, "pf_irc_confirm_no")
     self:Register(self.pda_confirmation_confirm, "pda_confirmation_confirm")
     self:Register(self.pda_confirmation_cancel, "pda_confirmation_cancel")
     self:AddCallback("pda_confirmation_confirm", ui_events.BUTTON_CLICKED,
         self.ConfirmPdaConfirmation, self)
     self:AddCallback("pda_confirmation_cancel", ui_events.BUTTON_CLICKED,
         self.CancelPdaConfirmation, self)
-    self.pda_confirmation_confirm:TextControl():SetText(
-        translated_utf8("pf_irc_confirm_yes"))
-    self.pda_confirmation_cancel:TextControl():SetText(
-        translated_utf8("pf_irc_confirm_no"))
     self.pda_confirmation_popup:Show(false)
     self.pda_confirmation_popup:Enable(false)
     self.pda_confirmation_shade:Show(false)
@@ -829,12 +864,12 @@ function pf_irc_chat_tab:__init() super()
     local command_menu_position = self.command_menu:GetWndPos()
     self.command_menu_x = command_menu_position.x
     self.command_menu_bottom_y = command_menu_position.y + self.command_menu:GetHeight()
-    self.command_clear = xml:Init3tButton("command_popup:clear", self.command_menu)
-    self.command_query = xml:Init3tButton("command_popup:query", self.command_menu)
-    self.command_mute = xml:Init3tButton("command_popup:mute", self.command_menu)
-    self.command_unmute = xml:Init3tButton("command_popup:unmute", self.command_menu)
-    self.command_close = xml:Init3tButton("command_popup:close", self.command_menu)
-    self.command_channel = xml:Init3tButton("command_popup:channel", self.command_menu)
+    self.command_clear = text_button("command_popup:clear", self.command_menu)
+    self.command_query = text_button("command_popup:query", self.command_menu)
+    self.command_mute = text_button("command_popup:mute", self.command_menu)
+    self.command_unmute = text_button("command_popup:unmute", self.command_menu)
+    self.command_close = text_button("command_popup:close", self.command_menu)
+    self.command_channel = text_button("command_popup:channel", self.command_menu)
     self.command_buttons = {
         clear = self.command_clear,
         query = self.command_query,
@@ -860,9 +895,9 @@ function pf_irc_chat_tab:__init() super()
     self.command_menu:Enable(false)
 
     self.quick_channel_popup = xml:InitStatic("quick_channel_popup", self)
-    xml:InitTextWnd("quick_channel_popup:caption", self.quick_channel_popup)
-    xml:InitTextWnd("quick_channel_popup:channel_label", self.quick_channel_popup)
-    xml:InitTextWnd("quick_channel_popup:key_label", self.quick_channel_popup)
+    label("quick_channel_popup:caption", self.quick_channel_popup)
+    label("quick_channel_popup:channel_label", self.quick_channel_popup)
+    label("quick_channel_popup:key_label", self.quick_channel_popup)
     self.quick_channel_name = xml:InitStatic("quick_channel_popup:channel", self.quick_channel_popup)
     self.quick_channel_name_hitbox = xml:Init3tButton(
         "quick_channel_popup:channel_hitbox", self.quick_channel_popup)
@@ -870,8 +905,8 @@ function pf_irc_chat_tab:__init() super()
     self.quick_channel_key_hitbox = xml:Init3tButton(
         "quick_channel_popup:key_hitbox", self.quick_channel_popup)
     self.quick_channel_result = xml:InitTextWnd("quick_channel_popup:result", self.quick_channel_popup)
-    self.quick_channel_connect = xml:Init3tButton("quick_channel_popup:connect", self.quick_channel_popup)
-    self.quick_channel_cancel = xml:Init3tButton("quick_channel_popup:cancel", self.quick_channel_popup)
+    self.quick_channel_connect = text_button("quick_channel_popup:connect", self.quick_channel_popup)
+    self.quick_channel_cancel = text_button("quick_channel_popup:cancel", self.quick_channel_popup)
     self:Register(self.quick_channel_name_hitbox, "quick_channel_name_hitbox")
     self:Register(self.quick_channel_key_hitbox, "quick_channel_key_hitbox")
     self:Register(self.quick_channel_connect, "quick_channel_connect")
@@ -892,7 +927,7 @@ function pf_irc_chat_tab:__init() super()
         "right_button_hint:description", self.right_button_hint)
     self.right_button_hint:Show(false)
     self.right_button_hint:Enable(false)
-    self.right_button_hints = {
+    self.chat_button_hints = {
         { key = "quick_channel", button = self.quick_channel_button,
             text_id = "pf_irc_quick_channel_hint", hint_x = 533 },
         { key = "conversation_notifications_on",
@@ -905,8 +940,31 @@ function pf_irc_chat_tab:__init() super()
             hint_x = 573 },
         { key = "conversation_delete", button = self.conversation_delete_button,
             text_id = "pf_irc_delete_conversation_hint", hint_x = 613 },
+        { key = "disconnect", button = self.disconnect_button,
+            text_id = "pf_irc_disconnect_session_hint", follow_button_y = true, hint_x = 98 },
+        { key = "send", button = self.send_button, text_id = "pf_irc_enter", compact = true,
+            follow_button_y = true, above_button = true },
         { key = "settings", button = self.settings_button,
             text_id = "pf_irc_settings_hint", hint_x = 653 }
+    }
+    self.login_button_hints = {
+        self.chat_button_hints[#self.chat_button_hints],
+        { key = "auto_login", button = self.auto_login, text_id = "pf_irc_auto_login_hint",
+            follow_button_y = true, above_button = true },
+        { key = "auto_login_label", button = self.auto_login_label, text_id = "pf_irc_auto_login_hint",
+            follow_button_y = true, above_button = true }
+    }
+    self.settings_button_hints = {
+        { key = "channel_show", button = self.channel_show, text_id = "pf_irc_show_channel_hint",
+            follow_button_y = true, above_button = true },
+        { key = "channel_show_label", button = self.settings_labels.channel_show_label,
+            text_id = "pf_irc_show_channel_hint", follow_button_y = true, above_button = true },
+        { key = "key_show", button = self.key_show, text_id = "pf_irc_show_key_hint",
+            follow_button_y = true, above_button = true },
+        { key = "key_show_label", button = self.settings_labels.key_show_label,
+            text_id = "pf_irc_show_key_hint", follow_button_y = true, above_button = true },
+        { key = "reset", button = self.settings_reset, text_id = "pf_irc_reset_connection_hint",
+            follow_button_y = true, above_button = true }
     }
 
     self.input_fields = pf_irc_input_field.create()
@@ -936,6 +994,32 @@ function pf_irc_chat_tab:__finalize()
     if self.input_fields then self.input_fields:shutdown() end
 end
 
+function pf_irc_chat_tab:BindLocalizedText(path, widget, id)
+    self.localized_texts[#self.localized_texts + 1] = {
+        widget = widget, id = id or self.row_xml:ReadValue(path .. ":text", 0)
+    }
+    return widget
+end
+
+function pf_irc_chat_tab:RefreshLocalization()
+    local language = pf_irc_chat_translate.game_language_code()
+    if self.ui_language == language then return false end
+    self.ui_language = language
+    for _, entry in ipairs(self.localized_texts) do
+        entry.widget:SetText(translated(entry.id))
+    end
+    self:CenterAutoLogin()
+    self:HideRightButtonHint()
+    self.settings_result:SetText("")
+    self.quick_channel_result:SetText("")
+    self.translation_target_list:RemoveAll()
+    self.translation_excluded_list:RemoveAll()
+    self.translation_target_indices = nil
+    self.translation_excluded_items = nil
+    if self.translation_draft then self:RefreshTranslationLanguageLists() end
+    return true
+end
+
 function pf_irc_chat_tab:HideRightButtonHint()
     if self.right_button_hint then self.right_button_hint:Show(false) end
     self.right_hint_target = nil
@@ -949,24 +1033,42 @@ function pf_irc_chat_tab:ShowRightButtonHint(item)
     -- These four controls have fixed PDA coordinates. Keeping the tooltip in
     -- the same coordinate system avoids the unreliable nested absolute-rect
     -- conversion and guarantees that it opens to the left of its button.
-    local hint_y = 140
+    local hint_x, hint_y = item.hint_x or 573, 140
+    local panel = self.right_button_hint
+    if item.compact and not self.default_hint_size then
+        self.default_hint_size = vector2():set(panel:GetWidth(), panel:GetHeight())
+        panel:SetWndSize(vector2():set(158, 29))
+        self.right_button_hint_text:SetWndSize(vector2():set(138, 19))
+    elseif not item.compact and self.default_hint_size then
+        local size = self.default_hint_size
+        panel:SetWndSize(size)
+        self.right_button_hint_text:SetWndSize(vector2():set(size.x - 20, size.y - 10))
+        self.default_hint_size = nil
+    end
     if item.follow_button_y then
         local rect = Frect()
         local rect_ok = pcall(function() item.button:GetAbsoluteRect(rect) end)
         if rect_ok then
             -- Vertically centre the 52 px panel against the participant's
             -- 24 px action button and keep it within the PDA chat frame.
-            hint_y = math.max(190, math.min(630, rect.y1 - 14))
+            if item.above_button then
+                local origin = Frect()
+                self:GetAbsoluteRect(origin)
+                hint_x = math.max(0, math.min(self:GetWidth() - panel:GetWidth(), rect.x1 - origin.x1))
+                hint_y = rect.y1 - origin.y1 - panel:GetHeight() - 5
+            else
+                hint_y = math.max(190, math.min(630, rect.y1 - 14))
+            end
         end
     end
-    self.right_button_hint:SetWndPos(vector2():set(item.hint_x or 573, hint_y))
+    self.right_button_hint:SetWndPos(vector2():set(hint_x, hint_y))
     self.right_button_hint:Show(true)
 end
 
 function pf_irc_chat_tab:UpdateRightButtonHint()
     if not self.right_button_hint then return end
     local scope = self:InputScope()
-    if (scope ~= "chat" and scope ~= "login") or self.settings:IsShown() or
+    if not scope or
         self.quick_channel_popup:IsShown() or self.command_menu:IsShown() or
         (self.pda_confirmation_popup and self.pda_confirmation_popup:IsShown()) then
         self:HideRightButtonHint()
@@ -974,16 +1076,15 @@ function pf_irc_chat_tab:UpdateRightButtonHint()
     end
 
     local hovered = nil
-    for _, item in ipairs(self.right_button_hints or {}) do
-        local ok, over = pcall(function()
-            return item.button:IsShown() and item.button:IsCursorOverWindow()
-        end)
-        if ok and over then
+    local hints = scope == "settings" and self.settings_button_hints or
+        (scope == "login" and self.login_button_hints or self.chat_button_hints)
+    for _, item in ipairs(hints) do
+        if item.button:IsShown() and cursor_over_with_left_padding(item.button, 0) then
             hovered = item
             break
         end
     end
-    if not hovered and self.user_actions_open and self.user_action_target then
+    if not hovered and scope == "chat" and self.user_actions_open and self.user_action_target then
         local row = self.user_action_target
         local user_hints = {
             { key = "user_mute", button = row.mute_button,
@@ -999,6 +1100,19 @@ function pf_irc_chat_tab:UpdateRightButtonHint()
             end)
             if ok and over then
                 hovered = item
+                break
+            end
+        end
+    end
+    if not hovered and scope == "chat" and cursor_over_with_left_padding(self.messages, 0) then
+        for index = self.visible_message_first, self.visible_message_last do
+            local row = self.message_rows[index]
+            local button = row.translate_button
+            if button and button:IsShown() and cursor_over_with_left_padding(button, 0) then
+                local action = row.translation_action
+                hovered = { key = tostring(row.message) .. action, button = button,
+                    text_id = "pf_irc_translate_hint_" .. action, follow_button_y = true,
+                    above_button = true, compact = true }
                 break
             end
         end
@@ -1024,23 +1138,31 @@ function pf_irc_chat_tab:Update()
     if self.pf_restore_active_section then
         finish_active_section_restore(self)
     end
+    if self.chat:IsShown() then self:UpdateMessageViewport() end
     CUIScriptWnd.Update(self)
     self:Pulse()
-    if self.pending_message_scroll_frames > 0 and self.messages then
-        -- CUIScrollView recalculates its maximum only after the newly rebuilt
-        -- rows have passed through a native UI frame. Repeat the request in
-        -- the following frame so a view that was already at the bottom stays
-        -- attached to the real, newly extended bottom.
-        self.messages:ScrollToEnd()
-        self.pending_message_scroll_frames = self.pending_message_scroll_frames - 1
-    end
     self:UpdateRightButtonHint()
 end
 
-function pf_irc_chat_tab:Pulse()
+function pf_irc_chat_tab:Pulse(poll_translations)
     -- Network/history state keeps advancing in the runtime. Native message
     -- and participant widgets need rebuilding only while this page is visible.
-    if not self:InputScope() then
+    -- Keep WinHTTP calls in the game update callback so each request is polled
+    -- on the same COM thread that started it.
+    local scope = self:InputScope()
+    local translation = pf_irc_chat_translate
+    local settings, now
+    if poll_translations then
+        local changed
+        settings, changed = translation.sync_settings(true)
+        now = pf_irc_translate_http.now()
+        self.translation_view_dirty = changed or self.translation_view_dirty
+        if now >= self.translation_poll_at then
+            self.translation_poll_at = now + 80
+            self.translation_view_dirty = translation.poll(now) or self.translation_view_dirty
+        end
+    end
+    if not scope then
         if self.last_input_scope ~= nil then
             self:ReleaseInlineInput()
             self.last_input_scope = nil
@@ -1049,9 +1171,26 @@ function pf_irc_chat_tab:Pulse()
         return
     end
     local state = pf_irc_chat.get_state()
-    if state.revision ~= self.last_revision then self:Refresh(false) end
-    self:PollHistoryPaging(state)
-    local scope = self:InputScope()
+    local localized = self:RefreshLocalization()
+    if localized or state.revision ~= self.last_revision then self:Refresh(true) end
+    scope = self:InputScope()
+    if poll_translations and scope == "chat" and now >= (self.translation_request_at or 0) and
+        translation.can_request(settings, now) then
+        self.translation_request_at = now + 80
+        local visible = {}
+        if settings.automatic and self:CanTranslateRows() then
+            self:UpdateMessageViewport()
+            for index = self.visible_message_first, self.visible_message_last do
+                visible[#visible + 1] = self.message_rows[index].message
+            end
+        end
+        self.translation_view_dirty = translation.request(visible, settings, now) or self.translation_view_dirty
+    end
+    if scope == "chat" then
+        if self.translation_view_dirty then self:RefreshMessages(state) end
+        self:PollHistoryPaging(state)
+    end
+    scope = self:InputScope()
     if scope ~= self.last_input_scope then
         self:ReleaseInlineInput()
         self.last_input_scope = scope
@@ -1069,6 +1208,19 @@ function pf_irc_chat_tab:Pulse()
     end
 end
 
+function pf_irc_chat_tab:CanTranslateRows()
+    return self.chat:IsShown() and not self.settings:IsShown() and not self.command_menu:IsShown() and
+        not self.quick_channel_popup:IsShown() and not self.pda_confirmation_popup:IsShown()
+end
+
+function pf_irc_chat_tab:TranslateMessage(message, action)
+    if action == "pending" or action == "same_language" then return end
+    if pf_irc_chat_translate.toggle(message, action) then
+        self.translation_request_at = 0
+        self.translation_view_dirty = true
+    end
+end
+
 function pf_irc_chat_tab:PollHistoryPaging(state)
     if not state.chat_open or not self.messages then return end
     local ok, minimum, maximum, current = pcall(function()
@@ -1079,12 +1231,17 @@ function pf_irc_chat_tab:PollHistoryPaging(state)
     local at_top, at_bottom, reachable_maximum =
         scroll_edge_state(self.messages, minimum, maximum, current)
     if pf_irc_chat.set_history_follow_latest then
-        pf_irc_chat.set_history_follow_latest(state.active_conversation, at_bottom)
+        pf_irc_chat.set_history_follow_latest(state.active_conversation, at_bottom and not state.history_has_newer)
     end
     if reachable_maximum <= minimum then
         self.history_edge_direction = nil
         return
     end
+    if self.history_paged_position and self.history_edge_conversation == state.active_conversation then
+        if self.history_paged_position == current then return end
+        self.history_edge_direction = nil
+    end
+    self.history_paged_position = nil
     local direction = nil
     if state.history_has_older and at_top then direction = "older"
     elseif state.history_has_newer and at_bottom then direction = "newer" end
@@ -1097,12 +1254,13 @@ function pf_irc_chat_tab:PollHistoryPaging(state)
         self.history_edge_conversation == state.active_conversation then return end
     self.history_edge_direction = direction
     self.history_edge_conversation = state.active_conversation
-    self.history_scroll_anchor = {
-        direction = direction, conversation = state.active_conversation,
-        position = current, maximum = maximum
-    }
+    self.history_paging_direction = direction
     local loaded = pf_irc_chat.load_message_page(direction)
-    if loaded then self:Refresh(false) else self.history_scroll_anchor = nil end
+    if loaded then
+        self:Refresh(false)
+        self.history_paged_position = self.messages:GetCurrentScrollPos()
+    end
+    self.history_paging_direction = nil
 end
 
 function pf_irc_chat_tab:InputScope()
@@ -1453,7 +1611,8 @@ end
 
 function pf_irc_chat_tab:Refresh(force)
     local state = pf_irc_chat.get_state()
-    if not force and state.revision == self.last_revision then return end
+    local localized = self:RefreshLocalization()
+    if not force and not localized and state.revision == self.last_revision then return end
     self.last_revision = state.revision
     local page = state.chat_open and "chat" or "login"
     self.chat:Show(page == "chat")
@@ -1504,56 +1663,134 @@ function pf_irc_chat_tab:TrimMessageViewCache(active_key)
     end
 end
 
-function pf_irc_chat_tab:ShowMessageView(conversation_key, messages, signature)
+function pf_irc_chat_tab:UpdateMessageViewport(force)
+    local position = self.messages:GetCurrentScrollPos()
+    local height = self.messages:GetHeight()
+    if not force and position == self.message_scroll_position and height == self.message_viewport_height then return end
+    self.message_scroll_position, self.message_viewport_height = position, height
+    local rows = self.message_rows
+    local viewport, bounds = self.message_viewport, self.message_bounds
+    self.messages:GetAbsoluteRect(viewport)
+    -- The native scroll view lays out rows in order, including hidden rows.
+    local first, limit = 1, #rows + 1
+    while first < limit do
+        local middle = math.floor((first + limit) / 2)
+        rows[middle]:GetAbsoluteRect(bounds)
+        if bounds.y2 <= viewport.y1 then first = middle + 1 else limit = middle end
+    end
+    local last = first - 1
+    for index = first, #rows do
+        rows[index]:GetAbsoluteRect(bounds)
+        if bounds.y1 >= viewport.y2 then break end
+        last = index
+    end
+    local old_first, old_last = self.visible_message_first, self.visible_message_last
+    for index = old_first, old_last do
+        if index < first or index > last then rows[index]:SetViewportVisible(false) end
+    end
+    for index = first, last do
+        if index < old_first or index > old_last then rows[index]:SetViewportVisible(true) end
+    end
+    self.visible_message_first, self.visible_message_last = first, last
+end
+
+local function message_row_key(message)
+    return message._history_id or message
+end
+
+function pf_irc_chat_tab:ShowMessageView(conversation_key, messages, settings)
     local key = tostring(conversation_key or "channel")
-    local entry = self.message_view_cache[key]
-    if self.active_message_view == key and entry and entry.signature == signature then
-        self.message_rows = entry.rows
-        self:TouchMessageView(entry)
+    local previous_view = self.message_view_cache[key]
+    local previous_rows = previous_view and previous_view.rows or {}
+    local same_view = self.active_message_view == key
+    local relayout = #previous_rows ~= #messages
+    local rows, rows_by_key, used_rows = {}, {}, {}
+    local previous_message
+    for index, message in ipairs(messages) do
+        local id = message_row_key(message)
+        local row = previous_view and previous_view.rows_by_key[id]
+        local grouped = same_message_group(previous_message, message)
+        local group_gap = previous_message and not grouped and 2 or 0
+        local text, action = pf_irc_chat_translate.presentation(message, settings)
+        if not row or used_rows[row] or row.grouped ~= grouped or row.group_gap ~= group_gap or row.display_text ~= text or
+            row.message.kind ~= message.kind or row.message.nick ~= message.nick or
+            row.message.time ~= message.time or (row.message.own == true) ~= (message.own == true) or
+            (row.message.mentioned == true) ~= (message.mentioned == true) then
+            row = pf_irc_message_row(self, message, grouped, group_gap, text, action)
+        end
+        row.message = message
+        row.translation_action = action
+        used_rows[row] = true
+        rows[index], rows_by_key[id] = row, row
+        -- The native Lua window binding has no equality operator.
+        relayout = relayout or not rawequal(previous_rows[index], row)
+        previous_message = message
+    end
+
+    if same_view and not relayout then
+        self:TouchMessageView(previous_view)
         return
     end
 
-    local same_view = self.active_message_view == key
-    local old_minimum = self.messages:GetMinScrollPos()
     local old_position = self.messages:GetCurrentScrollPos()
-    local old_maximum = self.messages:GetMaxScrollPos()
-    local _, was_at_bottom = scroll_edge_state(
-        self.messages, old_minimum, old_maximum, old_position)
-    local paging_anchor = self.history_scroll_anchor and
-        self.history_scroll_anchor.conversation == key
-    self.messages:Clear()
-    if not entry or entry.signature ~= signature then
-        entry = { signature = signature, rows = {}, last_used = 0 }
-        local previous_message = nil
-        for _, message in ipairs(messages) do
-            local grouped = same_message_group(previous_message, message)
-            local group_gap = previous_message and not grouped and 2 or 0
-            local row = pf_irc_message_row(self, message, grouped, self.emoji_width, self.emoji_height,
-                self.row_xml, group_gap)
-            table.insert(entry.rows, row)
-            previous_message = message
+    local _, was_at_bottom = scroll_edge_state(self.messages, self.messages:GetMinScrollPos(),
+        self.messages:GetMaxScrollPos(), old_position)
+    local paging = same_view and self.history_paging_direction
+    local follow_bottom = not same_view or (was_at_bottom and not paging)
+    local anchor_row, anchor_offset
+    if same_view and not follow_bottom then
+        self:UpdateMessageViewport()
+        local viewport, bounds = self.message_viewport, self.message_bounds
+        self.messages:GetAbsoluteRect(viewport)
+        for index = self.visible_message_first, self.visible_message_last do
+            local row = previous_rows[index]
+            anchor_row = rows_by_key[message_row_key(row.message)]
+            if anchor_row then
+                row:GetAbsoluteRect(bounds)
+                anchor_offset = bounds.y1 - viewport.y1
+                break
+            end
         end
-        self.message_view_cache[key] = entry
     end
 
-    for _, row in ipairs(entry.rows) do
-        -- Message rows are detached and reused when the player switches
-        -- conversations. Giving CUIScrollView ownership here makes Clear()
-        -- destroy a cached native window and leaves Lua holding a dangling
-        -- pointer; the next UI frame then crashes in CDialogHolder::OnFrame.
-        row:SetAutoDelete(false)
+    for index = self.visible_message_first, self.visible_message_last do
+        self.message_rows[index]:SetViewportVisible(false)
+    end
+    self.messages:Clear()
+    for _, row in ipairs(rows) do
+        -- Lua owns cached rows so Clear() only detaches them.
         self.messages:AddWindow(row, false)
     end
-    self.message_rows = entry.rows
+    local entry = { rows = rows, rows_by_key = rows_by_key }
+    self.message_view_cache[key] = entry
+    self.message_rows = rows
+    self.visible_message_first, self.visible_message_last = 1, 0
     self.active_message_view = key
     self:TouchMessageView(entry)
     self:TrimMessageViewCache(key)
-    if not same_view or (was_at_bottom and not paging_anchor) then
-        self.pending_message_scroll_frames = 2
+    if follow_bottom or (paging == "older" and not anchor_row) then
         self.messages:ScrollToEnd()
+    elseif paging == "newer" and not anchor_row then
+        self.messages:ScrollToBegin()
     else
+        -- SetScrollPos flushes the native layout before measuring the anchor.
         self.messages:SetScrollPos(old_position)
+        if anchor_row then
+            local viewport, bounds = self.message_viewport, self.message_bounds
+            self.messages:GetAbsoluteRect(viewport)
+            anchor_row:GetAbsoluteRect(bounds)
+            local delta = math.floor(bounds.y1 - viewport.y1 - anchor_offset + 0.5)
+            if delta ~= 0 then
+                self.messages:SetScrollPos(self.messages:GetCurrentScrollPos() + delta)
+            end
+        end
     end
+    self:UpdateMessageViewport(true)
+end
+
+function pf_irc_chat_tab:RefreshMessages(state)
+    self:ShowMessageView(state.active_conversation, pf_irc_chat.get_messages(), pf_irc_chat_translate.sync_settings())
+    self.translation_view_dirty = false
 end
 
 function pf_irc_chat_tab:RefreshChat(state)
@@ -1623,19 +1860,7 @@ function pf_irc_chat_tab:RefreshChat(state)
 
     self.messages:Show(true)
     self.messages:Enable(true)
-    local messages = pf_irc_chat.get_messages()
-    local message_signature = message_list_signature(messages)
-    self:ShowMessageView(state.active_conversation, messages, message_signature)
-    local anchor = self.history_scroll_anchor
-    if anchor and anchor.conversation == state.active_conversation then
-        if anchor.direction == "older" then
-            local new_maximum = self.messages:GetMaxScrollPos()
-            self.messages:SetScrollPos(anchor.position + (new_maximum - anchor.maximum))
-        else
-            self.messages:SetScrollPos(anchor.position)
-        end
-        self.history_scroll_anchor = nil
-    end
+    self:RefreshMessages(state)
     local visible_users = pf_irc_chat.get_visible_users()
     self.users_caption:SetText(string.format(translated("pf_irc_participants_count"), #visible_users))
     self:RefreshUsers(visible_users)
@@ -1992,6 +2217,123 @@ function pf_irc_chat_tab:SetSettingsWindows(windows, shown)
     end
 end
 
+function pf_irc_chat_tab:InitTranslationSettings(xml)
+    local path = "settings:translation:"
+    self.settings_tab_translation = xml:Init3tButton("settings:tab_translation", self.settings)
+    self:BindLocalizedText("settings:tab_translation", self.settings_tab_translation:TextControl())
+    self.translation_panel = xml:InitStatic("settings:translation", self.settings)
+    local panel = self.translation_panel
+    self.translation_manual = xml:InitCheck(path .. "manual", panel)
+    self.translation_automatic = xml:InitCheck(path .. "automatic", panel)
+    for _, name in ipairs({ "manual_label", "automatic_label", "target_label", "excluded_label", "disclosure" }) do
+        self:BindLocalizedText(path .. name, xml:InitTextWnd(path .. name, panel))
+    end
+    self.translation_target_list = xml:InitListBox(path .. "target_list", panel)
+    self.translation_excluded_list = xml:InitListBox(path .. "excluded_list", panel)
+    self.translation_target_list:ShowSelectedItem(true)
+    self:Register(self.settings_tab_translation, "settings_tab_translation")
+    self:Register(self.translation_target_list, "settings_translation_target")
+    self:Register(self.translation_excluded_list, "settings_translation_excluded")
+    self:AddCallback("settings_tab_translation", ui_events.BUTTON_CLICKED,
+        self.ShowTranslationSettingsTab, self)
+    self:AddCallback("settings_translation_target", ui_events.LIST_ITEM_CLICKED,
+        self.SelectTranslationTarget, self)
+    self:AddCallback("settings_translation_excluded", ui_events.LIST_ITEM_CLICKED,
+        self.ToggleTranslationException, self)
+    panel:Show(false)
+    panel:Enable(false)
+end
+
+function pf_irc_chat_tab:ShowTranslationSettingsTab()
+    self:ShowSettingsPage("translation")
+end
+
+function pf_irc_chat_tab:UpdateTranslationException(item, code, target)
+    local inherent = code == target
+    local selected = inherent or self.translation_draft.excluded[code] == true
+    local label = (selected and "[x]  " or "[ ]  ") .. pf_irc_chat_translate.language_name(code)
+    if inherent then label = label .. "  " .. game.translate_string("pf_irc_translate_target_badge") end
+    item:GetTextItem():SetText(pf_irc_text_codec.to_ui_literal(label))
+    item:SetTextColor(inherent and GetARGB(255, 165, 155, 119) or
+        (selected and GetARGB(255, 232, 192, 109) or GetARGB(255, 195, 198, 192)))
+end
+
+function pf_irc_chat_tab:RefreshTranslationExceptions()
+    local target = pf_irc_chat_translate.effective_target(self.translation_draft.target)
+    if self.translation_excluded_items then
+        for code, item in pairs(self.translation_excluded_items) do
+            self:UpdateTranslationException(item, code, target)
+        end
+        return
+    end
+    self.translation_excluded_items = {}
+    for _, code in ipairs(pf_irc_chat_translate.source_languages()) do
+        local item = pf_irc_profile_item("", 325, 21)
+        item.language_code = code
+        self.translation_excluded_list:AddExistingItem(item)
+        self.translation_excluded_items[code] = item
+        self:UpdateTranslationException(item, code, target)
+    end
+end
+
+function pf_irc_chat_tab:SelectTranslationTarget()
+    local item = self.translation_target_list:GetSelectedItem()
+    if not item or not self.translation_draft then return end
+    self.translation_draft.target = item.language_code
+    self:RefreshTranslationExceptions()
+end
+
+function pf_irc_chat_tab:ToggleTranslationException()
+    local item = self.translation_excluded_list:GetSelectedItem()
+    if not item or not self.translation_draft then return end
+    local code = item.language_code
+    local draft = self.translation_draft
+    local target = pf_irc_chat_translate.effective_target(draft.target)
+    if code == target then return end
+    draft.excluded[code] = not draft.excluded[code] or nil
+    self:UpdateTranslationException(item, code, target)
+end
+
+function pf_irc_chat_tab:FillTranslationSettings()
+    local translation = pf_irc_chat_translate
+    local settings = pf_irc_chat_config.get_translation_settings()
+    local code = translation.valid_target(settings.target) and settings.target or "game"
+    local excluded = {}
+    for language, value in pairs(settings.excluded) do excluded[language] = value end
+    self.translation_draft = { target = code, excluded = excluded }
+    self.translation_manual:SetCheck(settings.manual)
+    self.translation_automatic:SetCheck(settings.automatic)
+    self:RefreshTranslationLanguageLists()
+end
+
+function pf_irc_chat_tab:RefreshTranslationLanguageLists()
+    local translation = pf_irc_chat_translate
+    if not self.translation_target_indices then
+        self.translation_target_indices = {}
+        for index, language in ipairs(translation.target_languages()) do
+            local item = pf_irc_profile_item(translation.language_name(language), 240, 21)
+            item.language_code = language
+            self.translation_target_list:AddExistingItem(item)
+            self.translation_target_indices[language] = index - 1
+            if language == "game" then self.translation_game_item = item end
+        end
+    end
+    local game_label = translation.language_name("game") .. " (" ..
+        translation.language_name(translation.effective_target("game")) .. ")"
+    self.translation_game_item:GetTextItem():SetText(pf_irc_text_codec.to_ui_literal(game_label))
+    self.translation_target_list:SetSelectedIndex(self.translation_target_indices[self.translation_draft.target])
+    self:RefreshTranslationExceptions()
+end
+
+function pf_irc_chat_tab:SaveTranslationSettings()
+    local draft = self.translation_draft
+    draft.manual = self.translation_manual:GetCheck() == true
+    draft.automatic = self.translation_automatic:GetCheck() == true
+    local ok = pf_irc_chat_config.save_translation_settings(draft)
+    self.settings_result:SetText(translated(ok and "pf_irc_translate_saved" or "pf_irc_translate_save_failed"))
+    if ok then self.translation_view_dirty = true end
+end
+
 function pf_irc_chat_tab:ShowSettingsPage(page)
     if self.settings_tab == "channels" and page ~= "channels" then
         self:CommitSettingsChannel()
@@ -1999,6 +2341,7 @@ function pf_irc_chat_tab:ShowSettingsPage(page)
     self:ReleaseInlineInput()
     self:HideProfileList()
     self.settings_tab = page
+    self.settings_result:SetText("")
     local labels = self.settings_labels
     local connection = {
         self.connection_panel, labels.profile_label, self.profile, self.profile_hitbox,
@@ -2025,6 +2368,9 @@ function pf_irc_chat_tab:ShowSettingsPage(page)
     self:SetSettingsWindows(connection, page == "connection")
     self:SetSettingsWindows(channels, page == "channels")
     self:SetSettingsWindows(notifications, page == "notifications")
+    self:SetSettingsWindows({ self.translation_panel }, page == "translation")
+    self:SetSettingsWindows({ self.settings_reset }, page ~= "translation")
+    if page == "translation" and not self.translation_draft then self:FillTranslationSettings() end
     if page == "channels" then self:RefreshSensitiveSettings() end
     self:RefreshSettingsDeletionState()
 end
@@ -2170,6 +2516,7 @@ function pf_irc_chat_tab:FillNotificationSettings()
 end
 
 function pf_irc_chat_tab:ShowSettings()
+    self:RefreshLocalization()
     self:ReleaseInlineInput()
     self:CancelPdaConfirmation()
     self:HideQuickChannel()
@@ -2180,12 +2527,12 @@ function pf_irc_chat_tab:ShowSettings()
     local profile, profile_name = pf_irc_chat.get_active_profile()
     self:FillProfile(profile_name, profile)
     self:FillNotificationSettings()
+    self.translation_draft = nil
     self:ShowSettingsPage("connection")
     local state = pf_irc_chat.get_state()
     if state.authorized then
         self.input_fields:set_text("settings_nick", state.requested_nick or "")
     end
-    self.settings_save:TextControl():SetText(translated_utf8("pf_irc_save_compact"))
     self:HideCommandMenu()
     self.settings_shade:Show(true)
     self.settings:Show(true)
@@ -2242,6 +2589,7 @@ function pf_irc_chat_tab:ReadNotificationForm()
 end
 
 function pf_irc_chat_tab:SaveSettings()
+    if self.settings_tab == "translation" then return self:SaveTranslationSettings() end
     local profile_name, profile = self:ReadProfileForm()
     local notifications = self:ReadNotificationForm()
     local state = pf_irc_chat.get_state()
@@ -2462,7 +2810,7 @@ function pulse()
     end
     local online = false
     if chat_singleton then
-        chat_singleton:Pulse()
+        chat_singleton:Pulse(true)
         local ok, scope = pcall(function() return chat_singleton:InputScope() end)
         online = ok and scope == "chat"
     end
@@ -2470,6 +2818,7 @@ function pulse()
 end
 
 function before_game_reload()
+    pf_irc_chat_translate.prepare_reload()
     local window = chat_singleton
 
     -- CUIPdaWnd::Show(false) hides a script tab but leaves it attached to the

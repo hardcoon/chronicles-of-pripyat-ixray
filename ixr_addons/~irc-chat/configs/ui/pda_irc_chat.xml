@@ -42,10 +42,10 @@
       <texture_t>ui_pf_irc_authorize_t</texture_t>
       <texture_d>ui_pf_irc_authorize_d</texture_d>
     </authorize>
-    <auto_login_label x="135.0" y="178.0" width="192.0" height="29" hint="pf_irc_auto_login_hint">
+    <auto_login_label x="135.0" y="178.0" width="192.0" height="29">
       <text font="letterica16" align="l" vert_align="c" r="185" g="185" b="185">pf_irc_auto_login</text>
     </auto_login_label>
-    <auto_login x="121.0" y="178.0" width="44" height="29" hint="pf_irc_auto_login_hint">
+    <auto_login x="121.0" y="178.0" width="44" height="29">
       <texture>ui_inGame2_checkbox</texture>
     </auto_login>
     <result x="135.0" y="214.0" width="192.0" height="30">
@@ -53,7 +53,7 @@
     </result>
   </login>
   <chat x="0" y="0" width="1024" height="768">
-    <disconnect x="60" y="150" width="32" height="32" hint="pf_irc_disconnect_session_hint">
+    <disconnect x="60" y="150" width="32" height="32">
       <texture_e>ui_pf_irc_session_disconnect_e</texture_e>
       <texture_h>ui_pf_irc_session_disconnect_h</texture_h>
       <texture_t>ui_pf_irc_session_disconnect_t</texture_t>
@@ -132,7 +132,7 @@
       <text font="letterica16" align="c" vert_align="c" r="205" g="146" b="41" />
     </layout>
     <layout_hitbox x="653.0" y="648.0" width="28" height="29" />
-    <send x="685.0" y="646.0" width="32" height="32" hint="pf_irc_enter">
+    <send x="685.0" y="646.0" width="32" height="32">
       <texture_e>ui_pf_irc_send_e</texture_e>
       <texture_h>ui_pf_irc_send_h</texture_h>
       <texture_t>ui_pf_irc_send_t</texture_t>
@@ -177,6 +177,12 @@
     <system_body x="55" y="0" width="470" height="22">
       <text font="letterica16" complex_mode="1" align="c" vert_align="t" r="190" g="195" b="192" />
     </system_body>
+    <translate x="34.0" y="16" width="18" height="16" stretch="1">
+      <texture_e>ui_pf_irc_translate_e</texture_e>
+      <texture_h>ui_pf_irc_translate_h</texture_h>
+      <texture_t>ui_pf_irc_translate_t</texture_t>
+      <texture_d>ui_pf_irc_translate_d</texture_d>
+    </translate>
   </message_row>
   <user_row x="0" y="0" width="160.0" height="28">
     <presence x="5" y="10" width="8" height="8" stretch="1">
@@ -260,6 +266,13 @@
       <texture_t>ui_pf_irc_pda_button_t</texture_t>
       <texture_d>ui_pf_irc_pda_button_d</texture_d>
     </tab_notifications>
+    <tab_translation x="30" y="178" width="182" height="34" stretch="1">
+      <text font="letterica16" align="c" vert_align="c">pf_irc_settings_tab_translation</text>
+      <texture_e>ui_pf_irc_pda_button_e</texture_e>
+      <texture_h>ui_pf_irc_pda_button_h</texture_h>
+      <texture_t>ui_pf_irc_pda_button_t</texture_t>
+      <texture_d>ui_pf_irc_pda_button_d</texture_d>
+    </tab_translation>
     <nav_divider x="226" y="58" width="1" height="408" vertical="1">
       <texture a="105">ui_pf_irc_line_vertical</texture>
     </nav_divider>
@@ -375,10 +388,10 @@
       <text font="letterica16" vert_align="c" color="ui_5" />
       <texture a="215" r="24" g="32" b="29">ui\ui_noise</texture>
     </channel_mask>
-    <channel_show x="830" y="107" width="44" height="29" hint="pf_irc_show_channel_hint">
+    <channel_show x="830" y="107" width="44" height="29">
       <texture>ui_inGame2_checkbox</texture>
     </channel_show>
-    <channel_show_label x="866.0" y="108" width="52" height="27" hint="pf_irc_show_channel_hint">
+    <channel_show_label x="866.0" y="108" width="52" height="27">
       <text font="letterica16" vert_align="c">pf_irc_show_value</text>
     </channel_show_label>
     <channel_hitbox x="638" y="108" width="178" height="27" />
@@ -393,10 +406,10 @@
       <text font="letterica16" vert_align="c" color="ui_5" />
       <texture a="215" r="24" g="32" b="29">ui\ui_noise</texture>
     </key_mask>
-    <key_show x="830" y="152" width="44" height="29" hint="pf_irc_show_key_hint">
+    <key_show x="830" y="152" width="44" height="29">
       <texture>ui_inGame2_checkbox</texture>
     </key_show>
-    <key_show_label x="866.0" y="153" width="52" height="27" hint="pf_irc_show_key_hint">
+    <key_show_label x="866.0" y="153" width="52" height="27">
       <text font="letterica16" vert_align="c">pf_irc_show_value</text>
     </key_show_label>
     <key_hitbox x="638" y="153" width="178" height="27" />
@@ -456,10 +469,40 @@
     <private_sound x="827" y="199" width="44" height="29">
       <texture>ui_inGame2_checkbox</texture>
     </private_sound>
+    <translation x="240" y="58" width="654" height="408" stretch="1">
+      <texture a="82" r="15" g="19" b="19">ui\ui_noise</texture>
+      <manual x="18" y="9" width="44" height="29">
+        <texture>ui_inGame2_checkbox</texture>
+      </manual>
+      <manual_label x="55" y="10" width="575" height="27">
+        <text font="letterica16" vert_align="c">pf_irc_translate_manual</text>
+      </manual_label>
+      <automatic x="18" y="42" width="44" height="29">
+        <texture>ui_inGame2_checkbox</texture>
+      </automatic>
+      <automatic_label x="55" y="43" width="575" height="27">
+        <text font="letterica16" vert_align="c">pf_irc_translate_automatic</text>
+      </automatic_label>
+      <disclosure x="20" y="76" width="614" height="62">
+        <text font="letterica16" complex_mode="1" r="158" g="164" b="161">pf_irc_translate_disclosure</text>
+      </disclosure>
+      <target_label x="20" y="146" width="258" height="24">
+        <text font="letterica16" vert_align="c" color="ui_5">pf_irc_translate_target</text>
+      </target_label>
+      <target_list x="20" y="173" width="250" height="224" item_height="21" can_select="1" always_show_scroll="0" scroll_profile="pf_irc_compact_dark_v3">
+        <font font="letterica16" />
+      </target_list>
+      <excluded_label x="293" y="146" width="343" height="24">
+        <text font="letterica16" vert_align="c" color="ui_5">pf_irc_translate_excluded</text>
+      </excluded_label>
+      <excluded_list x="293" y="173" width="342" height="224" item_height="21" can_select="1" always_show_scroll="0" scroll_profile="pf_irc_compact_dark_v3">
+        <font font="letterica16" />
+      </excluded_list>
+    </translation>
     <result x="265" y="477" width="629" height="22">
       <text font="letterica16" align="c" r="220" g="150" b="60" />
     </result>
-    <reset x="30" y="507" width="225" height="32" stretch="1" hint="pf_irc_reset_connection_hint">
+    <reset x="30" y="507" width="225" height="32" stretch="1">
       <text font="letterica16" align="c" vert_align="c">pf_irc_reset_connection</text>
       <texture_e>ui_pf_irc_pda_button_e</texture_e>
       <texture_h>ui_pf_irc_pda_button_h</texture_h>

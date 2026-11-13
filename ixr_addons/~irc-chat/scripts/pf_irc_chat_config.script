@@ -25,10 +25,12 @@ local profiles_path = nil
 local identity_path = nil
 local muted_path = nil
 local notification_exceptions_path = nil
+local translation_path = nil
 
 local settings_cache = nil
 local muted_cache = nil
 local notification_exceptions_cache = nil
+local translation_cache = nil
 local identity_cache = nil
 local command_cache = nil
 
@@ -62,6 +64,7 @@ local function init_paths()
     identity_path = user_dir .. "\\identity.ltx"
     muted_path = user_dir .. "\\muted.ltx"
     notification_exceptions_path = user_dir .. "\\notification_exceptions.ltx"
+    translation_path = user_dir .. "\\translation.ltx"
     return true
 end
 
@@ -641,6 +644,43 @@ function get_notification_settings()
         notify_private_messages = settings.notify_private_messages == true,
         sound_private_messages = settings.sound_private_messages == true
     }
+end
+
+function get_translation_settings()
+    if translation_cache then return translation_cache end
+    local values = {}
+    if init_paths() then
+        values = (parse_ltx(translation_path) or {}).translation or {}
+    end
+    local excluded = {}
+    for code in tostring(values.excluded or ""):gmatch("[a-zA-Z][a-zA-Z0-9%-]*") do
+        excluded[code:lower()] = true
+    end
+    translation_cache = {
+        manual = bool_value(values.manual, true),
+        automatic = bool_value(values.automatic, false),
+        target = values.target or "game",
+        excluded = excluded
+    }
+    return translation_cache
+end
+
+function save_translation_settings(values)
+    if not init_paths() then return false, "user_directory_unavailable" end
+    local target = tostring(values.target or "game"):lower()
+    if not target:match("^[a-z][a-z0-9%-]*$") then return false, "translation_language_invalid" end
+    local excluded = {}
+    for code, selected in pairs(values.excluded) do
+        if selected and code:match("^[a-z][a-z0-9%-]*$") then excluded[#excluded + 1] = code end
+    end
+    table.sort(excluded)
+    local ok, error_code = write_atomic(translation_path, table.concat({
+        "[translation]", "manual = " .. tostring(values.manual == true),
+        "automatic = " .. tostring(values.automatic == true), "target = " .. target,
+        "excluded = " .. table.concat(excluded, ", "), ""
+    }, "\r\n"))
+    if ok then translation_cache = nil end
+    return ok, error_code
 end
 
 local function notification_key_part(value)

@@ -1,0 +1,384 @@
+local http = pf_irc_translate_http
+local MAX_BATCH_SIZE, MAX_BATCH_BYTES = 8, 3500
+local MAX_RESULTS = 2048
+local BATCH_DELAY_MS, RETRY_DELAY_MS = 180, 15000
+local SERVICE_NICKS = { chanserv = true, nickserv = true, memoserv = true, hostserv = true,
+    operserv = true, botserv = true, helpserv = true, saslserv = true, gameserv = true }
+
+-- Google targets whose standard alphabet fits Windows-1251, including ASCII.
+local TARGETS = { "game", "ru", "en", "uk", "be", "bg", "sr", "mk", "aa", "bem", "ceb", "cgg",
+    "id", "la", "lmo", "luo", "mfe", "ms", "nr", "om", "rn", "rw", "sn", "so", "ss", "st",
+    "sw", "tpi", "ts", "xh", "zu" }
+local TARGET_SET = {}
+for _, code in ipairs(TARGETS) do TARGET_SET[code] = true end
+
+local current_settings, target, game_language
+local cache, cache_order, cache_first, cache_last = {}, {}, 1, 0
+local session = rawget(_G, "__pf_irc_chat_translation_session")
+if not session then
+    session = { translations = {}, history_views = {} }
+    rawset(_G, "__pf_irc_chat_translation_session", session)
+end
+local translations, history_views = session.translations, session.history_views
+local active_job, batch, next_request, service_pause = nil, nil, 0, 0
+local cancel_requested = false
+local manual_queue, manual_pending = {}, {}
+
+local function strip(text)
+    return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function normalize_language(code)
+    code = tostring(code or ""):lower()
+    if code == "he" then return "iw" end
+    if code == "jv" then return "jw" end
+    if code == "fil" then return "tl" end
+    if code == "nb" then return "no" end
+    if code == "zh-hans" then return "zh-cn" end
+    if code == "zh-hant" then return "zh-tw" end
+    if code == "sr-cyrl" then return "sr" end
+    return code
+end
+
+function game_language_code()
+    if get_console then
+        local console = get_console()
+        local language = console and console:get_string("language")
+        if language == "eng" or language == "en" then return "en" end
+        if language == "rus" or language == "ru" then return "ru" end
+    end
+    return game.translate_string("pf_irc_translate_game_language") == "en" and "en" or "ru"
+end
+
+function target_languages()
+    return TARGETS
+end
+
+function valid_target(code)
+    return TARGET_SET[code] == true
+end
+
+function effective_target(code)
+    if code ~= "game" and TARGET_SET[code] then return code end
+    return game_language_code()
+end
+
+function language_name(code)
+    return game.translate_string("pf_irc_translate_lang_" .. code:gsub("-", "_"))
+end
+
+function source_languages()
+    local codes = game.translate_string("pf_irc_translate_language_codes")
+    local result = {}
+    for code in codes:gmatch("[a-z][a-z0-9%-]*") do result[#result + 1] = code end
+    return result
+end
+
+local function matches_target(language)
+    local base = language:match("^([a-z]+)%-") or language
+    return base == target
+end
+
+local function excluded(language, settings)
+    local base = language:match("^([a-z]+)%-") or language
+    return matches_target(language) or settings.excluded[language] == true or settings.excluded[base] == true
+end
+
+local function abort_batch()
+    if active_job then http.close(active_job, true) end
+    for _, entry in ipairs(batch or {}) do entry.pending = false end
+    active_job, batch = nil, nil
+end
+
+local function cancel_requests()
+    local clock = http.now()
+    for _, entry in ipairs(manual_queue) do entry.failed_until = clock end
+    for _, entry in ipairs(batch or {}) do entry.failed_until = clock end
+    abort_batch()
+    manual_queue, manual_pending = {}, {}
+    cancel_requested = false
+end
+
+function prepare_reload()
+    cancel_requests()
+end
+
+function sync_settings(network_tick)
+    local settings = pf_irc_chat_config.get_translation_settings()
+    local current_game = game_language_code()
+    local current_target = settings.target ~= "game" and TARGET_SET[settings.target] and
+        settings.target or current_game
+    local changed = settings ~= current_settings or game_language ~= current_game
+    if changed and (current_target ~= target or (current_settings and
+        ((current_settings.automatic and not settings.automatic) or
+            (current_settings.manual and not settings.manual and not settings.automatic)))) then
+        cancel_requested = true
+    end
+    if network_tick and cancel_requested then
+        cancel_requests()
+        changed = true
+    end
+    if not settings.manual and #manual_queue > 0 then manual_queue, manual_pending = {}, {} end
+    current_settings, target, game_language = settings, current_target, current_game
+    return settings, changed
+end
+
+local function protected_parts(text)
+    local spans = {}
+    for _, part in ipairs(pf_irc_emoji.tokenize(text)) do
+        if part.emoji or part.text ~= part.raw then spans[#spans + 1] = { part.first, part.last } end
+    end
+    for _, pattern in ipairs({ "`[^`]+`", "%%c%[[^%]]*%]", "[hH][tT][tT][pP][sS]?://[^%s<>]+",
+        "[wW][wW][wW]%.[^%s<>]+", "[%w%._%+%-]+@[%w%.%-]+%.[%a]+",
+        "@[%w_%-%.%[%]\\`^{}|\128-\255]+" }) do
+        local position = 1
+        while true do
+            local first, last = text:find(pattern, position)
+            if not first then break end
+            spans[#spans + 1] = { first, last }
+            position = last + 1
+        end
+    end
+    table.sort(spans, function(left, right)
+        if left[1] == right[1] then return left[2] > right[2] end
+        return left[1] < right[1]
+    end)
+
+    local tokens, pieces, literal = {}, {}, {}
+    local prefix = "XQZ"
+    local upper = text:upper()
+    while upper:find(prefix .. "%d+ZXQ") do prefix = prefix .. "Q" end
+    local position = 1
+    for _, span in ipairs(spans) do
+        local first, last = span[1], span[2]
+        if first >= position then
+            local plain = text:sub(position, first - 1)
+            literal[#literal + 1] = plain
+            pieces[#pieces + 1] = plain
+            tokens[#tokens + 1] = text:sub(first, last)
+            pieces[#pieces + 1] = string.format("%s%03dZXQ", prefix, #tokens)
+            position = last + 1
+        elseif last >= position then
+            tokens[#tokens] = tokens[#tokens] .. text:sub(position, last)
+            position = last + 1
+        end
+    end
+    local tail = text:sub(position)
+    literal[#literal + 1], pieces[#pieces + 1] = tail, tail
+    local language_sample = strip(table.concat(literal, " "))
+    if not http.has_letters(language_sample) then return nil end
+    return table.concat(pieces), tokens, prefix, language_sample
+end
+
+local function restore(text, entry)
+    text = pf_irc_text_codec.escape_markup(text:gsub("[%z\1-\8\11\12\14-\31]", ""))
+    local missing, seen = false, {}
+    local marker = entry.prefix:gsub("%a", function(letter)
+        return "[" .. letter .. letter:lower() .. "]"
+    end)
+    local restored = text:gsub(marker .. "(%d+)[Zz][Xx][Qq]", function(number)
+        local index = tonumber(number)
+        if seen[index] or not entry.tokens[index] then missing = true end
+        seen[index] = true
+        return entry.tokens[index] or ""
+    end)
+    for index in ipairs(entry.tokens) do
+        if not seen[index] then missing = true end
+    end
+    if not missing then return strip(restored) end
+end
+
+function is_candidate(message)
+    if message.kind ~= "chat" or message.own == true or message.service == true or
+        type(message.text) ~= "string" or #message.text == 0 or #message.text > 4096 then return false end
+    local nick = tostring(message.nick or ""):lower()
+    return nick ~= "" and not SERVICE_NICKS[nick]
+end
+
+local function view_for(message, create)
+    local id = message._history_id
+    local view = id and history_views[id] or message._translation_view
+    if not view and create then
+        view = {}
+        if id then history_views[id] = view else message._translation_view = view end
+    end
+    return view
+end
+
+local function entry_for(text)
+    local key = target .. "\0" .. text
+    local entry = cache[key]
+    if entry then return entry end
+    local masked, tokens, prefix, sample = protected_parts(text)
+    entry = { key = key, original = text, target = target, masked = masked, tokens = tokens, prefix = prefix,
+        language_sample = sample }
+    cache_last = cache_last + 1
+    cache_order[cache_last], cache[key] = key, entry
+    if cache_last - cache_first >= MAX_RESULTS then
+        local oldest = cache_order[cache_first]
+        cache[oldest], cache_order[cache_first] = nil, nil
+        cache_first = cache_first + 1
+    end
+    return entry
+end
+
+local function active_entry(message)
+    local view = view_for(message)
+    if view and view.entry and view.entry.target == target then return view.entry, view end
+    local key = target .. "\0" .. message.text
+    return translations[key] or cache[key], view
+end
+
+function presentation(message, settings)
+    if not is_candidate(message) then return message.text end
+    local entry, view = active_entry(message)
+    local has_result = entry and entry.result and entry.result ~= ""
+    local is_manual = view and view.mode == "translation" and view.entry == entry
+    local can_show = has_result and (is_manual or (settings.automatic and entry.source and
+        not excluded(entry.source, settings) and not (view and view.mode == "original")))
+    if can_show then return entry.result, "original" end
+    if has_result and view and view.mode == "original" then return message.text, "show_translation" end
+    if not settings.manual then return message.text end
+    if not entry then return message.text, "translate" end
+    if not entry.masked then return message.text end
+    if entry.pending or manual_pending[entry] then
+        return message.text, "pending"
+    end
+    if entry.failed_until or entry.error then return message.text, "unavailable" end
+    if is_manual and entry.done then return message.text, "same_language" end
+    return message.text, "translate"
+end
+
+function can_translate(message)
+    local entry = active_entry(message) or entry_for(message.text)
+    return entry.masked ~= nil
+end
+
+function toggle(message, action)
+    local settings = sync_settings()
+    if not action or not is_candidate(message) then return false end
+    local entry = active_entry(message)
+    if not entry and settings.manual then entry = entry_for(message.text) end
+    if not entry or not entry.masked then return false end
+    local view = view_for(message, true)
+    if action == "original" then
+        view.mode = "original"
+    else
+        view.mode = "translation"
+        if action == "unavailable" then
+            entry.failed_until, entry.done, entry.error = nil, nil, nil
+            next_request = 0
+        end
+    end
+    view.entry = entry
+    if view.mode == "translation" and not entry.done and not manual_pending[entry] then
+        local oldest = #manual_queue >= 24 and table.remove(manual_queue, 1)
+        if oldest then
+            manual_pending[oldest] = nil
+            oldest.failed_until = http.now()
+        end
+        manual_queue[#manual_queue + 1], manual_pending[entry] = entry, true
+    end
+    return true
+end
+
+local function fail(entries, clock, delay)
+    for _, entry in ipairs(entries) do
+        entry.pending = false
+        entry.failed_until = clock + delay
+        entry.failures = (entry.failures or 0) + 1
+    end
+    next_request = clock + delay
+end
+
+local function skip_automatic(entry, settings)
+    if not entry.checked_language then
+        entry.local_language = normalize_language(http.detect_language(entry.language_sample))
+        entry.language_sample = nil
+        entry.checked_language = true
+    end
+    return entry.local_language and entry.local_language ~= "" and excluded(entry.local_language, settings)
+end
+
+function can_request(settings, clock)
+    return not active_job and clock >= math.max(next_request, service_pause) and
+        (settings.automatic or (settings.manual and #manual_queue > 0))
+end
+
+function poll(clock)
+    if not active_job then return false end
+    local status, body = http.poll(active_job, clock)
+    if not status then return false end
+    local entries = batch
+    active_job, batch = nil, nil
+    local results = status == 200 and pf_irc_translate_response.parse(body, #entries)
+    if not results then
+        if status == 429 or status == 503 then service_pause = clock + 60000 end
+        fail(entries, clock, math.max(RETRY_DELAY_MS, service_pause - clock))
+        return true
+    end
+    for index, entry in ipairs(entries) do
+        local result = results[index]
+        local source = normalize_language(result.source)
+        local same_language = matches_target(source)
+        local translated = not same_language and restore(result.text, entry) or nil
+        entry.pending, entry.done, entry.failed_until = false, true, nil
+        entry.source = source:match("^[a-z][a-z0-9%-]*$") and source or nil
+        entry.error = not same_language and (not translated or translated == "")
+        if translated and translated ~= "" and translated ~= entry.original then
+            entry.result = translated
+            translations[entry.key] = entry
+        end
+    end
+    next_request = clock + BATCH_DELAY_MS
+    return true
+end
+
+function request(messages, settings, clock)
+    if not can_request(settings, clock) then return false end
+    local entries, texts, seen, bytes = {}, {}, {}, 0
+    local function collect(entry)
+        if not entry or not entry.masked or entry.done or entry.pending or seen[entry] or
+            (#entries > 0 and bytes + #entry.masked > MAX_BATCH_BYTES) then return end
+        seen[entry] = true
+        entries[#entries + 1], texts[#texts + 1] = entry, entry.masked
+        bytes = bytes + #entry.masked
+    end
+    while #manual_queue > 0 and #entries < MAX_BATCH_SIZE do
+        local entry = manual_queue[1]
+        if #entries > 0 and bytes + #entry.masked > MAX_BATCH_BYTES then break end
+        table.remove(manual_queue, 1)
+        manual_pending[entry] = nil
+        if not entry.failed_until then collect(entry) end
+    end
+    if settings.automatic then
+        local checks = 0
+        for _, message in ipairs(messages) do
+            if #entries == MAX_BATCH_SIZE or checks == MAX_BATCH_SIZE then break end
+            if is_candidate(message) then
+                local view = view_for(message)
+                if not view or view.mode ~= "original" then
+                    local entry = active_entry(message)
+                    if not entry then
+                        entry = entry_for(message.text)
+                        if not entry.masked then checks = checks + 1 end
+                    end
+                    if entry.masked and not entry.done and not entry.pending and not seen[entry] and
+                        (not entry.failed_until or (clock >= entry.failed_until and (entry.failures or 0) < 2)) then
+                        if not entry.checked_language then checks = checks + 1 end
+                        if not skip_automatic(entry, settings) then collect(entry) end
+                    end
+                end
+            end
+        end
+    end
+    if #entries == 0 then return false end
+    active_job = http.start(target, texts)
+    if not active_job then
+        fail(entries, clock, RETRY_DELAY_MS)
+    else
+        batch = entries
+        for _, entry in ipairs(batch) do entry.pending = true end
+    end
+    return true
+end

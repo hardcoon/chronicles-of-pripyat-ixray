@@ -77,6 +77,8 @@ local function encode_utf8(codepoint)
         0x80 + codepoint % 0x40)
 end
 
+utf8_character = encode_utf8
+
 -- IPC, history and editor state stay UTF-8. Native UI text uses Windows-1251,
 -- including the engine's byte-oriented ellipsis path.
 function to_ui(value)

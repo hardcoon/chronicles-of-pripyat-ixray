@@ -421,7 +421,7 @@ local function promote_private_dialog(key)
     runtime.private_order = reordered
 end
 
-local function add_private_message(nick, identity, text, own)
+local function add_private_message(nick, identity, text, own, service)
     text = trim(text)
     identity = trim(identity):lower()
     if text == "" then return end
@@ -438,6 +438,7 @@ local function add_private_message(nick, identity, text, own)
         identity = own and ("install:" .. own_install_id):lower() or identity,
         text = text,
         own = own == true,
+        service = service == true,
         -- A direct message uses the private notification settings below, but
         -- it is not an @mention and must keep the ordinary chat-row colours.
         mentioned = false,
@@ -1068,7 +1069,7 @@ local function handle_event(fields)
         -- Present it locally as a private service dialog so it does not flood
         -- every public conversation. No IRC message is modified or resent.
         if not own and irc_casefold(nick) == "chanserv" then
-            add_private_message(nick, identity, text, false)
+            add_private_message(nick, identity, text, false, true)
         else
             add_message("chat", nick, identity, text, own, channel_name)
         end
@@ -1088,11 +1089,11 @@ local function handle_event(fields)
         -- IRC clients instead: channel notices stay in their channel, while
         -- notices addressed directly to us open a service/private dialog.
         if irc_casefold(nick) == "chanserv" then
-            add_private_message(nick, identity, text, false)
+            add_private_message(nick, identity, text, false, true)
         elseif target and is_irc_channel_target(target) then
             add_message("system", nick, identity, text, false, target)
         else
-            add_private_message(nick, identity, text, false)
+            add_private_message(nick, identity, text, false, true)
         end
     elseif command == "USERS_CLEAR" or command == "USERS_SNAPSHOT_BEGIN" then
         local channel = ensure_channel(fields[2] or (active_channel() and active_channel().name))

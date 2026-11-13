@@ -1,6 +1,8 @@
 local LOG_VERSION = 1
 local INDEX_VERSION = 1
 local READ_BLOCK_BYTES = 8192
+local cleared_logs = rawget(_G, "__pf_irc_chat_cleared_history") or {}
+rawset(_G, "__pf_irc_chat_cleared_history", cleared_logs)
 
 local lfs_ok, lfs = pcall(require, "lfs")
 local ffi_ok, ffi = pcall(require, "ffi")
@@ -135,6 +137,11 @@ local function log_path(entry)
     if not active or not entry then return nil end
     return active.path .. "\\" .. (entry.kind == "private" and "private" or "channels") ..
         "\\" .. entry.filename
+end
+
+local function message_prefix(entry)
+    local path = log_path(entry)
+    return path .. "\0" .. tostring(cleared_logs[path] or 0) .. ":"
 end
 
 local function log_header(entry)
@@ -323,19 +330,21 @@ local function ensure_log(entry)
 end
 
 local function message_line(message)
-    return table.concat({ "M", encode(message.kind), encode(message.nick),
+    local line = table.concat({ "M", encode(message.kind), encode(message.nick),
         encode(message.identity), encode(message.text), message.own == true and "1" or "0",
         message.mentioned == true and "1" or "0", encode(message.time), encode(message.date) }, "\t")
+    return message.service and (line .. "\tservice") or line
 end
 
-local function parse_message(line, start_offset, end_offset)
+local function parse_message(line, start_offset, end_offset, prefix)
     local value = fields(line)
     if value[1] ~= "M" or #value < 9 then return nil end
     local message = {
         kind = decode(value[2]), nick = decode(value[3]),
         identity = decode(value[4]):lower(), text = decode(value[5]),
         own = value[6] == "1", mentioned = value[7] == "1",
-        time = decode(value[8]), date = decode(value[9]),
+        time = decode(value[8]), date = decode(value[9]), service = value[#value] == "service",
+        _history_id = prefix .. start_offset,
         _history_start = start_offset, _history_end = end_offset
     }
     if message.text == "" or #message.text > 4096 or #message.nick > 128 or
@@ -373,17 +382,20 @@ function append(entry, message)
     file:close()
     if not ok then return nil, "history_log_write_failed" end
     message._history_start, message._history_end = start_offset, end_offset
+    message._history_id = message_prefix(entry) .. start_offset
     return start_offset, end_offset
 end
 
 function clear(entry)
     if not active or not entry then return false, "history_entry_missing" end
-    local file = io.open(log_path(entry), "wb")
+    local path = log_path(entry)
+    local file = io.open(path, "wb")
     if not file then return false, "history_log_unavailable" end
     local ok = file:write(log_header(entry), "\r\n")
     file:flush()
     file:close()
     if not ok then return false, "history_log_write_failed" end
+    cleared_logs[path] = (cleared_logs[path] or 0) + 1
     return update_entry(entry, { unread = 0, last_activity = os.time() })
 end
 
@@ -422,17 +434,53 @@ local function complete_end(file, data_start)
     return newline and (newline + 1) or data_start
 end
 
-local function previous_line(file, cursor, data_start)
-    if cursor <= data_start then return nil end
-    local content_end = cursor
-    file:seek("set", cursor - 1)
-    if file:read(1) == "\n" then content_end = cursor - 1 end
-    local newline = previous_lf(file, content_end, data_start)
-    local line_start = newline and (newline + 1) or data_start
-    file:seek("set", line_start)
-    local line = file:read(content_end - line_start) or ""
-    line = line:gsub("\r$", "")
-    return line, line_start, cursor
+local function read_previous_messages(file, cursor, data_start, limit, prefix)
+    local reversed = {}
+    local line_end = cursor
+    local pieces = {}
+    while cursor > data_start and #reversed < limit do
+        local block_start = math.max(data_start, cursor - READ_BLOCK_BYTES)
+        file:seek("set", block_start)
+        local block = file:read(cursor - block_start)
+        if not block or #block ~= cursor - block_start then break end
+
+        local newlines = {}
+        for position in block:gmatch("()\n") do newlines[#newlines + 1] = position end
+        local right = #block
+        for index = #newlines, 1, -1 do
+            local newline = newlines[index]
+            local line_start = block_start + newline
+            if line_start < line_end then
+                local line = block:sub(newline + 1, right)
+                if #pieces > 0 then
+                    pieces[#pieces + 1] = line
+                    local ordered = {}
+                    for part = #pieces, 1, -1 do ordered[#ordered + 1] = pieces[part] end
+                    line = table.concat(ordered)
+                    pieces = {}
+                end
+                local message = parse_message((line:gsub("\r$", "")), line_start, line_end, prefix)
+                if message then reversed[#reversed + 1] = message end
+            end
+            line_end, right = line_start, newline - 1
+            if #reversed >= limit then break end
+        end
+        if #reversed < limit then
+            pieces[#pieces + 1] = block:sub(1, right)
+        end
+        cursor = block_start
+    end
+    if cursor == data_start and #reversed < limit and line_end > data_start then
+        local ordered = {}
+        for part = #pieces, 1, -1 do ordered[#ordered + 1] = pieces[part] end
+        local line = table.concat(ordered):gsub("\r$", "")
+        local message = parse_message(line, data_start, line_end, prefix)
+        if message then reversed[#reversed + 1] = message end
+        line_end = data_start
+    end
+    local messages = {}
+    for index = #reversed, 1, -1 do messages[#messages + 1] = reversed[index] end
+    return messages, line_end
 end
 
 function read_latest(entry, limit)
@@ -444,19 +492,10 @@ function read_latest(entry, limit)
         end
         return nil, nil, error_code
     end
-    local cursor = complete_end(file, data_start)
-    local end_offset = cursor
-    local reversed = {}
-    while cursor > data_start and #reversed < math.max(1, tonumber(limit) or 20) do
-        local line, line_start, line_end = previous_line(file, cursor, data_start)
-        if not line then break end
-        cursor = line_start
-        local message = parse_message(line, line_start, line_end)
-        if message then reversed[#reversed + 1] = message end
-    end
+    local end_offset = complete_end(file, data_start)
+    local messages, cursor = read_previous_messages(file, end_offset, data_start,
+        math.max(1, tonumber(limit) or 20), message_prefix(entry))
     file:close()
-    local messages = {}
-    for index = #reversed, 1, -1 do messages[#messages + 1] = reversed[index] end
     return messages, {
         start_offset = messages[1] and messages[1]._history_start or end_offset,
         end_offset = messages[#messages] and messages[#messages]._history_end or end_offset,
@@ -469,18 +508,9 @@ function read_older(entry, before_offset, limit)
     if not file then return nil, nil, error_code end
     local end_offset = math.max(data_start, math.min(tonumber(before_offset) or data_start,
         complete_end(file, data_start)))
-    local cursor = end_offset
-    local reversed = {}
-    while cursor > data_start and #reversed < math.max(1, tonumber(limit) or 20) do
-        local line, line_start, line_end = previous_line(file, cursor, data_start)
-        if not line then break end
-        cursor = line_start
-        local message = parse_message(line, line_start, line_end)
-        if message then reversed[#reversed + 1] = message end
-    end
+    local messages, cursor = read_previous_messages(file, end_offset, data_start,
+        math.max(1, tonumber(limit) or 20), message_prefix(entry))
     file:close()
-    local messages = {}
-    for index = #reversed, 1, -1 do messages[#messages + 1] = reversed[index] end
     return messages, {
         start_offset = messages[1] and messages[1]._history_start or end_offset,
         end_offset = end_offset, has_older = cursor > data_start,
@@ -495,6 +525,7 @@ function read_newer(entry, after_offset, limit)
     local cursor = math.max(data_start, math.min(tonumber(after_offset) or data_start, final_offset))
     file:seek("set", cursor)
     local messages = {}
+    local prefix = message_prefix(entry)
     while cursor < final_offset and #messages < math.max(1, tonumber(limit) or 20) do
         local line_start = cursor
         local line = file:read("*l")
@@ -502,7 +533,7 @@ function read_newer(entry, after_offset, limit)
         if not line or line_end > final_offset then break end
         cursor = line_end
         line = line:gsub("\r$", "")
-        local message = parse_message(line, line_start, line_end)
+        local message = parse_message(line, line_start, line_end, prefix)
         if message then messages[#messages + 1] = message end
     end
     file:close()

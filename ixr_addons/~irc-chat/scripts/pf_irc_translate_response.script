@@ -1,0 +1,73 @@
+local ESCAPES = { ['"'] = '"', ['\\'] = '\\', ['/'] = '/', b = '\b', f = '\f',
+    n = '\n', r = '\r', t = '\t' }
+
+local function read_string(body, position)
+    local pieces = {}
+    position = position + 1
+    while true do
+        local mark = body:find('["\\%z\1-\31]', position)
+        if not mark then return nil end
+        pieces[#pieces + 1] = body:sub(position, mark - 1)
+        local character = body:sub(mark, mark)
+        if character == '"' then return table.concat(pieces), mark + 1 end
+        if character ~= '\\' then return nil end
+        local escape = body:sub(mark + 1, mark + 1)
+        position = mark + 2
+        if escape == 'u' then
+            local hex = body:match('^(%x%x%x%x)', position)
+            if not hex then return nil end
+            local codepoint = tonumber(hex, 16)
+            position = position + 4
+            if codepoint >= 0xD800 and codepoint <= 0xDBFF then
+                local low_hex = body:match('^\\u(%x%x%x%x)', position)
+                local low = low_hex and tonumber(low_hex, 16) or 0
+                if low < 0xDC00 or low > 0xDFFF then return nil end
+                codepoint = 0x10000 + (codepoint - 0xD800) * 0x400 + low - 0xDC00
+                position = position + 6
+            elseif codepoint >= 0xDC00 and codepoint <= 0xDFFF then
+                return nil
+            end
+            pieces[#pieces + 1] = pf_irc_text_codec.utf8_character(codepoint)
+        else
+            if not ESCAPES[escape] then return nil end
+            pieces[#pieces + 1] = ESCAPES[escape]
+        end
+    end
+end
+
+-- The Google response is an array of [translation, detected language] pairs.
+-- Accept a bare translation as well, but keep the source unknown in that case.
+function parse(body, count)
+    if type(body) ~= 'string' then return nil end
+    local position = 1
+    local function take(character)
+        position = body:find('%S', position) or (#body + 1)
+        if body:sub(position, position) ~= character then return false end
+        position = position + 1
+        return true
+    end
+    local function string_value()
+        position = body:find('%S', position) or (#body + 1)
+        if body:sub(position, position) ~= '"' then return nil end
+        local value, next_position = read_string(body, position)
+        if value then position = next_position end
+        return value
+    end
+
+    local results = {}
+    if not take('[') then return nil end
+    for index = 1, count do
+        if index > 1 and not take(',') then return nil end
+        local pair = take('[')
+        local translated = string_value()
+        if not translated then return nil end
+        local language
+        if pair then
+            if not take(',') then return nil end
+            language = string_value()
+            if not language or not take(']') then return nil end
+        end
+        results[index] = { text = translated, source = language }
+    end
+    if take(']') and not body:find('%S', position) then return results end
+end

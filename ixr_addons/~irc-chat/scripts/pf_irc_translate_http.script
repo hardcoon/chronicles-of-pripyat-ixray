@@ -1,0 +1,306 @@
+-- WinHTTP runs the request on its own worker. Lua only polls completed work.
+local ffi_ok, ffi = pcall(require, "ffi")
+local ole32, oleaut32, kernel32
+local language_service, elscore
+
+if ffi_ok then
+    if not pcall(ffi.typeof, "PF_TRANSLATE_HTTP") then
+        pcall(ffi.cdef, [[
+            typedef struct {
+                unsigned long a;
+                unsigned short b, c;
+                unsigned char d[8];
+            } PF_TRANSLATE_GUID;
+            typedef struct {
+                size_t size;
+                void *category, *input_language, *output_language, *input_script, *output_script;
+                void *input_type, *output_type;
+                const PF_TRANSLATE_GUID* guid;
+                unsigned int flags;
+            } PF_TRANSLATE_LANGUAGE_OPTIONS;
+            typedef struct {
+                unsigned long first, last;
+                void* description;
+                unsigned long description_length;
+                const unsigned short* data;
+                unsigned long data_size;
+                void *content_type, *action_ids;
+                unsigned long action_count;
+                void* action_names;
+            } PF_TRANSLATE_LANGUAGE_RANGE;
+            typedef struct {
+                size_t size;
+                PF_TRANSLATE_LANGUAGE_RANGE* ranges;
+                unsigned long range_count;
+                void* service_data;
+                unsigned long service_data_size;
+                void* caller_data;
+                unsigned long caller_data_size;
+                void* context;
+            } PF_TRANSLATE_LANGUAGE_BAG;
+            long __stdcall MappingGetServices(const PF_TRANSLATE_LANGUAGE_OPTIONS*, void**, unsigned long*);
+            long __stdcall MappingFreeServices(void* service);
+            long __stdcall MappingRecognizeText(void* service, const unsigned short* text,
+                unsigned long length, unsigned long start, void* options, PF_TRANSLATE_LANGUAGE_BAG*);
+            long __stdcall MappingFreePropertyBag(PF_TRANSLATE_LANGUAGE_BAG*);
+            typedef struct {
+                unsigned short type, reserved1, reserved2, reserved3;
+                union { long integer; short boolean; unsigned short* string; void* pointers[2]; } value;
+            } PF_TRANSLATE_VARIANT;
+            typedef struct PF_TRANSLATE_HTTP PF_TRANSLATE_HTTP;
+            typedef struct {
+                void *QueryInterface, *AddRef;
+                unsigned long (__stdcall *Release)(PF_TRANSLATE_HTTP*);
+                void *GetTypeInfoCount, *GetTypeInfo, *GetIDsOfNames, *Invoke;
+                void *SetProxy, *SetCredentials;
+                long (__stdcall *Open)(PF_TRANSLATE_HTTP*, const unsigned short*, const unsigned short*, PF_TRANSLATE_VARIANT);
+                long (__stdcall *SetRequestHeader)(PF_TRANSLATE_HTTP*, const unsigned short*, const unsigned short*);
+                void *GetResponseHeader, *GetAllResponseHeaders;
+                long (__stdcall *Send)(PF_TRANSLATE_HTTP*, PF_TRANSLATE_VARIANT);
+                long (__stdcall *GetStatus)(PF_TRANSLATE_HTTP*, long*);
+                void *GetStatusText;
+                void *GetResponseText;
+                long (__stdcall *GetResponseBody)(PF_TRANSLATE_HTTP*, PF_TRANSLATE_VARIANT*);
+                void *GetResponseStream, *GetOption;
+                long (__stdcall *SetOption)(PF_TRANSLATE_HTTP*, int, PF_TRANSLATE_VARIANT);
+                long (__stdcall *WaitForResponse)(PF_TRANSLATE_HTTP*, PF_TRANSLATE_VARIANT, short*);
+                long (__stdcall *Abort)(PF_TRANSLATE_HTTP*);
+                long (__stdcall *SetTimeouts)(PF_TRANSLATE_HTTP*, long, long, long, long);
+                void *SetClientCertificate;
+                long (__stdcall *SetAutoLogonPolicy)(PF_TRANSLATE_HTTP*, int);
+            } PF_TRANSLATE_HTTP_VTBL;
+            struct PF_TRANSLATE_HTTP { const PF_TRANSLATE_HTTP_VTBL* methods; };
+            long __stdcall CoInitializeEx(void* reserved, unsigned long flags);
+            void __stdcall CoUninitialize(void);
+            long __stdcall CoCreateInstance(const PF_TRANSLATE_GUID* clsid, void* outer,
+                unsigned long context, const PF_TRANSLATE_GUID* iid, void** object);
+            unsigned short* __stdcall SysAllocStringLen(const unsigned short* source, unsigned int length);
+            void __stdcall SysFreeString(unsigned short* value);
+            long __stdcall VariantClear(PF_TRANSLATE_VARIANT* value);
+            long __stdcall SafeArrayAccessData(void* array, void** data);
+            long __stdcall SafeArrayUnaccessData(void* array);
+            long __stdcall SafeArrayGetLBound(void* array, unsigned int dimension, long* bound);
+            long __stdcall SafeArrayGetUBound(void* array, unsigned int dimension, long* bound);
+            int __stdcall MultiByteToWideChar(unsigned int code_page, unsigned long flags,
+                const char* text, int length, unsigned short* output, int capacity);
+            int __stdcall GetStringTypeW(unsigned long info, const unsigned short* text,
+                int length, unsigned short* types);
+            unsigned long long __stdcall GetTickCount64(void);
+            unsigned long __stdcall GetCurrentThreadId(void);
+        ]])
+    end
+    if pcall(ffi.typeof, "PF_TRANSLATE_HTTP") then
+        pcall(function()
+            ole32, oleaut32 = ffi.load("ole32"), ffi.load("oleaut32")
+            kernel32 = ffi.load("kernel32")
+        end)
+    end
+end
+
+local UTF8 = 65001
+local MAX_RESPONSE_BYTES = 65536
+local URL = "https://translate.googleapis.com/translate_a/t?client=gtx&dt=t&sl=auto&ie=UTF-8&oe=UTF-8&tl="
+local clsid, iid
+if ole32 then
+    clsid = ffi.new("PF_TRANSLATE_GUID[1]", {{0x2087c2f4, 0x2cef, 0x4953,
+        {0xa8, 0xab, 0x66, 0x77, 0x9b, 0x67, 0x04, 0x95}}})
+    iid = ffi.new("PF_TRANSLATE_GUID[1]", {{0x016fe2ec, 0xb2c8, 0x45f8,
+        {0xb2, 0x3b, 0x39, 0xe5, 0x3a, 0x75, 0x39, 0x6b}}})
+end
+
+local function wide(text)
+    local count = kernel32.MultiByteToWideChar(UTF8, 8, text, #text, nil, 0)
+    if count <= 0 then return nil end
+    local buffer = ffi.new("unsigned short[?]", count + 1)
+    if kernel32.MultiByteToWideChar(UTF8, 8, text, #text, buffer, count) ~= count then return nil end
+    return buffer, count
+end
+
+local function bstr(text)
+    local buffer, count = wide(text)
+    if not buffer then return nil end
+    local value = oleaut32.SysAllocStringLen(buffer, count)
+    if value ~= nil then return ffi.gc(value, oleaut32.SysFreeString) end
+end
+
+local function variant(kind, field, value)
+    local result = ffi.new("PF_TRANSLATE_VARIANT")
+    result.type, result.value[field] = kind, value
+    return result
+end
+
+function now()
+    if kernel32 then return tonumber(kernel32.GetTickCount64()) end
+    return time_global and time_global() or 0
+end
+
+local function has_letter_count(buffer, count, minimum)
+    local types = ffi.new("unsigned short[?]", count)
+    if kernel32.GetStringTypeW(1, buffer, count, types) == 0 then return false end
+    for index = 0, count - 1 do
+        -- C1_ALPHA is 0x0100.
+        if tonumber(types[index]) % 512 >= 256 then
+            minimum = minimum - 1
+            if minimum == 0 then return true end
+        end
+    end
+    return false
+end
+
+function has_letters(text)
+    if text:find("[A-Za-z]") then return true end
+    if not kernel32 or text == "" then return false end
+    local buffer, count = wide(text)
+    return buffer ~= nil and has_letter_count(buffer, count, 1)
+end
+
+local function get_language_service()
+    if language_service ~= nil then return language_service end
+    language_service = false
+    local ok, library = pcall(ffi.load, "elscore")
+    if not ok then return false end
+    elscore = library
+    local guid = ffi.new("PF_TRANSLATE_GUID[1]", {{0xcf7e00b1, 0x909b, 0x4d95,
+        {0xa8, 0xf4, 0x61, 0x1f, 0x7c, 0x37, 0x77, 0x02}}})
+    local options = ffi.new("PF_TRANSLATE_LANGUAGE_OPTIONS[1]")
+    options[0].size, options[0].guid = ffi.sizeof(options[0]), guid
+    local service, count = ffi.new("void*[1]"), ffi.new("unsigned long[1]")
+    if elscore.MappingGetServices(options, service, count) >= 0 and service[0] ~= nil then
+        if count[0] == 1 then
+            language_service = ffi.gc(service[0], elscore.MappingFreeServices)
+        else
+            elscore.MappingFreeServices(service[0])
+        end
+    end
+    return language_service
+end
+
+local function first_language(range)
+    if range.data == nil then return nil end
+    local letters = {}
+    for index = 0, math.min(31, math.floor(tonumber(range.data_size) / 2) - 1) do
+        local character = tonumber(range.data[index])
+        if character == 0 then
+            return table.concat(letters):match("^[A-Za-z][A-Za-z0-9%-]*$")
+        end
+        if character > 127 then return nil end
+        letters[#letters + 1] = string.char(character)
+    end
+end
+
+function detect_language(text)
+    if not kernel32 or text == "" then return nil end
+    local buffer, count = wide(text)
+    -- Short interjections are often shared by several languages.
+    if not buffer or count < 6 or not has_letter_count(buffer, count, 6) then return nil end
+    local service = get_language_service()
+    if not service then return nil end
+    local bag = ffi.new("PF_TRANSLATE_LANGUAGE_BAG[1]")
+    bag[0].size = ffi.sizeof(bag[0])
+    if elscore.MappingRecognizeText(service, buffer, count, 0, nil, bag) < 0 then return nil end
+    local language
+    for index = 0, tonumber(bag[0].range_count) - 1 do
+        local candidate = first_language(bag[0].ranges[index])
+        if not candidate or (language and language ~= candidate) then
+            language = nil
+            break
+        end
+        language = candidate
+    end
+    elscore.MappingFreePropertyBag(bag)
+    return language
+end
+
+local function form_encode(value)
+    return (value:gsub("([^%w%-%._~])", function(character)
+        return string.format("%%%02X", character:byte())
+    end))
+end
+
+function close(job, abort)
+    local request = job.request
+    if not request then return end
+    if abort then request.methods.Abort(request) end
+    request.methods.Release(ffi.gc(request, nil))
+    job.request = nil
+    if job.owns_com then ole32.CoUninitialize() end
+end
+
+function start(target, texts)
+    if not (ole32 and oleaut32 and kernel32) or not target:match("^[a-zA-Z][a-zA-Z0-9%-]*$") then return nil end
+    local fields = {}
+    for index, text in ipairs(texts) do fields[index] = "q=" .. form_encode(text) end
+    local method, url = bstr("POST"), bstr(URL .. target)
+    local header, mime = bstr("Content-Type"), bstr("application/x-www-form-urlencoded")
+    local body = bstr(table.concat(fields, "&"))
+    if not (method and url and header and mime and body) then return nil end
+
+    local com = ole32.CoInitializeEx(nil, 2) -- COINIT_APARTMENTTHREADED
+    -- The game may have initialized this thread in a different COM apartment.
+    if com < 0 and com ~= -2147417850 then return nil end -- RPC_E_CHANGED_MODE
+    local object = ffi.new("void*[1]")
+    if ole32.CoCreateInstance(clsid, nil, 1, iid, object) < 0 then
+        if com >= 0 then ole32.CoUninitialize() end
+        return nil
+    end
+    local request = ffi.cast("PF_TRANSLATE_HTTP*", object[0])
+    local methods = request.methods
+    ffi.gc(request, function(value)
+        methods.Abort(value)
+        methods.Release(value)
+        if com >= 0 then ole32.CoUninitialize() end
+    end)
+    local job = { request = request, owns_com = com >= 0, deadline = now() + 10000,
+        thread_id = tonumber(kernel32.GetCurrentThreadId()) }
+    local async, disabled = variant(11, "boolean", -1), variant(11, "boolean", 0) -- VT_BOOL
+    if methods.SetTimeouts(request, 3000, 4000, 5000, 7000) < 0 or
+        methods.Open(request, method, url, async) < 0 or
+        methods.SetOption(request, 6, disabled) < 0 or -- EnableRedirects
+        methods.SetAutoLogonPolicy(request, 2) < 0 or -- Never send Windows credentials
+        methods.SetRequestHeader(request, header, mime) < 0 or
+        methods.Send(request, variant(8, "string", body)) < 0 then -- VT_BSTR
+        close(job, true)
+        return nil
+    end
+    return job
+end
+
+function poll(job, clock)
+    if job.thread_id ~= tonumber(kernel32.GetCurrentThreadId()) then return nil end
+    if clock >= job.deadline then
+        close(job, true)
+        return 0, nil, "timeout"
+    end
+    local request = job.request
+    local methods = request.methods
+    local ready = ffi.new("short[1]")
+    local result = methods.WaitForResponse(request, variant(3, "integer", 0), ready) -- VT_I4
+    if result < 0 then
+        close(job, true)
+        return 0, nil, tonumber(result)
+    end
+    if ready[0] == 0 then return nil end
+
+    local status = ffi.new("long[1]")
+    local code = methods.GetStatus(request, status) >= 0 and tonumber(status[0]) or 0
+    local body
+    if code == 200 then
+        local response = ffi.new("PF_TRANSLATE_VARIANT[1]")
+        if methods.GetResponseBody(request, response) >= 0 and response[0].type == 0x2011 then -- VT_ARRAY | VT_UI1
+            local array = response[0].value.pointers[0]
+            local lower, upper = ffi.new("long[1]"), ffi.new("long[1]")
+            if array ~= nil and oleaut32.SafeArrayGetLBound(array, 1, lower) >= 0 and
+                oleaut32.SafeArrayGetUBound(array, 1, upper) >= 0 then
+                local bytes = tonumber(upper[0] - lower[0] + 1)
+                local data = ffi.new("void*[1]")
+                if bytes > 0 and bytes <= MAX_RESPONSE_BYTES and oleaut32.SafeArrayAccessData(array, data) >= 0 then
+                    body = ffi.string(data[0], bytes)
+                    oleaut32.SafeArrayUnaccessData(array)
+                end
+            end
+        end
+        oleaut32.VariantClear(response)
+    end
+    close(job, false)
+    return code, body
+end
