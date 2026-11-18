@@ -97,6 +97,8 @@ function control_labels()
         key_align=key_label(keys.align),key_simple=key_label(keys.simple),key_mode=key_label(keys.advanced),
         key_preview=key_label(keys.preview),key_escape=key_label(keys.cancel),
         key_display=key_label(keys.display),key_axis=key_label(keys.rotation_axis),key_copy=key_label(keys.copy),
+        key_extension=session and session.extension and key_label(session.extension.key) or nil,
+        extension_label=session and session.extension and session.extension:label() or nil,
         display_mode=game.translate_string("pf_rt_display_"..(session and session.display_mode or default_display)),
         rotation_axis=game.translate_string(AXIS_LABELS[session and session.rotation_axis or 1]),
         key_lmb=key_label(keys.move),key_rmb=key_label(keys.rotate),
@@ -253,7 +255,8 @@ local function render_preview(s,vertices,quaternion)
             transform.c=geometry.add(transform.c,quaternion:rotate_vector(s.model_center))
         end
         s.model.matrix=transform
-        s.model.color=fcolor():set(1,1,1,s.display_mode==1 and .42 or 1)
+        local tint=s.extension and s.extension:tint(s.valid,s.display_mode)
+        s.model.color=tint and fcolor():set(unpack(tint)) or fcolor():set(1,1,1,s.display_mode==1 and .42 or 1)
         s.model.visible=true
     end
     -- Display styles affect only helpers and model opacity, never placement.
@@ -341,20 +344,36 @@ local function update_pose(s,confirming)
             normal=normal and geometry.copy(normal),offset=geometry.copy(s.offset),rotation=s.rotation_offset,tilt=s.tilt_offset,roll=s.roll_offset}
         if s.state=="HOLDING" then s.last_distance=distance end
     end
+    -- Optional per-object adapter. Ordinary furniture supplies none and keeps
+    -- the original pose, input, collision, preview and HUD paths below.
+    local adjusted=s.extension_result
+    if s.extension and s.state~="PREVIEW" then
+        adjusted=s.extension:adjust_pose(position,quaternion,{mode=s.state,confirming=confirming,
+            source_object_id=s.spec.source_object_id,max_range=s.spec.max_range,
+            target_distance=target_distance(s),camera_position=geometry.copy(device().cam_pos),
+            camera_direction=geometry.copy(device().cam_dir)})
+        if adjusted then
+            position,quaternion=adjusted.position,adjusted.quaternion
+            rotation=quaternion:to_euler_angles()
+            anchor=geometry.add(position,quaternion:rotate_vector(s.spec.bounds.pivot))
+        end
+        s.extension_result=adjusted
+    end
     local valid=true
     s.error=nil
     if not geometry.finite(position) or not geometry.finite(rotation) then valid=false;s.error="pf_rt_no_surface" end
-    local distance=(s.state=="PREVIEW" or s.fixed_frame) and anchor:distance_to(device().cam_pos) or target_distance(s)
+    local distance=(s.extension or s.state=="PREVIEW" or s.fixed_frame) and anchor:distance_to(device().cam_pos) or target_distance(s)
     if distance>s.spec.max_range then valid=false;s.error="pf_rt_too_far" end
     -- Furniture does not navigate. The actor supplies ALife bookkeeping IDs;
     -- the chosen pose may be indoors, upstairs or entirely outside the AI grid.
     -- Match the donor: never derive placement permission or height from a node.
     local vertex=db.actor:level_vertex_id()
     local vertices=geometry.corners(s.spec.bounds,position,quaternion,false)
-    s.collision_vertices=geometry.corners(s.spec.bounds,position,quaternion,true)
-    local colliding=s.check_collision and geometry.collides(s.collision_ray,s.collision_vertices,
+    s.collision_vertices=geometry.corners(adjusted and adjusted.collision_bounds or s.spec.bounds,position,quaternion,true)
+    local colliding=s.check_collision and not (adjusted and adjusted.allow_contact) and geometry.collides(s.collision_ray,s.collision_vertices,
         s.spec.source_object_id and level.object_by_id(s.spec.source_object_id) or nil) or false
     if colliding then valid=false;s.error="pf_rt_collision" end
+    if adjusted and adjusted.error then valid=false;s.error=adjusted.error end
     s.valid,s.colliding,s.anchor,s.quaternion=valid,colliding,anchor,quaternion
     s.pose={position=position,rotation=rotation,level_vertex_id=vertex,game_vertex_id=db.actor:game_vertex_id()}
     if not confirming then
@@ -426,6 +445,7 @@ local function set_state(s,new_state)
         s.roll_offset=0
         s.rotation_axis=1
     end
+    if s.extension then s.extension:on_state(old_state,new_state) end
     if s.hud then s.hud:refresh(s) end
 end
 local function close_controls(s)
@@ -647,6 +667,10 @@ function handle_input(event,key,action,dx,dy)
         return s.controls_shown or false
     end
     if event==4 then return s.controls_shown or false end
+    if s.extension and key==s.extension.key then
+        if event==0 then s.extension:toggle() end
+        return true -- This optional key exists only for its object adapter.
+    end
     if key==s.keys.copy then
         if event==0 and s.state=="ADV_CTRL" then copy() end
         return true -- Never repeat on hold or leak X to game input in other modes.
@@ -786,7 +810,12 @@ function begin(spec)
     serial=serial+1
     local controls=spec.controls or {}
     local keys,place_uses_binding=configured_keys(controls)
-    local s={spec=own,actor_id=db.actor:id(),level_name=level.name(),state="IDLE",
+    if spec.extension then
+        for _,key in pairs(keys) do
+            if key==spec.extension.key then notify("pf_hfb_key_conflict");return false,"extension_key_conflict" end
+        end
+    end
+    local s={spec=own,extension=spec.extension,actor_id=db.actor:id(),level_name=level.name(),state="IDLE",
         offset=vector():set(0,0,0),rotation_offset=0,tilt_offset=0,roll_offset=0,rotation_axis=1,display_mode=default_display,
         check_collision=spec.check_collision==true or (spec.check_collision==nil and default_collision),
         align_surface=(spec.align_surface==true or (spec.align_surface==nil and default_surface)) and spec.orientation_mode~="local_minus_z_front",
@@ -812,7 +841,7 @@ function begin(spec)
         stage="primitives"
         allocate_preview(s)
         stage="hud"
-        s.hud=ui_pf_runtime_editor.create_hud()
+        s.hud=ui_pf_runtime_editor.create_hud(s.extension~=nil)
         stage="hud_registration"
         level.add_dialog_to_render(s.hud)
         stage="first_pose"

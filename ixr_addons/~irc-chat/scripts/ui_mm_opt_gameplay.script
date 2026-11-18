@@ -39,10 +39,13 @@ function opt_gameplay:InitControls(x, y, xml, handler)
     addStandard("cap_check_crouch_toggle", "check_crouch_toggle", "check")
     addStandard("cap_check_important_save", "check_important_save", "check")
     addStandard("cap_check_hud_draw", "check_hud_draw", "check")
-    _st = xml:InitStatic("video_adv:templ_item", nil)
-    xml:InitStatic("tab_gameplay:cap_disable_minimap", _st)
-    self.check_disable_minimap = xml:InitCheck("tab_gameplay:check_disable_minimap", _st)
-    addControl(_st)
+    -- ~dynamic-hud owns the minimap preference in MOD OPTIONS when installed.
+    if not getFS():exist("$game_config$", "mod_system_pf_dynamic_hud.ltx") then
+        _st = xml:InitStatic("video_adv:templ_item", nil)
+        xml:InitStatic("tab_gameplay:cap_disable_minimap", _st)
+        self.check_disable_minimap = xml:InitCheck("tab_gameplay:check_disable_minimap", _st)
+        addControl(_st)
+    end
 
     addStandard("cap_rs_fps_show", "check_rs_fps_show", "check")
 
@@ -84,14 +87,17 @@ function opt_gameplay:SaveDeveloperAccessValue()
 end
 
 function opt_gameplay:SetDisableMinimapValue()
+    if not self.check_disable_minimap then return end
     self.disable_minimap_backup = pf_minimap_settings.is_disabled()
     self.check_disable_minimap:SetCheck(self.disable_minimap_backup)
 end
 
 function opt_gameplay:SaveDisableMinimapValue()
+    if not self.check_disable_minimap then return true end
     local disabled = self.check_disable_minimap:GetCheck() == true
     if disabled == self.disable_minimap_backup then return true end
     if not pf_minimap_settings.set_disabled(disabled) then return false end
     self.disable_minimap_backup = disabled
     return true
 end
+

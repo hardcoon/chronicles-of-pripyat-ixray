@@ -1,0 +1,523 @@
+-- Damage_Zedd's Stalker Base Building v1.0.0 socket mathematics.
+-- IX-Ray adapter: only the 24 new pieces and six compatible HF walls are supported.
+-- No global input callbacks, original-HF hooks, furniture scans or MCM dependency.
+local catalog=pf_hf_building_catalog
+local geometry=pf_runtime_editor_geometry
+local rotation_math=pf_runtime_editor_math
+local preference=nil
+local TILE=4.70895
+local WALL_H=2.58663
+local WALL_T=0.114076
+local SLAB=.1
+local STOREY=2.68663
+local FOUND_TOP=.4
+local WALL_Z=-.008
+local ROOF_RISE=TILE*math.tan(math.rad(30))
+local HALF_PI=math.pi/2
+local YAW_BIAS=.25
+local SIDES={{1,0},{-1,0},{0,1},{0,-1}}
+local LEGS={{-1,0},{0,-1}}
+local HYPO=math.sqrt(.5)
+local HYPO_LEN=TILE*math.sqrt(2)
+local TOP={foundation=FOUND_TOP,floor=SLAB,stairs=STOREY,foundation_tri=FOUND_TOP,floor_tri=SLAB}
+local settings={radius=2.5}
+
+local function rot_y(x, z, yaw)
+    local c, s = math.cos(yaw), math.sin(yaw)
+    return x * c - z * s, x * s + z * c
+end
+
+-- yaw that turns local +Z onto the direction (dx, dz)
+local function dir_yaw(dx, dz)
+    return math.atan2(-dx, dz)
+end
+
+local function wrap_angle(a)
+    a = math.fmod(a + math.pi, 2 * math.pi)
+    if a < 0 then a = a + 2 * math.pi end
+    return a - math.pi
+end
+
+-- base + k*90 degrees, the one nearest to want
+local function quad_yaw(base, want)
+    local k = math.floor(wrap_angle(want - base) / HALF_PI + 0.5)
+    return base + k * HALF_PI
+end
+
+local function quantise(v, step)
+    if not step or step <= 0 then return v end
+    return math.floor(v / step + 0.5) * step
+end
+
+local function clamp(v, lo, hi)
+    if v < lo then return lo elseif v > hi then return hi end
+    return v
+end
+
+local function to_world(f, lx, ly, lz)
+    local wx, wz = rot_y(lx, lz, f.yaw)
+    return vector():set(f.pos.x + wx, f.pos.y + ly, f.pos.z + wz)
+end
+
+local function to_local(f, p)
+    local lx, lz = rot_y(p.x - f.pos.x, p.z - f.pos.z, -f.yaw)
+    return lx, p.y - f.pos.y, lz
+end
+
+---------------------
+local ACCEPTS = {
+    foundation = { foundation = true, foundation_tri = true },
+    foundation_tri = { foundation = true, foundation_tri = true },
+    floor      = { floor = true, foundation = true, wall = true, floor_tri = true, foundation_tri = true, post = true },
+    floor_tri  = { floor = true, foundation = true, floor_tri = true, foundation_tri = true, wall = true, post = true },
+    wall_low   = { foundation = true, floor = true, foundation_tri = true, floor_tri = true },
+    post       = { foundation = true, floor = true, foundation_tri = true, floor_tri = true, post = true },
+    steps      = { foundation = true },
+    roof_flat  = { wall = true, roof_flat = true, roof_triangle = true, post = true },
+    roof_triangle = { wall = true, roof_flat = true, roof_triangle = true, post = true },
+    roof_slope = { wall = true, roof_slope = true, roof_hip = true, roof_valley = true },
+    roof_hip   = { wall = true, roof_slope = true, roof_hip = true },
+    roof_valley  = { wall = true, roof_slope = true },
+    roof_pyramid = { wall = true },
+    wall_gable   = { wall = true },
+    wall       = { foundation = true, floor = true, wall = true, foundation_tri = true, floor_tri = true },
+    stairs     = { floor = true, foundation = true, floor_tri = true, foundation_tri = true },
+}
+
+local ROOF_SHAPE = {
+    roof_slope  = function(x, z) return ROOF_RISE * (z + TILE / 2) / TILE end,
+    roof_hip    = function(x, z) return ROOF_RISE * math.min(z + TILE / 2, x + TILE / 2) / TILE end,
+    roof_valley = function(x, z) return ROOF_RISE * math.max(z + TILE / 2, x + TILE / 2) / TILE end,
+}
+
+-- which pitched roofs may sit next to which (both directions are listed)
+local ROOF_PAIRS = {
+    roof_slope  = { roof_slope = true, roof_hip = true, roof_valley = true },
+    roof_hip    = { roof_slope = true, roof_hip = true },
+    roof_valley = { roof_slope = true },
+}
+
+-- Neighbour sockets between pitched roofs: a held piece one tile over on any side, in any of the
+-- 4 yaws, wherever its facing edge has the same height profile as the target's edge (after one
+-- vertical shift). Two eaves meeting (a V gutter) do not count.
+local function roof_neighbours(hc, tc, add)
+    local ft, fh = ROOF_SHAPE[tc], ROOF_SHAPE[hc]
+    if not (ft and fh and ROOF_PAIRS[hc] and ROOF_PAIRS[hc][tc]) then return end
+    local h = TILE / 2
+    for _, d in ipairs(SIDES) do
+        local px, pz = d[1] * TILE, d[2] * TILE
+        local tx, tz = d[2], -d[1]     -- along the shared edge
+        for k = 0, 3 do
+            local psi = k * HALF_PI
+            local dy, ok, gutter = nil, true, true
+            for _, t in ipairs({ -h, 0, h }) do
+                local ex, ez = d[1] * h + tx * t, d[2] * h + tz * t
+                local qx, qz = rot_y(ex - px, ez - pz, -psi)
+                local yt, yh = ft(ex, ez), fh(qx, qz)
+                if dy == nil then
+                    dy = yt - yh
+                elseif math.abs(yt - yh - dy) > 0.001 then
+                    ok = false
+                    break
+                end
+                if yt > 0.001 or yh > 0.001 then gutter = false end
+            end
+            if ok and not gutter then
+                add(px, dy, pz, psi, d[1] * h, ft(d[1] * h, d[2] * h), d[2] * h)
+            end
+        end
+    end
+end
+
+---------------------
+-- Sockets
+---------------------
+-- Each socket is a local position + yaw in the target's frame and an anchor: the point on the
+-- target the player aims at to pick it. quad = any of the 4 yaws, nearest to the preview wins.
+local socket_cache = {}
+
+local function info_key(info)
+    if info.key then return info.key end
+    return string.format("%s|%s|%s|%s",
+        info.class or "", tostring(info.w or ""), tostring(info.t or ""), info.half and "1" or "0")
+end
+
+local function build_sockets(held, tinfo)
+    local out = {}
+    local function add(px, py, pz, dyaw, ax, ay, az, quad)
+        out[#out + 1] = { px = px, py = py, pz = pz, dyaw = dyaw or 0, ax = ax, ay = ay, az = az, quad = quad }
+    end
+
+    local hc, tc = held.class, tinfo.class
+
+    -- next tile over on each side
+    -- (a triangle target only has its two legs to build off; its hypotenuse faces nothing a tile fits)
+    local function neighbours(py, top, quad, sides)
+        for _, d in ipairs(sides or SIDES) do
+            add(d[1] * TILE, py, d[2] * TILE, 0, d[1] * TILE / 2, top, d[2] * TILE / 2, quad)
+        end
+    end
+
+    -- lateral offsets of a tile centre along a wall: a half wall sits on either half of the edge
+    local function wall_laterals(info)
+        if info.half then return { TILE / 4, -TILE / 4 } end
+        return { 0 }
+    end
+
+    if (hc == "foundation" or hc == "foundation_tri") and (tc == "foundation" or tc == "foundation_tri") then
+        local tri = hc == "foundation_tri"
+        neighbours(0, FOUND_TOP, tri, tc == "foundation_tri" and LEGS or nil)
+        if tri and tc == "foundation_tri" then add(0, 0, 0, math.pi, 0, FOUND_TOP, 0) end   -- the other half of the tile
+
+    elseif hc == "floor_tri" and tc == "floor_tri" then
+        neighbours(0, SLAB, true, LEGS)
+        add(0, 0, 0, math.pi, 0, SLAB, 0)
+
+    elseif hc == "floor_tri" and (tc == "floor" or tc == "foundation") then
+        if tc == "floor" then neighbours(0, SLAB, true) else neighbours(FOUND_TOP - SLAB, FOUND_TOP, true) end
+
+    elseif hc == "floor_tri" and tc == "foundation_tri" then
+        neighbours(FOUND_TOP - SLAB, FOUND_TOP, true, LEGS)
+        add(0, FOUND_TOP - SLAB, 0, math.pi, 0, FOUND_TOP, 0)
+
+    elseif hc == "floor" and tc == "floor_tri" then
+        neighbours(0, SLAB, false, LEGS)
+
+    elseif hc == "floor" and tc == "foundation_tri" then
+        neighbours(FOUND_TOP - SLAB, FOUND_TOP, false, LEGS)
+
+    elseif hc == "post" and (tc == "foundation_tri" or tc == "floor_tri") then
+        -- the three corners of the triangle: the right angle, and the two acute ones pulled in so the
+        -- 0.4 m post stays inside the hypotenuse
+        local top, h = TOP[tc], TILE / 2
+        for _, c in ipairs({ { -h + 0.2, -h + 0.2 }, { h - 0.6, -h + 0.2 }, { -h + 0.2, h - 0.6 } }) do
+            add(c[1], top, c[2], 0, c[1], top, c[2])
+        end
+
+    elseif hc == "post" and (tc == "foundation" or tc == "floor") then
+        -- the four corners of the tile
+        local top = TOP[tc]
+        local c = TILE / 2 - 0.2
+        for _, sx in ipairs({ -1, 1 }) do
+            for _, sz in ipairs({ -1, 1 }) do
+                add(sx * c, top, sz * c, 0, sx * c, top, sz * c)
+            end
+        end
+
+    elseif hc == "steps" and tc == "foundation" then
+        -- outside each edge of the foundation, the high end against it
+        for _, d in ipairs(SIDES) do
+            add(d[1] * (TILE / 2 + 0.6), 0, d[2] * (TILE / 2 + 0.6), dir_yaw(-d[1], -d[2]), d[1] * TILE / 2, FOUND_TOP, d[2] * TILE / 2)
+        end
+
+    elseif hc == "floor" and tc == "floor" then
+        neighbours(0, SLAB)
+
+    elseif hc == "floor" and tc == "foundation" then
+        neighbours(FOUND_TOP - SLAB, FOUND_TOP)
+
+    elseif (hc == "floor" or hc == "floor_tri" or hc == "roof_flat" or hc == "roof_pyramid" or hc == "roof_triangle") and tc == "wall" then
+        -- the tile on top of the wall, on either side of it
+        for _, lx in ipairs(wall_laterals(tinfo)) do
+            add(lx, WALL_H, TILE / 2 - tinfo.t / 2 + WALL_Z, 0, lx / 2, WALL_H, 0.6, hc == "roof_triangle" or hc == "floor_tri")
+            add(lx, WALL_H, -(TILE / 2 + tinfo.t / 2) + WALL_Z, 0, lx / 2, WALL_H, -0.6, hc == "roof_triangle" or hc == "floor_tri")
+        end
+
+    elseif (hc == "roof_slope" or hc == "roof_hip" or hc == "roof_valley") and tc == "wall" then
+        -- low edge along the wall top, rising towards the tile on that side; the corner
+        -- pieces take any of the 4 yaws there
+        local quad = hc ~= "roof_slope"
+        for _, lx in ipairs(wall_laterals(tinfo)) do
+            add(lx, WALL_H, TILE / 2 - tinfo.t / 2 + WALL_Z, 0, lx / 2, WALL_H, 0.6, quad)
+            add(lx, WALL_H, -(TILE / 2 - tinfo.t / 2) + WALL_Z, math.pi, lx / 2, WALL_H, -0.6, quad)
+        end
+
+    elseif (hc == "wall" or hc == "wall_low") and (tc == "foundation" or tc == "floor" or tc == "foundation_tri" or tc == "floor_tri") then
+        local top = TOP[tc]
+        local tri = tc == "foundation_tri" or tc == "floor_tri"
+        -- every edge: outward direction d, distance from the pivot to the edge, length. The legs of a
+        -- triangle are tile edges; its hypotenuse passes through the pivot at 45 degrees and is
+        -- longer than a wall, so walls go flush to either corner or in the middle.
+        local edges = {}
+        for _, d in ipairs(tri and LEGS or SIDES) do
+            edges[#edges + 1] = { dx = d[1], dz = d[2], dist = TILE / 2, len = TILE }
+        end
+        if tri then edges[#edges + 1] = { dx = HYPO, dz = HYPO, dist = 0, len = HYPO_LEN } end
+        for _, e in ipairs(edges) do
+            local ex, ez = e.dz, -e.dx     -- along the edge
+            local yaw = dir_yaw(-e.dx, -e.dz)
+            -- the wall's slab sits WALL_Z towards its front (local -Z, which faces out)
+            local inset = e.dist - held.t / 2 + WALL_Z
+            local laterals
+            if e.len > TILE + 0.01 then
+                local o = (e.len - held.w) / 2
+                laterals = { -o, 0, o }
+            else
+                laterals = held.half and { TILE / 4, -TILE / 4 } or { 0 }
+            end
+            for _, l in ipairs(laterals) do
+                add(e.dx * inset + ex * l, top, e.dz * inset + ez * l, yaw,
+                    e.dx * (e.dist - 0.3) + ex * l, top, e.dz * (e.dist - 0.3) + ez * l)
+            end
+        end
+
+    elseif hc == "wall" and tc == "wall" then
+        -- stacked one storey up (over a half edge when the widths differ)
+        local diff = math.abs(tinfo.w - held.w) / 2
+        local stack = diff > 0.01 and { diff, -diff } or { 0 }
+        for _, lx in ipairs(stack) do
+            add(lx, STOREY, 0, 0, lx, WALL_H, 0)
+        end
+        -- continuing from either end
+        local reach = tinfo.w / 2 + held.w / 2
+        add(reach, 0, 0, 0, tinfo.w / 2, WALL_H / 2, 0)
+        add(-reach, 0, 0, 0, -tinfo.w / 2, WALL_H / 2, 0)
+
+    elseif hc == "wall_gable" and tc == "wall" then
+        -- base on the wall top, centred, high end towards either end (the rotate key flips it)
+        add(0, WALL_H, 0, 0, 0, WALL_H, 0)
+        add(0, WALL_H, 0, math.pi, 0, WALL_H, 0)
+
+    elseif hc == "post" and tc == "post" then
+        add(0, STOREY, 0, 0, 0, WALL_H, 0)
+
+    elseif (hc == "floor" or hc == "floor_tri" or hc == "roof_flat" or hc == "roof_triangle") and tc == "post" then
+        local c = TILE / 2 - 0.2
+        local quad = hc == "roof_triangle" or hc == "floor_tri"
+        for _, sx in ipairs({ -1, 1 }) do
+            for _, sz in ipairs({ -1, 1 }) do
+                add(sx * c, WALL_H, sz * c, 0, sx * 0.4, WALL_H, sz * 0.4, quad)
+            end
+        end
+
+    elseif hc == "stairs" and (tc == "floor" or tc == "foundation" or tc == "floor_tri" or tc == "foundation_tri") then
+        add(0, TOP[tc], 0, 0, 0, TOP[tc], 0, true)
+
+    elseif (hc == "roof_flat" or hc == "roof_triangle") and (tc == "roof_flat" or tc == "roof_triangle") then
+        neighbours(0, SLAB, hc == "roof_triangle", tc == "roof_triangle" and LEGS or nil)
+        if hc == "roof_triangle" and tc == "roof_triangle" then add(0, 0, 0, math.pi, 0, SLAB, 0) end
+
+    elseif ROOF_SHAPE[hc] and ROOF_SHAPE[tc] then
+        -- beside it, further up / down the slope, meeting at a ridge, or around a hip / valley
+        roof_neighbours(hc, tc, add)
+    end
+    return out
+end
+
+local function sockets(held, tinfo)
+    local hkey, tkey = info_key(held), info_key(tinfo)
+    local row = socket_cache[hkey]
+    if not row then
+        row = {}
+        socket_cache[hkey] = row
+    end
+    local list = row[tkey]
+    if not list then
+        list = build_sockets(held, tinfo)
+        row[tkey] = list
+    end
+    return list
+end
+
+-- best socket for a building piece: nearest anchor to the aim point within snap_radius
+local function solve_building(held, f, tinfo, hit, preview_yaw, origin)
+    local best_s, best_yaw, best_score
+    local rad2 = settings.radius * settings.radius
+    local cy, sy = math.cos(f.yaw), math.sin(f.yaw)
+    local px, py, pz = f.pos.x, f.pos.y, f.pos.z
+    local point = origin or hit
+    local hx, hy, hz = point.x, point.y, point.z
+    for _, s in ipairs(sockets(held, tinfo)) do
+        local ax = px + s.ax * cy - s.az * sy
+        local ay = py + s.ay
+        local az = pz + s.ax * sy + s.az * cy
+        if origin then
+            ax = px + s.px * cy - s.pz * sy
+            ay = py + s.py
+            az = pz + s.px * sy + s.pz * cy
+        end
+        local dx, dy, dz = ax - hx, ay - hy, az - hz
+        local d2 = dx * dx + dy * dy + dz * dz
+        if d2 <= rad2 then
+            local d = math.sqrt(d2)
+            local yaw = f.yaw + s.dyaw
+            if s.quad then yaw = quad_yaw(yaw, preview_yaw) end
+            local score = d + YAW_BIAS * math.abs(wrap_angle(yaw - preview_yaw)) / math.pi
+            if not best_score or score < best_score then
+                best_score = score
+                best_s = s
+                best_yaw = yaw
+            end
+        end
+    end
+    if not best_s then return nil end
+    return { pos = to_world(f, best_s.px, best_s.py, best_s.pz), yaw = best_yaw }
+end
+
+
+local function options()
+    local ini=system_ini()
+    local function value(key,fallback)
+        if not ini:section_exist("pf_hf_building") or not ini:line_exist("pf_hf_building",key) then return fallback end
+        return ini:r_string("pf_hf_building",key)
+    end
+    local function boolean(key)
+        local raw=value(key,"true"):lower()
+        return raw~="false" and raw~="off" and raw~="0"
+    end
+    local key=value("toggle_key","Z"):upper():gsub("^DIK_","")
+    local radius=tonumber(value("snap_radius","2.5")) or 2.5
+    if radius~=radius then radius=2.5 end
+    return {key=DIK_keys["DIK_"..key] or DIK_keys[key] or DIK_keys.DIK_Z,
+        radius=math.max(.5,math.min(radius,5)),enabled=boolean("snap_enabled"),
+        ground_fit=boolean("ground_fit"),hologram=boolean("hologram")}
+end
+
+local function info(entry)
+    return {class=entry.snap_class,w=entry.snap_width,t=entry.snap_thickness,half=entry.snap_half}
+end
+local function inverse(q)
+    return rotation_math.RuntimeEditorQuaternion(q.w,vector():set(-q.x,-q.y,-q.z))
+end
+local function same_pose(a,b)
+    if not a or not b then return false end
+    local delta=geometry.sub(a.position,b.position)
+    local qa,qb=a.quaternion,b.quaternion
+    local dot=math.abs(qa.w*qb.w+qa.x*qb.x+qa.y*qb.y+qa.z*qb.z)
+    return geometry.dot(delta,delta)<.000001 and dot>.999999
+end
+
+-- The service owns input/preview lifetime; this optional adapter owns only its
+-- own socket/terrain state. The ordinary-furniture path never constructs it.
+function create(section)
+    local entry=catalog.by_object[section]
+    if not entry then return nil end
+    local cfg=options()
+    local adapter={key=cfg.key,enabled=preference==nil and cfg.enabled or preference,
+        entry=entry,held=info(entry),cfg=cfg,source_seed=nil,seed_checked=false}
+    if preference==nil then adapter.enabled=cfg.enabled end
+
+    function adapter:label()
+        return game.translate_string(self.enabled and "pf_hfb_snap_on" or "pf_hfb_snap_off")
+    end
+    function adapter:rebase()
+        if not self.last_raw or not self.last_result then return end
+        self.bias_position=geometry.sub(self.last_result.position,self.last_raw.position)
+        self.bias_rotation=inverse(self.last_raw.quaternion):multiply(self.last_result.quaternion)
+        self.bias_rotation:normalize()
+    end
+    function adapter:toggle()
+        self:rebase()
+        self.enabled=not self.enabled
+        preference=self.enabled
+        self.source_seed=nil;self.seed_checked=true
+        self.fit_cache=nil
+    end
+    function adapter:on_state(old_state,new_state)
+        if new_state=="HOLDING" then
+            self.bias_position=nil;self.bias_rotation=nil;self.last_target=nil;self.fit_cache=nil
+        elseif new_state=="ADV_CTRL" then self:rebase() end
+    end
+    function adapter:tint(valid,display_mode)
+        if not self.cfg.hologram then return nil end
+        return valid and {.25,1,.4,display_mode==1 and .42 or 1} or {1,.2,.15,display_mode==1 and .42 or 1}
+    end
+    function adapter:target(context,hit)
+        local accepts=ACCEPTS[self.held.class] or {}
+        local function eligible(object)
+            if not object or object:id()==context.source_object_id then return nil end
+            local target=catalog.by_object[object:section()]
+            if not target or not accepts[target.snap_class] then return nil end
+            local angles=object:get_editor_rotation()
+            if math.abs(angles.x)>.02 or math.abs(angles.z)>.02 then return nil end
+            return object,info(target),angles
+        end
+        local object,tinfo,angles
+        if context.target_distance<=context.max_range then
+            object,tinfo,angles=eligible(level.get_target_obj())
+        end
+        if object then self.last_target={id=object:id(),time=time_global()}
+        elseif self.last_target and (context.mode=="ADV_CTRL" or time_global()-self.last_target.time<=1000) then
+            object,tinfo,angles=eligible(level.object_by_id(self.last_target.id))
+            if object and object:position():distance_to(hit)>TILE+self.cfg.radius then object=nil end
+        end
+        if not object then return nil end
+        return {pos=geometry.copy(object:position()),yaw=angles.y},tinfo
+    end
+    function adapter:ground_height(x,y,z)
+        self.ground_ray=self.ground_ray or ray_pick()
+        local ray=self.ground_ray
+        ray:set_position(vector():set(x,y+1.5,z))
+        ray:set_direction(vector():set(0,-1,0))
+        ray:set_range(9);ray:set_flags(2);ray:set_ignore_object(db.actor)
+        if not ray:query() then return nil end
+        local distance=ray:get_distance()
+        if distance~=distance or distance<0 or distance>9 then return nil end
+        return y+1.5-distance
+    end
+    function adapter:fit(position,yaw,confirming)
+        local cached=self.fit_cache
+        if cached and position:distance_to(cached.position)<.01 and math.abs(wrap_angle(yaw-cached.yaw))<.005 then
+            return cached.y,cached.error
+        end
+        local high,low,count=nil,nil,0
+        local half=TILE/2-.05
+        for i=0,4 do
+            local x=-half+half*i/2
+            for j=0,4 do
+                local z=-half+half*j/2
+                if self.held.class~="foundation_tri" or x+z<=.001 then
+                    local dx,dz=rot_y(x,z,yaw)
+                    local y=self:ground_height(position.x+dx,position.y,position.z+dz)
+                    if y then
+                        high=high and math.max(high,y) or y
+                        low=low and math.min(low,y) or y
+                        count=count+1
+                    end
+                end
+            end
+        end
+        local error=high and (high-low>.9 or math.abs(high-position.y)>1.5) and "pf_hfb_ground_uneven" or nil
+        self.fit_cache={position=geometry.copy(position),yaw=yaw,y=high,error=error}
+        return high,error
+    end
+    function adapter:adjust_pose(position,quaternion,context)
+        self.last_raw={position=geometry.copy(position),quaternion=quaternion}
+        if self.bias_position then position=geometry.add(position,self.bias_position) end
+        if self.bias_rotation then quaternion=quaternion:multiply(self.bias_rotation);quaternion:normalize() end
+        local result={position=position,quaternion=quaternion,
+            collision_bounds={min=vector():set(unpack(entry.placement_min)),max=vector():set(unpack(entry.placement_max))}}
+        if not self.seed_checked then
+            self.seed_checked=true
+            if context.source_object_id then self.source_seed=self.last_raw end
+        end
+        if self.source_seed and same_pose(self.source_seed,self.last_raw) then
+            self.last_result=result;return result
+        end
+        self.source_seed=nil
+        local angles=quaternion:to_euler_angles()
+        if self.enabled then
+            local hit=geometry.add(context.camera_position,geometry.scale(context.camera_direction,context.target_distance))
+            local frame,tinfo=self:target(context,hit)
+            settings.radius=self.cfg.radius
+            local solution=frame and solve_building(self.held,frame,tinfo,hit,angles.y,
+                context.mode=="ADV_CTRL" and position or nil)
+            if solution then
+                result.position=solution.pos
+                result.quaternion=rotation_math.get_rotation_around(vector():set(0,1,0),solution.yaw)
+                result.allow_contact=true
+                result.snapped=true
+            end
+        end
+        if not result.snapped and self.cfg.ground_fit and context.mode=="HOLDING" and
+                (self.held.class=="foundation" or self.held.class=="foundation_tri") and
+                math.abs(angles.x)<.02 and math.abs(angles.z)<.02 then
+            local y,error=self:fit(position,angles.y,context.confirming)
+            if y then result.position=vector():set(position.x,y,position.z) end
+            result.error=error
+        end
+        self.last_result=result
+        return result
+    end
+    return adapter
+end

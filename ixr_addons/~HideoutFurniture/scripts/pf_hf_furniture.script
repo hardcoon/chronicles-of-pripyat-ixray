@@ -4,7 +4,8 @@ for _,entry in ipairs(pf_hf_expansion_catalog.entries) do
     catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
 end
 for _,entry in ipairs(pf_hf_even_more_catalog.entries) do
-    catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
+    if not entry.variant or entry.variant=="v1" then catalog.by_item[entry.item]=entry end
+    catalog.by_object[entry.object]=entry
 end
 for section,entry in pairs(pf_hf_native_doors_catalog.by_object) do catalog.by_object[section]=entry end
 for section,entry in pairs(pf_hf_native_doors_catalog.by_item) do catalog.by_item[section]=entry end
@@ -18,6 +19,9 @@ for _,entry in ipairs(pf_hf_appliances_catalog.entries) do
     catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
 end
 for _,entry in ipairs(pf_hf_map_catalog.entries) do
+    catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
+end
+for _,entry in ipairs(pf_hf_building_catalog.entries) do
     catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
 end
 local pending={}
@@ -48,7 +52,7 @@ end
 function in_interaction_range(object)
     local entry=object and definition(object:section())
     if not entry or not db.actor then return false end
-    if entry.kind=="campfire" or entry.sliding then
+    if entry.kind=="campfire" or entry.sliding or entry.building then
         -- Large log/brick rings are used at their visible surface, not at the
         -- distant floor pivot in the middle of the model.
         local aimed,distance=level.get_target_obj(),level.get_target_dist()
@@ -124,7 +128,7 @@ end
 
 function bounds(entry)
     return {min=vector():set(unpack(entry.min)),max=vector():set(unpack(entry.max)),
-        pivot=vector():set((entry.min[1]+entry.max[1])/2,entry.min[2],(entry.min[3]+entry.max[3])/2)}
+        pivot=entry.pivot and vector():set(unpack(entry.pivot)) or vector():set((entry.min[1]+entry.max[1])/2,entry.min[2],(entry.min[3]+entry.max[3])/2)}
 end
 
 local function configure_light(object,entry,mode)
@@ -234,6 +238,7 @@ function place_item(item,variant)
         local ok=pf_runtime_editor.begin({section=entry.object,title=entry.title,
             source_item_id=id,source_section=entry.item,bounds=bounds(entry),visual=entry.visual,
             base_rotation=entry.base_rotation,preview_source=entry.preview_source,initial_distance=2,
+            extension=entry.building and pf_hf_building.create(entry.object) or nil,
             on_copy=function(excluded) return prepare_copy(entry.object,excluded) end,
             on_confirm=function(pose,source_id) return create_placed(pose,source_id,entry.object) end,
             on_cancel=function() pending[id]=nil end})
@@ -311,6 +316,7 @@ function edit_placed(id,opening_key)
         local ok=pf_runtime_editor.begin({section=section,title=entry.title,
             source_object_id=id,bounds=model_bounds,visual=visual,base_rotation=entry.base_rotation,
             preview_source=entry.preview_source,opening_key=opening_key,
+            extension=entry.building and pf_hf_building.create(entry.object) or nil,
             orientation_mode=entry.kind=="workbench" and "local_minus_z_front" or nil,
             initial_pose={position=vector():set(client:position()),rotation=client:get_editor_rotation()},
             on_copy=function(excluded) return prepare_copy(section,excluded) end,

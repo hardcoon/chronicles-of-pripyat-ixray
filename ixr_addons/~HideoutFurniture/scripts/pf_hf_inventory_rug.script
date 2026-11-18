@@ -1,0 +1,17 @@
+-- Inventory rugs need a physical shape when dropped. Refresh saved visuals
+-- during net_spawn, before CPhysicItem constructs the world-item shell.
+function init(object)
+    object:bind_object(pf_hf_inventory_rug_binder(object))
+end
+
+class "pf_hf_inventory_rug_binder" (object_binder)
+
+function pf_hf_inventory_rug_binder:__init(object) super(object)
+end
+
+function pf_hf_inventory_rug_binder:net_spawn(server_object)
+    if not object_binder.net_spawn(self, server_object) then return false end
+    local visual = system_ini():r_string(self.object:section(), "visual")
+    self.object:set_visual_name(visual)
+    return true
+end

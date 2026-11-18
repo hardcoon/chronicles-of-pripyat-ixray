@@ -1,0 +1,869 @@
+; Stalker Base Building v1.0.0 by Damage_Zedd; IX-Ray integration by Hardcoon.
+; Native fixed physics; no Anomaly/MCM hooks or global breakable patches.
+#include "plugins\pf_hf_building.ltx"
+
+[pf_hfb_foundation_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_foundation_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_foundation.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_foundation_name
+inv_name_short = pf_hfb_foundation_name
+description = pf_hfb_foundation_desc
+inv_weight = 0.3
+cost = 900
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 0
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_foundation]:physic_object
+visual = pf_hf_building\hs_foundation.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_foundation_triangle_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_foundation_triangle_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_foundation_triangle.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_foundation_triangle_name
+inv_name_short = pf_hfb_foundation_triangle_name
+description = pf_hfb_foundation_triangle_desc
+inv_weight = 0.3
+cost = 450
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 18
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_foundation_triangle]:physic_object
+visual = pf_hf_building\hs_foundation_triangle.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_floor_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_floor_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_floor.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_floor_name
+inv_name_short = pf_hfb_floor_name
+description = pf_hfb_floor_desc
+inv_weight = 0.2
+cost = 600
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 3
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_floor]:physic_object
+visual = pf_hf_building\hs_floor.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.2
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_floor_triangle_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_floor_triangle_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_floor_triangle.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_floor_triangle_name
+inv_name_short = pf_hfb_floor_triangle_name
+description = pf_hfb_floor_triangle_desc
+inv_weight = 0.2
+cost = 300
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 16
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_floor_triangle]:physic_object
+visual = pf_hf_building\hs_floor_triangle.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.2
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_stairs_spiral_end_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_stairs_spiral_end_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_stairs_spiral_end.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_stairs_spiral_end_name
+inv_name_short = pf_hfb_stairs_spiral_end_name
+description = pf_hfb_stairs_spiral_end_desc
+inv_weight = 0.2
+cost = 650
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 9
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_stairs_spiral_end]:physic_object
+visual = pf_hf_building\hs_stairs_spiral_end.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.2
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_wall_low_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_wall_low_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_wall_low.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_wall_low_name
+inv_name_short = pf_hfb_wall_low_name
+description = pf_hfb_wall_low_desc
+inv_weight = 0.2
+cost = 300
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 3
+inv_grid_y = 11
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_wall_low]:physic_object
+visual = pf_hf_building\hs_wall_low.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.2
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_wall_loophole_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_wall_loophole_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_wall_loophole.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_wall_loophole_name
+inv_name_short = pf_hfb_wall_loophole_name
+description = pf_hfb_wall_loophole_desc
+inv_weight = 1
+cost = 550
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 11
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_wall_loophole]:physic_object
+visual = pf_hf_building\hs_wall_loophole.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_wall_window_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_wall_window_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_wall_window.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_wall_window_name
+inv_name_short = pf_hfb_wall_window_name
+description = pf_hfb_wall_window_desc
+inv_weight = 1
+cost = 650
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 6
+inv_grid_y = 0
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_wall_window]:physic_object
+visual = pf_hf_building\hs_wall_window.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_wall_gable_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_wall_gable_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_wall_gable.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_wall_gable_name
+inv_name_short = pf_hfb_wall_gable_name
+description = pf_hfb_wall_gable_desc
+inv_weight = 0.5
+cost = 350
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 0
+inv_grid_y = 3
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_wall_gable]:physic_object
+visual = pf_hf_building\hs_wall_gable.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_doorway_double_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_doorway_double_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_doorway_double.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_doorway_double_name
+inv_name_short = pf_hfb_doorway_double_name
+description = pf_hfb_doorway_double_desc
+inv_weight = 1
+cost = 500
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 12
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_doorway_double]:physic_object
+visual = pf_hf_building\hs_doorway_double.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_support_frame_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_support_frame_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_support_frame.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_support_frame_name
+inv_name_short = pf_hfb_support_frame_name
+description = pf_hfb_support_frame_desc
+inv_weight = 0.1
+cost = 150
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 0
+inv_grid_y = 14
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_support_frame]:physic_object
+visual = pf_hf_building\hs_support_frame.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.1
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_stairs_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_stairs_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_stairs.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_stairs_name
+inv_name_short = pf_hfb_stairs_name
+description = pf_hfb_stairs_desc
+inv_weight = 0.5
+cost = 650
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 3
+inv_grid_y = 3
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_stairs]:physic_object
+visual = pf_hf_building\hs_stairs.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_stairs_small_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_stairs_small_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_stairs_small.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_stairs_small_name
+inv_name_short = pf_hfb_stairs_small_name
+description = pf_hfb_stairs_small_desc
+inv_weight = 0.5
+cost = 250
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 3
+inv_grid_y = 13
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_stairs_small]:physic_object
+visual = pf_hf_building\hs_stairs_small.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_stairs_l_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_stairs_l_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_stairs_l.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_stairs_l_name
+inv_name_short = pf_hfb_stairs_l_name
+description = pf_hfb_stairs_l_desc
+inv_weight = 0.5
+cost = 700
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 3
+inv_grid_y = 15
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_stairs_l]:physic_object
+visual = pf_hf_building\hs_stairs_l.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_stairs_l_mirrored_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_stairs_l_mirrored_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_stairs_l_mirrored.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_stairs_l_mirrored_name
+inv_name_short = pf_hfb_stairs_l_mirrored_name
+description = pf_hfb_stairs_l_mirrored_desc
+inv_weight = 0.5
+cost = 700
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 15
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_stairs_l_mirrored]:physic_object
+visual = pf_hf_building\hs_stairs_l_mirrored.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_stairs_u_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_stairs_u_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_stairs_u.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_stairs_u_name
+inv_name_short = pf_hfb_stairs_u_name
+description = pf_hfb_stairs_u_desc
+inv_weight = 0.5
+cost = 750
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 3
+inv_grid_y = 17
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_stairs_u]:physic_object
+visual = pf_hf_building\hs_stairs_u.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_stairs_spiral_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_stairs_spiral_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_stairs_spiral.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_stairs_spiral_name
+inv_name_short = pf_hfb_stairs_spiral_name
+description = pf_hfb_stairs_spiral_desc
+inv_weight = 0.5
+cost = 800
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 17
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_stairs_spiral]:physic_object
+visual = pf_hf_building\hs_stairs_spiral.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_ramp_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_ramp_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_ramp.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_ramp_name
+inv_name_short = pf_hfb_ramp_name
+description = pf_hfb_ramp_desc
+inv_weight = 0.5
+cost = 450
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 6
+inv_grid_y = 13
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_ramp]:physic_object
+visual = pf_hf_building\hs_ramp.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.5
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_roof_flat_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_roof_flat_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_roof_flat.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_roof_flat_name
+inv_name_short = pf_hfb_roof_flat_name
+description = pf_hfb_roof_flat_desc
+inv_weight = 0.3
+cost = 650
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 6
+inv_grid_y = 3
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_roof_flat]:physic_object
+visual = pf_hf_building\hs_roof_flat.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_roof_slope_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_roof_slope_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_roof_slope.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_roof_slope_name
+inv_name_short = pf_hfb_roof_slope_name
+description = pf_hfb_roof_slope_desc
+inv_weight = 0.3
+cost = 700
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 0
+inv_grid_y = 6
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_roof_slope]:physic_object
+visual = pf_hf_building\hs_roof_slope.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_roof_triangle_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_roof_triangle_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_roof_triangle.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_roof_triangle_name
+inv_name_short = pf_hfb_roof_triangle_name
+description = pf_hfb_roof_triangle_desc
+inv_weight = 0.3
+cost = 300
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 2
+inv_grid_x = 3
+inv_grid_y = 9
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_roof_triangle]:physic_object
+visual = pf_hf_building\hs_roof_triangle.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_roof_hip_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_roof_hip_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_roof_hip.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_roof_hip_name
+inv_name_short = pf_hfb_roof_hip_name
+description = pf_hfb_roof_hip_desc
+inv_weight = 0.3
+cost = 750
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 3
+inv_grid_y = 6
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_roof_hip]:physic_object
+visual = pf_hf_building\hs_roof_hip.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_roof_valley_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_roof_valley_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_roof_valley.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_roof_valley_name
+inv_name_short = pf_hfb_roof_valley_name
+description = pf_hfb_roof_valley_desc
+inv_weight = 0.3
+cost = 750
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 6
+inv_grid_y = 6
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_roof_valley]:physic_object
+visual = pf_hf_building\hs_roof_valley.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+[pf_hfb_roof_pyramid_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_hfb_roof_pyramid_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_hf_building\hs_roof_pyramid.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_hfb_roof_pyramid_name
+inv_name_short = pf_hfb_roof_pyramid_name
+description = pf_hfb_roof_pyramid_desc
+inv_weight = 0.3
+cost = 900
+can_trade = true
+quest_item = false
+use_condition = false
+icons_texture = ui\ui_pf_hf_building
+inv_grid_width = 3
+inv_grid_height = 3
+inv_grid_x = 0
+inv_grid_y = 9
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_hfb_roof_pyramid]:physic_object
+visual = pf_hf_building\hs_roof_pyramid.ogf
+script_binding = pf_hf_furniture_binder.init
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_weight = 0.3
+startup_animation =
+fixed_bones = link
+
+![inventory_sort_registry]
+pf_hfb_foundation_item = house_building
+pf_hfb_foundation_triangle_item = house_building
+pf_hfb_floor_item = house_building
+pf_hfb_floor_triangle_item = house_building
+pf_hfb_stairs_spiral_end_item = house_building
+pf_hfb_wall_low_item = house_building
+pf_hfb_wall_loophole_item = house_building
+pf_hfb_wall_window_item = house_building
+pf_hfb_wall_gable_item = house_building
+pf_hfb_doorway_double_item = house_building
+pf_hfb_support_frame_item = house_building
+pf_hfb_stairs_item = house_building
+pf_hfb_stairs_small_item = house_building
+pf_hfb_stairs_l_item = house_building
+pf_hfb_stairs_l_mirrored_item = house_building
+pf_hfb_stairs_u_item = house_building
+pf_hfb_stairs_spiral_item = house_building
+pf_hfb_ramp_item = house_building
+pf_hfb_roof_flat_item = house_building
+pf_hfb_roof_slope_item = house_building
+pf_hfb_roof_triangle_item = house_building
+pf_hfb_roof_hip_item = house_building
+pf_hfb_roof_valley_item = house_building
+pf_hfb_roof_pyramid_item = house_building

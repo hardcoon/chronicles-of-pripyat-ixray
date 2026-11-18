@@ -689,7 +689,8 @@ $spawn = "devices\pf_hfm_rug_item"
 $prefetch = 8
 class = II_ATTCH
 cform = skeleton
-visual = pf_hf_even_more\dynamics\decor\rug.ogf
+script_binding = pf_hf_inventory_rug.init
+visual = pf_hf_even_more\dynamics\decor\rug_item.ogf
 inv_name = pf_hfm_rug_name
 inv_name_short = pf_hfm_rug_name
 description = pf_hfm_rug_desc
@@ -703,8 +704,16 @@ inv_grid_y = 9
 inv_grid_width = 4
 inv_grid_height = 3
 icons_texture = pf_hf_even_more\ui\ui_decor
-use1_text = pf_hf_place
-use1_functor = pf_hf_furniture.place_item
+use1_text = pf_hfm_rug_pattern_1
+use1_functor = pf_hf_stock.place_1
+use2_text = pf_hfm_rug_pattern_2
+use2_functor = pf_hf_stock.place_2
+use3_text = pf_hfm_rug_pattern_3
+use3_functor = pf_hf_stock.place_3
+use4_text = pf_hfm_rug_pattern_4
+use4_functor = pf_hf_stock.place_4
+use5_text = pf_hfm_rug_pattern_5
+use5_functor = pf_hf_stock.place_5
 
 [pf_hfm_rug]:physic_object
 damage_immune = true
@@ -713,6 +722,18 @@ script_binding = pf_hf_furniture_binder.init
 inv_weight = 0.5
 startup_animation =
 fixed_bones = link
+
+[pf_hfm_rug_v2]:pf_hfm_rug
+visual = pf_hf_even_more\dynamics\decor\rug2.ogf
+
+[pf_hfm_rug_v3]:pf_hfm_rug
+visual = pf_hf_even_more\dynamics\decor\rug3.ogf
+
+[pf_hfm_rug_v4]:pf_hfm_rug
+visual = pf_hf_even_more\dynamics\decor\rug4.ogf
+
+[pf_hfm_rug_v5]:pf_hfm_rug
+visual = pf_hf_even_more\dynamics\decor\rug5.ogf
 
 [pf_hfm_stalker_outfit_item]:identity_immunities
 damage_immune = true
@@ -3378,11 +3399,12 @@ cost = 2400
 can_trade = false
 quest_item = false
 use_condition = false
-inv_grid_x = 5
-inv_grid_y = 15
+inv_grid_x = 0
+inv_grid_y = 0
 inv_grid_width = 3
-inv_grid_height = 1
-icons_texture = pf_hf_even_more\ui\ui_decor
+inv_grid_height = 2
+icons_texture = ui\ui_pf_hf_building_walls
+inv_scale = 4
 use1_text = pf_hf_place
 use1_functor = pf_hf_furniture.place_item
 
@@ -3412,11 +3434,12 @@ cost = 2700
 can_trade = false
 quest_item = false
 use_condition = false
-inv_grid_x = 5
-inv_grid_y = 16
+inv_grid_x = 0
+inv_grid_y = 2
 inv_grid_width = 3
-inv_grid_height = 1
-icons_texture = pf_hf_even_more\ui\ui_decor
+inv_grid_height = 2
+icons_texture = ui\ui_pf_hf_building_walls
+inv_scale = 4
 use1_text = pf_hf_place
 use1_functor = pf_hf_furniture.place_item
 
@@ -3446,11 +3469,12 @@ cost = 1400
 can_trade = false
 quest_item = false
 use_condition = false
-inv_grid_x = 11
-inv_grid_y = 15
-inv_grid_width = 3
-inv_grid_height = 1
-icons_texture = pf_hf_even_more\ui\ui_decor
+inv_grid_x = 6
+inv_grid_y = 0
+inv_grid_width = 2
+inv_grid_height = 2
+icons_texture = ui\ui_pf_hf_building_walls
+inv_scale = 4
 use1_text = pf_hf_place
 use1_functor = pf_hf_furniture.place_item
 
@@ -3480,11 +3504,12 @@ cost = 1700
 can_trade = false
 quest_item = false
 use_condition = false
-inv_grid_x = 11
-inv_grid_y = 16
-inv_grid_width = 3
-inv_grid_height = 1
-icons_texture = pf_hf_even_more\ui\ui_decor
+inv_grid_x = 6
+inv_grid_y = 2
+inv_grid_width = 2
+inv_grid_height = 2
+icons_texture = ui\ui_pf_hf_building_walls
+inv_scale = 4
 use1_text = pf_hf_place
 use1_functor = pf_hf_furniture.place_item
 
@@ -3514,11 +3539,12 @@ cost = 3000
 can_trade = false
 quest_item = false
 use_condition = false
-inv_grid_x = 8
-inv_grid_y = 15
+inv_grid_x = 3
+inv_grid_y = 0
 inv_grid_width = 3
-inv_grid_height = 1
-icons_texture = pf_hf_even_more\ui\ui_decor
+inv_grid_height = 2
+icons_texture = ui\ui_pf_hf_building_walls
+inv_scale = 4
 use1_text = pf_hf_place
 use1_functor = pf_hf_furniture.place_item
 
@@ -3548,11 +3574,12 @@ cost = 3300
 can_trade = false
 quest_item = false
 use_condition = false
-inv_grid_x = 8
-inv_grid_y = 16
+inv_grid_x = 3
+inv_grid_y = 2
 inv_grid_width = 3
-inv_grid_height = 1
-icons_texture = pf_hf_even_more\ui\ui_decor
+inv_grid_height = 2
+icons_texture = ui\ui_pf_hf_building_walls
+inv_scale = 4
 use1_text = pf_hf_place
 use1_functor = pf_hf_furniture.place_item
 
@@ -3698,10 +3725,10 @@ pf_hfm_door02_item = furniture
 pf_hfm_door03_item = furniture
 pf_hfm_door04_item = furniture
 pf_hfm_door05_item = furniture
-pf_hfm_wall_item = furniture
-pf_hfm_wall_metal_item = furniture
-pf_hfm_wall02_item = furniture
-pf_hfm_wall02_metal_item = furniture
-pf_hfm_wall_doorway_item = furniture
-pf_hfm_wall_doorway_metal_item = furniture
+pf_hfm_wall_item = house_building
+pf_hfm_wall_metal_item = house_building
+pf_hfm_wall02_item = house_building
+pf_hfm_wall02_metal_item = house_building
+pf_hfm_wall_doorway_item = house_building
+pf_hfm_wall_doorway_metal_item = house_building
 pf_hfm_arti_display_item = furniture

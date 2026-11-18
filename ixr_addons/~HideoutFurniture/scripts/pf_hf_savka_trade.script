@@ -62,6 +62,7 @@ function reset_category()
 end
 
 function category_for_section(section)
+    if pf_hf_building_catalog.by_item[section] then return "house_building" end
     return category_map()[section] or "general"
 end
 
@@ -78,8 +79,9 @@ function open_category(first_speaker, second_speaker, category)
     if actor == nil or npc == nil or npc:section() ~= "pf_yanov_savka" or
             not actor:is_trade_enabled() or not npc:is_trade_enabled() then return false end
     if category ~= "storage" and category ~= "lighting" and category ~= "doors" and
-            category ~= "interactive" and category ~= "materials" and category ~= "general" then return false end
+            category ~= "interactive" and category ~= "materials" and category ~= "house_building" and category ~= "general" then return false end
     selected_category = category
+    if category=="house_building" then pf_hf_building_trade.restock(npc) end
     actor:switch_to_trade()
     return true
 end

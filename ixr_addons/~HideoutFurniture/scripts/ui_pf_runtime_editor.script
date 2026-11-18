@@ -1,5 +1,5 @@
 class "pf_runtime_editor_hud" (CUIScriptWnd)
-function pf_runtime_editor_hud:__init() super()
+function pf_runtime_editor_hud:__init(extra_controls) super()
     local xml=CScriptXmlInit()
     xml:ParseFile("ui_pf_runtime_editor.xml")
     xml:InitWindow("main",0,self)
@@ -8,12 +8,13 @@ function pf_runtime_editor_hud:__init() super()
     self.title=xml:InitTextWnd("main:title",self)
     self.status=xml:InitTextWnd("main:status",self)
     self.control_rows={}
-    for index=1,15 do
+    self.row_height=extra_controls and 22 or 24
+    for index=1,15+(extra_controls and 1 or 0) do
         local key=xml:InitTextWnd("main:control_key",self)
         local action=xml:InitTextWnd("main:control_action",self)
         local accent=xml:InitTextWnd("main:control_action",self)
-        key:SetWndPos(vector2():set(20,286+(index-1)*24))
-        action:SetWndPos(vector2():set(96,286+(index-1)*24))
+        key:SetWndPos(vector2():set(20,286+(index-1)*(self.row_height or 24)))
+        action:SetWndPos(vector2():set(96,286+(index-1)*(self.row_height or 24)))
         accent:Show(false)
         self.control_rows[index]={key=key,action=action,accent=accent}
     end
@@ -34,6 +35,9 @@ function pf_runtime_editor_hud:refresh(session)
     local mode=session.state=="ADV_CTRL" and "advanced" or string.lower(session.state)
     local message=game.translate_string("pf_rt_controls_"..mode)
     local labels=pf_runtime_editor.control_labels()
+    if session.extension then
+        message=message.."\n$key_extension - $extension_label"
+    end
     labels.collision_state=game.translate_string(session.check_collision and "pf_rt_value_on" or "pf_rt_value_off")
     labels.alignment_mode=game.translate_string(session.align_surface and "pf_rt_align_surface" or "pf_rt_align_direction")
     message=message:gsub("%$([%w_]+)",function(key) return labels[key] or key end)
@@ -84,15 +88,15 @@ function pf_runtime_editor_hud:refresh(session)
     local right=20+self.title:GetWidth()
     for visible=1,index do
         local row=self.control_rows[visible]
-        row.action:SetWndPos(vector2():set(action_x,286+(visible-1)*24))
+        row.action:SetWndPos(vector2():set(action_x,286+(visible-1)*(self.row_height or 24)))
         if row.accent:IsShown() then
-            row.accent:SetWndPos(vector2():set(action_x+row.action:GetWidth(),286+(visible-1)*24))
+            row.accent:SetWndPos(vector2():set(action_x+row.action:GetWidth(),286+(visible-1)*(self.row_height or 24)))
         end
         right=math.max(right,action_x+row.width)
     end
     for _,row in ipairs(self.hold_rows) do right=math.max(right,action_x+row.action:GetWidth()) end
     local width=right+12-8
-    local height=50+index*24
+    local height=50+index*(self.row_height or 24)
     self.controls_background:SetWidth(width)
     self.controls_background:SetHeight(height)
     local status_y=244+height+8
@@ -109,7 +113,7 @@ function pf_runtime_editor_hud:refresh(session)
     self.status_background:SetWidth(width)
     self.status_background:SetHeight(self.status:GetHeight()+4+#self.hold_rows*24+16)
 end
-function create_hud() return pf_runtime_editor_hud() end
+function create_hud(extra_controls) return pf_runtime_editor_hud(extra_controls) end
 
 function pf_runtime_editor_hud:Update()
     CUIScriptWnd.Update(self)
