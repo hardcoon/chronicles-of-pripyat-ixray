@@ -163,12 +163,13 @@
             </phrase>
             <phrase id="128">
                 <text>pf_yanov_nimble_vehicle_category_armored</text>
-                <precondition>pf_yanov_nimble_dialog.armored_vehicles_unlocked</precondition>
                 <next>600</next>
             </phrase>
             <phrase id="200">
                 <text>pf_yanov_nimble_vehicle_list_prompt</text>
+                <next>210</next>
                 <next>201</next>
+                <next>211</next>
                 <next>202</next>
                 <next>204</next>
                 <next>206</next>
@@ -233,12 +234,25 @@
                 <action>pf_yanov_nimble_dialog.select_vehicle_lada_2108</action>
                 <next>500</next>
             </phrase>
+            <phrase id="210">
+                <text>pf_yanov_nimble_vehicle_zaz965</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_zaz965_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_zaz965</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="211">
+                <text>pf_yanov_nimble_vehicle_moskvich_408</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_moskvich_408_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_moskvich_408</action>
+                <next>500</next>
+            </phrase>
             <phrase id="219">
                 <text>pf_yanov_nimble_vehicle_back_categories</text>
                 <next>127</next>
             </phrase>
             <phrase id="300">
                 <text>pf_yanov_nimble_vehicle_list_prompt</text>
+                <next>308</next>
                 <next>302</next>
                 <next>303</next>
                 <next>304</next>
@@ -290,6 +304,12 @@
                 <action>pf_yanov_nimble_dialog.select_vehicle_niva_2329</action>
                 <next>500</next>
             </phrase>
+            <phrase id="308">
+                <text>pf_yanov_nimble_vehicle_luaz</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_luaz_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_luaz</action>
+                <next>500</next>
+            </phrase>
             <phrase id="319">
                 <text>pf_yanov_nimble_vehicle_back_categories</text>
                 <next>127</next>
@@ -297,8 +317,10 @@
             <phrase id="400">
                 <text>pf_yanov_nimble_vehicle_list_prompt</text>
                 <next>401</next>
+                <next>405</next>
                 <next>402</next>
                 <next>403</next>
+                <next>404</next>
                 <next>419</next>
             </phrase>
             <phrase id="401">
@@ -319,12 +341,25 @@
                 <action>pf_yanov_nimble_dialog.select_vehicle_kamaz_tent</action>
                 <next>500</next>
             </phrase>
+            <phrase id="405">
+                <text>pf_yanov_nimble_vehicle_paz3206</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_paz3206_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_paz3206</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="404">
+                <text>pf_yanov_nimble_vehicle_kamaz_army</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_kamaz_army_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_kamaz_army</action>
+                <next>500</next>
+            </phrase>
             <phrase id="419">
                 <text>pf_yanov_nimble_vehicle_back_categories</text>
                 <next>127</next>
             </phrase>
             <phrase id="600">
                 <text>pf_yanov_nimble_vehicle_list_prompt</text>
+                <next>603</next>
                 <next>601</next>
                 <next>602</next>
                 <next>619</next>
@@ -339,6 +374,12 @@
                 <text>pf_yanov_nimble_vehicle_btr60</text>
                 <precondition>pf_yanov_nimble_dialog.vehicle_btr60_available</precondition>
                 <action>pf_yanov_nimble_dialog.select_vehicle_btr60</action>
+                <next>500</next>
+            </phrase>
+            <phrase id="603">
+                <text>pf_yanov_nimble_vehicle_brdm_nogun</text>
+                <precondition>pf_yanov_nimble_dialog.vehicle_brdm_nogun_available</precondition>
+                <action>pf_yanov_nimble_dialog.select_vehicle_brdm_nogun</action>
                 <next>500</next>
             </phrase>
             <phrase id="619">

@@ -123,7 +123,31 @@ local VEHICLE_SALES = {
 		"pf_yanov_nimble_vehicle_marker_kamaz_tent",
 		{ x = -1177.843140, y = -0.006631, z = -13.014608 },
 		{ x = -0.020098, y = -2.770224, z = -0.003349 }, 1444771, 773),
-	-- Armored vehicles are purchase-only. Saved parked poses are lifted by 5 cm.
+	new_vehicle_sale("zaz965", 35000, "veh_dcp_zaz965",
+		"pf_yanov_nimble_vehicle_marker_zaz965",
+		{ x = -1172.647217, y = -0.057537, z = -398.401825 },
+		{ x = -0.000083, y = 0.747416, z = -0.004627 }, 1432508, 423),
+	new_vehicle_sale("moskvich_408", 55000, "veh_dcp_moskvich_408",
+		"pf_yanov_nimble_vehicle_marker_moskvich_408",
+		{ x = 496.823639, y = 0.009851, z = -550.604675 },
+		{ x = 0.002298, y = 0.726326, z = -0.000004 }, 9601781, 185),
+	new_vehicle_sale("luaz", 45000, "veh_dcp_luaz",
+		"pf_yanov_nimble_vehicle_marker_luaz",
+		{ x = -342.583344, y = 0.020897, z = 58.240501 },
+		{ x = -0.000810, y = 2.632231, z = -0.000010 }, 5380173, 287),
+	new_vehicle_sale("paz3206", 110000, "veh_dcp_paz3206",
+		"pf_yanov_nimble_vehicle_marker_paz3206",
+		{ x = -1552.749634, y = 0.695166, z = 1425.655396 },
+		{ x = 0.004422, y = 2.995751, z = 0.000124 }, 19540, 477),
+	new_vehicle_sale("kamaz_army", 150000, "veh_dcp_kamaz_army",
+		"pf_yanov_nimble_vehicle_marker_kamaz_army",
+		{ x = -565.892517, y = -0.036683, z = 1318.851807 },
+		{ x = -0.002580, y = -0.021839, z = 0.000059 }, 4067962, 503),
+	new_vehicle_sale("brdm_nogun", 45000, "veh_dcp_brdm_nogun",
+		"pf_yanov_nimble_vehicle_marker_brdm_nogun",
+		{ x = 730.943359, y = 13.079359, z = 1652.576904 },
+		{ x = -0.033088, y = 2.888644, z = -0.101573 }, 11003347, 548),
+	-- Armed vehicles are purchase-only. Saved parked poses are lifted by 5 cm.
 	new_vehicle_sale("brdm", 50000, "veh_dcp_brdm",
 		"pf_yanov_nimble_vehicle_marker_brdm",
 		{ x = -102.926888, y = -0.136654, z = 1529.856567 },
@@ -457,7 +481,7 @@ function armored_vehicles_unlocked()
 		return false
 	end
 	local ok, count = pcall(pf_tank_progress_reader.completed_levels)
-	return ok and type(count) == "number" and count >= 50
+	return ok and type(count) == "number" and count >= 20
 end
 
 local function vehicle_sale_available(sale, first_speaker, second_speaker)
@@ -627,6 +651,56 @@ local function update_discoverable_vehicle_spawns()
 	end
 end
 
+local function set_discoverable_vehicle_markers(visible)
+	if db.actor == nil then
+		debug_print("[PF VEHICLES] Load a game before showing vehicle markers")
+		return false
+	end
+	local simulator = alife()
+	if simulator == nil or not map_spot_api_available() then
+		debug_print("[PF VEHICLES] Vehicle map markers are unavailable")
+		return false
+	end
+
+	local marked, missing = 0, 0
+	for _, sale in ipairs(VEHICLE_SALES) do
+		if sale.discoverable and stored(sale.discoverable_spawned_key, false) == true then
+			local object_id = tonumber(stored(sale.object_id_key, -1)) or -1
+			local object = object_id >= 0 and simulator:object(object_id) or nil
+			if object ~= nil and object:section_name() == sale.section then
+				if visible then
+					ensure_vehicle_marker(sale, object_id)
+					marked = marked + 1
+				elseif stored(sale.purchased_key, false) ~= true then
+					-- Keep ordinary purchase leads when hiding manually revealed cars.
+					if level.map_has_object_spot(object_id, sale.marker_type) ~= 0 then
+						remove_map_spots(object_id, sale.marker_type)
+						marked = marked + 1
+					end
+				end
+			else
+				missing = missing + 1
+			end
+		end
+	end
+	debug_print(string.format(
+		"[PF VEHICLES] World vehicle markers %s: %d; missing vehicles: %d",
+		visible and "shown" or "hidden", marked, missing
+	))
+	return marked
+end
+
+-- Console: run_string pf_yanov_nimble_dialog.show_vehicle_markers()
+-- Reveal existing option-spawned vehicles without spawning or purchasing any.
+function show_vehicle_markers()
+	return set_discoverable_vehicle_markers(true)
+end
+
+-- Console: run_string pf_yanov_nimble_dialog.hide_vehicle_markers()
+function hide_vehicle_markers()
+	return set_discoverable_vehicle_markers(false)
+end
+
 function buy_selected_vehicle(first_speaker, second_speaker)
 	return buy_vehicle_sale(selected_vehicle_sale(), first_speaker, second_speaker)
 end
@@ -674,6 +748,19 @@ function select_vehicle_zil131() return select_vehicle_sale("zil131") end
 function select_vehicle_kamaz_tent() return select_vehicle_sale("kamaz_tent") end
 function select_vehicle_brdm() return select_vehicle_sale("brdm") end
 function select_vehicle_btr60() return select_vehicle_sale("btr60") end
+
+function vehicle_zaz965_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.zaz965, a, b) end
+function vehicle_moskvich_408_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.moskvich_408, a, b) end
+function vehicle_luaz_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.luaz, a, b) end
+function vehicle_paz3206_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.paz3206, a, b) end
+function vehicle_kamaz_army_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.kamaz_army, a, b) end
+function vehicle_brdm_nogun_available(a, b) return vehicle_sale_available(VEHICLE_SALES_BY_ID.brdm_nogun, a, b) end
+function select_vehicle_zaz965() return select_vehicle_sale("zaz965") end
+function select_vehicle_moskvich_408() return select_vehicle_sale("moskvich_408") end
+function select_vehicle_luaz() return select_vehicle_sale("luaz") end
+function select_vehicle_paz3206() return select_vehicle_sale("paz3206") end
+function select_vehicle_kamaz_army() return select_vehicle_sale("kamaz_army") end
+function select_vehicle_brdm_nogun() return select_vehicle_sale("brdm_nogun") end
 
 -- Compatibility entry points retained for the already released UAZ sale.
 function uaz_van_sale_available(a, b) return vehicle_uaz_van_available(a, b) end
