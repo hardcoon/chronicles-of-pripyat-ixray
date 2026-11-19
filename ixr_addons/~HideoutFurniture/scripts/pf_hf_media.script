@@ -25,9 +25,10 @@ function stop_notes()
     for _,sound in ipairs(voices) do sound:stop() end
     voices={}
 end
--- Collection IDs are saved, so appending a new collection does not reorder old saves.
+-- Collection IDs are saved, so tab order can change without changing saved selections.
 local collections={
     {id="yanov",title="pf_hf_playlist_yanov",tracks=pf_hf_radio_playlists.yanov},
+    {id="2k7",title="pf_hf_playlist_2k7",tracks=pf_hf_radio_playlists.mix_2k7},
     {id="zonefm",title="pf_hf_playlist_zonefm",tracks={}},
     {id="personal",title="pf_hf_playlist_personal",tracks={}}}
 local by_collection={}

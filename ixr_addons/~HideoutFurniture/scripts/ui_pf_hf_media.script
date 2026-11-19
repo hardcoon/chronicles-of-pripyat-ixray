@@ -20,6 +20,7 @@ function pf_hf_media_dialog:__init(id,kind,context) super()
     if kind=="radio" then
         callbacks.lower=nil;callbacks.higher=nil
         callbacks.yanov=function() pf_hf_media.radio_set_collection(self.id,"yanov",self:state());self:refresh() end
+        callbacks.mix_2k7=function() pf_hf_media.radio_set_collection(self.id,"2k7",self:state());self:refresh() end
         callbacks.personal=function() pf_hf_media.radio_set_collection(self.id,"personal",self:state());self:refresh() end
         callbacks.zonefm=function() pf_hf_media.radio_set_collection(self.id,"zonefm",self:state());self:refresh() end
         callbacks.ordered=function() pf_hf_media.radio_set_order(self.id,"ordered",self:state());self:refresh() end
@@ -45,7 +46,7 @@ function pf_hf_media_dialog:__init(id,kind,context) super()
             local icon=xml:InitStatic("main:"..name.."_icon",self.buttons[name])
             icon:Enable(false);self.icons[name]=icon
         end
-        for _,name in ipairs({"yanov","zonefm","personal"}) do
+        for _,name in ipairs({"yanov","mix_2k7","zonefm","personal"}) do
             local selected=xml:InitStatic("main:"..name.."_selected",self.buttons[name])
             selected:Enable(false);self.selected[name]=selected
         end
@@ -137,7 +138,7 @@ function pf_hf_media_dialog:refresh_radio_hint()
     local cursor=GetCursorPosition()
     local hint="pf_hf_radio_hint"
     for name,button in pairs(self.buttons) do
-        if name~="yanov" and name~="zonefm" and name~="personal" and contains(button,cursor) then
+        if name~="yanov" and name~="mix_2k7" and name~="zonefm" and name~="personal" and contains(button,cursor) then
             hint="pf_hf_radio_hint_"..name;break
         end
     end
@@ -162,7 +163,8 @@ function pf_hf_media_dialog:refresh()
         self:refresh_radio_volume()
         self.icons.toggle:InitTexture(own.is_on and "ui_pf_hf_radio_stop" or "ui_pf_hf_radio_play")
         local selected={ordered=own.play_order=="ordered",shuffle=own.play_order=="shuffle",
-            repeat_track=own.repeat_track,personal=own.collection=="personal",yanov=own.collection=="yanov",zonefm=own.collection=="zonefm"}
+            repeat_track=own.repeat_track,personal=own.collection=="personal",yanov=own.collection=="yanov",
+            mix_2k7=own.collection=="2k7",zonefm=own.collection=="zonefm"}
         for name,icon in pairs(self.icons) do
             icon:SetTextureColor(selected[name] and GetARGB(255,205,146,44) or GetARGB(255,205,197,178))
         end
@@ -174,6 +176,7 @@ function pf_hf_media_dialog:refresh()
         self.buttons.next:Enable(track~=nil)
         self.buttons.personal:Enable(own.collection~="personal")
         self.buttons.yanov:Enable(own.collection~="yanov")
+        self.buttons.mix_2k7:Enable(own.collection~="2k7")
         self.buttons.zonefm:Enable(own.collection~="zonefm")
         self:refresh_radio_hint()
     else
