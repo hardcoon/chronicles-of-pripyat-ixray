@@ -1,0 +1,56 @@
+; David Montana, Christmas Tree snow low poly, CC BY 4.0.
+; One portable item and two placement variants. Colored unlit garland; no lights.
+[pf_tree_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_tree_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_trees\pale_green.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_tree_name
+inv_name_short = pf_tree_name
+description = pf_tree_desc
+inv_weight = 1
+cost = 300
+can_trade = true
+quest_item = false
+use_condition = false
+inv_grid_width = 2
+inv_grid_height = 3
+inv_grid_x = 2
+inv_grid_y = 0
+icons_texture = ui\ui_pf_trees
+use1_text = pf_tree_variant_1
+use1_functor = pf_hf_stock.place_1
+use2_text = pf_tree_variant_2
+use2_functor = pf_hf_stock.place_2
+
+; Keep prototype section IDs loadable in existing saves, hidden from F1 and trade.
+[pf_tree_pale_green_item]:pf_tree_item
+can_trade = false
+$spawn = "devices\pf_tree_pale_green_item"
+pf_spawn_hidden = true
+
+[pf_tree_white_item]:pf_tree_item
+can_trade = false
+$spawn = "devices\pf_tree_white_item"
+pf_spawn_hidden = true
+
+[pf_tree_pale_green]:physic_object
+visual = pf_trees\pale_green.ogf
+damage_immune = true
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 1
+startup_animation =
+fixed_bones = link
+
+[pf_tree_white]:pf_tree_pale_green
+visual = pf_trees\white.ogf
+
+![inventory_sort_registry]
+pf_tree_item = furniture
+pf_tree_pale_green_item = furniture
+pf_tree_white_item = furniture

@@ -1,0 +1,9 @@
+-- Mount point is 5 cm behind the cable; default local +Z points into the aimed wall.
+-- One portable prop; use the existing furniture editor, binder and pickup flow.
+local entry={["item"]="pf_garland_item",["object"]="pf_garland",["kind"]="prop",["visual"]="pf_garland\\garland.ogf",["min"]={-1.522268533706665,0.0,-0.07657426595687866},["max"]={1.522268295288086,0.6660414338111877,0.07657426595687866},["pivot"]={0,0.6660414338111877,0.05},["base_rotation"]=0,["title"]="pf_garland_name",["preview_source"]="ogf",["physicsless"]=true}
+function on_game_start()
+    local catalog=pf_hf_furniture_catalog
+    catalog.by_item[entry.item]=entry
+    catalog.by_object[entry.object]=entry
+end
+on_game_start()

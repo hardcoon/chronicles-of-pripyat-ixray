@@ -1,0 +1,39 @@
+; Main-patch hanging garland. Original model: tronk, CC BY 4.0.
+[pf_garland_item]:identity_immunities
+GroupControlSection = spawn_group
+discovery_dependency =
+$spawn = "devices\pf_garland_item"
+$prefetch = 8
+class = II_ATTCH
+cform = skeleton
+visual = pf_garland\garland.ogf
+damage_immune = true
+immunities_sect = pf_hf_damage_immunities
+inv_name = pf_garland_name
+inv_name_short = pf_garland_name
+description = pf_garland_desc
+inv_weight = 0.1
+cost = 300
+can_trade = true
+quest_item = false
+use_condition = false
+inv_grid_width = 3
+inv_grid_height = 1
+inv_grid_x = 0
+inv_grid_y = 0
+icons_texture = ui\ui_pf_garland
+use1_text = pf_hf_place
+use1_functor = pf_hf_furniture.place_item
+
+[pf_garland]:physic_object
+; Same supported physicsless world-object route as portable campfire meshes.
+; A hanging cable must not create an invisible box across the doorway.
+class = SCRPTOBJ
+cform = skeleton
+damage_immune = true
+visual = pf_garland\garland.ogf
+script_binding = pf_hf_furniture_binder.init
+inv_weight = 0.1
+
+![inventory_sort_registry]
+pf_garland_item = furniture

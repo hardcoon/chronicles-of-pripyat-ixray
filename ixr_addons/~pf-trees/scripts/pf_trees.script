@@ -1,0 +1,14 @@
+-- Shared portable item; the existing furniture transaction handles both variants.
+local entries={
+{["item"]="pf_tree_item",["object"]="pf_tree_pale_green",["kind"]="prop",["visual"]="pf_trees\\pale_green.ogf",["min"]={-0.5804437398910522,0.0,-0.6165712475776672},["max"]={0.5262956619262695,2.200000047683716,0.5105293393135071},["base_rotation"]=0,["title"]="pf_tree_name",["preview_source"]="ogf",["variant"]="v1",["variants"]={["v1"]="pf_tree_pale_green",["v2"]="pf_tree_white"}},
+{["item"]="pf_tree_item",["object"]="pf_tree_white",["kind"]="prop",["visual"]="pf_trees\\white.ogf",["min"]={-0.5804437398910522,0.0,-0.6165713667869568},["max"]={0.5262956619262695,2.1999998092651367,0.5105292201042175},["base_rotation"]=0,["title"]="pf_tree_name",["preview_source"]="ogf",["variant"]="v2",["variants"]={["v1"]="pf_tree_pale_green",["v2"]="pf_tree_white"}}
+}
+function on_game_start()
+    local catalog=pf_hf_furniture_catalog
+    for _,entry in ipairs(entries) do catalog.by_object[entry.object]=entry end
+    catalog.by_item.pf_tree_item=entries[1]
+    -- Old prototype items keep working; picking up either placed tree returns the common item.
+    catalog.by_item.pf_tree_pale_green_item=entries[1]
+    catalog.by_item.pf_tree_white_item=entries[1]
+end
+on_game_start()
