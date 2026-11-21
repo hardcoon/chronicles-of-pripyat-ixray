@@ -664,11 +664,15 @@ function impl.travel_cost(distance)
 	-- Wear is reduced by 40%: 500 m ~= 3%, 1000 m ~= 6%.
 	-- The former 30% long-route cap is reduced proportionally to 18%.
 	local damage = math.min(0.30, math.max(0.01, distance / 10000)) * 0.60
-	-- Estimate the route at a slow 1 km/h pace: the actor is moving through the
-	-- Zone over rough terrain while carrying heavy equipment. Short routes cost
-	-- at least one in-game minute; exceptionally long routes cap at six hours.
-	local hours = math.min(6, math.max(1 / 60, distance / 1000))
+	-- Shared by the locator, map hints, classic teleport and optional journey UI.
+	-- Halve the former game-time quote before rounding; equipment wear is unchanged.
+	local hours = math.min(6, math.max(1 / 60, distance / 1000)) * 0.5
 	return hours, damage
+end
+
+-- Public cost provider; keeps every beacon travel mode on the same formula.
+function get_travel_cost(distance)
+	return impl.travel_cost(distance)
 end
 
 function impl.belt_adjusted_travel_damage(damage)
@@ -898,12 +902,7 @@ function pda_property_box_clicked(property_ui)
 end
 
 function impl.is_travel_equipment(item)
-	if core.is_weapon(item) or core.is_outfit_or_helmet(item) then return true end
-	if type(IsDetector) == "function" and IsDetector(item) then return true end
-	local section = item and item:section() or nil
-	if not section or not core.get_sysini():line_exist(section, "class") then return false end
-	local class = core.get_sysini():r_string(section, "class") or ""
-	return string.sub(class, 1, 4) == "DET_"
+	return core.is_weapon(item) or core.is_outfit_or_helmet(item)
 end
 
 function impl.damage_travel_equipment(estimated_damage)

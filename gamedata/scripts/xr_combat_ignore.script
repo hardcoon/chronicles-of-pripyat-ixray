@@ -35,6 +35,12 @@ local protected_resident_sections = {
 	pf_story_preacher = true,
 }
 
+-- Read-only predicate shared with offline journey scans; use the AI's existing registry.
+function is_protected_target(section)
+	return type(section) == "string" and (protected_resident_sections[section] == true or
+		string.sub(section, 1, 14) == "pf_past_ghost_")
+end
+
 fighting_with_actor_npcs = {
 }
 

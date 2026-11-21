@@ -1,0 +1,293 @@
+-- One reward per saved playthrough; genuine ALife inventory boxes hold contents.
+local ITEM, STORE, KEY = "pf_buffer", "pf_buffer_store", "pf_buffer_v1"
+local ISSUED_KEY = "pf_buffer_reward_issued"
+local TIMEOUT = 8000
+local CAPACITY = 30
+local data = { stores = {} }
+local rt = { registered = false, next_reward_check = 0 }
+
+local function simulator()
+    return type(alife) == "function" and alife() or nil
+end
+
+local function actor_ready()
+    return db and db.actor and db.storage and db.storage[db.actor:id()] and
+        db.actor:alive() and device().precache_frame == 0 and simulator() ~= nil
+end
+
+local function record(object)
+    return { id = object.id, name = object:name() }
+end
+
+local function resolve(saved, section)
+    local sim = simulator()
+    local object = sim and saved and sim:object(saved.id, true)
+    if object and object:name() == saved.name and object:section_name() == section then
+        return object
+    end
+end
+
+local function store_key(object)
+    return tostring(object.id) .. ":" .. object:name()
+end
+
+local function owned(saved)
+    local object = resolve(saved, ITEM)
+    if object and db.actor and tonumber(object.parent_id) == db.actor:id() then return object end
+end
+
+local function menu()
+    return ActorMenu and ActorMenu.get_actor_menu and ActorMenu.get_actor_menu() or nil
+end
+
+local function tip(key, delay)
+    if not actor_ready() then return end
+    db.actor:give_game_news(game.translate_string("pf_buffer_name"),
+        game.translate_string(key), "pf_buffer_icon", delay or 0, 7000)
+end
+
+local function park_box(box)
+    if not box then return end
+    local sim = simulator()
+    sim:set_switch_online(box.id, false)
+    sim:set_switch_offline(box.id, true)
+end
+
+local function cancel_request(notice)
+    local request = rt.request
+    local ui = menu()
+    local current = ui and ui:GetMenuMode() == 4 and ui:GetInvBox()
+    if request and request.box and current and current:id() == request.box.id then
+        get_hud():HideActorMenu()
+    end
+    if request and request.box then park_box(resolve(request.box, STORE)) end
+    rt.request = nil
+    if notice then tip(notice) end
+end
+
+local function reset_runtime()
+    cancel_request()
+    rt.next_reward_check = 0
+    for _, saved in pairs(data.stores) do park_box(resolve(saved, STORE)) end
+end
+
+local function find_existing_reward()
+    for _, object in simulator():objects() do
+        if object:section_name() == ITEM then return object end
+    end
+end
+
+local function ensure_reward(now)
+    if data.issued or now < rt.next_reward_check then return end
+    rt.next_reward_check = now + 1000
+    if not pf_on_the_edge.achievement_functor() then return end
+    local actor = db.actor
+    local object = find_existing_reward()
+    if not object then
+        object = simulator():create(ITEM, actor:position(), actor:level_vertex_id(),
+            actor:game_vertex_id(), actor:id())
+        if not object then return end
+        tip("pf_buffer_received", 11000)
+    end
+    data.reward = record(object)
+    data.issued = true
+    xr_logic.pstor_store(actor, ISSUED_KEY, true)
+    printf("[PF BUFFER] reward registered id=%s name=%s", tostring(object.id), object:name())
+end
+
+-- The installed native OnInvBoxCanPlaceItem hook already points here through
+-- HideoutFurniture. Preserve its exact behavior for every other container.
+local function install_store_filter()
+    if rt.filter_installed then return end
+    local furniture = pf_hf_furniture
+    local previous = furniture.can_store
+    assert(type(previous) == "function", "Missing inventory-box placement filter")
+    furniture.can_store = function(box, item)
+        if box and box:section() == STORE then
+            if not item or item:section() == ITEM then return false end
+            local weight, contained = 0, false
+            box:iterate_inventory_box(function(_, stored)
+                weight = weight + stored:weight()
+                if stored:id() == item:id() then contained = true end
+            end, box)
+            return contained or weight + item:weight() <= CAPACITY + 0.00001
+        end
+        return previous(box, item)
+    end
+    rt.filter_installed = true
+end
+
+function open(item)
+    if not item or not actor_ready() or item:section() ~= ITEM then return false end
+    local object = simulator():object(item:id(), true)
+    if not object or tonumber(object.parent_id) ~= db.actor:id() or rt.request then return false end
+    install_store_filter()
+    rt.request = { item = record(object), phase = "hide", started = time_global() }
+    -- This is a custom action, not an eat/use action for the native item.
+    return false
+end
+
+local function prepare_store(request, artifact)
+    local key = store_key(artifact)
+    local saved = data.stores[key]
+    local box = resolve(saved, STORE)
+    if saved and not box then
+        printf("! [PF BUFFER] linked store missing for %s; preserving its record", key)
+        cancel_request("pf_buffer_store_missing")
+        return
+    end
+    if not box then
+        local actor = db.actor
+        box = simulator():create(STORE, actor:position(), actor:level_vertex_id(), actor:game_vertex_id())
+        if not box then cancel_request("pf_buffer_unavailable"); return end
+        box:use_ai_locations(false)
+        data.stores[key] = record(box)
+        request.box = data.stores[key]
+        simulator():set_switch_online(box.id, true)
+        simulator():set_switch_offline(box.id, false)
+        request.phase = "online"
+        return
+    end
+    request.box = saved
+    park_box(box)
+    request.phase = "offline"
+end
+
+local function contents(box)
+    local result = {}
+    box:iterate_inventory_box(function(_, item)
+        result[#result + 1] = item
+    end, box)
+    return result
+end
+
+local function validate_capacity(request, box)
+    -- The native right-click "put stack" path transfers a whole stack after
+    -- one placement callback. Return only excess original objects, using the
+    -- standard inventory-box transfer events; never recreate their contents.
+    local items, weight = contents(box), 0
+    request.known = request.known or {}
+    request.returning = request.returning or {}
+    for _, item in ipairs(items) do
+        if not request.returning[item:id()] then weight = weight + item:weight() end
+    end
+    table.sort(items, function(a, b)
+        local old_a, old_b = request.known[a:id()], request.known[b:id()]
+        if old_a ~= old_b then return old_a ~= true end
+        return a:id() > b:id()
+    end)
+    local changed, present = false, {}
+    for _, item in ipairs(items) do
+        local id = item:id()
+        present[id] = true
+        if not request.returning[id] and (item:section() == ITEM or
+                (weight > CAPACITY + 0.00001 and item:weight() > 0)) then
+            box:transfer_item(item, db.actor)
+            request.returning[id] = true
+            weight = weight - item:weight()
+            changed = true
+        end
+    end
+    for id in pairs(request.returning) do
+        if not present[id] then request.returning[id] = nil end
+    end
+    request.known = present
+    if changed then tip("pf_buffer_full") end
+end
+
+local function update_request(now)
+    local request = rt.request
+    if not request then return end
+    local artifact = owned(request.item)
+    if not artifact then
+        cancel_request()
+        return
+    end
+    if request.phase ~= "active" and now - request.started > TIMEOUT then
+        cancel_request("pf_buffer_unavailable")
+        return
+    end
+    local ui = menu()
+    if not ui then cancel_request("pf_buffer_unavailable"); return end
+    if request.phase == "hide" then
+        -- Run on the actor update after the context-menu callback has returned.
+        get_hud():HideActorMenu()
+        request.phase = "prepare"
+    elseif request.phase == "prepare" then
+        if ui:GetMenuMode() ~= 0 then return end
+        prepare_store(request, artifact)
+    elseif request.phase == "offline" then
+        local box = resolve(request.box, STORE)
+        if not box then cancel_request("pf_buffer_store_missing"); return end
+        if level.object_by_id(box.id) then return end
+        local actor = db.actor
+        simulator():teleport_object(box.id, actor:game_vertex_id(), actor:level_vertex_id(), actor:position())
+        simulator():set_switch_online(box.id, true)
+        simulator():set_switch_offline(box.id, false)
+        request.phase = "online"
+    elseif request.phase == "online" then
+        local box = resolve(request.box, STORE)
+        if not box then cancel_request("pf_buffer_store_missing"); return end
+        local client = level.object_by_id(box.id)
+        if not client then return end
+        if ui:GetMenuMode() ~= 0 then cancel_request("pf_buffer_unavailable"); return end
+        validate_capacity(request, client)
+        client:use(db.actor)
+        request.phase = "active"
+    elseif request.phase == "active" then
+        local client = level.object_by_id(request.box.id)
+        if client then validate_capacity(request, client) end
+        local box = ui:GetInvBox()
+        if ui:GetMenuMode() ~= 4 or not box or box:id() ~= request.box.id then cancel_request() end
+    end
+end
+
+local function update()
+    if not actor_ready() then
+        if rt.request then cancel_request() end
+        return
+    end
+    local now = time_global()
+    ensure_reward(now)
+    update_request(now)
+end
+
+local function save_state(storage)
+    storage[KEY] = data
+end
+
+local function load_state(storage)
+    data = type(storage[KEY]) == "table" and storage[KEY] or { stores = {} }
+    data.stores = data.stores or {}
+    rt.loaded_state = true
+    rt.request = nil
+    rt.next_reward_check = 0
+end
+
+local function actor_loaded()
+    if not rt.loaded_state then
+        data = { stores = {}, issued = db.actor and
+            xr_logic.pstor_retrieve(db.actor, ISSUED_KEY, false) == true or false }
+    end
+    rt.loaded_state = nil
+    reset_runtime()
+end
+
+local function new_game_created()
+    data = { stores = {} }
+    rt.loaded_state = nil
+    rt.request = nil
+    rt.next_reward_check = 0
+end
+
+function on_game_start()
+    if rt.registered then return end
+    RegisterScriptCallback("update", update)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("load", actor_loaded)
+    RegisterScriptCallback("new_game_created", new_game_created)
+    rt.registered = true
+end
+
+on_game_start()

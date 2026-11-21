@@ -5,7 +5,12 @@ local intercepts =
 	update = {},
 
 	save_state = {},
-	load_state = {}
+	load_state = {},
+
+	-- Native save-pair lifecycle emitted by alife_storage_manager.
+	save_file_created = {},
+	save_file_loaded = {},
+	new_game_created = {}
 }
 
 -- Opt-in timed update callbacks. The existing callback lists keep their

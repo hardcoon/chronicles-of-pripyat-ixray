@@ -1,0 +1,359 @@
+-- Shared game-graph routes; the 409 MB AI mesh is never loaded into Lua.
+local impl = {}
+impl.armor_profiles={actor_armor_suit="light",actor_armor_light="light",
+    actor_armor_svoboda_light="light",actor_armor_dolg_light="light",
+    actor_armor_medium="medium",actor_armor_medium2="medium",actor_armor_sci="medium",actor_armor_ecolog="medium",
+    actor_armor_heavy="heavy",actor_armor_exo="heavy",actor_armor_exo2="heavy"}
+impl.chance_defaults={bypass_light_max=90,bypass_medium_max=70,bypass_heavy_max=50,
+    bypass_mutant_light_max=90,bypass_mutant_medium_max=75,bypass_mutant_heavy_max=60,
+    bypass_min=10,bypass_max=90,bypass_success_penalty=3,bypass_night_bonus=30}
+impl.unknown_profiles={}
+
+function impl.copy(p) return {x=p.x,y=p.y,z=p.z} end
+function impl.distance(a,b) return math.sqrt((a.x-b.x)^2+(a.y-b.y)^2+(a.z-b.z)^2) end
+
+function capacity(actor)
+    local bonus=0
+    for _,slot in ipairs({OUTFIT_SLOT or 7,BACKPACK_SLOT or 13}) do
+        local item=actor:item_in_slot(slot)
+        if item then bonus=bonus+(tonumber(item:get_additional_max_walk_weight()) or 0) end
+    end
+    local ini=system_ini()
+    for i=0,actor:belt_count()-1 do
+        local item=actor:item_on_belt(i)
+        local section=item and item:section()
+        if section and item:cast_Artefact() and ini:line_exist(section,"additional_inventory_weight") then
+            bonus=bonus+ini:r_float(section,"additional_inventory_weight")*item:condition()
+        end
+    end
+    return actor:get_total_weight(),math.max(.001,actor:get_actor_max_walk_weight()+bonus)
+end
+function armor_class(actor)
+    local outfit=actor:item_in_slot(OUTFIT_SLOT or 7)
+    if not outfit then return "light" end
+    local ini,section=system_ini(),outfit:section()
+    local profile=ini:line_exist(section,"bones_koeff_protection") and ini:r_string(section,"bones_koeff_protection") or ""
+    local class=impl.armor_profiles[profile]
+    if class then return class end
+    if not impl.unknown_profiles[profile] then
+        impl.unknown_profiles[profile]=true
+        printf("[pf_travel] unknown armor profile '%s' (%s); using medium",profile,section)
+    end
+    return "medium"
+end
+function bypass_chance(weight,maximum,class,successes,settings,enemy_type,hour)
+    local config=settings or impl.chance_defaults
+    local minimum=config.bypass_min
+    local base=config["bypass_"..(class or "light").."_max"] or config.bypass_medium_max
+    if enemy_type=="mutant" then
+        local key="bypass_mutant_"..(class or "light").."_max"
+        base=config[key] or impl.chance_defaults[key] or impl.chance_defaults.bypass_mutant_medium_max
+    end
+    base=math.max(minimum,base)
+    local load=weight/math.max(.001,maximum)
+    local chance=load<=.5 and base or minimum+(base-minimum)*math.max(0,2*(1-load))
+    if enemy_type=="npc" and hour and hour%24<5 then
+        chance=chance+(config.bypass_night_bonus or impl.chance_defaults.bypass_night_bonus)
+    end
+    -- Cap before the trip penalty so every successful bypass still lowers the chance.
+    chance=math.min(math.max(minimum,config.bypass_max or impl.chance_defaults.bypass_max),chance)
+    return math.floor(math.max(minimum,chance-config.bypass_success_penalty*math.max(0,successes or 0))+.5)
+end
+function anomalous_boots_equipped(actor)
+    if not actor then return false end
+    for i=0,actor:belt_count()-1 do
+        local item=actor:item_on_belt(i)
+        if item and item:section()=="af_anomalous_boots" then return true end
+    end
+    return false
+end
+function adjusted_wear(actor,base)
+    return anomalous_boots_equipped(actor) and base*.30 or base
+end
+function quote(actor,object,cost)
+    local distance=impl.distance(actor:position(),object.position)
+    local hours,wear=cost(distance)
+    local whole=math.floor(hours)
+    return {distance=distance,minutes=whole*60+math.floor((hours-whole)*60+.5),
+        wear=wear}
+end
+function apply_wear(actor,damage)
+    damage=adjusted_wear(actor,damage)
+    actor:iterate_inventory(function(_,item)
+        if lz_nm_core.is_weapon(item) or lz_nm_core.is_outfit_or_helmet(item) then
+            local condition=item:condition()
+            if condition and condition>0 then
+                item:set_condition(math.max(.01,condition-damage*math.random(75,125)/100))
+            end
+        end
+    end,actor)
+end
+function build(actor,object,graph)
+    assert(graph.ready(),"navigation unavailable")
+    local start_cell=graph.cell(actor:level_vertex_id())
+    local goal_cell=graph.cell(object.m_level_vertex_id)
+    assert(start_cell and goal_cell,"route endpoints are outside the navigation graph")
+    local ids=assert(graph.route(start_cell.gv,goal_cell.gv),"no route to beacon")
+    local route={points={impl.copy(actor:position())},segment_lengths={},total=0}
+    local function add(point,length,lv)
+        local prev=route.points[#route.points]
+        length=length or impl.distance(prev,point)
+        if length<.01 then return end
+        local p=impl.copy(point);p.lv=lv
+        route.points[#route.points+1]=p
+        route.segment_lengths[#route.segment_lengths+1]=length
+        route.total=route.total+length
+    end
+    route.points[1].lv=actor:level_vertex_id()
+    for i,id in ipairs(start_cell.gv==goal_cell.gv and {} or ids) do
+        local point=assert(graph.vertex(id),"graph vertex missing")
+        local distance
+        if i>1 then
+            for _,edge in ipairs(graph.vertex(ids[i-1]).edges) do
+                if edge.to==id then distance=edge.distance;break end
+            end
+            assert(distance,"graph edge missing")
+        end
+        add(point,distance,point.lv)
+    end
+    add(object.position,nil,object.m_level_vertex_id)
+    assert(route.total>0 and #route.points>=2,"empty route")
+    return route
+end
+function position_at(route,ratio)
+    local remain=route.total*math.max(0,math.min(1,ratio))
+    for i,length in ipairs(route.segment_lengths) do
+        if remain<=length or i==#route.segment_lengths then
+            local a,b=route.points[i],route.points[i+1]
+            local t=math.min(1,remain/length)
+            return vector():set(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t),i
+        end
+        remain=remain-length
+    end
+end
+function nearest_progress(route,position)
+    local best,best_progress,passed=math.huge,0,0
+    for i,length in ipairs(route.segment_lengths) do
+        local a,b=route.points[i],route.points[i+1]
+        local dx,dy,dz=b.x-a.x,b.y-a.y,b.z-a.z
+        local denom=dx*dx+dy*dy+dz*dz
+        local t=denom>.001 and math.max(0,math.min(1,((position.x-a.x)*dx+(position.y-a.y)*dy+(position.z-a.z)*dz)/denom)) or 0
+        local x,y,z=a.x+dx*t,a.y+dy*t,a.z+dz*t
+        local d=(position.x-x)^2+(position.y-y)^2+(position.z-z)^2
+        if d<best then best=d;best_progress=(passed+length*t)/route.total end
+        passed=passed+length
+    end
+    return best_progress,math.sqrt(best)
+end
+
+-- Collision landing checks retained from the active beacon implementation.
+local BEACON_LANDING = {
+	radii = {0.7, 1.5, 3, 5, 7.5, 10},
+	directions = {{1, 0}, {0.70710678, 0.70710678}, {0, 1}, {-0.70710678, 0.70710678},
+		{-1, 0}, {-0.70710678, -0.70710678}, {0, -1}, {0.70710678, -0.70710678}},
+	footprint = {-0.35, 0, 0.35},
+	body_heights = {0.2, 0.9, 1.7},
+	max_radius_sqr = 100,
+	min_radius_sqr = 0.36,
+	max_height_difference = 0.75,
+	floor_probe_up = 0.5,
+	floor_probe_range = 1,
+	floor_vertex_tolerance = 0.4,
+	floor_spread = 0.22,
+	lift = 0.15,
+	headroom = 1.9,
+	dynamic_radius = 1.1,
+	dynamic_center_height = 0.95,
+	max_nearby = 128
+}
+
+function impl.beacon_landing_ray(probe, x, y, z, dx, dy, dz, distance)
+	probe:set_position(vector():set(x, y, z))
+	probe:set_direction(vector():set(dx, dy, dz))
+	probe:set_range(distance)
+	return probe:query()
+end
+
+function impl.beacon_landing_segment(probe, x, y, z, dx, dy, dz, distance)
+	-- Static ray queries cull back faces. Test both directions for walls and
+	-- narrow obstacles whose triangle winding faces away from the first ray.
+	return impl.beacon_landing_ray(probe, x, y, z, dx, dy, dz, distance) or
+		impl.beacon_landing_ray(probe, x + dx * distance, y + dy * distance,
+			z + dz * distance, -dx, -dy, -dz, distance)
+end
+
+function impl.beacon_landing_dynamic_clear(position, beacon_id)
+	-- A small native spatial query, not an ALife scan. Large intersecting
+	-- objects are included by their spatial bounds, even if their origin is far.
+	nearest.set(BEACON_LANDING.dynamic_radius, vector():set(position.x,
+		position.y + BEACON_LANDING.dynamic_center_height, position.z))
+	local count = nearest.size()
+	if count > BEACON_LANDING.max_nearby then return false end
+	for index = 0, count - 1 do
+		local object = nearest.get(index)
+		if object and object:id() ~= db.actor:id() and object:id() ~= beacon_id and
+			object:parent() == nil and
+			(IsStalker(object) or IsMonster(object) or object:get_physics_shell() ~= nil) then
+			return false
+		end
+	end
+	return true
+end
+
+function impl.beacon_landing_candidate(probe, point, beacon_position, beacon_id, anchor)
+	local dx, dz = point.x - beacon_position.x, point.z - beacon_position.z
+	local distance_sqr = dx * dx + dz * dz
+	if distance_sqr > BEACON_LANDING.max_radius_sqr or
+		distance_sqr < BEACON_LANDING.min_radius_sqr or
+		math.abs(point.y - beacon_position.y) > BEACON_LANDING.max_height_difference then
+		return nil
+	end
+	local floor_min, floor_max = math.huge, -math.huge
+	-- Nine support samples reject holes and the lip of a platform. Use the
+	-- highest support point so the lifted actor cannot start inside a slope.
+	for _, x in ipairs(BEACON_LANDING.footprint) do
+		for _, z in ipairs(BEACON_LANDING.footprint) do
+			local start_y = point.y + BEACON_LANDING.floor_probe_up
+			if not impl.beacon_landing_ray(probe, point.x + x, start_y, point.z + z,
+				0, -1, 0, BEACON_LANDING.floor_probe_range) then return nil end
+			local y = start_y - probe:get_distance()
+			if math.abs(y - point.y) > BEACON_LANDING.floor_vertex_tolerance then return nil end
+			floor_min, floor_max = math.min(floor_min, y), math.max(floor_max, y)
+			if floor_max - floor_min > BEACON_LANDING.floor_spread then return nil end
+		end
+	end
+	local landing_y = floor_max + BEACON_LANDING.lift
+	for _, x in ipairs(BEACON_LANDING.footprint) do
+		for _, z in ipairs(BEACON_LANDING.footprint) do
+			if impl.beacon_landing_ray(probe, point.x + x, landing_y, point.z + z,
+				0, 1, 0, BEACON_LANDING.headroom) then return nil end
+		end
+	end
+	-- Rows and columns through the standing actor's footprint cover the body,
+	-- including its centre; floor/head rays alone would miss vertical walls.
+	for _, height in ipairs(BEACON_LANDING.body_heights) do
+		for _, offset in ipairs(BEACON_LANDING.footprint) do
+			if impl.beacon_landing_segment(probe, point.x - 0.35, landing_y + height,
+				point.z + offset, 1, 0, 0, 0.7) or
+				impl.beacon_landing_segment(probe, point.x + offset, landing_y + height,
+					point.z - 0.35, 0, 0, 1, 0.7) then return nil end
+		end
+	end
+	-- Prefer the original placement vertex as the room reference. The beacon
+	-- can be inset into a wall: requiring a clear line all the way into its
+	-- mesh would reject even the valid bunker floor in the supplied save.
+	local reference = anchor or beacon_position
+	local rx, rz = point.x - reference.x, point.z - reference.z
+	local dy = landing_y - reference.y
+	local line_length = math.sqrt(rx * rx + rz * rz + dy * dy)
+	if rx * rx + rz * rz > 0.0025 then
+		local inset = anchor and 0 or math.min(0.4, line_length)
+		if impl.beacon_landing_segment(probe, reference.x + rx / line_length * inset,
+			reference.y + 1.4 + dy / line_length * inset, reference.z + rz / line_length * inset,
+			rx / line_length, dy / line_length, rz / line_length, line_length - inset) then return nil end
+	end
+	local result = vector():set(point.x, landing_y, point.z)
+	if not impl.beacon_landing_dynamic_clear(result, beacon_id) then return nil end
+	return result
+end
+
+function impl.find_beacon_landing(object)
+	-- AI nodes guide NPC navigation and may be on the ground below a walkable
+	-- roof. They are a landing hint, not a requirement for the actor's floor.
+	local probe = ray_pick()
+	probe:set_flags(rq_target.rqtStatic)
+	local beacon_position = object.position
+	local anchor
+	local id = object.m_level_vertex_id
+	if id and level.valid_vertex_id(id) and level.is_accessible_vertex_id(id) then
+		local point = level.vertex_position(id)
+		local dx, dz = point.x - beacon_position.x, point.z - beacon_position.z
+		local distance_sqr = dx * dx + dz * dz
+		if distance_sqr >= BEACON_LANDING.min_radius_sqr and distance_sqr <= BEACON_LANDING.max_radius_sqr and
+			math.abs(point.y - beacon_position.y) <= BEACON_LANDING.max_height_difference then
+			anchor = point
+			local destination = impl.beacon_landing_candidate(probe, point, beacon_position, object.id, anchor)
+			if destination then return destination end
+		end
+	end
+	-- Keep the beacon's height while probing real collision. Projecting every
+	-- sample onto the AI graph used to move roof samples to the ground below
+	-- and reject them before even checking their physical support.
+	-- One stored hint plus 48 distinct samples: at most 49 candidates.
+	for _, radius in ipairs(BEACON_LANDING.radii) do
+		for _, direction in ipairs(BEACON_LANDING.directions) do
+			local point = vector():set(beacon_position.x + direction[1] * radius,
+				beacon_position.y, beacon_position.z + direction[2] * radius)
+			local destination = impl.beacon_landing_candidate(probe, point, beacon_position, object.id, anchor)
+			if destination then return destination end
+		end
+	end
+	return nil
+end
+
+
+function landing(object) return impl.find_beacon_landing(object) end
+function near_landing(position)
+    local probe=ray_pick();probe:set_flags(rq_target.rqtStatic)
+    local y=position.y
+    local lv=level.vertex_id(position)
+    if level.valid_vertex_id(lv) then
+        local node=level.vertex_position(lv)
+        if math.abs(node.y-y)<=BEACON_LANDING.max_height_difference then y=node.y end
+    end
+    -- Search around the body itself, without preferring a distant AI-graph hint.
+    for _,radius in ipairs({.7,1,1.5,2,3,4,5,7.5,10})do
+        local best,best_distance
+        for _,direction in ipairs(BEACON_LANDING.directions)do
+            local point=vector():set(position.x+direction[1]*radius,y,position.z+direction[2]*radius)
+            local result=impl.beacon_landing_candidate(probe,point,position,65535,nil)
+            if result then
+                local distance=(result.x-position.x)^2+(result.y-position.y)^2+(result.z-position.z)^2
+                if not best_distance or distance<best_distance then best,best_distance=result,distance end
+            end
+        end
+        if best then return best end
+    end
+end
+function npc_landing(requested,anchor,graph)
+    if not graph.ready() then return nil end
+    local lv=level.vertex_id(requested)
+    if not level.valid_vertex_id(lv) or not level.is_accessible_vertex_id(lv) then return nil end
+    local point=impl.find_beacon_landing({position=requested,m_level_vertex_id=lv,id=65535})
+    if not point or math.abs(point.y-anchor.y)>2.5 then return nil end
+    lv=level.vertex_id(point)
+    if not level.valid_vertex_id(lv) or not level.is_accessible_vertex_id(lv) then return nil end
+    local node=level.vertex_position(lv)
+    local dx,dz=node.x-point.x,node.z-point.z
+    if dx*dx+dz*dz>2.25 or math.abs(node.y-point.y)>2.5 then return nil end
+    local cell=graph.cell(lv)
+    if not cell then return nil end
+    local direction=vector():set(point.x-anchor.x,point.y-anchor.y,point.z-anchor.z)
+    local distance=math.sqrt(direction.x^2+direction.y^2+direction.z^2)
+    if distance>.2 then
+        direction:mul(1/distance)
+        local ray=ray_pick();ray:set_flags(rq_target.rqtStatic);ray:set_ignore_object(db.actor)
+        ray:set_position(vector():set(anchor.x,anchor.y+1.4,anchor.z));ray:set_direction(direction)
+        ray:set_range(distance-.1)
+        if ray:query() then return nil end
+    end
+    return point,lv,cell.gv
+end
+function stop_landing(route,ratio)
+    if ratio<=0 then return vector():set(route.points[1].x,route.points[1].y,route.points[1].z),0 end
+    local position,index=position_at(route,ratio)
+    local lv=level.vertex_id(position)
+    local target={position=position,m_level_vertex_id=lv,id=65535}
+    local result=impl.find_beacon_landing(target)
+    if result then return result,ratio end
+    local passed=0
+    for i=1,index-1 do passed=passed+route.segment_lengths[i] end
+    for i=index,math.max(1,index-7),-1 do
+        local p=route.points[i]
+        target.position=vector():set(p.x,p.y,p.z);target.m_level_vertex_id=p.lv
+        result=impl.find_beacon_landing(target)
+        if result then return result,passed/route.total end
+        if i>1 then passed=passed-route.segment_lengths[i-1] end
+    end
+    return nil
+end

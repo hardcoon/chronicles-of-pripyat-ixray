@@ -1,0 +1,588 @@
+-- Journey presentation only. The travel controller owns time, costs and world events.
+-- Geometry follows the approved full-screen 1600x900 map reference.
+local state = {maps={}}
+local impl = {}
+
+function impl.tr(id) return game.translate_string("pf_travel_"..id) end
+function impl.rect(wnd, x, y, width, height)
+    state.rect=state.rect or Frect()
+    wnd:SetWndRect(state.rect:set(x, y, x+width, y+height))
+end
+function impl.clamp(value, lo, hi) return math.max(lo, math.min(hi, value)) end
+function impl.number(value, decimals)
+    local text = string.format("%."..(decimals or 0).."f", value)
+    if game.translate_string("pf_travel_m") ~= "m" then text = text:gsub("%.", ",") end
+    return text
+end
+function impl.distance(value)
+    local text = string.format("%.0f", math.max(0, value))
+    while true do
+        local count
+        text, count = text:gsub("^(%d+)(%d%d%d)", "%1 %2")
+        if count == 0 then break end
+    end
+    return text.." "..impl.tr("m")
+end
+function impl.minutes(value)
+    local n = math.max(0, math.floor(value+.5))
+    if n < 60 then return n.." "..impl.tr("min") end
+    return string.format("%d %s %02d %s", math.floor(n/60), impl.tr("hour"), n%60, impl.tr("min"))
+end
+
+-- Use the same level-map texture/bounds as the PDA. VFS resolves winter/summer.
+function map_for_level(level_name)
+    assert(type(level_name)=="string" and level_name:match("^[%w_%-]+$"), "invalid map level")
+    if state.maps[level_name] then return state.maps[level_name] end
+    local ini = read_ini("$game_levels$", level_name.."\\level.ltx")
+    assert(ini:section_exist("level_map"), "level map is missing")
+    local bounds = {}
+    for value in ini:r_string("level_map", "bound_rect"):gmatch("[^,]+") do
+        bounds[#bounds+1] = assert(tonumber(value), "invalid map bounds")
+    end
+    assert(#bounds==4 and bounds[3]>bounds[1] and bounds[4]>bounds[2], "invalid map bounds")
+    local texture = ini:r_string("level_map", "texture")
+    assert(getFS():exist("$game_textures$",texture..".dds"), "map texture is missing")
+    local result={texture=texture,bounds=bounds}
+    state.maps[level_name]=result
+    return result
+end
+
+class "travel_window" (CUIScriptWnd)
+
+function travel_window:__init() super()
+    self:SetAutoDelete(false)
+    self.work_in_pause=true
+end
+function travel_window:init(model, on_action)
+    assert(type(model)=="table" and type(model.points)=="table" and #model.points>=2
+        and #model.points<=2048, "invalid journey route")
+    self:SetAutoDelete(false)
+    self.model, self.on_action = model, on_action
+    self.progress, self.event = impl.clamp(tonumber(model.progress) or 0, 0, 1), nil
+    self.xml = CScriptXmlInit()
+    self.xml:ParseFile("pf_travel.xml")
+    impl.rect(self, 0, 0, 1024, 768)
+    self.surface = self.xml:InitStatic("group", self)
+    self.surface:Show(false)
+    self.background = self.xml:InitStatic("pixel", self.surface)
+    impl.rect(self.background, 0, 0, 1024, 768)
+    self.background:SetTextureColor(GetARGB(255,17,26,22))
+    self.map_layer = self.xml:InitStatic("group", self.surface)
+    self.map_offset=vector2()
+    self.actor_point,self.event_point,self.marker_tiles={},{},{}
+    self.visual_progress=self.progress
+    self.map = self.xml:InitStatic("map", self.map_layer)
+    self.map_data = model.map or map_for_level(model.level_name or level.name())
+    self.map:InitTexture(self.map_data.texture)
+    self.map:ResetOriginalRect()
+    self.map_wait_frame=device().frame+1
+    self.tint = self.xml:InitStatic("pixel", self.surface)
+    impl.rect(self.tint, 0, 0, 1024, 768)
+    self.tint:SetTextureColor(self.map_data.width and GetARGB(15,6,12,10) or GetARGB(255,0,0,0))
+    self.lines = self.xml:InitStatic("group", self.map_layer)
+    self.markers = self.xml:InitStatic("group", self.map_layer)
+    self.shade = self.xml:InitStatic("shade", self.surface)
+    self.footer = self.xml:InitStatic("group", self.surface)
+    self.route, self.lengths, self.cumulative, self.total = {}, {}, {0}, 0
+    local b = self.map_data.bounds
+    for i, point in ipairs(model.points) do
+        local u = point.u or (point.x-b[1])/(b[3]-b[1])
+        local v = point.v or (b[4]-point.z)/(b[4]-b[2])
+        assert(u==u and v==v and u>=0 and u<=1 and v>=0 and v<=1, "route outside map")
+        self.route[i] = {u=u, v=v}
+        if i>1 then
+            local prev = model.points[i-1]
+            local length = model.segment_lengths and model.segment_lengths[i-1]
+            if not length then
+                length = math.sqrt((point.x-prev.x)^2+(point.y-prev.y)^2+(point.z-prev.z)^2)
+            end
+            assert(length>=0 and length<1000000, "invalid route length")
+            self.lengths[i-1] = length
+            self.total = self.total+length
+            self.cumulative[i]=self.total
+        end
+    end
+    assert(self.total>0, "empty journey route")
+    -- Keep ordering stable when a straight planning preview is replaced by a real route.
+    self.dark = {layer=self.xml:InitStatic("group", self.lines)}
+    self.dashes = {layer=self.xml:InitStatic("group", self.lines)}
+    self.past = {layer=self.xml:InitStatic("group", self.lines)}
+    self.start_marker = self.xml:InitStatic("marker", self.markers)
+    self.end_marker = self.xml:InitStatic("marker", self.markers)
+    self.actor_marker = self.xml:InitStatic("marker", self.markers)
+    self.event_marker = self.xml:InitStatic("marker", self.markers)
+    self.start_tag = self:make_tag(impl.tr("start"))
+    self.end_tag = self:make_tag(model.destination_name or "")
+    self.actor_tag = self:make_tag(impl.tr("actor"))
+    self.stats = {
+        path={self:make_text("label", impl.tr("path")), self:make_text("value"), self:make_text("total")},
+        time={self:make_text("label", impl.tr("time")), self:make_text("value")},
+        wear={self:make_text("label", impl.tr(model.vehicle and "fuel" or "wear")), self:make_text("value")},
+        weight={self:make_text("label", impl.tr("weight")), self:make_text("value"), self:make_text("small")}
+    }
+    self.title = self:make_text("title")
+    self.description = self:make_text("description")
+    self.chance = self:make_text("chance")
+    self.chance_value = self:make_text("chance_value")
+    self.stop = self:make_button("stop", "stop")
+    self.primary = self:make_button("primary", "bypass")
+    self.secondary = self:make_button("secondary", "fight")
+    self:init_settings(model.ignored_events or {})
+    self:layout()
+    self:set_progress(self.progress, model.game_minutes or 0, model.wear_percent or 0,
+        model.weight or 0, model.capacity or 1,model.fuel,model.tank)
+    self:set_event(nil)
+    self.curtain = self.xml:InitStatic("pixel", self)
+    impl.rect(self.curtain,-self.ux,-self.uy,1024+2*self.ux,768+2*self.uy)
+    self.curtain:SetTextureColor(GetARGB(0,0,0,0))
+    self.transition={phase="out",started=time_global_async()}
+end
+
+function travel_window:make_text(kind, value)
+    local text = self.xml:InitTextWnd(kind, self.footer)
+    text:SetText(value or "")
+    return text
+end
+function travel_window:make_button(name, caption)
+    local button = self.xml:Init3tButton("button", self.footer)
+    button:SetText(impl.tr(caption))
+    self:Register(button, name)
+    -- The native callback must not retain its own Lua window through a strong self cycle.
+    self:AddCallback(name, ui_events.BUTTON_CLICKED, function()
+        local window=state.window
+        if window then window:action(name) end
+    end, nil)
+    return button
+end
+function travel_window:make_tag(value)
+    local bg = self.xml:InitStatic("pixel", self.markers)
+    bg:SetTextureColor(GetARGB(240, 10, 17, 14))
+    local text = self.xml:InitTextWnd("marker_text", self.markers)
+    text:SetText(value)
+    return {bg=bg, text=text}
+end
+function travel_window:settings_callback(action)
+    return function()
+        local window=state.window
+        if window then window:action(action) end
+    end
+end
+function travel_window:init_settings(values)
+    self.settings_panel=self.xml:InitStatic("group",self.surface)
+    self.settings_shade=self.xml:InitStatic("settings_shade",self.settings_panel)
+    self.settings_icon=self.xml:InitStatic("settings_icon",self.surface)
+    self.settings_icon:SetTextureColor(GetARGB(255,205,146,44))
+    self.settings_button=self.xml:Init3tButton("settings_button",self.surface)
+    self:Register(self.settings_button,"settings")
+    self:AddCallback("settings",ui_events.BUTTON_CLICKED,self:settings_callback("settings"),nil)
+    self.settings_title=self.xml:InitTextWnd("settings_title",self.settings_panel)
+    self.settings_title:SetText(impl.tr("settings_title"))
+    self.settings_separator=self.xml:InitStatic("pixel",self.settings_panel)
+    self.settings_separator:SetTextureColor(GetARGB(150,112,101,75))
+    self.filter_rows={}
+    for _,key in ipairs({"traveler","npc","mutant","battle","artifact","help","emission"})do
+        local row={key=key,check=self.xml:InitCheck("settings_check",self.settings_panel),
+            caption=self.xml:Init3tButton("settings_caption",self.settings_panel)}
+        row.caption:SetText(impl.tr("ignore_"..key))
+        local callback=self:settings_callback("ignore:"..key)
+        for _,part in ipairs({"check","caption"})do
+            local name="ignore_"..part.."_"..key
+            self:Register(row[part],name);self:AddCallback(name,ui_events.BUTTON_CLICKED,callback,nil)
+        end
+        self.filter_rows[#self.filter_rows+1]=row
+    end
+    self:set_ignored(values)
+    self:set_settings_open(false)
+end
+function travel_window:all_ignored()
+    for _,row in ipairs(self.filter_rows)do if row.key~="all" and not self.ignored_events[row.key] then return false end end
+    return true
+end
+function travel_window:set_ignored(values)
+    self.ignored_events=values
+    for _,row in ipairs(self.filter_rows)do row.check:SetCheck(values[row.key]==true) end
+end
+function travel_window:set_settings_open(value)
+    self.settings_open=value==true
+    self.settings_panel:Show(self.settings_open);self.settings_panel:Enable(self.settings_open)
+end
+function travel_window:layout_settings()
+    local s,ux,uy=self.scale,self.ux,self.uy
+    impl.rect(self.settings_icon,24*s*ux,22*s*uy,28*s*ux,28*s*uy)
+    impl.rect(self.settings_button,16*s*ux,14*s*uy,44*s*ux,44*s*uy)
+    impl.rect(self.settings_panel,20*s*ux,64*s*uy,430*s*ux,350*s*uy)
+    impl.rect(self.settings_title,42*s*ux,-40*s*uy,350*s*ux,32*s*uy)
+    -- Uniform darkness inside the reference area; feathering starts outside it.
+    impl.rect(self.settings_shade,(-20*s-1)*ux,(-64*s-1)*uy,(390*s+2)*ux,(376*s+2)*uy)
+    impl.rect(self.settings_separator,0,-4*s*uy,314*s*ux,uy)
+    for i,row in ipairs(self.filter_rows)do
+        local y=8+(i-1)*34
+        impl.rect(row.check,8*s*ux,(y+3)*s*uy,20*s*ux,20*s*uy)
+        -- SetWndRect does not resize the CUICheckButton's state backgrounds.
+        row.check:SetWidth(20*s*ux);row.check:SetHeight(20*s*uy)
+        impl.rect(row.caption,42*s*ux,y*s*uy,314*s*ux,26*s*uy)
+    end
+end
+function travel_window:tag(tag, x, y, align, visible)
+    tag.bg:Show(visible);tag.text:Show(visible)
+    if not visible then return end
+    local s, ux, uy = self.scale, self.ux, self.uy
+    if not tag.width then tag.text:AdjustWidthToText();tag.width=tag.text:GetWidth()/ux end
+    local width = tag.width
+    if align=="right" then x=x-width end
+    x=impl.clamp(x+self.camera_x,8*s,self.width-width-8*s)-self.camera_x
+    y=impl.clamp(y+self.camera_y,13*s,self.height-13*s)-self.camera_y
+    impl.rect(tag.bg, (x-8*s)*ux, (y-13*s)*uy, (width+16*s)*ux, 26*s*uy)
+    impl.rect(tag.text, x*ux, (y-13*s)*uy, (width+1)*ux, 26*s*uy)
+end
+
+function travel_window:line(pool, index, x1, y1, x2, y2, thickness, color)
+    local line = pool[index]
+    if not line then
+        line = self.xml:InitStatic("line", pool.layer)
+        pool[index] = line
+    end
+    local dx, dy = x2-x1, y2-y1
+    local length = math.sqrt(dx*dx+dy*dy)
+    -- Native heading rotates an isotropic quad before applying the UI aspect factor.
+    local w, h = length*self.uy, thickness*self.uy
+    impl.rect(line, (x1+x2)*.5*self.ux-w*.5, (y1+y2)*.5*self.uy-h*.5, w, h)
+    line:SetHeading(-math.atan2(dy, dx))
+    line:SetTextureColor(color)
+    line:Show(length>.01)
+end
+function travel_window:marker(wnd, point, size, tile)
+    local s = self.scale
+    if self.marker_tiles[wnd]~=tile then
+        wnd:SetTextureRect(Frect():set(tile*32, 0, (tile+1)*32, 32))
+        self.marker_tiles[wnd]=tile
+    end
+    impl.rect(wnd, (point.x-size*s/2)*self.ux, (point.y-size*s/2)*self.uy,
+        size*s*self.ux, size*s*self.uy)
+end
+
+function travel_window:layout()
+    self.width, self.height = device().width, device().height
+    self.scale, self.ux, self.uy = self.height/900, 1024/self.width, 768/self.height
+    local s, w, h, ux, uy = self.scale, self.width, self.height, self.ux, self.uy
+    local bounds=self.map_data.bounds
+    local world_w,world_h=bounds[3]-bounds[1],bounds[4]-bounds[2]
+    local pixels_per_m=math.max(w/(self.model.view_width_m or 1500),w/world_w,h/world_h)
+    self.canvas_width,self.canvas_height=world_w*pixels_per_m,world_h*pixels_per_m
+    impl.rect(self.map_layer,0,0,self.canvas_width*ux,self.canvas_height*uy)
+    impl.rect(self.map,0,0,self.canvas_width*ux,self.canvas_height*uy)
+    -- Overscan prevents the native half-pixel raster offset exposing a bottom row.
+    impl.rect(self.background,-ux,-uy,1024+2*ux,768+2*uy)
+    impl.rect(self.tint,-ux,-uy,1024+2*ux,768+2*uy)
+    local shade_top=math.floor(h*.51+.5)
+    impl.rect(self.shade,-ux,shade_top*uy,1024+2*ux,(h-shade_top+1)*uy)
+    self.shade:SetTextureRect(Frect():set(.5,.5,3.5,1023.5))
+    if self.curtain then impl.rect(self.curtain,-ux,-uy,1024+2*ux,768+2*uy) end
+    self.projected = {}
+    for i,p in ipairs(self.route) do
+        self.projected[i]={x=p.u*self.canvas_width,y=p.v*self.canvas_height}
+    end
+    local md = self.map_data
+    if md.width then
+        -- The full image is clipped natively; camera movement cannot reveal wrapped UVs.
+        self.map:SetTextureRect(Frect():set(.5,.5,md.width-.5,md.height-.5))
+    end
+    local dash_index, phase = 0, 0
+    for i=1,#self.projected-1 do
+        local a, b = self.projected[i], self.projected[i+1]
+        self:line(self.dark, i, a.x,a.y,b.x,b.y,6*s,GetARGB(184,3,8,5))
+        self:line(self.past,i,a.x,a.y,b.x,b.y,3*s,GetARGB(255,208,161,74))
+        self.past[i]:Show(false)
+        local dx, dy = b.x-a.x, b.y-a.y
+        local length = math.sqrt(dx*dx+dy*dy)
+        local at = -phase
+        while at<length do
+            local lo, hi = math.max(0,at), math.min(length,at+3*s)
+            if hi>lo and dash_index<2048 then
+                dash_index=dash_index+1
+                self:line(self.dashes, dash_index, a.x+dx*lo/length,a.y+dy*lo/length,
+                    a.x+dx*hi/length,a.y+dy*hi/length,2*s,GetARGB(255,230,214,170))
+            end
+            at=at+10*s
+        end
+        phase=(phase+length)%(10*s)
+    end
+    for i=dash_index+1,#self.dashes do self.dashes[i]:Show(false) end
+    self:marker(self.start_marker,self.projected[1],10,0)
+    self:marker(self.end_marker,self.projected[#self.projected],20,1)
+    self.start_tag.width,self.end_tag.width,self.actor_tag.width=nil,nil,nil
+    self.past_segment=nil
+    self:refresh_stats()
+    self:refresh_progress()
+    self:set_event(self.event)
+    if self.preparing then self:set_preparing(true) end
+    self:layout_settings()
+end
+
+function travel_window:replace_route(route)
+    local bounds=self.map_data.bounds
+    self.route,self.lengths,self.cumulative,self.total={},{},{0},0
+    self.model.points,self.model.segment_lengths=route.points,route.segment_lengths
+    for i,p in ipairs(route.points)do
+        self.route[i]={u=(p.x-bounds[1])/(bounds[3]-bounds[1]),v=(bounds[4]-p.z)/(bounds[4]-bounds[2])}
+        if i>1 then
+            local length=route.segment_lengths[i-1]
+            self.lengths[i-1]=length;self.total=self.total+length;self.cumulative[i]=self.total
+        end
+    end
+    for _,lines in ipairs({self.dark,self.past,self.dashes})do for _,line in ipairs(lines)do line:Show(false)end end
+    self.progress,self.visual_progress=0,0
+    self:layout()
+end
+function travel_window:set_preparing(value)
+    self.preparing=value==true
+    self.lines:Show(not self.preparing)
+    self.start_marker:Show(not self.preparing);self.end_marker:Show(not self.preparing)
+    self.start_tag.bg:Show(not self.preparing);self.start_tag.text:Show(not self.preparing)
+    self.end_tag.bg:Show(not self.preparing);self.end_tag.text:Show(not self.preparing)
+    if self.preparing then
+        self.title:Show(true);self.title:SetText(impl.tr("car_planning"))
+        impl.rect(self.title,262,(self.height-175*self.scale)*self.uy,500,45*self.scale*self.uy)
+        self.description:Show(false);self.chance:Show(false);self.chance_value:Show(false)
+    else self:set_event(nil) end
+end
+
+function travel_window:layout_buttons()
+    local s,ux,uy=self.scale,self.ux,self.uy
+    self.stop:AdjustWidthToText();self.primary:AdjustWidthToText();self.secondary:AdjustWidthToText()
+    local padding=24*s*ux
+    local stop_width=self.stop:GetWidth()+padding
+    local first=self.primary:GetWidth()+padding
+    local second=self.secondary:GetWidth()+padding
+    local gap=40*s*ux
+    local left=(1024-first-second-gap)/2
+    local top=(self.height-76*s)*uy
+    impl.rect(self.stop,(1024-stop_width)/2,top,stop_width,48*s*uy)
+    impl.rect(self.primary,left,top,first,48*s*uy)
+    impl.rect(self.secondary,left+first+gap,top,second,48*s*uy)
+end
+
+function travel_window:row(items, x, y, right, gaps)
+    local widths, total = {}, 0
+    for i,text in ipairs(items) do
+        text:AdjustWidthToText()
+        widths[i]=text:GetWidth()
+        total=total+widths[i]+(i>1 and (gaps and gaps[i-1] or 10)*self.scale*self.ux or 0)
+    end
+    if right then x=x-total end
+    for i,text in ipairs(items) do
+        local offset=(i==2 and 2 or 4)*self.scale*self.uy
+        impl.rect(text,x,y+offset,widths[i]+.5,34*self.scale*self.uy)
+        x=x+widths[i]+(gaps and gaps[i] or 10)*self.scale*self.ux
+    end
+end
+function travel_window:refresh_stats()
+    if not self.weight then return end
+    local stats, s, ux, uy = self.stats,self.scale,self.ux,self.uy
+    stats.path[2]:SetText(impl.distance(self.total*self.progress))
+    stats.path[3]:SetText("/ "..impl.distance(self.total))
+    stats.time[2]:SetText(impl.minutes(self.minutes))
+    if self.model.vehicle then
+        stats.wear[2]:SetText(impl.number(self.fuel or 0,1).." / "..impl.number(self.tank or 0,0).." "..impl.tr("litre"))
+    else stats.wear[2]:SetText(impl.tr("approx").." "..impl.number(self.wear,1).."%") end
+    stats.weight[2]:SetText(impl.number(self.weight).." / "..impl.number(self.capacity).." "..impl.tr("kg"))
+    stats.weight[3]:SetText(impl.number(100*self.weight/math.max(.001,self.capacity)).."%")
+    self:row(stats.path,20*s*ux,(self.height-104*s)*uy,false,{10,0})
+    self:row(stats.time,20*s*ux,(self.height-61*s)*uy,false,{7})
+    self:row(stats.wear,(self.width-20*s)*ux,(self.height-104*s)*uy,true)
+    self:row(stats.weight,(self.width-20*s)*ux,(self.height-61*s)*uy,true,{4,8})
+end
+function travel_window:position_at(ratio,point)
+    local remain=self.total*impl.clamp(ratio,0,1)
+    local lo,hi=1,#self.lengths
+    while lo<hi do
+        local mid=math.floor((lo+hi)/2)
+        if remain<=self.cumulative[mid+1] then hi=mid else lo=mid+1 end
+    end
+    local length=self.lengths[lo]
+    local t=length>0 and impl.clamp((remain-self.cumulative[lo])/length,0,1) or 0
+    local a,b=self.projected[lo],self.projected[lo+1]
+    point=point or {}
+    point.x,point.y=a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t
+    return point,lo
+end
+function travel_window:point_visible(point)
+    local x,y=point.x+self.camera_x,point.y+self.camera_y
+    return x>=0 and x<=self.width and y>=0 and y<=self.height
+end
+function travel_window:refresh_camera(actor)
+    local s=self.scale
+    self.camera_x=impl.clamp(self.width*.5-actor.x,self.width-self.canvas_width,0)
+    self.camera_y=impl.clamp(self.height*.4-actor.y,self.height-self.canvas_height,0)
+    self.map_layer:SetWndPos(self.map_offset:set(self.camera_x*self.ux,self.camera_y*self.uy))
+    local first,last=self.projected[1],self.projected[#self.projected]
+    local first_visible,last_visible=self:point_visible(first),self:point_visible(last)
+    self.start_marker:Show(first_visible);self.end_marker:Show(last_visible)
+    self:tag(self.start_tag,first.x-13*s,first.y+24*s,"right",first_visible)
+    self:tag(self.end_tag,last.x+17*s,last.y,nil,last_visible)
+    self:tag(self.actor_tag,actor.x+22*s,actor.y+s,nil,self:point_visible(actor))
+    if self.event and self.event.progress then
+        local point=self:position_at(self.event.progress,self.event_point)
+        self:marker(self.event_marker,point,18,self.event.kind=="enemy" and 3 or 4)
+        self.event_marker:Show(self:point_visible(point))
+    else self.event_marker:Show(false) end
+end
+function travel_window:refresh_progress()
+    local actor,segment=self:position_at(self.visual_progress or self.progress,self.actor_point)
+    if self.past_segment~=segment then
+        for i=1,#self.lengths do
+            if i<segment then
+                local a,b=self.projected[i],self.projected[i+1]
+                self:line(self.past,i,a.x,a.y,b.x,b.y,3*self.scale,GetARGB(255,208,161,74))
+            elseif i>segment and self.past[i] then self.past[i]:Show(false) end
+        end
+        self.past_segment=segment
+    end
+    local a=self.projected[segment]
+    self:line(self.past,segment,a.x,a.y,actor.x,actor.y,3*self.scale,GetARGB(255,208,161,74))
+    self:marker(self.actor_marker,actor,28,self.model.vehicle and 5 or 2)
+    self:refresh_camera(actor)
+end
+
+-- Values are already accrued by the controller; the UI never charges the player.
+function travel_window:set_progress(progress, minutes, wear, weight, capacity, fuel, tank)
+    self.progress = impl.clamp(progress,0,1)
+    self.sample_from=self.visual_progress or self.progress
+    self.sample_at=time_global_async()
+    if self.event or self.progress==0 or self.progress==1 or self.progress<self.sample_from then
+        self.visual_progress=self.progress
+    end
+    self.minutes,self.wear,self.weight,self.capacity = minutes,wear,weight,math.max(.001,capacity)
+    self.fuel,self.tank=fuel,tank
+    self:refresh_stats()
+    self:refresh_progress()
+end
+function travel_window:set_event(event)
+    self.event = event
+    local active, enemy = event~=nil,event and event.kind=="enemy"
+    self.stop:Show(not active);self.stop:Enable(not active)
+    self.primary:Show(active);self.primary:Enable(active)
+    self.secondary:Show(active);self.secondary:Enable(active)
+    self.title:Show(active);self.description:Show(active);self.chance:Show(enemy==true)
+    self.chance_value:Show(enemy==true)
+    self.event_marker:Show(active and event.progress~=nil)
+    if not active then self:layout_buttons();self:refresh_progress();return end
+    local text_kind=enemy and event.enemy_type=="mutant" and "mutant" or event.kind
+    self.title:SetText(game.translate_string(event.title_id or ("pf_travel_"..text_kind.."_title")))
+    self.description:SetText(game.translate_string(event.description_id or ("pf_travel_"..text_kind.."_description")))
+    self.primary:SetText(impl.tr(enemy and "fight" or "stop"))
+    self.secondary:SetText(impl.tr(self.model.vehicle and (enemy and "car_bypass" or "car_pass") or (enemy and "bypass" or "pass")))
+    self:layout_buttons()
+    local s,ux,uy,w,h = self.scale,self.ux,self.uy,self.width,self.height
+    local width=math.min(570*s,w*.48)
+    local bottom=h-91*s
+    if enemy then
+        self.chance:SetText(impl.tr(self.model.vehicle and "car_chance" or "chance"))
+        self.chance_value:SetText(impl.number(event.chance or 0).."%")
+        self.chance:AdjustWidthToText();self.chance_value:AdjustWidthToText()
+        local cw=self.chance:GetWidth()+self.chance_value:GetWidth()+8*s*ux
+        local left=(1024-cw)/2
+        impl.rect(self.chance,left,(bottom-32*s)*uy,self.chance:GetWidth()+.5,32*s*uy)
+        impl.rect(self.chance_value,left+self.chance:GetWidth()+8*s*ux,(bottom-32*s)*uy,
+            self.chance_value:GetWidth()+.5,32*s*uy)
+        bottom=bottom-40*s
+    end
+    impl.rect(self.description,(w-width)/2*ux,(bottom-57*s)*uy,width*ux,57*s*uy)
+    self.description:AdjustHeightToText()
+    local dh=self.description:GetHeight()/uy
+    impl.rect(self.description,(w-width)/2*ux,(bottom-dh)*uy,width*ux,dh*uy)
+    impl.rect(self.title,(w-width)/2*ux,(bottom-dh-46*s)*uy,width*ux,38*s*uy)
+    self.visual_progress=self.progress
+    self:refresh_progress()
+end
+function travel_window:action(name)
+    if self.closed or self.action_pending then return end
+    if name=="settings" then self:set_settings_open(not self.settings_open);return end
+    if (name=="primary" or name=="secondary") and not self.event then return end
+    local action=name
+    if name=="primary" then action=self.event.kind=="enemy" and "fight" or "stop" end
+    if name=="secondary" then action=self.event.kind=="enemy" and "bypass" or "pass" end
+    self.action_pending=true
+    if self.on_action then self.on_action(action,self) end
+    self.action_pending=false
+end
+function travel_window:OnKeyboard(dik, action)
+    if action==ui_events.WINDOW_KEY_PRESSED then
+        if dik==DIK_keys.DIK_ESCAPE then
+            if self.settings_open then self:set_settings_open(false) else self:action("stop") end
+        end
+        if dik_to_bind(dik)==key_bindings.kQUICK_SAVE then self:action("save") end
+    end
+    return true
+end
+function travel_window:is_ready() return self.transition==nil end
+function travel_window:world_hidden() return self.surface:IsShown() end
+function travel_window:update_transition()
+    local transition=self.transition
+    if not transition then return end
+    local now=time_global_async()
+    if transition.phase=="loading" then
+        if not self.map_data.width or device().frame<=self.map_wait_frame then return end
+        transition.phase="in";transition.started=now
+    end
+    local t=impl.clamp((now-transition.started)/180,0,1)
+    local smooth=t*t*(3-2*t)
+    local alpha=transition.phase=="out" and smooth or (1-smooth)
+    self.curtain:SetTextureColor(GetARGB(math.floor(alpha*255+.5),0,0,0))
+    if t<1 then return end
+    if transition.phase=="out" then
+        self.surface:Show(true)
+        self.map_wait_frame=device().frame+1
+        transition.phase="loading"
+    else
+        self.curtain:Show(false)
+        self.transition=nil
+    end
+end
+function travel_window:Update()
+    CUIScriptWnd.Update(self)
+    if self.closed then return end
+    if self.surface:IsShown() and not self.map_data.width and device().frame>self.map_wait_frame then
+        -- The renderer supplies the active texture's real dimensions after its first draw.
+        -- Do not use the unsafe IReader*& Lua close binding or read the entire DDS into Lua.
+        local r=self.map:GetTextureRect()
+        if r.x2>0 and r.y2>0 and r.x2<=32768 and r.y2<=32768 then
+            self.map_data.width,self.map_data.height=r.x2,r.y2
+            self.tint:SetTextureColor(GetARGB(15,6,12,10))
+            self:layout()
+        end
+    end
+    if device().width~=self.width or device().height~=self.height then self:layout() end
+    self:update_transition()
+    if self.on_tick then self.on_tick() end
+    if self.closed then return end
+    if self.visual_progress~=self.progress then
+        local t=impl.clamp((time_global_async()-(self.sample_at or 0))/33,0,1)
+        self.visual_progress=self.sample_from+(self.progress-self.sample_from)*t
+        self:refresh_progress()
+    end
+end
+
+function create(model, on_action)
+    local window=travel_window()
+    window:init(model,on_action)
+    return window
+end
+function open(model, on_action, on_tick)
+    close()
+    local window=create(model,on_action)
+    state.window=window
+    window.on_tick=on_tick
+    window:ShowDialog(true)
+    return window
+end
+function close()
+    local window=state.window
+    state.window=nil
+    if window and not window.closed then
+        window.closed=true
+        window:HideDialog()
+        window.on_action=nil
+        window.on_tick=nil
+    end
+end

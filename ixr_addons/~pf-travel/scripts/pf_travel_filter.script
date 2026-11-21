@@ -1,0 +1,46 @@
+-- Client preferences only. Ignored events are never rolled, queued or materialized.
+local state={}
+local impl={keys={"traveler","npc","mutant","battle","artifact","help","emission"}}
+function impl.load()
+    if state.ignored then return end
+    state.ignored={}
+    for _,key in ipairs(impl.keys)do state.ignored[key]=false end
+    local file=io.open(getFS():update_path("$app_data_root$","pf_travel_events.setting"),"rb")
+    if not file then return end
+    for line in file:lines()do
+        local key,value=line:match("^([%w_]+)=([01])$")
+        if key and state.ignored[key]~=nil then state.ignored[key]=value=="1" end
+    end
+    file:close()
+end
+function snapshot()
+    impl.load()
+    local result={}
+    for _,key in ipairs(impl.keys)do result[key]=state.ignored[key] end
+    return result
+end
+function ignores(event)
+    impl.load()
+    local key=event.kind=="enemy" and (event.enemy_type=="mutant" and "mutant" or "npc") or event.kind
+    return state.ignored[key]==true
+end
+function encounters_disabled()
+    impl.load()
+    for _,key in ipairs(impl.keys)do if key~="emission" and not state.ignored[key] then return false end end
+    return true
+end
+function set_ignored(key,enabled)
+    local values=snapshot()
+    if key~="all" and values[key]==nil then return false end
+    if key=="all" then for _,name in ipairs(impl.keys)do values[name]=enabled==true end
+    else values[key]=enabled==true end
+    local file=io.open(getFS():update_path("$app_data_root$","pf_travel_events.setting"),"wb")
+    if not file then return false end
+    local lines={}
+    for _,name in ipairs(impl.keys)do lines[#lines+1]=name.."="..(values[name] and "1" or "0") end
+    local wrote=file:write(table.concat(lines,"\n").."\n")
+    local closed=file:close()
+    if not wrote or not closed then return false end
+    state.ignored=values
+    return true
+end

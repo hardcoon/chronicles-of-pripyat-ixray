@@ -1,0 +1,344 @@
+-- An explicit journey scan only. Events reference existing world objects, never spawned rewards.
+local impl = {solitary={SM_BURER=true,SM_GIANT=true,SM_CONTR=true,SM_BLOOD=true}}
+local state={alerts={},next_alert=0}
+
+function impl.section_class(section,cache)
+    if cache[section]~=nil then return cache[section] end
+    local ini=system_ini()
+    local value=ini:line_exist(section,"class") and ini:r_string(section,"class") or ""
+    cache[section]=value
+    return value
+end
+function impl.creature_type(server)
+    local id=server:clsid()
+    if id==clsid.script_stalker or id==clsid.stalker then return "npc",id end
+    if IsMonster(nil,id) then return "mutant",id end
+    return nil,id
+end
+function impl.position(server)
+    local online=server.online and level.object_by_id(server.id) or nil
+    return online and online:position() or server.position,online
+end
+function impl.distance_sqr(a,b)
+    return (a.x-b.x)^2+(a.y-b.y)^2+(a.z-b.z)^2
+end
+function impl.on_level(server,level_id)
+    return game_graph():valid_vertex_id(server.m_game_vertex_id)
+        and game_graph():vertex(server.m_game_vertex_id):level_id()==level_id
+end
+function impl.hostile(server,kind,actor_id,online)
+    if kind=="mutant" then return true end
+    if online then return online:relation(db.actor)==game_object.enemy end
+    -- Match the owned NPC's real on-bind rule before its first online appearance.
+    local dialogs=rawget(_G,"pf_pa_dialogs")
+    local rule=dialogs and rawget(dialogs,"forced_actor_relation")
+    local relation=type(rule)=="function" and rule(server:section_name(),server:community()) or nil
+    if relation~=nil then return relation==game_object.enemy end
+    local ini=system_ini()
+    local threshold=ini:line_exist("game_relations","attitude_neutal_threshold")
+        and ini:r_s32("game_relations","attitude_neutal_threshold") or -999
+    -- Current rank/reputation matrices are zero. Preserve personal and faction-to-actor goodwill offline.
+    return relation_registry.get_general_goodwill_between(server.id,actor_id)<threshold
+end
+function impl.target(scan,server,position)
+    local kind,id=impl.creature_type(server)
+    return {id=server.id,name=server:name(),section=server:section_name(),clsid=id,
+        class=impl.section_class(server:section_name(),scan.classes),creature_type=kind,
+        position={x=position.x,y=position.y,z=position.z}}
+end
+function impl.encounter_groups(scan)
+    local world=rawget(_G,"pf_pa_world")
+    local snapshot=world and rawget(world,"debug_objects")
+    local by_id,groups={},{}
+    if type(snapshot)~="function" then return by_id end
+    -- This is the same read-only, live-member snapshot used by the PDA count.
+    for _,item in ipairs(snapshot())do
+        if item.kind=="m" or item.kind=="s" then
+            local server=alife():object(item.id)
+            local kind=server and impl.creature_type(server)
+            if server and server:alive() and server:section_name()==item.section
+                and server.parent_id==65535 and (kind=="mutant" or kind=="npc")
+                and impl.on_level(server,scan.level_id) then
+                local key=item.group or ("single:"..item.id)
+                local group=groups[key]
+                if not group then group={id=key,count=item.count or 1,members={}};groups[key]=group end
+                local position=impl.position(server)
+                group.members[#group.members+1]=impl.target(scan,server,position)
+                by_id[server.id]=group
+            end
+        end
+    end
+    return by_id
+end
+function impl.scene_owned(server)
+    return pf_travel_scenes and pf_travel_scenes.owns and pf_travel_scenes.owns(server)
+end
+function impl.recent_dead(server,online,max_age,expected_time)
+    if server:alive() or not online then return false end
+    local death=online:death_time()
+    if death<=0 or (expected_time and death~=expected_time) then return false end
+    local age=time_global()-death
+    return age>=0 and age<=max_age,death
+end
+function detectors(actor,min_condition)
+    local result={}
+    local ini=system_ini()
+    actor:iterate_inventory(function(_,item)
+        local section=item:section()
+        if item:condition()>=min_condition and ini:line_exist(section,"af_class_1") then
+            local radius=ini:line_exist(section,"af_radius") and ini:r_float(section,"af_radius") or 30
+            if radius>0 then
+                for i=1,256 do
+                    local key="af_class_"..i
+                    if not ini:line_exist(section,key) then break end
+                    local artifact=ini:r_string(section,key)
+                    result[artifact]=math.max(result[artifact] or 0,radius)
+                end
+            end
+        end
+    end,actor)
+    return result
+end
+function begin_scan(actor,route,settings,projection)
+    local iterator,source,control=alife():objects()
+    local scan={iterator=iterator,source=source,control=control,route=route,settings=settings,
+        projection=projection,detectors=detectors(actor,settings.detector_min_condition),
+        actor_id=actor:id(),level_id=game_graph():vertex(alife():actor().m_game_vertex_id):level_id(),
+        max_age=settings.recent_battle_hours*3600000/math.max(1,level.get_time_factor()),
+        classes={},candidates={},dead={},count=0}
+    scan.groups=impl.encounter_groups(scan)
+    return scan
+end
+function impl.offer(scan,server,kind,position,radius,enemy_type)
+    if pf_travel_filter.ignores({kind=kind,enemy_type=enemy_type}) then return end
+    local group=enemy_type and scan.groups[server.id] or nil
+    if enemy_type=="mutant" and (not group or group.count<2)
+        and not impl.solitary[impl.section_class(server:section_name(),scan.classes)] then return end
+    local progress,distance=scan.projection(scan.route,position)
+    local object_progress=progress
+    local total=scan.route.total
+    if distance>radius or (1-progress)*total<15 then return end
+    local stop_distance=enemy_type=="mutant" and (scan.settings.mutant_stop_distance or 20) or scan.settings.enemy_stop_distance
+    if kind=="enemy" then progress=math.max(0,progress-stop_distance/total) end
+    if progress*total+.000001<(scan.settings.departure_grace_distance or 200) then return end
+    if scan.minimum_progress and (progress-scan.minimum_progress)*total<-.000001 then return end
+    local event=impl.target(scan,server,position)
+    event.kind,event.progress,event.object_progress,event.enemy_type=kind,progress,object_progress,enemy_type
+    event.actor_id,event.level_id,event.radius=scan.actor_id,scan.level_id,radius
+    event.route,event.projection=scan.route,scan.projection
+    event.enemy_stop_distance,event.max_age=stop_distance,scan.max_age
+    event.enemy_max_stop_distance=enemy_type=="mutant" and (scan.settings.mutant_max_stop_distance or 35)
+        or (scan.settings.enemy_max_stop_distance or 35)
+    if enemy_type=="mutant" then
+        event.mutant_group,event.mutant_count=group and group.id,group and group.count or 1
+        event.mutant_max_stop_distance=scan.settings.mutant_max_stop_distance or 35
+        event.mutants={}
+        for _,member in ipairs(group and group.members or {})do
+            if member.id~=event.id then event.mutants[#event.mutants+1]=member end
+        end
+    elseif enemy_type=="npc" then
+        event.npc_group=group and group.id
+        event.npc_count=group and group.count or 1
+        event.npcs={}
+        for _,member in ipairs(group and group.members or {})do
+            if member.id~=event.id and member.creature_type=="npc"
+                and impl.distance_sqr(member.position,position)<=radius^2 then
+                event.npcs[#event.npcs+1]=member
+            end
+        end
+    end
+    event.detector_min_condition=scan.settings.detector_min_condition
+    event.departure_grace_distance=scan.settings.departure_grace_distance or 200
+    scan.candidates[#scan.candidates+1]=event
+    return event
+end
+function impl.consider(scan,server)
+    if not server or server.id==scan.actor_id or server.parent_id~=65535
+        or not impl.on_level(server,scan.level_id) then return end
+    local section=server:section_name()
+    local radius=scan.detectors[section] or scan.detectors["artefact"]
+    local position,online=impl.position(server)
+    if radius then
+        impl.offer(scan,server,"artifact",position,radius)
+        return
+    end
+    local kind=impl.creature_type(server)
+    if not kind then return end
+    if not server:alive() then
+        local recent,death=impl.recent_dead(server,online,scan.max_age)
+        if kind=="npc" and recent and #scan.dead<128 then
+            scan.dead[#scan.dead+1]={server=server,position=position,death_time=death}
+        end
+        return
+    end
+    if kind=="npc" and xr_combat_ignore.is_protected_target(section) then return end
+    if impl.hostile(server,kind,scan.actor_id,online) then
+        impl.offer(scan,server,"enemy",position,scan.settings.event_radius,kind)
+    elseif kind=="npc" and not impl.scene_owned(server) then
+        impl.offer(scan,server,"traveler",position,scan.settings.event_radius)
+    end
+end
+function scan_step(scan)
+    local started=time_global_async()
+    for i=1,96 do
+        local key,server=scan.iterator(scan.source,scan.control)
+        scan.control=key
+        if key==nil then
+            scan.iterator,scan.source,scan.control=nil,nil,nil
+            for a=1,#scan.dead do
+                local first=scan.dead[a]
+                for b=a+1,#scan.dead do
+                    local second=scan.dead[b]
+                    if impl.distance_sqr(first.position,second.position)<1600 then
+                        local event=impl.offer(scan,first.server,"battle",first.position,scan.settings.event_radius)
+                        if event then
+                            event.death_time=first.death_time
+                            event.other=impl.target(scan,second.server,second.position)
+                            event.other.death_time=second.death_time
+                        end
+                        break
+                    end
+                end
+            end
+            table.sort(scan.candidates,function(a,b)
+                if a.progress==b.progress then return a.id<b.id end
+                return a.progress<b.progress
+            end)
+            local events,last,seen_groups={},-math.huge,{}
+            for _,event in ipairs(scan.candidates) do
+                if not pf_travel_filter.ignores(event) and not (event.mutant_group and seen_groups[event.mutant_group]) then
+                local distance=event.progress*scan.route.total
+                if distance-last+.000001>=scan.settings.event_spacing then
+                    events[#events+1]=event;last=distance
+                    if event.mutant_group then seen_groups[event.mutant_group]=true end
+                end
+                end
+            end
+            return events
+        end
+        impl.consider(scan,server)
+        scan.count=scan.count+1
+        if time_global_async()-started>=2 then break end
+    end
+end
+function impl.valid_target(event,target)
+    local server=target and alife():object(target.id)
+    if not server or server:section_name()~=target.section or server:name()~=target.name
+        or server:clsid()~=target.clsid or server.parent_id~=65535
+        or not impl.on_level(server,event.level_id) then return nil end
+    local kind=impl.creature_type(server)
+    if kind~=target.creature_type then return nil end
+    local position,online=impl.position(server)
+    if impl.distance_sqr(position,target.position)>event.radius^2 then return nil end
+    return server,position,online
+end
+function valid(event,check_detector)
+    if not event or not db.actor or not db.actor:alive() or db.actor:id()~=event.actor_id then return false end
+    if pf_travel_filter.ignores(event) or event.progress*event.route.total+.000001<(event.departure_grace_distance or 200) then return false end
+    if not impl.on_level(alife():actor(),event.level_id) then return false end
+    local server,position,online=impl.valid_target(event,event)
+    if not server then return false end
+    if (event.kind=="enemy" or event.kind=="traveler") and event.creature_type=="npc"
+        and xr_combat_ignore.is_protected_target(event.section) then return false end
+    local radius,other_position=event.radius
+    if event.kind=="artifact" and check_detector then
+        local available=detectors(db.actor,event.detector_min_condition)
+        radius=available[event.section] or available["artefact"]
+        if not radius then return false end
+    end
+    local progress,distance=event.projection(event.route,position)
+    if distance>radius or math.abs(progress-event.object_progress)*event.route.total>radius then return false end
+    if event.kind=="enemy" then
+        if not server:alive() or event.enemy_type~=event.creature_type
+            or not impl.hostile(server,event.enemy_type,event.actor_id,online) then return false end
+        if event.enemy_type=="mutant" and not impl.solitary[event.class] then
+            local companion=false
+            for _,member in ipairs(event.mutants or {})do
+                local other=impl.valid_target(event,member)
+                if other and other:alive() and member.creature_type=="mutant" then companion=true;break end
+            end
+            if not companion then return false end
+        end
+    elseif event.kind=="traveler" then
+        if event.creature_type~="npc" or not server:alive() or impl.scene_owned(server)
+            or impl.hostile(server,"npc",event.actor_id,online) then return false end
+    elseif event.kind=="battle" then
+        local other,other_online
+        other,other_position,other_online=impl.valid_target(event,event.other)
+        if event.creature_type~="npc" or not event.other or event.other.creature_type~="npc"
+            or not other or not impl.recent_dead(server,online,event.max_age,event.death_time)
+            or not impl.recent_dead(other,other_online,event.max_age,event.other.death_time)
+            or impl.distance_sqr(position,other_position)>=1600 then return false end
+    elseif event.kind~="artifact" then return false end
+    return true,position,radius,other_position
+end
+function emission_delay()
+    local manager=surge_manager and surge_manager.get_surge_manager()
+    if not manager then return nil end
+    if manager.started then return 0 end
+    if not manager.last_surge_time or not manager._delta then return nil end
+    if manager.condlist and xr_logic.pick_section_from_condlist(db.actor,nil,manager.condlist)~="true" then return nil end
+    return math.max(0,manager._delta-game.get_game_time():diffSec(manager.last_surge_time))
+end
+
+function reset_alerts()state.alerts={};state.next_alert=0 end
+function alerts_pending()return next(state.alerts)~=nil end
+function impl.alert(event,kind)
+    if not event or event.enemy_type~=kind or not db.actor or not db.actor:alive() then return 0 end
+    local targets={event}
+    for _,member in ipairs((kind=="mutant" and event.mutants or event.npcs) or {})do targets[#targets+1]=member end
+    local count=0
+    for _,target in ipairs(targets)do
+        local server=alife():object(target.id)
+        if server and server:alive() and server:name()==target.name and server:section_name()==target.section
+            and server:clsid()==target.clsid and impl.creature_type(server)==kind
+            and impl.on_level(server,event.level_id)
+            and (kind~="npc" or (not xr_combat_ignore.is_protected_target(target.section)
+                and impl.hostile(server,kind,db.actor:id(),select(2,impl.position(server))))) then
+            state.alerts[target.id]={id=target.id,name=target.name,section=target.section,clsid=target.clsid,
+                actor_id=db.actor:id(),level_id=event.level_id,enemy_type=kind,expires=time_global_async()+5000,
+                radius=math.max(100,(event.radius or 65)*2+16)}
+            count=count+1
+        end
+    end
+    state.next_alert=0
+    return count
+end
+function alert_mutants(event)return impl.alert(event,"mutant")end
+function alert_npcs(event)return impl.alert(event,"npc")end
+function update_alerts()
+    if not alerts_pending() then return end
+    if not db.actor or not db.actor:alive() then reset_alerts();return end
+    if device():is_paused() then return end
+    local now=time_global_async()
+    if now<state.next_alert then return end
+    state.next_alert=now+50
+    for id,entry in pairs(state.alerts)do
+        local server=alife():object(id)
+        if now>=entry.expires or db.actor:id()~=entry.actor_id or not server or not server:alive()
+            or server:name()~=entry.name or server:section_name()~=entry.section or server:clsid()~=entry.clsid
+            or not impl.on_level(server,entry.level_id) or not impl.on_level(alife():actor(),entry.level_id) then state.alerts[id]=nil
+        else
+            local position,object=impl.position(server)
+            if impl.distance_sqr(position,db.actor:position())>entry.radius^2 then state.alerts[id]=nil
+            elseif entry.enemy_type=="npc" and (xr_combat_ignore.is_protected_target(entry.section)
+                or not impl.hostile(server,"npc",entry.actor_id,object)) then state.alerts[id]=nil
+            elseif object and object:alive() then
+                local ok,noticed=pcall(function()
+                    if entry.enemy_type=="npc" then
+                        object:enable_vision(true)
+                        object:make_object_visible_somewhen(db.actor)
+                        object:enable_memory_object(db.actor,true)
+                        object:register_in_combat()
+                        return true
+                    end
+                    return object:force_detect_actor()
+                end)
+                if not ok or noticed then
+                    state.alerts[id]=nil
+                    printf("[pf_travel] enemy detection type=%s id=%s noticed=%s",entry.enemy_type,tostring(id),tostring(ok and noticed))
+                end
+            end
+        end
+    end
+end

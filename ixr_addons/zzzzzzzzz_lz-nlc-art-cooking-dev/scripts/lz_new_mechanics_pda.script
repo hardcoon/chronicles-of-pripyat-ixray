@@ -287,12 +287,17 @@ function lz_nm_beacon_tab:AskTravel(id)
 	end
 	if not selected then self:Reset() return end
 	self.pending_travel_id = id
-	self.confirm:InitMessageBox("message_box_yes_no")
-	self.confirm:SetText(string.format(
+	local style="message_box_yes_no"
+	local text=string.format(
 		game.translate_string("lz_nm_beacon_travel_confirm"),
 		lz_new_mechanics.beacon_name_for_utf8(selected.name), selected.distance,
 		lz_new_mechanics.format_beacon_travel_time(selected.hours), selected.damage
-	))
+	)
+	local decorate=rawget(lz_nm_beacons,"pf_travel_confirmation_text")
+	if type(decorate)=="function" then text,style=decorate(text) end
+	if style=="message_box_ok" then self.pending_travel_id=nil end
+	self.confirm:InitMessageBox(style or "message_box_yes_no")
+	self.confirm:SetText(text)
 	self.confirm:ShowDialog(true)
 end
 

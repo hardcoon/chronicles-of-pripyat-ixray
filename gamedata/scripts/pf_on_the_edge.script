@@ -1,0 +1,130 @@
+-- "On the Edge": remember the first successful save beyond the old packet limit.
+-- eng239 captures the sidecar again after server objects have been serialized.
+local STATE_KEY = "pf_on_the_edge"
+local PSTOR_KEY = "pf_on_the_edge_gained"
+local STATE_VERSION = 2
+local OLD_CAPACITY = 16 * 1024
+local state = { earned = false, registered = false }
+
+local function actor_ready()
+    return db and db.actor and db.storage and db.storage[db.actor:id()] ~= nil
+end
+
+local function clear_attempt()
+    state.armed = false
+    state.observed = false
+    state.staged = false
+    state.packet_bytes = nil
+    state.actor_id = nil
+end
+
+local function remember_on_actor()
+    if actor_ready() and state.earned then
+        xr_logic.pstor_store(db.actor, PSTOR_KEY, true)
+    end
+end
+
+local function begin_save()
+    clear_attempt()
+    if not actor_ready() then return end
+    state.armed = true
+    state.actor_id = db.actor:id()
+end
+
+-- Called at the end of the active se_actor:STATE_Write. At this point the
+-- actual spawn packet includes its header, current client data and actor state.
+-- Observe it without adding bytes or retaining the native packet after return.
+function capture_actor_packet(server_actor, packet)
+    if not state.armed or state.earned or not actor_ready() or
+            server_actor.id ~= state.actor_id or db.actor:id() ~= state.actor_id then
+        return
+    end
+    if packet:write_failed() then return end
+    local bytes = packet:w_tell()
+    if bytes >= OLD_CAPACITY then
+        state.observed = true
+        state.packet_bytes = bytes
+    end
+end
+
+local function save_state(data)
+    local earned = state.earned or (state.armed and state.observed)
+    -- Persist in this same save pair, before native transaction commit. Never
+    -- expose a staged award through the PDA functor or notify on a failed save.
+    data[STATE_KEY] = earned and { earned = true, version = STATE_VERSION } or nil
+    state.staged = earned
+end
+
+local function save_succeeded()
+    if state.armed and state.observed and state.staged and not state.earned then
+        state.earned = true
+        remember_on_actor()
+        state.pending_tip = true
+        printf("[PF ON THE EDGE] awarded after successful save; actor_packet=%s old_capacity=%s",
+            tostring(state.packet_bytes), tostring(OLD_CAPACITY))
+    end
+    clear_attempt()
+end
+
+local function load_state(data)
+    local saved = data[STATE_KEY]
+    state.restored = type(saved) == "table" and saved.earned == true
+    -- Version 1 saved the award, but the unsupported save_file_created event
+    -- prevented its live confirmation and news. Repair only that old format.
+    state.restore_missing_tip = state.restored and saved.version ~= STATE_VERSION
+    state.earned = state.restored
+    state.pending_tip = false
+    clear_attempt()
+end
+
+local function actor_loaded()
+    if state.restored ~= nil then
+        state.earned = state.restored
+    else
+        -- Also handles legacy saves without a sidecar and in-session new games.
+        state.earned = actor_ready() and
+            xr_logic.pstor_retrieve(db.actor, PSTOR_KEY, false) == true or false
+    end
+    state.restored = nil
+    state.pending_tip = state.earned and state.restore_missing_tip or false
+    state.restore_missing_tip = nil
+    clear_attempt()
+    remember_on_actor()
+end
+
+local function new_game_created()
+    state.earned = false
+    state.restored = nil
+    state.restore_missing_tip = nil
+    state.pending_tip = false
+    clear_attempt()
+end
+
+local function update()
+    if not state.pending_tip or not actor_ready() then return end
+    if device().precache_frame > 0 then return end
+    state.pending_tip = false
+    xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+    db.actor:give_game_news(
+        game.translate_string("pf_on_the_edge_name"),
+        game.translate_string("pf_on_the_edge_descr"),
+        "pf_on_the_edge_icon", 0, 10000)
+end
+
+function achievement_functor()
+    return actor_ready() and state.earned == true or false
+end
+
+function on_game_start()
+    if state.registered then return end
+    RegisterScriptCallback("save", begin_save)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("save_file_created", save_succeeded)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("load", actor_loaded)
+    RegisterScriptCallback("new_game_created", new_game_created)
+    RegisterScriptCallback("update", update)
+    state.registered = true
+end
+
+on_game_start()

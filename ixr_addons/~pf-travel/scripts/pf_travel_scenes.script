@@ -1,0 +1,303 @@
+-- Deferred travel scenes. Only accepted stops materialize stock, save-compatible NPCs.
+local state={rows=nil,sequence=0,prepared={}}
+local impl={key="pf_travel_scenes_v1",fields={"id","name","section","role","scene","ready","trap","phase","x","y","z","dx","dz"},
+    kinds={help="sim_default_stalker_0"},limit=16}
+
+function impl.escape(value)
+    return tostring(value):gsub("%%","%%25"):gsub("|","%%7C"):gsub(";","%%3B"):gsub("\n","%%0A")
+end
+function impl.split(text,delimiter)
+    local result={}
+    for value in (text..delimiter):gmatch("(.-)"..delimiter) do
+        result[#result+1]=value:gsub("%%(%x%x)",function(hex)return string.char(tonumber(hex,16))end)
+    end
+    return result
+end
+function impl.load()
+    if state.rows then return end
+    state.rows={};state.sequence=0;state.prepared={}
+    local saved=xr_logic.pstor_retrieve(db.actor,impl.key,"")
+    if saved=="" then return end
+    local lines=impl.split(saved,";")
+    local header=impl.split(lines[1] or "","|")
+    if header[1]~="1" then return end
+    state.sequence=tonumber(header[2]) or 0
+    for i=2,math.min(#lines,impl.limit+1) do
+        local values=impl.split(lines[i],"|")
+        if #values==#impl.fields then
+            local row={}
+            for j,key in ipairs(impl.fields) do row[key]=values[j] end
+            for _,key in ipairs({"id","scene","ready","trap","x","y","z","dx","dz"})do row[key]=tonumber(row[key])end
+            if row.id and row.id>=0 and row.id<65535 and row.scene and row.x and row.y and row.z
+                and row.dx and row.dz and (impl.kinds[row.role] or row.role=="bandit" or row.role=="traveler") then
+                if row.phase=="reply" or row.phase=="attack" then row.due=time_global_async()+1000 end
+                if row.ready==0 then row.born=time_global_async() end
+                state.rows[#state.rows+1]=row
+            end
+        end
+    end
+end
+function impl.save()
+    local lines={"1|"..state.sequence}
+    for _,row in ipairs(state.rows) do
+        local fields={}
+        for _,key in ipairs(impl.fields)do fields[#fields+1]=impl.escape(row[key])end
+        lines[#lines+1]=table.concat(fields,"|")
+    end
+    xr_logic.pstor_store(db.actor,impl.key,table.concat(lines,";"))
+end
+function configure(settings,api) state.settings,state.api=settings,api end
+function reset_runtime()
+    state.rows,state.pending,state.next_update=nil,nil,nil
+    state.prepared={};state.spawning=false
+end
+function impl.server(row)
+    local server=alife():object(row.id)
+    if server and server:name()==row.name and server:section_name()==row.section then return server end
+end
+-- Old saved travelers stay tracked for ordinary cleanup, never offered as a world encounter.
+function owns(server)
+    if not server or not db.actor then return false end
+    impl.load()
+    for _,row in ipairs(state.rows)do
+        if server.id==row.id and server:name()==row.name and server:section_name()==row.section then return true end
+    end
+    return false
+end
+function impl.row(npc)
+    if not npc or not db.actor then return end
+    impl.load()
+    for _,row in ipairs(state.rows) do
+        if row.id==npc:id() and row.name==npc:name() and row.section==npc:section() then return row end
+    end
+end
+function impl.scene_count()
+    impl.load()
+    local scenes={};local count=0
+    for _,row in ipairs(state.rows)do if not scenes[row.scene] then scenes[row.scene]=true;count=count+1 end end
+    return count
+end
+function impl.weights()
+    if state.weights then return state.weights end
+    local ini=ini_file("pf_travel_events.ltx")
+    local keys={};for key in pairs(impl.kinds)do keys[#keys+1]=key end;table.sort(keys)
+    local weights,total={},0
+    for _,key in ipairs(keys)do
+        local value=ini:line_exist("scripted_events",key) and ini:r_float("scripted_events",key) or 0
+        value=value==value and math.max(0,math.min(100,value)) or 0
+        if value>0 then weights[#weights+1]={kind=key,weight=value};total=total+value end
+    end
+    state.weights={entries=weights,total=total}
+    return state.weights
+end
+function valid(event)
+    return event and event.scripted==true and impl.kinds[event.kind]~=nil
+        and not pf_travel_filter.ignores(event)
+        and impl.scene_count()<state.settings.scene_limit and #state.rows<impl.limit-3
+end
+function plan(route)
+    local result={}
+    if not state.settings or state.settings.scene_max_per_trip<=0 or pf_travel_filter.ignores({kind="help"})
+        or impl.scene_count()>=state.settings.scene_limit then return result end
+    local weights=impl.weights();if weights.total<=0 then return result end
+    local total=route.total
+    for start=0,total,1000 do
+        local span=math.min(1000,total-start)
+        local grace=state.settings.departure_grace_distance or 200
+        local lo,hi=math.max(start,grace),math.min(start+span,total-15)
+        if hi>lo and math.random()<math.min(1,weights.total/100)*span/1000 then
+            local roll=math.random()*weights.total
+            local kind=weights.entries[#weights.entries].kind
+            for _,entry in ipairs(weights.entries)do roll=roll-entry.weight;if roll<0 then kind=entry.kind;break end end
+            local ratio=(lo+(hi-lo)*math.random())/total
+            local point,actual=state.api.stop_point(route,ratio)
+            if point and actual*total+.000001>=grace and (1-actual)*total>=15 then
+                local d=db.actor:direction()
+                local target=vector():set(point.x+d.x*8,point.y,point.z+d.z*8)
+                if state.api.npc_spot(target,point) then
+                    result[#result+1]={kind=kind,scripted=true,progress=actual,object_progress=actual}
+                    if #result>=state.settings.scene_max_per_trip then break end
+                end
+            end
+        end
+    end
+    return result
+end
+function impl.spot(anchor,dx,dz,distance,side)
+    return state.api.npc_spot(vector():set(anchor.x+dx*distance+dz*side,anchor.y,
+        anchor.z+dz*distance-dx*side),anchor)
+end
+function queue(event,destination,clearance)
+    if not valid(event) or state.pending then return false end
+    local direction=db.actor:direction()
+    local length=math.sqrt(direction.x*direction.x+direction.z*direction.z)
+    if length<.001 then return false end
+    local dx,dz=direction.x/length,direction.z/length
+    local position,lv,gv
+    for _,side in ipairs({0,2,-2,4,-4})do
+        position,lv,gv=impl.spot(destination,dx,dz,8+math.max(0,tonumber(clearance) or 0),side)
+        if position then break end
+    end
+    if not position then return false end
+    state.pending={kind=event.kind,position=position,lv=lv,gv=gv,dx=-dx,dz=-dz,
+        trap=event.kind=="help" and math.random()*100<state.settings.scene_ambush_chance and 1 or 0}
+    state.spawning=true
+    return true
+end
+function busy() return state.spawning==true or state.pending~=nil end
+function impl.create(section,role,scene,position,lv,gv,dx,dz,trap)
+    local server=alife():create(section,position,lv,gv)
+    if not server then return end
+    server.angle=vector():set(0,math.atan2(-dx,-dz),0)
+    local row={id=server.id,name=server:name(),section=section,role=role,scene=scene,ready=0,
+        trap=trap or 0,phase=role=="help" and "waiting" or "done",
+        x=position.x,y=position.y,z=position.z,dx=dx,dz=dz,born=time_global_async()}
+    state.rows[#state.rows+1]=row
+    impl.save()
+    return row
+end
+function impl.relation(npc,enemy)
+    npc:force_set_goodwill(0,db.actor)
+    local target=enemy and -2000 or 0
+    npc:force_set_goodwill(target-npc:general_goodwill(db.actor),db.actor)
+    npc:set_relation(enemy and game_object.enemy or game_object.neutral,db.actor)
+    db.actor:set_relation(enemy and game_object.enemy or game_object.neutral,npc)
+end
+function impl.initialize(row,npc)
+    local storage=db.storage[npc:id()]
+    if not storage or not storage.wounded or not storage.wounded.wound_manager then return false end
+    if row.role=="help" then
+        xr_logic.pstor_store(npc,"pf_pa_help_enabled",true)
+        local wounded=storage.wounded
+        wounded.help_dialog,wounded.help_start_dialog="pf_pa_medkit_help","pf_pa_medkit_help"
+        if row.phase=="waiting" then
+            wounded.autoheal=false;wounded.use_medkit=true;wounded.enable_talk=true;wounded.not_for_help=false
+            wounded.hp_state=utils.parse_data(npc,"10|wounded_heavy@help_heavy")
+            wounded.hp_state_see=utils.parse_data(npc,"10|wounded_heavy@help_heavy")
+            npc:set_health_ex(math.min(.08,npc.health))
+            wounded.wound_manager:update()
+            npc:set_start_dialog("pf_pa_medkit_help")
+        elseif row.phase=="done" and row.trap==1 then
+            if npc:character_community()~="bandit" then
+                npc:set_character_community("bandit",0,0)
+            end
+            impl.relation(npc,true)
+        end
+    end
+    if row.ready==0 then
+        impl.relation(npc,row.role=="bandit")
+        npc:set_desired_direction(vector():set(row.dx,0,row.dz))
+        row.ready=1;impl.save()
+    end
+    state.prepared[row.id]=true
+    return true
+end
+function before_medkit(first,second)
+    local npc=first and first:id()==db.actor:id() and second or (second and second:id()==db.actor:id() and first or nil)
+    local row=impl.row(npc)
+    if not row or row.role~="help" or row.phase~="waiting" then return end
+    for _,section in ipairs({"medkit","medkit_army","medkit_scientic"})do
+        local item=db.actor:object(section)
+        if item then return {id=row.id,name=row.name,npc=npc,kit=item:id(),trap=row.trap==1} end
+    end
+end
+function is_trap(npc)
+    local row=impl.row(npc)
+    return row and row.role=="help" and row.trap==1 or false
+end
+function medkit_finished(proof)
+    if not proof then return false end
+    local row=impl.row(proof.npc)
+    if not row or row.phase~="waiting" then return false end
+    -- Stock transfer_item queues ownership changes for the next network update.
+    -- The existing dialog marks treatment when it sends that transfer request.
+    if xr_logic.pstor_retrieve(proof.npc,"pf_pa_medkit_treated",false)~=true then return false end
+    row.phase=row.trap==1 and "reply" or "done"
+    if row.trap==1 then
+        xr_logic.pstor_store(proof.npc,"pf_pa_medkit_treated",true)
+        xr_logic.pstor_store(proof.npc,"pf_pa_medkit_rewarded",true)
+        row.due=time_global_async()+1500
+    end
+    impl.save()
+    return true
+end
+function reply_key(npc)
+    local row=impl.row(npc)
+    if not row or row.trap~=1 or row.phase=="waiting" then return end
+    if row.phase=="reply" then row.phase="attack";row.due=time_global_async()+1000;impl.save() end
+    return "pf_travel_betrayal"
+end
+function impl.attack(row,npc)
+    local anchor=db.actor:position();local direction=db.actor:direction()
+    local length=math.sqrt(direction.x*direction.x+direction.z*direction.z)
+    if length<.001 then return false end
+    local dx,dz=-direction.x/length,-direction.z/length
+    local spots={}
+    for i=1,state.settings.scene_bandits do
+        local found
+        for _,spread in ipairs({0,2,-2,4,-4,7,-7})do
+            local side=(i-(state.settings.scene_bandits+1)/2)*3+spread
+            local p,lv,gv=impl.spot(anchor,dx,dz,16+4*i,side)
+            if p and (p.x-anchor.x)*direction.x+(p.z-anchor.z)*direction.z < -10 then
+                local clear=true
+                for _,spot in ipairs(spots)do if p:distance_to_sqr(spot.p)<4 then clear=false;break end end
+                if clear then found={p=p,lv=lv,gv=gv};break end
+            end
+        end
+        if not found then spots={};break end
+        spots[#spots+1]=found
+    end
+    db.actor:stop_talk();npc:stop_talk()
+    npc:set_character_community("bandit",0,0)
+    npc:set_health_ex(math.max(.6,npc.health))
+    local wounded=db.storage[npc:id()].wounded
+    wounded.hp_state=utils.parse_data(npc,"10|wounded_heavy@help_heavy")
+    wounded.hp_state_see=utils.parse_data(npc,"10|wounded_heavy@help_heavy")
+    wounded.wound_manager:update();npc:wounded(false);npc:movement_enabled(true)
+    impl.relation(npc,true)
+    row.phase="done";impl.save()
+    for _,spot in ipairs(spots)do
+        impl.create("sim_default_bandit_1","bandit",row.scene,spot.p,spot.lv,spot.gv,-dx,-dz,0)
+    end
+    if #spots==0 then printf("[pf_travel] no safe positions behind actor for ambush squad") end
+    return true
+end
+function update()
+    if not state.settings or not db.actor or not db.actor:alive() then return end
+    local now=time_global_async()
+    if now<(state.next_update or 0) then return end
+    state.next_update=now+(busy() and 50 or 500)
+    impl.load()
+    if state.pending then
+        local pending=state.pending;state.pending=nil;state.sequence=state.sequence+1
+        local ok,row=pcall(impl.create,impl.kinds[pending.kind],pending.kind,state.sequence,
+            pending.position,pending.lv,pending.gv,pending.dx,pending.dz,pending.trap)
+        if not ok or not row then state.spawning=false;printf("[pf_travel] scene spawn failed: %s",tostring(row)) end
+    end
+    local changed,pending=false,false
+    for i=#state.rows,1,-1 do
+        local row=state.rows[i];local server=impl.server(row)
+        if not server then table.remove(state.rows,i);state.prepared[row.id]=nil;changed=true
+        else
+            local npc=level.object_by_id(row.id)
+            local position=npc and npc:position() or server.position
+            if position:distance_to_sqr(db.actor:position())>state.settings.scene_cleanup_distance^2 then
+                alife():release(server,true);table.remove(state.rows,i);state.prepared[row.id]=nil;changed=true
+            elseif npc and npc:alive() then
+                if not state.prepared[row.id] then impl.initialize(row,npc) end
+                if state.prepared[row.id] and row.role=="help" and row.phase=="waiting" and npc.health>.09 then
+                    npc:set_health_ex(.08)
+                    db.storage[npc:id()].wounded.wound_manager:update()
+                end
+                if row.ready==0 then pending=true end
+                if state.prepared[row.id] and (row.phase=="attack" or row.phase=="reply") and now>=(row.due or 0) then impl.attack(row,npc) end
+            elseif row.ready==0 then pending=true end
+            if row.ready==0 and row.born and now-row.born>15000 then
+                alife():release(server,true);table.remove(state.rows,i);state.prepared[row.id]=nil;changed=true
+            end
+        end
+    end
+    for _,row in ipairs(state.rows)do if row.ready==0 then pending=true;break end end
+    state.spawning=pending
+    if changed then impl.save() end
+end

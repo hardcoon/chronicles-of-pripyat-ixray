@@ -1,0 +1,34 @@
+function bind_item(object)
+    object:bind_object(pf_buffer_item_binder(object))
+end
+
+class "pf_buffer_item_binder" (bind_artefact.artefact_binder)
+function pf_buffer_item_binder:__init(object) super(object)
+end
+
+function pf_buffer_item_binder:net_spawn(server_object)
+    if not bind_artefact.artefact_binder.net_spawn(self, server_object) then return false end
+    self.object:set_condition(1)
+    return true
+end
+
+function bind_store(object)
+    object:bind_object(pf_buffer_store_binder(object))
+end
+
+class "pf_buffer_store_binder" (object_binder)
+function pf_buffer_store_binder:__init(object) super(object)
+end
+
+function pf_buffer_store_binder:net_spawn(server_object)
+    if not object_binder.net_spawn(self, server_object) then return false end
+    self.object:set_render_visible(false)
+    self.object:set_nonscript_usable(false)
+    self.object:set_tip_text("")
+    return true
+end
+
+function pf_buffer_store_binder:update(delta)
+    object_binder.update(self, delta)
+    self.object:set_render_visible(false)
+end

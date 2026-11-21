@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<shader>
+  <element_nd_0 vs="pf_skybox_ground" ps="pf_skybox_ground" fog="false" zread="true" zwrite="true">
+    <blend status="true" src="invsrcalpha" dest="srcalpha" />
+    <texture name="s_position" rt="$user$position" />
+    <texture name="s_base" rt="t_base" />
+    <texture name="s_material" rt="$user$material" />
+    <texture name="env_s0" rt="$user$env_s0" />
+    <texture name="env_s1" rt="$user$env_s1" />
+    <texture name="sky_s0" rt="$user$sky0" />
+    <texture name="sky_s1" rt="$user$sky1" />
+    <texture name="sb_grass" rt="pf_skybox\detail_grass" />
+    <texture name="sb_earth" rt="pf_skybox\detail_earth" />
+    <texture name="sb_asphalt" rt="pf_skybox\detail_asphalt" />
+    <texture name="sb_normal" rt="pf_skybox\detail_normal" />
+    <sampler name="smp_base" />
+    <sampler name="smp_rtlinear" />
+    <sampler name="smp_linear" />
+    <sampler name="smp_material" />
+  </element_nd_0>
+</shader>

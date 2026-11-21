@@ -2,12 +2,21 @@
 local impl = {}
 local state = {data = nil, last = nil}
 
+function impl.owned_section(section)
+    return string.match(section, "^pf_pa_s_%d+$") ~= nil
+        or string.match(section, "^pf_pa_s_[dfobeac]_%d+$") ~= nil
+end
+
+-- Shared on-bind policy, also queried read-only for an offline travel encounter.
+function forced_actor_relation(section,community)
+    if impl.owned_section(section) and community=="bandit" then return game_object.enemy,-1000 end
+end
+
 function impl.owned(speaker)
     local kind = type(speaker)
     if kind ~= "userdata" and kind ~= "table" then return false end
     local section = speaker:section()
-    return string.match(section, "^pf_pa_s_%d+$") ~= nil
-        or string.match(section, "^pf_pa_s_[dfobeac]_%d+$") ~= nil
+    return impl.owned_section(section)
 end
 
 function impl.npc(first, second)
@@ -215,9 +224,10 @@ function configure(npc)
     end
     npc:set_start_dialog("pf_pa_city_news")
     npc:disable_trade()
-    if db.actor and character_community(npc) == "bandit" then
-        npc:set_relation(game_object.enemy, db.actor)
-        npc:force_set_goodwill(-1000, db.actor)
-        db.actor:set_relation(game_object.enemy, npc)
+    local relation,goodwill=forced_actor_relation(npc:section(),character_community(npc))
+    if db.actor and relation~=nil then
+        npc:set_relation(relation, db.actor)
+        npc:force_set_goodwill(goodwill, db.actor)
+        db.actor:set_relation(relation, npc)
     end
 end

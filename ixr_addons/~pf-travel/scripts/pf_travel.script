@@ -1,0 +1,667 @@
+-- Independent beacon journey controller. Legacy travel remains the original function.
+local state = {registered=false,enabled=nil}
+local impl = {}
+
+function impl.message(id) lz_nm_core.message("pf_travel_"..id) end
+function impl.path() return getFS():update_path("$app_data_root$","pf_travel.setting") end
+function is_enabled()
+    if state.enabled~=nil then return state.enabled end
+    local file=io.open(impl.path(),"rb")
+    local value=file and file:read("*l") or ""
+    if file then file:close() end
+    value=value:lower():match("^%s*(.-)%s*$")
+    state.enabled=impl.settings().enabled~=false and value~="0" and value~="false" and value~="off"
+    return state.enabled
+end
+function set_enabled(enabled)
+    local file=io.open(impl.path(),"wb")
+    if not file then return false end
+    local wrote=file:write(enabled and "1\n" or "0\n")
+    local closed=file:close()
+    if not wrote or not closed then return false end
+    state.enabled=impl.settings().enabled~=false and enabled==true
+    return true
+end
+function is_active() return state.trip~=nil end
+function take_result()
+    local result=state.result
+    state.result=nil
+    return result
+end
+function impl.settings()
+    if state.settings then return state.settings end
+    local ini=ini_file("pf_travel.ltx")
+    local function number(key,default,lo,hi)
+        local value=ini:line_exist("travel",key) and ini:r_float("travel",key) or default
+        if value~=value then value=default end
+        return math.max(lo,math.min(hi,value))
+    end
+    state.settings={enabled=not ini:line_exist("travel","enabled") or ini:r_bool("travel","enabled"),
+        real_seconds_per_km=number("real_seconds_per_km",15,.1,3600),
+        boots_real_time_multiplier=number("boots_real_time_multiplier",.5,.01,10),
+        beacon_cooldown_minutes=number("beacon_cooldown_minutes",30,0,1440),
+        encounter_cooldown_minutes=number("encounter_cooldown_minutes",number("mutant_cooldown_minutes",10,0,1440),0,1440),
+        departure_grace_distance=number("departure_grace_distance",200,0,2000),
+        vehicle_real_time_multiplier=number("vehicle_real_time_multiplier",.5,.01,10),
+        vehicle_game_time_multiplier=number("vehicle_game_time_multiplier",.5,.01,10),
+        vehicle_parking_radius=number("vehicle_parking_radius",100,5,100),
+        vehicle_route_timeout_ms=number("vehicle_route_timeout_ms",30000,1000,120000),
+        map_view_width_m=number("map_view_width_m",1500,100,20000),
+        bypass_light_max=number("bypass_light_max",90,0,100),bypass_medium_max=number("bypass_medium_max",70,0,100),
+        bypass_heavy_max=number("bypass_heavy_max",50,0,100),bypass_min=number("bypass_min",10,0,100),
+        bypass_mutant_light_max=number("bypass_mutant_light_max",90,0,100),
+        bypass_mutant_medium_max=number("bypass_mutant_medium_max",75,0,100),
+        bypass_mutant_heavy_max=number("bypass_mutant_heavy_max",60,0,100),
+        bypass_max=number("bypass_max",90,0,100),bypass_success_penalty=number("bypass_success_penalty",3,0,100),
+        bypass_night_bonus=number("bypass_night_bonus",30,0,100),
+        scene_max_per_trip=math.floor(number("scene_max_per_trip",1,0,3)),
+        scene_limit=math.floor(number("scene_limit",4,1,4)),
+        scene_cleanup_distance=number("scene_cleanup_distance",180,120,1000),
+        scene_ambush_chance=number("scene_ambush_chance",30,0,100),
+        scene_bandits=math.floor(number("scene_bandits",3,1,3)),
+        event_radius=number("event_radius",65,5,200),enemy_stop_distance=number("enemy_stop_distance",20,10,100),
+        enemy_max_stop_distance=number("enemy_max_stop_distance",35,10,100),
+        mutant_stop_distance=number("mutant_stop_distance",20,5,50),
+        mutant_max_stop_distance=number("mutant_max_stop_distance",35,10,100),
+        event_spacing=number("event_spacing",400,50,2000),detector_min_condition=number("detector_min_condition",.01,0,1),
+        recent_battle_hours=number("recent_battle_hours",6,.1,24)}
+    return state.settings
+end
+function impl.overloaded()
+    if not db.actor then return true end
+    if is_enabled() and db.actor.IsInCar and db.actor:IsInCar() then return false end
+    local weight,maximum=pf_travel_route.capacity(db.actor)
+    if weight>=maximum then impl.message("overloaded");return true end
+    return false
+end
+
+-- Native OnSaveStatus covers console, quick, manual-menu and automatic save commands.
+-- Requests coalesce into a standard quicksave after returning to the world.
+function can_save()
+    if (state.trip and state.trip.phase~="launching") or pf_travel_scenes.busy() or pf_travel_events.alerts_pending() then
+        state.deferred_save=true
+        return false
+    end
+    return true
+end
+function impl.request_save()
+    if state.trip then state.deferred_save=true;impl.message("save_deferred") end
+end
+function impl.clear_fade(trip)
+    if trip and trip.fade_owned then
+        trip.fade_owned=false
+        pcall(level.remove_pp_effector,105183)
+    end
+end
+-- The native sequencer consumes Quit before forwarding it to a dialog.
+-- Its stop callback requests the same settlement as the visible Stop button.
+function pause_stopped()
+    local trip=state.trip
+    if not trip or not trip.pause_owned then return end
+    trip.pause_owned=false
+    trip.finish_reason=trip.finish_reason or "stop"
+end
+function impl.cleanup()
+    local trip=state.trip
+    state.trip=nil
+    if trip then
+        impl.clear_fade(trip)
+        if trip.vehicle then pf_travel_vehicle.cancel(trip.vehicle) end
+        trip.scan=nil
+        local ui=rawget(_G,"pf_travel_ui")
+        if ui then pcall(ui.close) end
+        if trip.pause_owned then
+            if game.active_tutorial_name()=="pf_travel_pause" then game.stop_tutorial() end
+            trip.pause_owned=false
+        end
+    end
+    return trip
+end
+function reset()
+    impl.cleanup()
+    pf_travel_scenes.reset_runtime()
+    pf_travel_events.reset_alerts()
+    state.deferred_save,state.flush_at=nil,nil
+    state.result=nil
+end
+function impl.point_text(point)
+    return point and string.format("(%.2f,%.2f,%.2f)",point.x,point.y,point.z) or "-"
+end
+function impl.log_event(event,phase,position,ratio)
+    if not event then return end
+    printf("[pf_travel] event phase=%s kind=%s id=%s name=%s section=%s class=%s clsid=%s type=%s group=%s count=%s pair=%s body=%s target=%s request=%s landing=%s progress=%.6f",
+        phase,tostring(event.kind),tostring(event.id),tostring(event.name),tostring(event.section),
+        tostring(event.class),tostring(event.clsid),tostring(event.enemy_type),tostring(event.mutant_group or event.npc_group),tostring(event.mutant_count or event.npc_count),
+        tostring(event.other and event.other.id),tostring(event.stop_body_id),
+        impl.point_text(event.observed_position or event.position),impl.point_text(event.stop_request),
+        impl.point_text(position),ratio or event.progress or 0)
+end
+function impl.battle_landing(trip,event,origin,first,second)
+    local bodies={{id=event.id,point=first}}
+    if second then bodies[#bodies+1]={id=event.other.id,point=second} end
+    local function distance(a,b)return (a.x-b.x)^2+(a.y-b.y)^2+(a.z-b.z)^2 end
+    table.sort(bodies,function(a,b)return distance(a.point,origin)<distance(b.point,origin) end)
+    local best,best_distance
+    for _,body in ipairs(bodies)do
+        local destination,parking,ratio
+        if trip.vehicle then
+            if not trip.route.vehicle or not pf_travel_vehicle.valid(trip.vehicle,db.actor) then return end
+            parking=pf_travel_vehicle.landing(trip.vehicle,trip.route,event.progress,false,body.point)
+            if parking then destination,ratio=parking.point,parking.ratio end
+        else destination,ratio=pf_travel_route.near_landing(body.point),event.progress end
+        if destination and (not event.stop_progress or math.abs(ratio-event.stop_progress)<=.000001) then
+            local d=distance(destination,body.point)
+            if d<=event.radius^2 and (not best_distance or d<best_distance-.0001)then
+                best={point=destination,ratio=ratio,body=body,parking=parking};best_distance=d
+            end
+        end
+    end
+    if best then
+        event.stop_body_id=best.body.id
+        local p=best.body.point
+        local request=vector():set(p.x,p.y,p.z)
+        return best.point,best.ratio,request,request,best.parking
+    end
+end
+function impl.event_landing(trip,event)
+    local valid,position,radius,other_position=impl.valid_event(event,true)
+    if not valid then return nil end
+    if event.stop_progress and math.abs(trip.progress-event.stop_progress)>.000001 then return nil end
+    local request=event.stop_request or pf_travel_route.position_at(trip.route,event.progress)
+    if event.kind=="battle" then return impl.battle_landing(trip,event,request,position,other_position) end
+    local enemy=event.kind=="enemy"
+    if enemy and not event.stop_request then
+        if not position then return nil end
+        local dx,dz=request.x-position.x,request.z-position.z
+        local length=math.sqrt(dx*dx+dz*dz)
+        if length<.001 then return nil end
+        local distance=event.enemy_stop_distance
+        request=vector():set(position.x+dx/length*distance,position.y,position.z+dz/length*distance)
+    end
+    local destination,vehicle_landing,ratio
+    if trip.vehicle then
+        if not trip.route.vehicle or not pf_travel_vehicle.valid(trip.vehicle,db.actor) then return nil end
+        vehicle_landing=pf_travel_vehicle.landing(trip.vehicle,trip.route,event.progress,false,enemy and request or nil)
+        if vehicle_landing then
+            ratio=vehicle_landing.ratio
+            if event.stop_progress and math.abs(ratio-event.stop_progress)>.000001 then return nil end
+            destination=vector():set(vehicle_landing.point.x,vehicle_landing.point.y,vehicle_landing.point.z)
+        end
+    else
+        -- Unlike ordinary stop_landing, this search cannot retreat to distant graph nodes.
+        destination=pf_travel_route.landing({position=request,m_level_vertex_id=level.vertex_id(request),id=65535})
+        ratio=event.progress
+    end
+    if destination and not event.scripted then
+        if not position or not radius then return nil end
+        local limit=enemy and event.enemy_max_stop_distance or radius
+        local distance=(destination.x-position.x)^2+(destination.y-position.y)^2+(destination.z-position.z)^2
+        if distance>limit^2 then return nil end
+    end
+    return destination,ratio,request,position,vehicle_landing
+end
+function impl.finish(reason)
+    local trip=state.trip
+    if not trip or trip.finished then return end
+    trip.finished=true
+    if not db.actor or db.actor:id()~=trip.actor_id or not db.actor:alive() then reset();return end
+    local destination,ratio,settlement,request,position,landing
+    if trip.event and (reason=="stop" or reason=="fight") then
+        if trip.event.stop_position then
+            destination,ratio,request,position,landing=impl.event_landing(trip,trip.event)
+            if destination and trip.vehicle then
+                settlement=pf_travel_vehicle.settle(trip.vehicle,landing,trip.route)
+                destination=settlement and vector():set(settlement.x,settlement.y,settlement.z) or nil
+                if settlement then ratio=settlement.ratio end
+            end
+        end
+    elseif trip.vehicle then
+        if not trip.route.vehicle then impl.cleanup();return end
+        landing=pf_travel_vehicle.landing(trip.vehicle,trip.route,
+            reason=="complete" and 1 or trip.progress,reason=="complete")
+        if landing then
+            settlement=pf_travel_vehicle.settle(trip.vehicle,landing,trip.route)
+            if settlement then
+                destination=vector():set(settlement.x,settlement.y,settlement.z);ratio=settlement.ratio
+            end
+        end
+    elseif reason=="complete" then
+        local object=alife():object(trip.id)
+        if object then destination=pf_travel_route.landing(object);ratio=1 end
+    else destination,ratio=pf_travel_route.stop_landing(trip.route,trip.progress) end
+    if not destination then
+        -- A changed/blocked endpoint must never teleport into collision or charge an unmade move.
+        impl.log_event(trip.event,"rejected:"..reason,nil,trip.progress)
+        impl.cleanup()
+        if state.deferred_save then state.flush_at=time_global_async()+200 end
+        impl.message("landing_failed");return
+    end
+    local scene_failed=false
+    if reason=="stop" and trip.event and trip.event.scripted then
+        scene_failed=not pf_travel_scenes.queue(trip.event,landing and landing.point or destination,
+            trip.vehicle and (trip.vehicle.length or 0)*.5 or 0)
+    end
+    local minutes=math.floor(trip.quote.minutes*ratio+.5)
+    if not trip.vehicle then
+        db.actor:set_actor_position(destination)
+        pf_travel_route.apply_wear(db.actor,trip.quote.wear*ratio)
+    end
+    if minutes>0 then level.change_game_time(0,math.floor(minutes/60),minutes%60) end
+    state.result={reason=reason,ratio=ratio,minutes=minutes,wear=trip.quote.wear*ratio,
+        distance=trip.route.total*ratio,x=destination.x,y=destination.y,z=destination.z,
+        event_id=trip.event and trip.event.id,event_kind=trip.event and trip.event.kind,
+        corpse_id=trip.event and trip.event.stop_body_id,
+        enemy_type=trip.event and trip.event.enemy_type,bypass_failed=trip.bypass_failed==true}
+    if trip.event then trip.event.observed_position=position end
+    impl.log_event(trip.event,"finished:"..reason,destination,ratio)
+    if settlement then
+        state.result.vehicle_id=trip.vehicle.id;state.result.fuel=settlement.fuel
+        state.result.fuel_remaining=settlement.fuel_remaining
+    end
+    if level_weathers and level_weathers.get_weather_manager then
+        level_weathers.get_weather_manager():forced_weather_change()
+    end
+    if trip.bypass_failed and trip.event and trip.event.enemy_type=="mutant" then pf_travel_events.alert_mutants(trip.event)
+    elseif trip.event and trip.event.kind=="enemy" and trip.event.enemy_type=="npc"
+        and (reason=="fight" or reason=="stop") then pf_travel_events.alert_npcs(trip.event) end
+    impl.cleanup()
+    lz_nm_core.refresh_actor_menu()
+    impl.message(reason=="complete" and "complete" or (reason=="emission" and "emission_stop"
+        or (reason=="fuel" and "car_empty_stop" or "stopped")))
+    if trip.vehicle and reason=="complete" then
+        local beacon=alife():object(trip.id)
+        if beacon then
+            local p=beacon.position
+            local n=math.floor(math.sqrt((destination.x-p.x)^2+(destination.y-p.y)^2+(destination.z-p.z)^2)+.5)
+            db.actor:give_game_news(game.translate_string("st_tip"),
+                string.format(game.translate_string("pf_travel_car_parked"),n,trip.name),"pf_news_item_received",0,5000)
+        end
+    end
+    if scene_failed then impl.message("scene_unavailable") end
+    if reason=="complete" or (reason=="stop" and not trip.event) or trip.bypass_failed then
+        local kind=reason~="complete" and trip.bypass_failed and "encounter" or "travel"
+        state.result.cooldown_started=pf_travel_cooldown.start(kind)
+    end
+    if state.deferred_save then state.flush_at=time_global_async()+200 end
+end
+function impl.action(action,window)
+    local trip=state.trip
+    if not trip or trip.finish_reason then return end
+    local key=action:match("^ignore:([%w_]+)$")
+    if key then
+        local values=pf_travel_filter.snapshot()
+        local enabled=key=="all" and not window:all_ignored() or (key~="all" and not values[key])
+        if not pf_travel_filter.set_ignored(key,enabled) then impl.message("setting_failed") end
+        local updated=pf_travel_filter.snapshot()
+        window:set_ignored(updated)
+        for name,ignored in pairs(values)do
+            if name~="emission" and ignored and not updated[name] then trip.rescan_events=true;break end
+        end
+        if trip.event and pf_travel_filter.ignores(trip.event) then
+            impl.log_event(trip.event,"ignored",nil,trip.progress)
+            trip.event=nil;trip.index=trip.index+1;window:set_event(nil)
+        end
+        trip.last_real=time_global_async()
+        return
+    end
+    if action=="save" then impl.request_save();return end
+    if action=="stop" or action=="fight" then
+        trip.finish_reason=action
+        return
+    end
+    if not trip.event then return end
+    if action=="bypass" then
+        if trip.event.kind~="enemy" then return end
+        if not impl.valid_event(trip.event,true) then
+            impl.log_event(trip.event,"invalid:bypass",nil,trip.progress)
+            trip.event=nil;trip.index=trip.index+1;trip.last_real=time_global_async()
+            window:set_event(nil)
+            return
+        end
+        if math.random()*100>=trip.event.chance then
+            trip.bypass_failed=true;trip.finish_reason="fight";return
+        end
+        trip.successful_bypasses=trip.successful_bypasses+1
+        impl.message(trip.vehicle and "car_bypass_success" or "bypass_success")
+    end
+    if action=="bypass" or action=="pass" then
+        impl.log_event(trip.event,action,nil,trip.progress)
+        trip.event=nil
+        trip.index=trip.index+1
+        trip.last_real=time_global_async()
+        window:set_event(nil)
+    end
+end
+function impl.safe_action(action,window)
+    local ok,reason=xpcall(function() impl.action(action,window) end,debug.traceback)
+    if not ok then printf("[pf_travel] %s",tostring(reason));reset();impl.message("failed") end
+end
+function impl.event_interval_ok(trip,progress)
+    return not trip.last_event_progress
+        or (progress-trip.last_event_progress)*trip.route.total+.000001>=impl.settings().event_spacing
+end
+function impl.show_event(trip,event)
+    local grace=impl.settings().departure_grace_distance
+    if event.progress*trip.route.total+.000001<grace or not impl.event_interval_ok(trip,event.progress) then return false end
+    local destination,ratio,request,position=impl.event_landing(trip,event)
+    if not destination or ratio*trip.route.total+.000001<grace or not impl.event_interval_ok(trip,ratio) then
+        impl.log_event(event,"unavailable",nil,event.progress);return false
+    end
+    event.stop_position,event.stop_progress,event.stop_request=destination,ratio,request
+    event.observed_position=position
+    trip.progress=ratio
+    trip.last_event_progress=ratio
+    trip.event=event
+    local weight,maximum=pf_travel_route.capacity(db.actor)
+    event.chance=nil
+    if event.kind=="enemy" then
+        local hour=((trip.start_minutes+trip.quote.minutes*trip.progress)%1440)/60
+        if trip.vehicle then event.chance=pf_travel_vehicle.bypass_chance(trip.vehicle,trip.successful_bypasses,event.enemy_type)
+        else event.chance=pf_travel_route.bypass_chance(weight,maximum,pf_travel_route.armor_class(db.actor),
+            trip.successful_bypasses,impl.settings(),event.enemy_type,hour) end
+    end
+    local text_kind=event.kind=="enemy" and event.enemy_type=="mutant" and "mutant" or event.kind
+    impl.progress(trip,trip.progress)
+    trip.window:set_event({kind=event.kind,enemy_type=event.enemy_type,
+        title_id="pf_travel_"..text_kind.."_title",
+        description_id="pf_travel_"..text_kind.."_description",
+        chance=event.chance,progress=event.object_progress})
+    impl.log_event(event,"shown",destination,ratio)
+    return true
+end
+function impl.progress(trip,progress)
+    local weight,maximum=pf_travel_route.capacity(db.actor)
+    local fuel,tank
+    if trip.vehicle then fuel,tank=pf_travel_vehicle.fuel_at(trip.vehicle,trip.route,progress) end
+    trip.window:set_progress(progress,trip.quote.minutes*progress,
+        trip.vehicle and 0 or pf_travel_route.adjusted_wear(db.actor,trip.quote.wear)*100*progress,
+        weight,maximum,fuel,tank)
+end
+function impl.real_seconds(route,vehicle)
+    local settings=impl.settings()
+    local multiplier=1
+    if vehicle then multiplier=settings.vehicle_real_time_multiplier
+    elseif pf_travel_route.anomalous_boots_equipped(db.actor) then
+        multiplier=settings.boots_real_time_multiplier
+    end
+    return route.total/1000*settings.real_seconds_per_km*multiplier
+end
+function impl.start_route(trip)
+    trip.start_minutes=level.get_time_hours()*60+level.get_time_minutes()
+    trip.phase="scanning"
+    trip.rescan_events=nil
+    if pf_travel_filter.encounters_disabled() then
+        trip.scan=nil;trip.events={};trip.index=1;trip.last_real=time_global_async();trip.phase="travelling"
+    else trip.scan=pf_travel_events.begin_scan(db.actor,trip.route,impl.settings(),pf_travel_route.nearest_progress) end
+    local delay=pf_travel_events.emission_delay()
+    if delay then trip.emission_ratio=math.min(1,delay/math.max(1,trip.quote.minutes*60)) end
+end
+function impl.vehicle_step(trip)
+    if time_global_async()-trip.planning_started>impl.settings().vehicle_route_timeout_ms then
+        impl.cleanup();impl.message("no_route");return
+    end
+    local route,error=pf_travel_vehicle.step_route(trip.vehicle)
+    if error then impl.cleanup();impl.message(error);return end
+    if not route then return end
+    trip.route=route;trip.quote=pf_travel_vehicle.quote(route,lz_nm_beacons.get_travel_cost)
+    trip.real_seconds=impl.real_seconds(route,trip.vehicle)
+    trip.window:replace_route(route)
+    trip.window:set_preparing(false)
+    impl.progress(trip,0);impl.start_route(trip)
+end
+function impl.valid_event(event,check_detector)
+    if pf_travel_filter.ignores(event) then return false end
+    if event.scripted then return pf_travel_scenes.valid(event) end
+    return pf_travel_events.valid(event,check_detector)
+end
+function impl.add_scenes(events,route,trip)
+    if pf_travel_filter.ignores({kind="help"}) then return events end
+    local planned=trip and trip.scene_plan or nil
+    if not planned then planned=pf_travel_scenes.plan(route);if trip then trip.scene_plan=planned end end
+    for _,event in ipairs(planned)do
+        local clear=true
+        if trip and trip.scan_from and (event.progress-trip.scan_from)*route.total<-.000001 then clear=false end
+        for _,existing in ipairs(events)do
+            if math.abs(existing.progress-event.progress)*route.total+.000001<impl.settings().event_spacing then clear=false;break end
+        end
+        if clear then events[#events+1]=event end
+    end
+    table.sort(events,function(a,b)return a.progress<b.progress end)
+    return events
+end
+function impl.tick()
+    local trip=state.trip
+    if not trip or trip.phase=="launching" then return end
+    if not db.actor or not db.actor:alive() or db.actor:id()~=trip.actor_id then reset();return end
+    if trip.vehicle and not pf_travel_vehicle.valid(trip.vehicle,db.actor) then reset();impl.message("car_unavailable");return end
+    if trip.finish_reason then impl.finish(trip.finish_reason);return end
+    if trip.pause_owned and (game.active_tutorial_name()~="pf_travel_pause" or not device():is_paused()) then
+        reset();impl.message("failed");return
+    end
+    if trip.window.world_hidden and trip.window:world_hidden() then impl.clear_fade(trip) end
+    local now=time_global_async()
+    if trip.phase=="planning" then impl.vehicle_step(trip);return end
+    if trip.phase=="scanning" then
+        local events=pf_travel_events.scan_step(trip.scan)
+        if events then
+            trip.scan=nil;trip.events=impl.add_scenes(events,trip.route,trip);trip.index=1;trip.scan_from=nil
+            trip.last_real=now;trip.phase="travelling"
+        end
+        return
+    end
+    if trip.window.is_ready and not trip.window:is_ready() then trip.last_real=now;return end
+    if trip.window.settings_open or trip.event then trip.last_real=now;return end
+    if trip.rescan_events then
+        trip.rescan_events=nil
+        local earliest=trip.last_event_progress and trip.last_event_progress+impl.settings().event_spacing/trip.route.total
+        trip.scan_from=math.max(trip.progress,earliest or trip.progress)
+        trip.scan=pf_travel_events.begin_scan(db.actor,trip.route,impl.settings(),pf_travel_route.nearest_progress)
+        trip.scan.minimum_progress=trip.scan_from
+        trip.phase="scanning";trip.last_real=now
+        return
+    end
+    local delta=math.max(0,now-trip.last_real)/1000
+    trip.last_real=now
+    local progress=math.min(1,trip.progress+delta/trip.real_seconds)
+    local stop_ratio,stop_reason=1,"complete"
+    if trip.vehicle and trip.route.fuel_limit<stop_ratio then stop_ratio,stop_reason=trip.route.fuel_limit,"fuel" end
+    local emission_ratio=trip.emission_ratio and math.max(trip.emission_ratio,impl.settings().departure_grace_distance/trip.route.total)
+    if emission_ratio and not pf_travel_filter.ignores({kind="emission"}) and emission_ratio<stop_ratio then
+        stop_ratio,stop_reason=math.max(trip.progress,emission_ratio),"emission"
+    end
+    progress=math.min(progress,stop_ratio)
+    local event=trip.events[trip.index]
+    while event do
+        if impl.valid_event(event) then
+            if progress<event.progress then break end
+            if impl.show_event(trip,event) then progress=trip.progress;break end
+        end
+        trip.index=trip.index+1;event=trip.events[trip.index]
+    end
+    trip.progress=progress
+    if now>=(trip.next_ui or 0) then
+        impl.progress(trip,progress)
+        trip.next_ui=now+33
+    end
+    if not trip.event and progress>=stop_ratio then impl.finish(stop_reason) end
+end
+function impl.safe_tick()
+    local ok,reason=xpcall(impl.tick,debug.traceback)
+    if not ok then
+        printf("[pf_travel] %s",tostring(reason))
+        reset();impl.message("failed")
+    end
+end
+function impl.open(trip)
+    if not db.actor or not db.actor:alive() then reset();return end
+    if device():is_paused() then reset();return end
+    local weight,maximum=pf_travel_route.capacity(db.actor)
+    if not trip.vehicle and weight>=maximum then reset();impl.message("overloaded");return end
+    if db.actor.bleeding>0 then reset();lz_nm_core.message("lz_nm_beacon_bleeding");return end
+    if db.actor.radiation>.10 then reset();lz_nm_core.message("lz_nm_beacon_radiation");return end
+    assert(not game.has_active_tutorial(),"another native sequence is active")
+    -- Use the native sequence pause owner: no god mode, altered time factor, pause label or menu footer.
+    -- The sequence draws nothing and forwards input to the ordinary full-screen dialog.
+    game.start_tutorial("pf_travel_pause")
+    trip.pause_owned=game.active_tutorial_name()=="pf_travel_pause"
+    assert(trip.pause_owned and device():is_paused(),"journey pause unavailable")
+    trip.phase=trip.vehicle and "planning" or "scanning"
+    trip.window=pf_travel_ui.open({points=trip.route.points,segment_lengths=trip.route.segment_lengths,
+        level_name=level.name(),destination_name=trip.name,progress=0,game_minutes=0,wear_percent=0,
+        view_width_m=impl.settings().map_view_width_m,
+        vehicle=trip.vehicle~=nil,ignored_events=pf_travel_filter.snapshot(),weight=weight,capacity=maximum,
+        fuel=trip.vehicle and trip.vehicle.fuel,tank=trip.vehicle and trip.vehicle.tank},impl.safe_action,impl.safe_tick)
+    if trip.vehicle then
+        trip.planning_started=time_global_async();trip.window:set_preparing(true)
+        local object=alife():object(trip.id)
+        local result=object and pf_travel_vehicle.begin_route(trip.vehicle,object)
+        if result~="pending" then
+            impl.cleanup()
+            impl.message(result=="car_engine_off" and result or (result=="no_parking" and "car_no_parking" or "no_route"))
+        end
+    else impl.start_route(trip) end
+end
+function impl.update()
+    local trip=state.trip
+    if trip and trip.phase=="launching" and time_global_async()>=trip.open_at then
+        local ok,reason=xpcall(function() impl.open(trip) end,debug.traceback)
+        if not ok then printf("[pf_travel] %s",tostring(reason));reset();impl.message("failed") end
+    end
+    if not state.trip and db.actor and db.actor:alive() and not device():is_paused() then
+        pf_travel_scenes.update();pf_travel_events.update_alerts()
+    end
+    if state.deferred_save and not state.trip and not state.flush_at then state.flush_at=time_global_async()+200 end
+    if state.flush_at and time_global_async()>=state.flush_at and not state.trip and not pf_travel_scenes.busy()
+        and not pf_travel_events.alerts_pending()
+        and db.actor and db.actor:alive() then
+        state.flush_at,state.deferred_save=nil,nil
+        -- This callback already runs after leaving the UI and restoring the world.
+        -- The native save command queues M_SAVE_GAME itself.
+        get_console():execute("save")
+    end
+end
+function impl.safe_update()
+    local ok,reason=xpcall(impl.update,debug.traceback)
+    if not ok then printf("[pf_travel] %s",tostring(reason));reset();impl.message("failed") end
+end
+
+function begin(id)
+    if state.trip or not db.actor or not db.actor:alive() or impl.overloaded() then return false end
+    if pf_travel_cooldown.blocked() then return false end
+    -- Disabled mode is the original player-only handler, including its normal vehicle exit.
+    if not is_enabled() then return state.legacy_travel(id) end
+    if pf_travel_scenes.busy() then impl.message("busy");return false end
+    local vehicle,vehicle_error=pf_travel_vehicle.context(db.actor)
+    if vehicle_error then impl.message(vehicle_error);return false end
+    if db.actor.bleeding>0 then lz_nm_core.message("lz_nm_beacon_bleeding");return false end
+    if db.actor.radiation>.10 then lz_nm_core.message("lz_nm_beacon_radiation");return false end
+    local selected
+    for _,beacon in ipairs(lz_nm_beacons.get_beacons()) do if beacon.id==tonumber(id) then selected=beacon;break end end
+    local object=selected and alife():object(selected.id)
+    if not object then lz_nm_core.message("lz_nm_beacon_destroyed");return false end
+    if not selected.same_level then impl.message("no_route");return false end
+    if not getFS():exist("$game_scripts$","pf_squad_route.script") then impl.message("no_route");return false end
+    if not state.pause_checked then
+        local xml=CScriptXmlInit();xml:ParseFile("game_tutorials.xml")
+        if not xml:NodeExist("pf_travel_pause:global_wnd",0) or not xml:NodeExist("pf_travel_pause:item",0) then
+            printf("[pf_travel] native pause XML override is unavailable")
+            impl.message("failed");return false
+        end
+        state.pause_checked=true
+    end
+    local quote=pf_travel_route.quote(db.actor,object,lz_nm_beacons.get_travel_cost)
+    if quote.distance<1 then lz_nm_core.message("lz_nm_beacon_too_close");return false end
+    if device():is_paused() then return false end
+    if game.has_active_tutorial() then impl.message("busy");return false end
+    local delay=pf_travel_events.emission_delay()
+    if delay==0 and not pf_travel_filter.ignores({kind="emission"}) then impl.message("emission_active");return false end
+    local route
+    local ok,reason=pcall(function()
+        if vehicle then
+            local p=db.actor:position();local q=object.position
+            route={points={{x=p.x,y=p.y,z=p.z},{x=q.x,y=q.y,z=q.z}},segment_lengths={quote.distance},total=quote.distance}
+        else
+            assert(pf_travel_route.landing(object),"no safe landing at beacon")
+            route=pf_travel_route.build(db.actor,object,pf_squad_route)
+        end
+    end)
+    if not ok then printf("[pf_travel] %s",tostring(reason));impl.message("no_route");return false end
+    xr_effects.scenario_autosave(db.actor,nil,{"st_save_lz_before_beacon_travel"})
+    get_hud():HidePdaMenu()
+    state.trip={phase="launching",id=selected.id,name=lz_nm_beacons.beacon_name_for_utf8(selected.name),
+        vehicle=vehicle,
+        actor_id=db.actor:id(),route=route,quote=quote,progress=0,successful_bypasses=0,
+        real_seconds=impl.real_seconds(route,vehicle),open_at=time_global_async()+700}
+    local faded,why=pcall(function()
+        if ixray_fadefx and ixray_fadefx.travel_effect then ixray_fadefx.travel_effect()
+        else level.add_complex_effector("fade_in_out",105183) end
+    end)
+    state.trip.fade_owned=faded
+    if not faded then printf("[pf_travel] launch fade: %s",tostring(why)) end
+    return true
+end
+function impl.install()
+    pf_travel_cooldown.configure(impl.settings().beacon_cooldown_minutes,impl.settings().encounter_cooldown_minutes)
+    lz_nm_beacons.pf_travel_confirmation_text=pf_travel_cooldown.confirmation_text
+    local message=lz_nm_core.message
+    lz_nm_core.message=function(id,...)
+        local result=message(id,...)
+        -- The legacy handler reports this only after a successful transfer/time charge.
+        if id=="lz_nm_beacon_travel_complete" then pf_travel_cooldown.start() end
+        return result
+    end
+    pf_travel_vehicle.configure(impl.settings(),{position_at=pf_travel_route.position_at})
+    pf_travel_scenes.configure(impl.settings(),{
+        stop_point=function(route,ratio)return pf_travel_route.stop_landing(route,ratio)end,
+        npc_spot=function(point,anchor)return pf_travel_route.npc_landing(point,anchor,pf_squad_route)end})
+    local prepare=pf_pa_help.prepare
+    pf_pa_help.prepare=function(npc,...)
+        if pf_travel_scenes.is_trap(npc) then return nil end
+        return prepare(npc,...)
+    end
+    local give=pf_pa_help.give_medkit
+    pf_pa_help.give_medkit=function(first,second,...)
+        local proof=pf_travel_scenes.before_medkit(first,second)
+        if proof and proof.trap then
+            if not pf_pa_help.can_help(first,second) then return false end
+            dialogs.transfer_medkit(db.actor,proof.npc)
+            xr_logic.pstor_store(proof.npc,"pf_pa_medkit_treated",true)
+            return pf_travel_scenes.medkit_finished(proof)
+        end
+        local result=give(first,second,...)
+        pf_travel_scenes.medkit_finished(proof)
+        return result
+    end
+    local answer=pf_pa_help.answer_text
+    pf_pa_help.answer_text=function(npc,...)
+        local key=pf_travel_scenes.reply_key(npc)
+        if key then return game.translate_string(key) end
+        return answer(npc,...)
+    end
+    state.legacy_travel=lz_nm_beacons.travel_to_beacon
+    state.legacy_map=lz_nm_beacons.map_spot_menu_property_clicked
+    lz_nm_beacons.travel_to_beacon=begin
+    lz_nm_beacons.map_spot_menu_property_clicked=function(ui,id,level_name,property)
+        if property~=game.translate_string("lz_nm_beacon_travel_action") then
+            return state.legacy_map(ui,id,level_name,property)
+        end
+        if impl.overloaded() then return false end
+        if pf_travel_cooldown.blocked() then return false end
+        if not is_enabled() then return state.legacy_map(ui,id,level_name,property) end
+        return begin(id)
+    end
+    local owner=bind_stalker.actor_binder
+    local old_destroy=owner.net_destroy
+    owner.net_destroy=function(self,...)
+        reset()
+        if old_destroy then return old_destroy(self,...) end
+    end
+end
+function on_game_start()
+    if state.registered then return end
+    impl.install()
+    RegisterScriptCallback("update",impl.safe_update)
+    RegisterScriptCallback("load",reset)
+    state.registered=true
+end
+on_game_start()

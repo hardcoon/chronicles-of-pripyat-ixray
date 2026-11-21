@@ -1,0 +1,146 @@
+-- Automotive adapter. The facade supplies shared route helpers; no sibling dependencies.
+local state={}
+local impl={defaults={light={fuel=.2,chance=90},offroad={fuel=.3,chance=70},
+    heavy={fuel=.6,chance=50},armored={fuel=1,chance=100}}}
+
+function configure(settings,api) state.settings,state.api=settings,api end
+function impl.object(context,actor)
+    if not context or not actor or not actor:IsInCar() then return end
+    local object=actor:get_attached_vehicle()
+    if object and object:id()==context.id and object:name()==context.name and object:section()==context.section then
+        return object,object:get_car()
+    end
+end
+function context(actor)
+    if not actor or not actor:IsInCar() then return end
+    local object=actor:get_attached_vehicle()
+    local car=object and object:get_car()
+    if not car or car:GetfHealth()<=0 then return nil,"car_unavailable" end
+    local ok,supported=pcall(function()
+        return type(car.travel_route_begin)=="function" and type(car.travel_move)=="function"
+    end)
+    if not ok or not supported then return nil,"car_unsupported" end
+    if not car.engine_running then return nil,"car_engine_off" end
+    if car:CurrentVel():magnitude()>.5 then return nil,"car_moving" end
+    if not car:fuel_system_enabled() then return nil,"car_unsupported" end
+    if car.fuel<=.000001 then return nil,"car_empty" end
+    if not state.classes then
+        state.classes={}
+        local ini=ini_file("pf_travel_vehicles.ltx")
+        for class in pairs(impl.defaults)do
+            if ini:section_exist(class) then
+                for i=0,ini:line_count(class)-1 do
+                    local _,section=ini:r_line(class,i,"","")
+                    state.classes[section]=class
+                end
+            end
+        end
+    end
+    local class=state.classes[object:section()]
+    if not class then return nil,"car_unsupported" end
+    local p=object:position()
+    local ini=ini_file("pf_travel_vehicles.ltx")
+    local rate=ini:line_exist("fuel_per_km",class) and ini:r_float("fuel_per_km",class) or impl.defaults[class].fuel
+    local chance=ini:line_exist("bypass",class) and ini:r_float("bypass",class) or impl.defaults[class].chance
+    if rate~=rate or rate<=0 or rate>20 then rate=impl.defaults[class].fuel end
+    if chance~=chance then chance=impl.defaults[class].chance end
+    return {id=object:id(),name=object:name(),section=object:section(),class=class,
+        rate=rate,base_chance=math.max(0,math.min(100,chance)),fuel=car.fuel,tank=car.fuel_tank,
+        start={x=p.x,y=p.y,z=p.z}}
+end
+function valid(context,actor) return impl.object(context,actor)~=nil end
+function cancel(context)
+    local _,car=impl.object(context,db.actor)
+    if car then car:travel_route_cancel() end
+end
+function begin_route(context,target)
+    local object,car=impl.object(context,db.actor)
+    if not car then return "car_unavailable" end
+    if not car.engine_running then return "car_engine_off" end
+    local p=object:position();context.start={x=p.x,y=p.y,z=p.z}
+    local result=car:travel_route_begin(target.position,state.settings.vehicle_parking_radius)
+    printf("[pf_travel] vehicle route begin car=%s class=%s status=%s detail=%s",tostring(context.id),context.class,tostring(result.status),tostring(result.detail))
+    return result.status,result.detail
+end
+function step_route(context)
+    local _,car=impl.object(context,db.actor)
+    if not car then return nil,"car_unavailable" end
+    local result=car:travel_route_step()
+    if result.status=="pending" then return nil,nil,result end
+    printf("[pf_travel] vehicle route end car=%s status=%s detail=%s expanded=%s",tostring(context.id),tostring(result.status),tostring(result.detail),tostring(result.expanded))
+    if result.status~="ready" then return nil,result.status=="no_parking" and "car_no_parking" or "no_route",result.detail end
+    local points=result.points
+    context.width,context.length=result.width,result.length
+    if #points<1 then return nil,"no_route" end
+    local first=points[1]
+    local start={x=context.start.x,y=first.y,z=context.start.z}
+    local distance=math.sqrt((first.x-start.x)^2+(first.z-start.z)^2)
+    if distance>.05 then table.insert(points,1,start) end
+    if #points<2 then return nil,"car_too_close" end
+    local route={points=points,total=0,segment_lengths={},vehicle=true}
+    for i=2,#points do
+        local a,b=points[i-1],points[i]
+        local d=math.sqrt((b.x-a.x)^2+(b.y-a.y)^2+(b.z-a.z)^2)
+        route.segment_lengths[i-1]=d;route.total=route.total+d
+    end
+    if route.total<1 then return nil,"car_too_close" end
+    context.fuel=math.max(0,car.fuel);context.tank=car.fuel_tank
+    if context.fuel<=.000001 then return nil,"car_empty" end
+    route.fuel_limit=math.min(1,context.fuel/(route.total/1000*context.rate))
+    return route
+end
+function bypass_chance(context,successes,enemy_type)
+    if context.class=="armored" then return 100 end
+    local base=context.base_chance
+    if enemy_type=="mutant" then
+        local class=context.class=="offroad" and "medium" or context.class
+        base=state.settings["bypass_mutant_"..class.."_max"] or ({light=90,medium=75,heavy=60})[class] or base
+    end
+    return math.floor(math.max(state.settings.bypass_min,
+        base-state.settings.bypass_success_penalty*math.max(0,successes or 0))+.5)
+end
+function quote(route,cost)
+    local hours=cost(route.total)
+    return {distance=route.total,minutes=hours*60*state.settings.vehicle_game_time_multiplier,wear=0}
+end
+function landing(context,route,progress,complete,target)
+    local _,car=impl.object(context,db.actor)
+    if not car then return end
+    local requested=math.max(0,math.min(1,progress))
+    requested=math.min(requested,math.max(0,car.fuel)/(route.total/1000*context.rate))
+    if requested<=.000001 then return {point=context.start,ratio=0,stay=true} end
+    local point,index=state.api.position_at(route,requested)
+    local a,b=route.points[index],route.points[index+1]
+    -- X-Ray setHPB uses k.x=-sin(heading), so forward +X is negative heading.
+    local yaw=-math.atan2(b.x-a.x,b.z-a.z)
+    if target then point=target end
+    local best,best_distance
+    -- The actual spawn may shift off the virtual line, never sideways or backwards.
+    for _,offset in ipairs({0,math.pi/12,-math.pi/12,math.pi/6,-math.pi/6})do
+        local angle=yaw+offset
+        local probe=car:travel_probe(point,angle)
+        if probe then
+            local floor=probe.floor or point
+            local x,y,z=floor.x,floor.y,floor.z
+            local distance=(x-point.x)^2+(y-point.y)^2+(z-point.z)^2
+            if not best_distance or distance<best_distance-.0001 then
+                best={point=vector():set(x,y,z),yaw=angle,ratio=requested};best_distance=distance
+            end
+            if best_distance<.0001 then break end
+        end
+    end
+    return best
+end
+function settle(context,landing,route)
+    local object,car=impl.object(context,db.actor)
+    if not object then return end
+    local used=route.total*landing.ratio/1000*context.rate
+    if used>math.max(0,car.fuel)+.000001 then return end
+    if not landing.stay and not car:travel_move(landing.point,landing.yaw) then return end
+    car.fuel=math.max(0,car.fuel-used)
+    local p=object:position()
+    return {fuel=used,fuel_remaining=car.fuel,x=p.x,y=p.y,z=p.z,ratio=landing.ratio}
+end
+function fuel_at(context,route,progress)
+    return math.max(0,context.fuel-route.total*progress/1000*context.rate),context.tank
+end

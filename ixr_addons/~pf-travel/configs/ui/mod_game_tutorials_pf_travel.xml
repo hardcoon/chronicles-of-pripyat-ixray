@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<window override="add">
+    <!-- Invisible native pause owner; input is forwarded to the journey dialog. -->
+    <pf_travel_pause>
+        <global_wnd x="0" y="0" width="1024" height="768">
+            <pause_state>on</pause_state>
+            <function_on_stop>pf_travel.pause_stopped</function_on_stop>
+        </global_wnd>
+        <item>
+            <disabled_key>pause</disabled_key>
+            <length_sec>1000000000</length_sec>
+            <grab_input>off</grab_input>
+            <main_wnd x="0" y="0" width="0" height="0"/>
+        </item>
+    </pf_travel_pause>
+</window>

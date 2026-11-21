@@ -32,6 +32,7 @@ function se_actor:STATE_Write(packet)
 	packet:w_bool(self.start_position_filled)
 --	story_objects.get_story_objects_registry():save(packet)
 	set_save_marker(packet, "save", true, "se_actor")
+	pf_on_the_edge.capture_actor_packet(self, packet)
 end
 --------------------
 function se_actor:STATE_Read(packet, size)

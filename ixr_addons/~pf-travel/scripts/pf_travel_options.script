@@ -1,0 +1,21 @@
+-- Extend Mod Options and use its existing client-preference Apply/Cancel flow.
+local installed=false
+function install(api)
+    if installed then return end
+    local mod=ui_mm_opt_mod.opt_mod
+    local init=mod.InitControls
+    function mod:InitControls(...)
+        init(self,...)
+        local xml=CScriptXmlInit();xml:ParseFile("pf_travel_options.xml")
+        local row=xml:InitStatic("row",nil)
+        self.pf_travel_row=row
+        xml:InitStatic("row:caption",row)
+        self.pf_travel_check=xml:InitCheck("row:check",row)
+        self.pf_travel_check:SetCheck(api.is_enabled())
+        self.scroll_v:AddWindow(row,true)
+        row:SetAutoDelete(false)
+        self.preferences[#self.preferences+1]={control=self.pf_travel_check,
+            get=api.is_enabled,set=api.set_enabled}
+    end
+    installed=true
+end

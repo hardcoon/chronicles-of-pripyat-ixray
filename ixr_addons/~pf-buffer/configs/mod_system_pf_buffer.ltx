@@ -1,0 +1,58 @@
+; A separate reward item. Existing artefacts and their visuals stay independent.
+[pf_buffer]:af_compass
+$spawn = "artefacts\pf_buffer"
+visual = pf_buffer\buffer.ogf
+inv_name = pf_buffer_name
+inv_name_short = pf_buffer_name
+description = pf_buffer_descr
+icons_texture = ui\pf_buffer
+inv_grid_x = 0
+inv_grid_y = 0
+inv_grid_width = 1
+inv_grid_height = 1
+inv_weight = 0.5
+; Hermann buys at 60%: floor(273067 * 0.60) = 163840.
+cost = 273067
+can_trade = true
+quest_item = false
+pf_spawn_hidden = true
+af_rank = 0
+use_condition = false
+degrade_rate = 0
+script_binding = pf_buffer_binder.bind_item
+use1_text = pf_buffer_open
+use1_functor = pf_buffer.open
+particles = artefact\af_electra_idle
+trail_light_color = 0.25, 0.50, 1.0
+trail_light_range = 0.6
+health_restore_speed = 0.0003
+radiation_restore_speed = 0
+satiety_restore_speed = 0
+thirst_restore_speed = 0
+power_restore_speed = 0
+bleeding_restore_speed = 0
+additional_inventory_weight = 0
+additional_inventory_weight2 = 0
+hit_absorbation_sect = pf_buffer_absorbation
+
+; Meso benchmarks: Spirit II health, Grandma II psi, Pudding II heat.
+[pf_buffer_absorbation]
+burn_immunity = 0.035
+strike_immunity = 0
+shock_immunity = 0
+wound_immunity = 0
+radiation_immunity = 0
+telepatic_immunity = 0.01
+chemical_burn_immunity = 0
+explosion_immunity = 0
+fire_wound_immunity = 0
+
+[pf_buffer_store]:inventory_box
+inv_name = pf_buffer_name
+script_binding = pf_buffer_binder.bind_store
+capacity = 30
+pf_spawn_hidden = true
+
+![inventory_sort_registry]
+pf_buffer = artefacts
+pf_buffer_store = technical

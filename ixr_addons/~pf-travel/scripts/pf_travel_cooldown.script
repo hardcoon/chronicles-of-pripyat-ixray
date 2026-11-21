@@ -1,0 +1,60 @@
+-- Character save data, scoped to one engine process. A fresh launch clears old fatigue.
+local impl={key="pf_travel_cooldown_v1",durations={travel=1800,encounter=600}}
+function configure(minutes,encounter_minutes)
+    impl.durations.travel=math.max(0,tonumber(minutes)or 30)*60
+    impl.durations.encounter=math.max(0,tonumber(encounter_minutes)or 10)*60
+end
+function impl.seconds()return game.get_game_time():diffSec(level.get_start_time())end
+function remaining()
+    if not db.actor then return 0 end
+    local raw=xr_logic.pstor_retrieve(db.actor,impl.key,"")
+    if raw=="" then return 0 end
+    local session,kind,finish=tostring(raw):match("^2|([^|]+)|([%a_]+)|([%d%.]+)$")
+    if not session then
+        session,finish=tostring(raw):match("^1|([^|]+)|([%d%.]+)$")
+        kind="travel"
+    end
+    if kind=="mutant" then kind="encounter" end
+    local duration=impl.durations[kind]or 0
+    local now=impl.seconds()
+    local value=(tonumber(finish)or 0)-now
+    if duration<=0 or session~=game.get_application_session()or value~=value or value<=0 or value>duration+1 then
+        xr_logic.pstor_store(db.actor,impl.key,"");return 0
+    end
+    return value,kind
+end
+function impl.breath_notice(value)
+    return string.format(game.translate_string("pf_travel_cooldown_dialog"),math.ceil(value/60))
+end
+function notice()
+    local value,kind=remaining()
+    if value<=0 then return nil end
+    if kind=="encounter" then return impl.breath_notice(value) end
+    return string.format(game.translate_string("pf_travel_cooldown_blocked"),math.ceil(value/60))
+end
+function confirmation_text(text)
+    local value=remaining()
+    if value>0 then
+        return impl.breath_notice(value),"message_box_ok"
+    end
+    return text,"message_box_yes_no"
+end
+function impl.message(text)
+    xr_sound.set_sound_play(db.actor:id(),"pda_tips")
+    db.actor:give_game_news(game.translate_string("st_tip"),text,"pf_actor_thought_icon",0,7000,0)
+end
+function blocked()
+    local message=notice()
+    if not message then return false end
+    impl.message(message)
+    return true
+end
+function start(kind)
+    kind=kind or "travel"
+    if kind=="mutant" then kind="encounter" end
+    local duration=impl.durations[kind]or 0
+    if not db.actor or duration<=0 then return false end
+    xr_logic.pstor_store(db.actor,impl.key,string.format("2|%s|%s|%.3f",game.get_application_session(),kind,impl.seconds()+duration))
+    impl.message(kind=="encounter" and impl.breath_notice(duration) or game.translate_string("pf_travel_cooldown_started"))
+    return true
+end

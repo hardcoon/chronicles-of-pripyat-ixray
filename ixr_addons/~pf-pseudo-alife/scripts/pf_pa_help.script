@@ -7,7 +7,8 @@ function impl.npc(first, second)
         local kind = type(object)
         if kind == "userdata" or kind == "table" then
             local section = object:section()
-            if section:match("^pf_pa_s_[a-z]*_?%d+$") or section:match("^pf_irc_npc_") then return object end
+            if section:match("^pf_pa_s_[a-z]*_?%d+$") or section:match("^pf_irc_npc_")
+                or (db.storage[object:id()] and xr_logic.pstor_retrieve(object,"pf_pa_help_enabled",false)==true) then return object end
         end
     end
 end
