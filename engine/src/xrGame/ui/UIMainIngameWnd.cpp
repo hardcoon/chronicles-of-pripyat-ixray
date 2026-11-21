@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "UIMainIngameWnd.h"
+#include "UIHudIconVisibility.h"
 #include "UIMessagesWindow.h"
 #include "UIZoneMap.h"
 
@@ -349,6 +350,44 @@ void CUIMainIngameWnd::Init()
 		m_QuickSlotText4				= UIHelper::CreateTextWnd(uiXml, "quick_slot3_text", this);
 
 	HUD_SOUND_ITEM::LoadSound				("maingame_ui", "snd_new_contact", m_contactSnd, SOUND_TYPE_IDLE);
+    InitDynamicHudIcons();
+}
+
+// COP_ENGINE_PATCH: COP-ENG-231 - capture authored positions once, never accumulate offsets.
+void CUIMainIngameWnd::InitDynamicHudIcons()
+{
+    m_dynamicHudIcons.clear();
+    m_dynamicHudIconShift = 0.0f;
+    if (!m_ui_hud_states->DynamicHudAvailable())
+        return;
+
+    CUIWindow* icons[] = {m_ind_boost_psy, m_ind_boost_radia, m_ind_boost_chem,
+        m_ind_boost_wound, m_ind_boost_weight, m_ind_boost_health, m_ind_boost_power,
+        m_ind_boost_rad, m_ind_bleeding, m_ind_radiation, m_ind_starvation,
+        m_ind_thirst, m_ind_sleepiness, m_ind_overweight, m_ind_weapon_broken,
+        m_ind_outfit_broken, m_ind_helmet_broken, UIStackPanelBoosters, UIStackPanelIndicators};
+    float bottom = 0.0f;
+    for (CUIWindow* icon : icons)
+    {
+        if (!icon || icon->GetParent() != this)
+            continue;
+        const Fvector2 position = icon->GetWndPos();
+        if (position.x < 0.0f || position.x >= UI_BASE_WIDTH * 0.5f || position.y < UI_BASE_HEIGHT * 0.5f)
+            continue;
+        m_dynamicHudIcons.push_back({icon, position});
+        bottom = _max(bottom, position.y + icon->GetHeight());
+        for (CUIWindow* child : icon->GetChildWndList())
+            bottom = _max(bottom, position.y + child->GetWndPos().y + child->GetHeight());
+    }
+    if (!m_dynamicHudIcons.empty())
+        m_dynamicHudIconShift = _max(0.0f, UI_BASE_HEIGHT - m_ui_hud_states->DynamicIconMargin() - bottom);
+}
+
+void CUIMainIngameWnd::UpdateDynamicHudIcons()
+{
+    const float offset = m_dynamicHudIconShift * (1.0f - m_ui_hud_states->DynamicHealthOpacity());
+    for (const auto& icon : m_dynamicHudIcons)
+        icon.window->SetWndPos(Fvector2().set(icon.position.x, icon.position.y + offset));
 }
 
 float UIStaticDiskIO_start_time = 0.0f;
@@ -400,7 +439,18 @@ void CUIMainIngameWnd::Draw()
 
 	bool tmp = UIMotionIcon->IsShown();
 	UIMotionIcon->Show(false);
-	CUIWindow::Draw();
+    {
+        // COP_ENGINE_PATCH: COP-ENG-233 - masks survive neither the frame nor inventory rendering.
+        CUIWindow* states[] = {m_ind_bleeding, m_ind_radiation, m_ind_starvation,
+            m_ind_thirst, m_ind_sleepiness, m_ind_overweight, m_ind_weapon_broken,
+            m_ind_outfit_broken, m_ind_helmet_broken, UIStackPanelIndicators};
+        CUIWindow* effects[] = {m_ind_boost_psy, m_ind_boost_radia, m_ind_boost_chem,
+            m_ind_boost_wound, m_ind_boost_weight, m_ind_boost_health,
+            m_ind_boost_power, m_ind_boost_rad, UIStackPanelBoosters};
+        const CHudIconVisibility stateVisibility(states, m_ui_hud_states->HudStatesVisible());
+        const CHudIconVisibility effectVisibility(effects, m_ui_hud_states->HudEffectsVisible());
+        CUIWindow::Draw();
+    }
 	UIMotionIcon->Show(tmp);
 
 	RenderQuickInfos();		
@@ -439,6 +489,7 @@ void CUIMainIngameWnd::SetMPChatLog(CUIWindow* pChat, CUIWindow* pLog){
 void CUIMainIngameWnd::Update()
 {
 	CUIWindow::Update();
+    UpdateDynamicHudIcons();
 	CActor* pActor = Level().CurrentViewEntity() ? Level().CurrentViewEntity()->cast_actor() : nullptr;
 
 	if (m_pMPChatWnd)
@@ -1148,6 +1199,26 @@ void CUIMainIngameWnd::DrawMainIndicatorsForInventory()
 	if (m_QuickSlotText4)
 		m_QuickSlotText4->Draw();
 
+	if (m_ui_hud_states->HudEffectsVisible() || m_ui_hud_states->HudEffectsInventoryOnly())
+		DrawBoosterIndicators();
+
+	m_ui_hud_states->DrawZoneIndicators();
+}
+
+// COP_ENGINE_PATCH: COP-ENG-233 - render effects above inventory, excluding trade/loot/upgrade menus.
+void CUIMainIngameWnd::DrawInventoryBoosterIndicators()
+{
+    if (m_ui_hud_states->HudEffectsInventoryOnly())
+        DrawBoosterIndicators();
+}
+
+void CUIMainIngameWnd::DrawBoosterIndicators()
+{
+    CActor* actor = Level().CurrentViewEntity() ? Level().CurrentViewEntity()->cast_actor() : nullptr;
+    if (!actor)
+        return;
+    UpdateBoosterIndicators(actor->conditions().GetCurBoosterInfluences());
+    UpdateDynamicHudIcons();
 	if(m_ind_boost_psy && m_ind_boost_psy->IsShown())
 	{
 		m_ind_boost_psy->Update();
@@ -1196,7 +1267,6 @@ void CUIMainIngameWnd::DrawMainIndicatorsForInventory()
 		m_ind_boost_rad->Draw();
 	}
 
-	m_ui_hud_states->DrawZoneIndicators();
 }
 
 void CUIMainIngameWnd::UpdateBoosterIndicators(const xr_map<EBoostParams, SBooster> influences)

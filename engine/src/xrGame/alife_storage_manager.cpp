@@ -21,6 +21,8 @@
 #include "saved_game_wrapper.h"
 #include "../xrEngine/IGame_Persistent.h"
 #include "autosave_manager.h"
+#include "save_format239.h"
+#include "save_pair_transaction.h"
 #include "../xrEngine/string_table.h"
 
 XRCORE_API string_path g_bug_report_file;
@@ -35,85 +37,63 @@ CALifeStorageManager::~CALifeStorageManager()
 
 void CALifeStorageManager::save(LPCSTR save_name_no_check, bool update_name)
 {
-	LPCSTR game_saves_path		= FS.get_path("$game_saves$")->m_Path;
+    // COP_ENGINE_PATCH: COP-ENG-239 - stage the complete pair before replacing a save.
+    m_last_save_succeeded = false;
+    LPCSTR game_saves_path = FS.get_path("$game_saves$")->m_Path;
+    string_path save_name, previous_name;
+    strncpy_s(save_name, sizeof(save_name), save_name_no_check, sizeof(save_name)-5-xr_strlen(IXRAY_DEF_SAVE_EXTENSION)-xr_strlen(game_saves_path));
+    xr_strcpy(previous_name, m_save_name);
+    if (save_name[0]) xr_strconcat(m_save_name, save_name, IXRAY_DEF_SAVE_EXTENSION);
+    if (!m_save_name[0]) { Msg("! [SAVE239] No save name"); return; }
 
-	string_path					save_name;
-	strncpy_s					(save_name, sizeof(save_name), save_name_no_check, sizeof(save_name)-5-xr_strlen(IXRAY_DEF_SAVE_EXTENSION)-xr_strlen(game_saves_path));
+    string_path full_name;
+    FS.update_path(full_name, "$game_saves$", m_save_name);
+    const save_pair239::Paths paths(full_name);
+    const auto fail = [&](LPCSTR reason)
+    {
+        Msg("! [SAVE239] Save cancelled: %s; previous save preserved [%s]", reason, m_save_name);
+        xr_strcpy(m_save_name, previous_name);
+        FS.rescan_path(game_saves_path, TRUE);
+    };
+    if (!save_pair239::prepare(paths)) { fail("could not prepare save transaction"); return; }
 
-	xr_strcpy(g_last_saved_game, save_name);
+    // An old Lua module cannot accidentally overwrite the final sidecar: it has
+    // no stage_save entry point, so a mixed installation fails before any write.
+    luabind::functor<bool> stage_state;
+    if (!ai().script_engine().functor("alife_storage_manager.CALifeStorageManager_stage_save", stage_state))
+    { fail("save scripts do not support transactional staging"); return; }
+    if (!stage_state((LPCSTR)m_save_name)) { fail("could not stage custom save state"); return; }
 
-	string_path					saveBackup;
-	xr_strcpy					(saveBackup,m_save_name);
-	if (save_name[0])
-	{
-		xr_strconcat(m_save_name, save_name, IXRAY_DEF_SAVE_EXTENSION);
-	}
-	else
-	{
-		if (!xr_strlen(m_save_name))
-		{
-			Log("There is no file name specified!");
-			return;
-		}
-	}
+    CMemoryWriter stream;
+    header().save(stream);
+    time_manager().save(stream);
+    spawns().save(stream);
+    if (!objects().save(stream)) { fail("an object exceeds save capacity"); return; }
+    registry().save(stream);
+    // Retain the original second state capture after server-object serialization.
+    if (!stage_state((LPCSTR)m_save_name)) { fail("could not finalize custom save state"); return; }
 
-	// To get the savegame fname to make our own custom save state
-	luabind::functor<void> funct1;
-	if (ai().script_engine().functor("alife_storage_manager.CALifeStorageManager_before_save", funct1))
-	{
-		funct1((LPCSTR)m_save_name);
-	}
+    const u32 source_count = stream.tell();
+    const u32 dest_capacity = rtc_csize(source_count);
+    void* dest_data = xr_malloc(dest_capacity);
+    const u32 dest_count = (u32)rtc_compress(dest_data, dest_capacity, stream.pointer(), source_count);
+    if (!dest_count || dest_count > dest_capacity)
+    { xr_free(dest_data); fail("save compression failed"); return; }
+    const uint32_t file_header[3] = { save_format239::extended_magic, ALIFE_VERSION, source_count };
+    const bool written = save_pair239::Files::write_save(paths.staged_main, file_header, dest_data, dest_count);
+    xr_free(dest_data);
+    if (!written) { fail("could not write complete staged save"); return; }
 
-	u32 source_count;
-	u32 dest_count;
-	void* dest_data;
-	{
-		CMemoryWriter stream;
-		header().save(stream);
-		time_manager().save(stream);
-		spawns().save(stream);
-		objects().save(stream);
-		registry().save(stream);
-
-		source_count = stream.tell();
-		void* source_data = stream.pointer();
-		dest_count = rtc_csize(source_count);
-		dest_data = xr_malloc(dest_count);
-		dest_count = (u32)rtc_compress(dest_data, dest_count, source_data, source_count);
-	}
-
-	string_path temp;
-	FS.update_path(temp, "$game_saves$", m_save_name);
-	IWriter* writer = FS.w_open(temp);
-	writer->w_u32(u32(-1));
-	writer->w_u32(ALIFE_VERSION);
-
-	writer->w_u32(source_count);
-	writer->w(dest_data, dest_count);
-	xr_free(dest_data);
-	FS.w_close(writer);
-#ifdef DEBUG
-	Msg("* Game %s is successfully saved to file '%s' (%d bytes compressed to %d)", m_save_name, temp, source_count, dest_count + 4);
-#else // DEBUG
-	Msg("* Game %s is successfully saved to file '%s'", m_save_name, temp);
-#endif // DEBUG
-
-	// To get the savegame fname to make our own custom save states
-	luabind::functor<void> funct2;
-	if (ai().script_engine().functor("alife_storage_manager.CALifeStorageManager_before_save", funct2))
-	{
-		funct2((LPCSTR)m_save_name);
-	}
-
-	// To get the savegame fname to make our own custom save states
-	luabind::functor<void> funct3;
-	if (ai().script_engine().functor("alife_storage_manager.CALifeStorageManager_after_save", funct3))
-	{
-		funct3((LPCSTR)m_save_name);
-	}
-
-	if (!update_name)
-		xr_strcpy					(m_save_name,saveBackup);
+    if (!save_pair239::commit(paths, save_pair239::Files::exists(paths.staged_data)))
+    { fail("could not commit save pair"); return; }
+    FS.rescan_path(game_saves_path, TRUE);
+    m_last_save_succeeded = true;
+    xr_strcpy(g_last_saved_game, save_name);
+    Msg("* Game %s is successfully saved to file '%s' [SAVE239 capacity=%u]", m_save_name, full_name, NET_PacketSizeLimit - 1);
+    luabind::functor<void> after_save;
+    if (ai().script_engine().functor("alife_storage_manager.CALifeStorageManager_after_save", after_save))
+        after_save((LPCSTR)m_save_name);
+    if (!update_name) xr_strcpy(m_save_name, previous_name);
 }
 
 void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR file_name)
@@ -185,6 +165,9 @@ bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 	string_path file_name;
 	FS.update_path(file_name, "$game_saves$", m_save_name);
 
+	if (!save_pair239::recover(save_pair239::Paths(file_name))) { Msg("! [SAVE239] Unfinished save could not be rolled back"); return false; }
+	FS.rescan_path(game_saves_path, TRUE);
+
 	xr_strcpy(g_last_saved_game, save_name);
 	xr_strcpy(g_bug_report_file, file_name);
 
@@ -237,15 +220,16 @@ bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 
 void CALifeStorageManager::save(NET_Packet& net_packet)
 {
-	prepare_objects_for_save();
+	m_last_save_succeeded = false;
+	if (!prepare_objects_for_save()) return;
 
 	shared_str game_name;
 	net_packet.r_stringZ(game_name);
 	save(*game_name, !!net_packet.r_u8());
 }
 
-void CALifeStorageManager::prepare_objects_for_save()
+bool CALifeStorageManager::prepare_objects_for_save()
 {
 	Level().ClientSend();
-	Level().ClientSave();
+	return Level().ClientSave();
 }

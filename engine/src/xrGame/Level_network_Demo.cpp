@@ -207,7 +207,7 @@ bool CLevel::LoadPacket		(NET_Packet & dest_packet, u32 global_time_delta)
 		(tmp_hdr.m_time_global_delta <= global_time_delta) :
 		(tmp_hdr.m_time_global_delta < global_time_delta))
 	{
-		R_ASSERT2	(tmp_hdr.m_packet_size < NET_PacketSizeLimit, "bad demo packet");
+		R_ASSERT2	(tmp_hdr.m_packet_size < NET_TransportPacketSizeLimit, "bad demo packet");
 		m_reader->r	(dest_packet.B.data, tmp_hdr.m_packet_size);
 		dest_packet.B.count		= tmp_hdr.m_packet_size;
 		dest_packet.timeReceive = tmp_hdr.m_timeReceive; //not used ..

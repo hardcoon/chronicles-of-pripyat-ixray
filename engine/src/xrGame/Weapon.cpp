@@ -314,6 +314,8 @@ void CWeapon::Load		(LPCSTR section)
 
 	m_zoom_inertion.OriginOffset = READ_IF_EXISTS(pSettings, r_float, hud_sect, "inertion_aim_origin_offset", ORIGIN_OFFSET * 0.5f);
 	m_zoom_inertion.TendtoSpeed = READ_IF_EXISTS(pSettings, r_float, hud_sect, "inertion_aim_tendto_speed", TENDTO_SPEED);
+	// COP_ENGINE_PATCH: COP-ENG-224 - common defaults cover every weapon HUD.
+	LoadHikeInertia();
 	
 	if(pSettings->line_exist(section, "flame_particles_2"))
 		m_sFlameParticles2 = pSettings->r_string(section, "flame_particles_2");
@@ -3288,10 +3290,14 @@ void CWeapon::UpdateHudAdditonal(Fmatrix& trans)
 		return;
 	}
 
+	// COP_ENGINE_PATCH: COP-ENG-224 - Hike rotates the root before aim offsets.
+	Fvector hike_offset;
+	UpdateHikeInertia(trans, hike_offset, *pActor);
 	Fvector curr_offs, curr_rot;
 	curr_offs = hi->m_measures.m_hands_positions.hands_offsets[0][idx];//pos,aim
 	curr_rot = hi->m_measures.m_hands_positions.hands_offsets[1][idx];//rot,aim
 	curr_offs.mul(m_zoom_params.m_fZoomRotationFactor);
+	curr_offs.add(hike_offset);
 	curr_rot.mul(m_zoom_params.m_fZoomRotationFactor);
 
 	Fmatrix	hud_rotation;
@@ -4805,6 +4811,8 @@ void CWeapon::OnChangeVisual()
 
 void CWeapon::on_a_hud_attach()
 {
+	// COP_ENGINE_PATCH: COP-ENG-224 - no stale turn when drawing/swapping a weapon.
+	ResetHikeInertia();
 	inherited::on_a_hud_attach();
 
 	ForceUpdateHUD();

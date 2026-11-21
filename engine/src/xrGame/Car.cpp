@@ -213,6 +213,8 @@ CCar::CCar()
 
 CCar::~CCar(void)
 {
+	// COP_ENGINE_PATCH: COP-ENG-240 - pending navigation cannot outlive its car.
+	TravelRouteCancel();
 	ClearDcpGaugeVisuals();
     ClearGrassSpheres();
 	UnregisterProfileCollisionSoundOwner();

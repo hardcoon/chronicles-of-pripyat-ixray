@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "../xrRender/SSSSettings.h"
+#include "PFSkybox.h"
 #include "../../xrEngine/IGame_Persistent.h"
 #include "../../xrEngine/Environment.h"
 
@@ -185,6 +186,13 @@ void CRenderTarget::phase_combine()
 
 		RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 	}
+
+    // COP_ENGINE_PATCH: COP-ENG-245 - preserve native fog blending and world depth.
+    if (!_menu_pp)
+    {
+        PFSkyboxRender(*this);
+        RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, 0x01, 0xff, 0x00);
+    }
 
     // COP_ENGINE_PATCH: COP-ENG-128 - own SSR/puddles override without changing native flags.
     if (!_menu_pp) phase_pf_sss_reflections();

@@ -175,6 +175,32 @@ void SPHNetState::net_Load(IReader &P)
 	previous_position.set(position);
 }
 
+// COP_ENGINE_PATCH: COP-ENG-236 - preserve the exact simulation float bits.
+// Keep the legacy post-load velocity reset and enabled-state semantics.
+void SPHNetState::save_pose(NET_Packet& P)
+{
+    P.w_vec3(position);
+    P.w_vec4(*((Fvector4*)&quaternion));
+    P.w_u8((u8)enabled);
+}
+
+template<typename src>
+void SPHNetState::read_pose(src& P)
+{
+    linear_vel.set(0.f, 0.f, 0.f);
+    angular_vel.set(0.f, 0.f, 0.f);
+    force.set(0.f, 0.f, 0.f);
+    torque.set(0.f, 0.f, 0.f);
+    position = P.r_vec3();
+    previous_position.set(position);
+    *((Fvector4*)&quaternion) = P.r_vec4();
+    previous_quaternion.set(quaternion);
+    enabled = !!P.r_u8();
+}
+
+void SPHNetState::load_pose(NET_Packet& P) { read_pose(P); }
+void SPHNetState::load_pose(IReader& P) { read_pose(P); }
+
 void SPHNetState::net_Save(NET_Packet &P,const Fvector& min,const Fvector& max)
 {
 	w_vec_q8(P, position, min, max);
@@ -193,6 +219,9 @@ void SPHNetState::read(src &P,const Fvector& min,const Fvector& max)
 	r_vec_q8(P, position, min, max);
 	previous_position.set(position);
 	r_qt_q8(P, quaternion);
+    // COP_ENGINE_PATCH: COP-ENG-236 - ODE and interpolation must receive the
+    // same unit rotation from legacy q8 data; native-float poses stay untouched.
+    quaternion.normalize();
 	previous_quaternion.set(quaternion);
 	enabled = !!P.r_u8();
 
@@ -229,7 +258,9 @@ void SPHBonesData::net_Save(NET_Packet &P)
 
 	P.w_vec3(get_min());
 	P.w_vec3(get_max());
-	P.w_u16((u16)bones.size());//bones number;
+	// COP_ENGINE_PATCH: COP-ENG-236 - tag the format, including offline resaves.
+    R_ASSERT(bones.size() < full_precision_flag);
+    P.w_u16(u16(bones.size()) | full_precision_flag);
 
 	if(bones.size() > 64) {
 		Msg("!![SPHBonesData::net_Save] bones_size is [%u]!", bones.size());
@@ -238,37 +269,42 @@ void SPHBonesData::net_Save(NET_Packet &P)
 
 	PHNETSTATE_I i = bones.begin(), e = bones.end();
 	for(; e != i; i++) {
-		(*i).net_Save(P, get_min(), get_max());
+		(*i).save_pose(P);
 	}
 }
 
-void SPHBonesData::net_Load(NET_Packet &P)
+// Both server packets and client IReader payloads use the same format.
+// Untagged legacy snapshots remain readable without modifying their poses.
+template<typename src>
+static void load_ph_bones(src& P, SPHBonesData& data)
 {
-	bones.clear();
-
-	// VisMask init 
-	u64 _low = P.r_u64(); // Left (0...64)
-	u64 _high = u64(-1); // Right(64..128)
-
-	root_bone = P.r_u16();
-	Fvector _mn, _mx;
-	P.r_vec3(_mn);
-	P.r_vec3(_mx);
-	set_min_max(_mn, _mx);
-
-	u16 bones_number = P.r_u16();
-	if(bones_number > 64) {
-		Msg("!![SPHBonesData::net_Load] bones_number is [%u]!", bones_number);
-		_high = P.r_u64();
-	}
-	bones_mask.set(_low, _high);
-
-	for(int i = 0; i < bones_number; i++) {
-		SPHNetState	S;
-		S.net_Load(P, get_min(), get_max());
-		bones.push_back(S);
-	}
+    data.bones.clear();
+    const u64 low = P.r_u64();
+    u64 high = u64(-1);
+    data.root_bone = P.r_u16();
+    const Fvector minimum = P.r_vec3();
+    const Fvector maximum = P.r_vec3();
+    data.set_min_max(minimum, maximum);
+    const u16 tagged_count = P.r_u16();
+    const bool exact = (tagged_count & SPHBonesData::full_precision_flag) != 0;
+    const u16 count = tagged_count & ~SPHBonesData::full_precision_flag;
+    if (count > 64)
+        high = P.r_u64();
+    data.bones_mask.set(low, high);
+    data.bones.reserve(count);
+    for (u16 index = 0; index < count; ++index)
+    {
+        SPHNetState state;
+        if (exact)
+            state.load_pose(P);
+        else
+            state.net_Load(P, data.get_min(), data.get_max());
+        data.bones.push_back(state);
+    }
 }
+
+void SPHBonesData::net_Load(NET_Packet& P) { load_ph_bones(P, *this); }
+void SPHBonesData::net_Load(IReader& P) { load_ph_bones(P, *this); }
 
 void SPHBonesData::set_min_max(const Fvector& _min, const Fvector& _max)
 {

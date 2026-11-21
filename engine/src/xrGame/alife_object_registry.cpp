@@ -28,19 +28,23 @@ CALifeObjectRegistry::~CALifeObjectRegistry	()
 	m_objects_as_vec.clear();
 }
 
-void CALifeObjectRegistry::save				(IWriter &memory_stream, CSE_ALifeDynamicObject *object, u32 &object_count)
+bool CALifeObjectRegistry::save				(IWriter &memory_stream, CSE_ALifeDynamicObject *object, u32 &object_count)
 {
 	++object_count;
 
-	NET_Packet					tNetPacket;
+	// This function recurses through inventory parents; keep the larger packet off the stack.
+	auto packet_storage = std::make_unique<NET_Packet>();
+	NET_Packet& tNetPacket = *packet_storage;
 	// Spawn
 	object->Spawn_Write			(tNetPacket,TRUE);
+	if (tNetPacket.write_failed()) { Msg("! [SAVE239] Spawn packet overflow id=%u section=%s", object->ID, object->s_name.c_str()); return false; }
 	memory_stream.w_u16			(u16(tNetPacket.B.count));
 	memory_stream.w				(tNetPacket.B.data,tNetPacket.B.count);
 
 	// Update
 	tNetPacket.w_begin			(M_UPDATE);
 	object->UPDATE_Write		(tNetPacket);
+	if (tNetPacket.write_failed()) { Msg("! [SAVE239] Update packet overflow id=%u section=%s", object->ID, object->s_name.c_str()); return false; }
 
 	memory_stream.w_u16			(u16(tNetPacket.B.count));
 	memory_stream.w				(tNetPacket.B.data,tNetPacket.B.count);
@@ -55,11 +59,12 @@ void CALifeObjectRegistry::save				(IWriter &memory_stream, CSE_ALifeDynamicObje
 		if (!child->can_save())
 			continue;
 
-		save					(memory_stream,child,object_count);
+		if (!save(memory_stream,child,object_count)) return false;
 	}
+	return true;
 }
 
-void CALifeObjectRegistry::save				(IWriter &memory_stream)
+bool CALifeObjectRegistry::save				(IWriter &memory_stream)
 {
 	Msg							("* Saving objects...");
 	memory_stream.open_chunk	(OBJECT_CHUNK_DATA);
@@ -80,7 +85,7 @@ void CALifeObjectRegistry::save				(IWriter &memory_stream)
 		if ((*I).second->ID_Parent != 0xffff)
 			continue;
 
-		save					(memory_stream,(*I).second, object_count);
+		if (!save(memory_stream,(*I).second, object_count)) return false;
 	}
 	
 	u32							last_position = memory_stream.tell();
@@ -91,6 +96,7 @@ void CALifeObjectRegistry::save				(IWriter &memory_stream)
 	memory_stream.close_chunk	();
 	
 	Msg							("* %d objects are successfully saved",object_count);
+	return true;
 }
 
 CSE_ALifeDynamicObject *CALifeObjectRegistry::get_object		(IReader &file_stream)

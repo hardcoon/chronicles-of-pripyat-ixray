@@ -39,6 +39,8 @@
 #include "HudItem.h"
 #include "WeaponKnife.h"
 #include "../xrEngine/XR_IOConsole.h"
+#include "ui/UIMainIngameWnd.h"
+#include "ui/UIHudStatesWnd.h"
 
 extern u32 hud_adj_mode;
 
@@ -73,6 +75,10 @@ void CActor::IR_OnKeyboardPress(int cmd)
 	}
 
 	if (!g_Alive()) return;
+
+    // COP_ENGINE_PATCH: COP-ENG-231 - respect remapping and reveal attempted weapon interactions.
+    if (CurrentGameUI() && CurrentGameUI()->UIMainIngameWnd)
+        CurrentGameUI()->UIMainIngameWnd->get_hud_states()->NotifyDynamicWeaponAction(cmd);
 
 	if(m_holder && kUSE != cmd)
 	{
@@ -1062,7 +1068,10 @@ void CActor::set_input_external_handler(CActorInputHandler *handler)
 
 void CActor::SwitchNightVision()
 {
-	if (CurrentGameUI() && CurrentGameUI()->TopInputReceiver())
+	// COP_ENGINE_PATCH: COP-ENG-225 - allow the equipment toggle with the physical PDA in hand.
+	const bool pdaActive = GetPDA() && GetPDA()->Is3DActive();
+	if (CurrentGameUI() && CurrentGameUI()->TopInputReceiver() &&
+		!(pdaActive && CurrentGameUI()->TopInputReceiver() == &CurrentGameUI()->PdaMenu()))
 	{
 		return;
 	}
@@ -1071,6 +1080,14 @@ void CActor::SwitchNightVision()
 
 	if (!has_nvg)
 	{
+		return;
+	}
+
+	if (pdaActive)
+	{
+		// Both hands hold the PDA; switch the native effector without a hand animation.
+		if (auto* nightVision = GetNightVisionEffector())
+			nightVision->SwitchNightVision();
 		return;
 	}
 

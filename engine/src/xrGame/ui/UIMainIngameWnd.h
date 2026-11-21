@@ -27,6 +27,13 @@ public:
 	virtual void Draw();
 	virtual void Update();
 
+    // COP_ENGINE_PATCH: COP-ENG-231 - keep status/effect visibility and animate only their group position.
+    struct SDynamicHudIcon { CUIWindow* window; Fvector2 position; };
+    xr_vector<SDynamicHudIcon> m_dynamicHudIcons;
+    float m_dynamicHudIconShift = 0.0f;
+    void InitDynamicHudIcons();
+    void UpdateDynamicHudIcons();
+
 	virtual CUIWindow* ui_cast_window() { return this; }
 
 protected:
@@ -71,6 +78,10 @@ public:
 		void			UpdateZoneMap();
 
 		void			DrawMainIndicatorsForInventory();
+        void            DrawInventoryBoosterIndicators();
+private:
+        void            DrawBoosterIndicators();
+public:
 	
 	CUIHudStatesWnd*	get_hud_states() { return m_ui_hud_states; } //temp
 	void				OnSectorChanged			(int sector);

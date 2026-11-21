@@ -26,6 +26,12 @@ MultipacketSender::MultipacketSender()
 
 void MultipacketSender::SendPacket( const void* packet_data, u32 packet_sz, u32 flags, u32 timeout )
 {
+    // COP_ENGINE_PATCH: COP-ENG-239 - larger save storage does not enlarge the wire protocol.
+    if (!packet_data || packet_sz >= NET_TransportPacketSizeLimit - sizeof(u16))
+    {
+        Msg("! [SAVE239] Refused oversized transport packet: %u bytes", packet_sz);
+        return;
+    }
     _buf_cs.Enter();
 	
     Buffer* buf = &_buf;
@@ -47,7 +53,7 @@ void MultipacketSender::SendPacket( const void* packet_data, u32 packet_sz, u32 
     u32 old_flags = (buf->last_flags) & (~DPNSEND_IMMEDIATELLY);
     u32 new_flags = flags & (~DPNSEND_IMMEDIATELLY);
 
-    if(     (buf->buffer.B.count + packet_sz + sizeof(u16) >= NET_PacketSizeLimit)
+    if(     (buf->buffer.B.count + packet_sz + sizeof(u16) >= NET_TransportPacketSizeLimit)
         ||  (old_flags != new_flags)
         ||  (flags & DPNSEND_IMMEDIATELLY)
       )

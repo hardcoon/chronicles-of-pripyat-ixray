@@ -8,6 +8,20 @@
 
 #include "StdAfx.h"
 #include "pch_script.h"
+
+// COP_ENGINE_PATCH: COP-ENG-243 - stable through Lua/save reloads, new on process restart.
+static LPCSTR game_application_session()
+{
+    static const xr_string session = []()
+    {
+        FILETIME created = {}, exited = {}, kernel = {}, user = {};
+        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+        string64 value;
+        xr_sprintf(value, "%lu:%08lx%08lx", GetCurrentProcessId(), created.dwHighDateTime, created.dwLowDateTime);
+        return xr_string(value);
+    }();
+    return session.c_str();
+}
 #include "WatchShaderParams.h"
 #include "SleepTimelapse.h"
 #include "Level.h"
@@ -1831,6 +1845,7 @@ void CLevel::script_register(lua_State *L)
 			// declarations
 			def("time",					get_time),
 			def("get_game_time",		get_time_struct),
+            def("get_application_session", &game_application_session),
 //			def("get_surge_time",	Game::get_surge_time),
 //			def("get_object_by_name",Game::get_object_by_name),
 		

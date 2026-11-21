@@ -6,7 +6,11 @@
 
 #pragma pack(push,1)
 
-const	u32			NET_PacketSizeLimit	= 16*1024;
+// COP_ENGINE_PATCH: COP-ENG-239 - save packets share this storage with Lua.
+// Keep transport batching at its original size; object save blocks use u16 lengths.
+constexpr u32 NET_TransportPacketSizeLimit = 16 * 1024;
+constexpr u32 NET_PacketSizeLimit = 64 * 1024;
+static_assert(NET_PacketSizeLimit - 1 <= 0xffff);
 
 struct XRCORE_API IIniFileStream
 {
@@ -73,6 +77,12 @@ public:
 
     void            construct( const void* data, unsigned size )
                     {
+                        m_write_error = false;
+                        if (!data || size >= NET_PacketSizeLimit) {
+                            B.count = 0;
+                            m_write_error = true;
+                            return;
+                        }
                         memcpy( B.data, data, size );
                         B.count = size;
                     }
@@ -81,11 +91,15 @@ public:
 	u32				r_pos;
 	u32				timeReceive;
 	bool			w_allow;
+private:
+	bool m_write_error;
 public:
-	NET_Packet			():inistream(NULL),w_allow(true)	{}
+	NET_Packet() : inistream(NULL), r_pos(0), timeReceive(0), w_allow(true), m_write_error(false) { B.count = 0; }
+	IC bool write_failed() const { return m_write_error; }
+	IC void fail_write() { m_write_error = true; }
 	// writing - main
-	IC void write_start	()				{	B.count=0;				INI_W(move_begin());}
-	IC void	w_begin		( u16 type	)	{	B.count=0;	w_u16(type);}
+	IC void write_start() { B.count = 0; m_write_error = false; INI_W(move_begin()); }
+	IC void w_begin(u16 type) { B.count = 0; m_write_error = false; w_u16(type); }
 
 	struct W_guard{
 		bool*	guarded;
@@ -95,8 +109,11 @@ public:
 	IC void	w		( const void* p, u32 count )
 	{
 		R_ASSERT	(inistream==NULL || w_allow);
-		VERIFY		(p && count);
-		VERIFY		(B.count + count < NET_PacketSizeLimit);
+		if (m_write_error || !count) return;
+		if (!p || B.count >= NET_PacketSizeLimit || count >= NET_PacketSizeLimit - B.count) {
+			m_write_error = true;
+			return;
+		}
 		CopyMemory(&B.data[B.count],p,count);
 		B.count		+= count;
 		VERIFY		(B.count<NET_PacketSizeLimit);
@@ -192,6 +209,8 @@ public:
 	
 	IC void w_chunk_close8		(u32 position)
 	{
+		if (m_write_error) return;
+		if (position >= B.count || B.count - position - sizeof(u8) >= 256) { fail_write(); return; }
 		u32 size	= u32(w_tell() - position) - sizeof(u8);
 		VERIFY		(size<256	);
 		u8			_size = (u8)size;
@@ -208,6 +227,8 @@ public:
 
 	IC void w_chunk_close16		(u32 position)
 	{
+		if (m_write_error) return;
+		if (position > B.count || B.count - position < sizeof(u16) || B.count - position - sizeof(u16) >= 65536) { fail_write(); return; }
 		u32 size	= u32(w_tell() - position) - sizeof(u16);
 		VERIFY		(size < 65536);
 		u16			_size = (u16)size;

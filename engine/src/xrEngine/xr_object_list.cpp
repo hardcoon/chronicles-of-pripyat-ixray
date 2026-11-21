@@ -362,7 +362,7 @@ u32	CObjectList::net_Export			(NET_Packet* _Packet,	u32 start, u32 max_object_si
 			Packet.w_chunk_close8	(position);
 //			if (0==(--count))		
 //				break;
-			if (max_object_size >= (NET_PacketSizeLimit - Packet.w_tell()))
+			if (max_object_size >= (NET_TransportPacketSizeLimit - Packet.w_tell()))
 				break;
 		}
 	}

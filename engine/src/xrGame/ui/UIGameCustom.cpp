@@ -325,8 +325,17 @@ void CUIGameCustom::ShowMessagesWindow()
 bool CUIGameCustom::ShowPdaMenu()
 {
 	HideActorMenu();
-    if (Actor() && Actor()->GetPDA() && Actor()->GetPDA()->CanUse3D()) {
-        Actor()->GetPDA()->Toggle3D();
+    auto* actor = Actor();
+    auto* pda = actor ? actor->GetPDA() : nullptr;
+    // COP_ENGINE_PATCH: COP-ENG-228 - finish any pending holster before opening the desktop page.
+    // Otherwise its animation callback can hide the newly opened vehicle PDA.
+    if (actor && actor->Holder() && pda && pda->Is3DActive()) {
+        pda->Close3D();
+        pda->Cleanup3D();
+    }
+    const bool use3D = pda && pda->CanUse3D();
+    if (use3D) {
+        pda->Toggle3D();
         return true;
     }
 	m_PdaMenu->ShowDialog(true);

@@ -48,6 +48,7 @@ u32 r_begin(NET_Packet* self)
 }
 
 LPCSTR script_section = "script";
+u32 net_packet_capacity() { return NET_PacketSizeLimit; }
 LPCSTR current_version = "current_server_entity_version";
 
 u16	SCRIPTS_API script_server_object_version()
@@ -69,6 +70,7 @@ void CScriptNetPacket::script_register(lua_State *L)
 	module(L)
 	[
 		def("script_server_object_version", &script_server_object_version),
+		def("net_packet_capacity", &net_packet_capacity),
 		
 		class_<ClientID>("ClientID")
 			.def(					constructor<>()				)
@@ -78,6 +80,7 @@ void CScriptNetPacket::script_register(lua_State *L)
 
 		class_<NET_Packet>("net_packet")
 			.def(					constructor<>()				)
+			.def("write_failed", &NET_Packet::write_failed)
 			.def("w_begin",			&NET_Packet::w_begin		)
 //			.def("w",				&NET_Packet::w				)
 //			.def("w_seek",			&NET_Packet::w_seek			)

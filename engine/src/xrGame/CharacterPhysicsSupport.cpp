@@ -346,6 +346,8 @@ void CCharacterPhysicsSupport::destroy_imotion()
 
 void CCharacterPhysicsSupport::in_NetDestroy( )
 {
+	// COP_ENGINE_PATCH: COP-ENG-230 - release weapon links before respawning this support.
+	RemoveActiveWeaponCollision(false);
 	destroy( m_interactive_motion );
 	m_PhysicMovementControl->DestroyCharacter( );
 
@@ -917,57 +919,46 @@ void		CCharacterPhysicsSupport::on_child_shell_activate	( CPhysicsShellHolder* o
 
 }
 
-void	CCharacterPhysicsSupport::	RemoveActiveWeaponCollision		()
+void CCharacterPhysicsSupport::RemoveActiveWeaponCollision(bool transfer_motion)
 {
-	
-
-	VERIFY( m_pPhysicsShell );
-	VERIFY( m_weapon_attach_bone );
-	VERIFY( !m_weapon_geoms.empty() );
-	xr_vector<CODEGeom*>::iterator ii =m_weapon_geoms.begin(), ee = m_weapon_geoms.end();
-	Fmatrix m0;
-	(*ii)->get_xform( m0 );
-	CPhysicsElement* root = m_active_item_obj->PPhysicsShell()->get_ElementByStoreOrder( 0 );
-	CODEGeom *rg = root->geometry( 0 );
-	VERIFY( rg );
-	Fmatrix m1;
-	rg->get_xform( m1 );
-
-	Fmatrix me;
-	root->GetGlobalTransformDynamic( &me );
-
-	Fmatrix m1_to_e = Fmatrix().mul_43( Fmatrix().invert( m1 ), me );
-
-	Fmatrix m0e = Fmatrix().mul_43( m0, m1_to_e );
-	root->SetTransform( m0e, mh_unspecified );
-
-	for( ;ii!=ee; ++ii )
+	// COP_ENGINE_PATCH: COP-ENG-230 - deletion can happen without activating a dropped shell.
+	// The character shell may already have been destroyed by the inherited net_Destroy.
+	if (m_pPhysicsShell && m_weapon_attach_bone)
 	{
-		CODEGeom *g  =(*ii);
+		if (transfer_motion)
+		{
+			VERIFY(!m_weapon_geoms.empty());
+			Fmatrix weapon_form;
+			m_weapon_geoms.front()->get_xform(weapon_form);
+			CPhysicsElement* root = m_active_item_obj->PPhysicsShell()->get_ElementByStoreOrder(0);
+			CODEGeom* root_geom = root->geometry(0);
+			VERIFY(root_geom);
+			Fmatrix root_form;
+			root_geom->get_xform(root_form);
+			Fmatrix element_form;
+			root->GetGlobalTransformDynamic(&element_form);
+			Fmatrix root_to_element = Fmatrix().mul_43(Fmatrix().invert(root_form), element_form);
+			Fmatrix dropped_form = Fmatrix().mul_43(weapon_form, root_to_element);
+			root->SetTransform(dropped_form, mh_unspecified);
 
-		//g->dbg_draw( 0.01f, color_xrgb( 0, 0, 255 ), Flags32() );
+			Fvector angular_velocity, linear_velocity;
+			m_weapon_attach_bone->GetPointVel(linear_velocity, root->mass_Center());
+			m_weapon_attach_bone->get_AngularVel(angular_velocity);
+			root->set_AngularVel(angular_velocity);
+			root->set_LinearVel(linear_velocity);
+		}
 
-		m_weapon_attach_bone->remove_geom( g );
-		g->destroy();
-		xr_delete(g);
+		for (CODEGeom* geometry : m_weapon_geoms)
+		{
+			m_weapon_attach_bone->remove_geom(geometry);
+			geometry->destroy();
+			xr_delete(geometry);
+		}
 	}
 
-
-	//m_active_item_obj->PPhysicsShell()->dbg_draw_geometry( 0.2f, color_xrgb( 255, 0, 100 ) );
-	
-	Fvector a_vel, l_vel;
-	const Fvector& mc = root->mass_Center();
-	//dBodyGetPointVel( m_weapon_attach_bone->get_body(),mc.x, mc.y, mc.z, cast_fp(l_vel) );
-	m_weapon_attach_bone->GetPointVel( l_vel, mc );
-	m_weapon_attach_bone->get_AngularVel( a_vel );
-	
-	root->set_AngularVel( a_vel );
-	root->set_LinearVel( l_vel );
-	
 	m_weapon_geoms.clear();
-	m_weapon_attach_bone = 0;
-	m_active_item_obj	= 0;
-
+	m_weapon_attach_bone = nullptr;
+	m_active_item_obj = nullptr;
 	bone_fix_clear();
 }
 void CCharacterPhysicsSupport::bone_fix_clear()
@@ -1031,6 +1022,11 @@ void	CCharacterPhysicsSupport::	AddActiveWeaponCollision		()
 
 	VERIFY( m_pPhysicsShell );
 	CPhysicsElement* weapon_attach_bone = m_pPhysicsShell->get_PhysicsParrentElement( (u16)br );
+	VERIFY(weapon_attach_bone);
+	// COP_ENGINE_PATCH: COP-ENG-230 - transferred geometry belongs to the character shell.
+	const dxGeomUserData* character_geom_data = PHRetrieveGeomUserData(
+		weapon_attach_bone->geometry(0)->geometry_transform());
+	VERIFY(character_geom_data);
 
 	bone_chain_disable( (u16)br, weapon_attach_bone->m_SelfID, *m_pPhysicsShell->PKinematics() );
 	if(bl != br && bl!=-1 )
@@ -1058,6 +1054,8 @@ void	CCharacterPhysicsSupport::	AddActiveWeaponCollision		()
 		CODEGeom *g  =(*ii);
 		weapon_element->remove_geom( g );
 		g->set_bone_id( weapon_attach_bone->m_SelfID );
+		g->set_ref_object(weapon_attach_bone->PhysicsRefObject());
+		g->set_ph_object(character_geom_data->ph_object);
 		weapon_attach_bone->add_geom( g );
 	}
 	m_weapon_attach_bone = weapon_attach_bone;
@@ -1323,6 +1321,10 @@ void CCharacterPhysicsSupport::DestroyIKController()
 
 void		 CCharacterPhysicsSupport::in_NetRelcase(CObject* O)																													
 {
+	// COP_ENGINE_PATCH: COP-ENG-230 - remove the proxy before the weapon object is deleted.
+	if (m_active_item_obj && m_active_item_obj == O)
+		RemoveActiveWeaponCollision(false);
+
 	m_PhysicMovementControl->NetRelcase( O );
 
 	if( m_sv_hit.is_valide() && m_sv_hit.initiator() == O )

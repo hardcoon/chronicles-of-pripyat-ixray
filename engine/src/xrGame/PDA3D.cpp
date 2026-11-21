@@ -49,7 +49,10 @@ namespace
 
 bool CPda::CanUse3D() const
 {
-    return m_has3D && psPda3D.test(1) && IsGameTypeSingle() && ResolvePdaRenderer();
+    // COP_ENGINE_PATCH: COP-ENG-228 - occupied vehicles/holders cannot equip a handheld PDA.
+    auto* owner = H_Parent() ? const_cast<CObject*>(H_Parent())->cast_actor() : nullptr;
+    return m_has3D && psPda3D.test(1) && IsGameTypeSingle() &&
+        (!owner || !owner->Holder()) && ResolvePdaRenderer();
 }
 
 bool CPda::Is3DActive() const

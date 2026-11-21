@@ -21,7 +21,8 @@ protected:
 	string_path		m_save_name;
 	LPCSTR			m_section;
 private:
-			void	prepare_objects_for_save();
+			bool	prepare_objects_for_save();
+	bool m_last_save_succeeded = false;
 			void	load					(void *buffer, const u32 &buffer_size, LPCSTR file_name);
 
 public:
@@ -30,6 +31,7 @@ public:
 			bool	load					(LPCSTR	save_name = 0);
 			void	save					(LPCSTR	save_name = 0, bool update_name = true);
 			void	save					(NET_Packet &net_packet);
+	bool last_save_succeeded() const { return m_last_save_succeeded; }
 };
 
 #include "alife_storage_manager_inline.h"

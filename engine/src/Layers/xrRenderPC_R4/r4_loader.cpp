@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "r4.h"
+#include "PFSkybox.h"
 #include "../xrRender/ResourceManager.h"
 #include "../xrRender/FBasicVisual.h"
 #include "../../xrEngine/Fmesh.h"
@@ -126,6 +127,7 @@ void CRender::level_Load(IReader* fs)
 	mapLOD.clear				();
 
 	// signal loaded
+	PFSkyboxLoad(); // COP_ENGINE_PATCH: COP-ENG-244: optional external visual scene.
 	b_loaded					= TRUE	;
 }
 
@@ -163,6 +165,7 @@ void CRender::LoadPuddles()
 
 void CRender::level_Unload()
 {
+    PFSkyboxUnload(); // COP_ENGINE_PATCH: COP-ENG-244: also clear on aborted loads.
     PFOnlineTv::Stop(); // COP_ENGINE_PATCH: COP-ENG-194 - no audio across levels/saves.
     // COP_ENGINE_PATCH: COP-ENG-192 - contacts cannot survive a save/level reload.
     SSSPuddleContactReset();

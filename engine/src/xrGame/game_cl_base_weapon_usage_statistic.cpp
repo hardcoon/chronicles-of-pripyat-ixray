@@ -107,7 +107,7 @@ void Weapon_Statistic::net_save(NET_Packet* P, victims_table const & vt, bone_ta
 		{
 			if (hit.Completed)
 			{
-				if (NET_PacketSizeLimit - packet_to_write->w_tell() < HitData::net_packet_size)
+				if (NET_TransportPacketSizeLimit - packet_to_write->w_tell() < HitData::net_packet_size)
 					return false;
 				hit.net_save(packet_to_write, vtable, btable);
 				++complete_hits_count;
@@ -365,7 +365,7 @@ void Player_Statistic::net_save(NET_Packet* P)
 
 	u32 tables_size = create_victims_table(vict_table);
 	tables_size += create_bone_table(bone_table);
-	if (NET_PacketSizeLimit - P->w_tell() < tables_size + Weapon_Statistic::net_packet_size)
+	if (NET_TransportPacketSizeLimit - P->w_tell() < tables_size + Weapon_Statistic::net_packet_size)
 		return;
 
 	vict_table.net_save(P);

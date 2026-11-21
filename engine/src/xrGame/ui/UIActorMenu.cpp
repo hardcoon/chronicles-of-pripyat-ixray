@@ -251,6 +251,9 @@ void CUIActorMenu::Draw()
 	//CurrentGameUI()->UIMainIngameWnd->DrawMainIndicatorsForInventory();
 
 	inherited::Draw	();
+    // COP_ENGINE_PATCH: COP-ENG-233 - inventory-only exception for hidden booster effects.
+    if (GetMenuMode() == mmInventory)
+        CurrentGameUI()->UIMainIngameWnd->DrawInventoryBoosterIndicators();
 	//m_ActorStateInfo->Draw();
 	m_ItemInfo->Draw();
 	m_hint_wnd->Draw();

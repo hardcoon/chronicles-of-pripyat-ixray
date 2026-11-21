@@ -501,7 +501,9 @@ void CMainMenu::OnRenderPPUI_main	()
 	// COP_ENGINE_PATCH: COP-ENG-209 - optional client-selected transparent inventory layouts.
 	// COP_ENGINE_PATCH: COP-ENG-210 - configurable fast-transfer keys.
 	// COP_ENGINE_PATCH: COP-ENG-214 - PDA reading zoom.
-	pCGameFont->Out(Device.TargetWidth - pCGameFont->GetHeight(), (Device.TargetHeight - pCGameFont->GetHeight()), "IX-Ray Modified [eng-223]"); // COP_ENGINE_PATCH: COP-ENG-215 COP-ENG-216 COP-ENG-217
+	// COP_ENGINE_PATCH: COP-ENG-224 - firearm HUD inertia.
+	// COP_ENGINE_PATCH: COP-ENG-225 - night vision with the physical PDA.
+	pCGameFont->Out(Device.TargetWidth - pCGameFont->GetHeight(), (Device.TargetHeight - pCGameFont->GetHeight()), "IX-Ray Modified [eng-247]"); // COP_ENGINE_PATCH: COP-ENG-215 COP-ENG-216 COP-ENG-217 COP-ENG-228 COP-ENG-230 COP-ENG-231 COP-ENG-232 COP-ENG-233 COP-ENG-234 COP-ENG-235 COP-ENG-236 COP-ENG-239 COP-ENG-238 COP-ENG-240 COP-ENG-241 COP-ENG-242 COP-ENG-243 COP-ENG-244 COP-ENG-245 COP-ENG-246 COP-ENG-247
 	pCGameFont->OnRender();
 }
 

@@ -159,6 +159,13 @@ bool player_hud_motion_container::has_motion(const shared_str& name)
 
 void player_hud_motion_container::load(IKinematicsAnimated* model, const shared_str& sect, IKinematicsAnimated* item_model)
 {
+	// COP_ENGINE_PATCH: COP-ENG-247 - MotionIDs belong to one hands model.
+	// Reloading must replace every alias, including optional item bone parts.
+	m_anims.clear();
+	m_item_anims.clear();
+	m_names.clear();
+	m_banned_bone_parts.clear();
+
 	CInifile::Sect& _sect = pSettings->r_section(sect);
 
 	for (const auto& data : _sect.Data)
@@ -1390,6 +1397,22 @@ player_hud::~player_hud()
 	xr_delete(m_animator_item);
 }
 
+// COP_ENGINE_PATCH: COP-ENG-247 - holstered items remain in m_pool after an
+// outfit change. Rebind them before any attach callback can replay a motion.
+static void reload_hud_motion_cache(IKinematicsAnimated* hands,
+	const xr_vector<attachable_hud_item*>& items, animator_item* animator)
+{
+	for (auto* item : items)
+	{
+		item->m_hand_motions.load(hands, item->m_sect_name,
+			item->m_model->dcast_PKinematicsAnimated());
+	}
+	if (animator)
+	{
+		animator->m_hand_motions.load(hands, animator->m_section);
+	}
+}
+
 void player_hud::load(const shared_str& player_hud_sect)
 {
 	if (player_hud_sect == m_sect_name)
@@ -1435,6 +1458,11 @@ void player_hud::load(const shared_str& player_hud_sect)
 		}
 	}
 
+	// Additional OMFs must be present before resolving the new numerical IDs.
+	reload_hud_motion_cache(m_model, m_pool, m_animator_item);
+	if (b_reload)
+		Msg("[HUD MOTION CACHE] COP-ENG-247 rebound hands=%s items=%u animator=%u",
+			m_sect_name.c_str(), u32(m_pool.size()), m_animator_item ? 1u : 0u);
 
 	if(pSettings->line_exist(player_hud_sect, "legs_visual")) {
 		auto model_name = pSettings->r_string(player_hud_sect, "legs_visual");
@@ -1681,6 +1709,32 @@ void player_hud::render_hud()
 
 #include "../xrEngine/motion.h"
 
+// COP_ENGINE_PATCH: COP-ENG-247 - reject invalid cached IDs before the renderer
+// indexes either the OMF slots or their motion definitions. No name lookup or
+// collection scan is added to normal animation playback.
+static bool valid_hud_motion(IKinematicsAnimated* model, const MotionID& motion)
+{
+	if (model && motion.valid() && motion.slot < model->LL_MotionsSlotCount())
+	{
+		// The existing getter is non-const; this only reads the shared vector.
+		const auto* definitions = const_cast<shared_motions&>(
+			model->LL_MotionsSlot(motion.slot)).motion_defs();
+		if (definitions && motion.idx < definitions->size())
+			return true;
+	}
+
+	static IKinematicsAnimated* last_bad_model = nullptr;
+	static u32 last_bad_motion = u32(-1);
+	if (last_bad_model != model || last_bad_motion != motion.val)
+	{
+		Msg("! [HUD MOTION CACHE] COP-ENG-247 rejected slot=%u index=%u slots=%u",
+			u32(motion.slot), u32(motion.idx), model ? u32(model->LL_MotionsSlotCount()) : 0u);
+		last_bad_model = model;
+		last_bad_motion = motion.val;
+	}
+	return false;
+}
+
 u32 player_hud::motion_length(const shared_str& anim_name, const shared_str& hud_name, const CMotionDef*& md)
 {
 	float speed						= CalcMotionSpeed(anim_name);
@@ -1696,6 +1750,11 @@ u32 player_hud::motion_length(const shared_str& anim_name, const shared_str& hud
 
 u32 player_hud::motion_length(const MotionID& M, const CMotionDef*& md, float speed)
 {
+	if (!valid_hud_motion(m_model, M))
+	{
+		md = nullptr;
+		return 0;
+	}
 	md = m_model->LL_GetMotionDef(M);
 	VERIFY(md);
 	if (md != nullptr && md->flags & esmStopAtEnd)
@@ -1821,6 +1880,11 @@ void player_hud::update(const Fmatrix& cam_trans)
 
 u32 player_hud::anim_play(u16 part, const MotionID& M, BOOL bMixIn, const CMotionDef*& md, float speed)
 {
+	if (!valid_hud_motion(m_model, M))
+	{
+		md = nullptr;
+		return 0;
+	}
 	///partitions info
 	// 0==default (root_bone)
 	// 1==left_hand (left hand bone hierarchy)

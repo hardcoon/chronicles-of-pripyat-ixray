@@ -423,7 +423,9 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet &P)
 	P.w_vec3(min);
 	P.w_vec3(max);
 
-	P.w_u16(bones_number);
+	// COP_ENGINE_PATCH: COP-ENG-236 - all physical items use native-float poses.
+    R_ASSERT(bones_number < SPHBonesData::full_precision_flag);
+    P.w_u16(bones_number | SPHBonesData::full_precision_flag);
 
 	if(bones_number > 64) {
 		Msg("!![CPhysicsShellHolder::PHSaveState] bones_number is [%u]!", bones_number);
@@ -434,41 +436,27 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet &P)
 	{
 		SPHNetState state;
 		PHGetSyncItem(i)->get_State(state);
-		state.net_Save(P,min,max);
+		state.save_pose(P);
 	}
 }
 
-void CPhysicsShellHolder::PHLoadState(IReader& P) {
-	u64 _low = 0;
-	u64 _high = 0;
-	
-	IKinematics* K=smart_cast<IKinematics*>(Visual());
-	if(K)
-	{
-		_low = P.r_u64();
-		K->LL_SetBoneRoot(P.r_u16());
-	}
-
-	Fvector min=P.r_vec3();
-	Fvector max=P.r_vec3();
-	
-	VERIFY(!min.similar(max));
-
-	u16 bones_number = P.r_u16();
-	if(bones_number > 64) {
-		Msg("!![CPhysicsShellHolder::PHLoadState] bones_number is [%u]!", bones_number);
-		_high = P.r_u64();
-	}
-
-	VisMask _vm(_low, _high);
-	K->LL_SetBonesVisible(_vm);
-
-	for(u16 i=0;i<bones_number;i++)
-	{
-		SPHNetState state;
-		state.net_Load(P,min,max);
-		PHGetSyncItem(i)->set_State(state);
-	}
+void CPhysicsShellHolder::PHLoadState(IReader& P)
+{
+    // COP_ENGINE_PATCH: COP-ENG-236 - share old/new decoding with ALife.
+    IKinematics* K = smart_cast<IKinematics*>(Visual());
+    SPHBonesData data;
+    data.net_Load(P);
+    // Preserve the holder reader's legacy upper-mask default.
+    if (data.bones.size() <= 64)
+        data.bones_mask._visimask_ex.flags = 0;
+    if (K)
+    {
+        K->LL_SetBoneRoot(data.root_bone);
+        K->LL_SetBonesVisible(data.bones_mask);
+    }
+    R_ASSERT(data.bones.size() <= PHGetSyncItemsNumber());
+    for (u16 index = 0; index < data.bones.size(); ++index)
+        PHGetSyncItem(index)->set_State(data.bones[index]);
 }
 
 bool CPhysicsShellHolder::register_schedule	() const

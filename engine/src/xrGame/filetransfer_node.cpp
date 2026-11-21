@@ -24,7 +24,7 @@ bool disk_file_reader::make_data_packet(NET_Packet& packet, u32 chunk_size)
 	
 	void* pointer		= _alloca(size_to_write);
 		
-	R_ASSERT(size_to_write < (NET_PacketSizeLimit - packet.w_tell()));
+	R_ASSERT(size_to_write < (NET_TransportPacketSizeLimit - packet.w_tell()));
 
 	m_reader->r	(pointer, size_to_write);
 	packet.w	(pointer, size_to_write);
@@ -66,7 +66,7 @@ bool memory_reader::make_data_packet(NET_Packet &packet, u32 chunk_size)
 	
 	void* pointer		= _alloca(size_to_write);
 		
-	R_ASSERT(size_to_write < (NET_PacketSizeLimit - packet.w_tell()));
+	R_ASSERT(size_to_write < (NET_TransportPacketSizeLimit - packet.w_tell()));
 
 	m_reader->r	(pointer, size_to_write);
 	packet.w	(pointer, size_to_write);
@@ -229,7 +229,7 @@ bool memory_writer_reader::make_data_packet(NET_Packet & packet, u32 chunk_size)
 	u32 size_to_write	= (elapsed >= chunk_size) ? chunk_size : elapsed;
 	void* pointer		= m_writer_as_src->pointer() + m_writer_pointer;
 	
-	R_ASSERT(size_to_write < (NET_PacketSizeLimit - packet.w_tell()));
+	R_ASSERT(size_to_write < (NET_TransportPacketSizeLimit - packet.w_tell()));
 
 	m_writer_pointer += size_to_write;
 	packet.w(pointer, size_to_write);

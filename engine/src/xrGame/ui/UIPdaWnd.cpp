@@ -499,6 +499,13 @@ bool CUIPdaWnd::OnKeyboardAction(int dik, EUIMessages keyboard_action)
 		Actor()->SwitchTorch();
 		return true;
 	}
+	// COP_ENGINE_PATCH: COP-ENG-225 - let editable fields consume their keys before toggling NVG.
+	if (keyboard_action == WINDOW_KEY_PRESSED && is_binded(kNIGHT_VISION, dik) &&
+		Actor() && Actor()->GetPDA() && Actor()->GetPDA()->Is3DActive())
+	{
+		Actor()->SwitchNightVision();
+		return true;
+	}
 	return false;
 }
 

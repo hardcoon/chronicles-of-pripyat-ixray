@@ -1,4 +1,8 @@
+// COP_ENGINE_PATCH: COP-ENG-234 - persistent native surface-track buffer.
 #include "stdafx.h"
+#ifdef USE_DX11
+#include "WinterTracks.h"
+#endif
 
 
 #include "ResourceManager.h"
@@ -258,6 +262,33 @@ static cl_pf_sss_wind_animation<false> binder_sss_wind_animation;
 static cl_pf_sss_wind_animation<true> binder_sss_wind_previous;
 static cl_pf_sss_benders<false> binder_sss_benders;
 static cl_pf_sss_benders<true> binder_sss_benders_previous;
+
+static cop_winter::Buffer winterTracksCurrent{}, winterTracksPrevious{};
+static u32 winterTrackFrame = u32(-1);
+
+template<bool previous> class cl_pf_winter_tracks : public R_constant_setup
+{
+    void setup(R_constant* constant) override
+    {
+        if (winterTrackFrame != Device.dwFrame)
+        {
+            const bool contiguous = winterTrackFrame + 1 == Device.dwFrame;
+            winterTracksPrevious = winterTracksCurrent;
+            cop_winter::tracks.snapshot(winterTracksCurrent);
+            if (!contiguous)
+                winterTracksPrevious = winterTracksCurrent;
+            winterTrackFrame = Device.dwFrame;
+        }
+        const auto& values = previous ? winterTracksPrevious : winterTracksCurrent;
+        for (u32 index = 0; index < cop_winter::vector_count; ++index)
+        {
+            const auto& value = values[index];
+            RCache.set_ca(constant, index, value[0], value[1], value[2], value[3]);
+        }
+    }
+};
+static cl_pf_winter_tracks<false> binder_winter_tracks;
+static cl_pf_winter_tracks<true> binder_winter_tracks_previous;
 // COP_ENGINE_PATCH: COP-ENG-128 - original droplet accumulation uses rain exposure and elapsed time.
 static class cl_pf_sss_hud_rain : public R_constant_setup {
     float animation=0,wetness=0;u32 frame=u32(-1);
@@ -911,7 +942,14 @@ static class cl_m_hybrid_aa_params : public R_constant_setup
 	virtual void setup(R_constant* C)
 	{
 		// COP_ENGINE_PATCH: COP-ENG-011 - x marks the HUD G-buffer pass; y enables the hybrid resolve.
+#if RENDER == R_R4
 		const bool hybridEnabled = (ssfx_active() ? ssfx_hybrid_aa() : ps_r2_aa_type == 4) && ps_r_scale_mode < 2; // COP_ENGINE_PATCH: COP-ENG-128
+#elif RENDER == R_R2
+		// COP_ENGINE_PATCH: COP-ENG-239 - the complete ABI rebuild also includes DX9, which has no SSFX API.
+		const bool hybridEnabled = ps_r2_aa_type == 4 && ps_r_scale_mode < 2;
+#else
+		const bool hybridEnabled = false;
+#endif
 		RCache.set_c(C, hybridEnabled && RDEVICE.hudViewportData.isRenderProcess, hybridEnabled, 0.0f, 0.0f);
 	}
 } binder_m_hybrid_aa_params;
@@ -1101,6 +1139,8 @@ void	CBlender_Compile::SetMapping()
     r_Constant("pf_sss_wind_anim_previous", &binder_sss_wind_previous);
     r_Constant("pf_sss_benders", &binder_sss_benders);
     r_Constant("pf_sss_benders_previous", &binder_sss_benders_previous);
+    r_Constant("pf_winter_track_data", &binder_winter_tracks);
+    r_Constant("pf_winter_track_data_previous", &binder_winter_tracks_previous);
     r_Constant("pf_sss_shadow", &binder_ssfx_shadow);
     r_Constant("pf_sss_quality", &binder_ssfx_quality);
     r_Constant("pf_sss_ao", &binder_ssfx_ao);

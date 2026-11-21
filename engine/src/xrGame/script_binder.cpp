@@ -169,6 +169,7 @@ void CScriptBinder::save			(NET_Packet &output_packet)
 			m_object->save	(&output_packet);
 		}
 		catch(...) {
+			output_packet.fail_write(); // COP_ENGINE_PATCH: COP-ENG-239 - never commit partial Lua state.
 			clear			();
 		}
 	}

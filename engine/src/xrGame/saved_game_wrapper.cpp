@@ -17,6 +17,8 @@
 #include "alife_simulator.h"
 #include "alife_spawn_registry.h"
 #include "../xrEngine/string_table.h"
+#include "save_format239.h"
+#include "save_pair_transaction.h"
 
 extern LPCSTR alife_section;
 
@@ -36,10 +38,10 @@ bool CSavedGameWrapper::saved_game_exist		(LPCSTR saved_game_name)
 
 bool CSavedGameWrapper::valid_saved_game		(IReader &stream)
 {
-	if (stream.length() < 8)
+	if (stream.length() < 12)
 		return					(false);
 
-	if (stream.r_u32() != u32(-1))
+	if (!save_format239::supported(stream.r_u32()))
 		return					(false);
 
 	if (stream.r_u32() < ALIFE_VERSION)
@@ -51,6 +53,12 @@ bool CSavedGameWrapper::valid_saved_game		(IReader &stream)
 bool CSavedGameWrapper::valid_saved_game		(LPCSTR saved_game_name)
 {
 	string_path					file_name;
+	saved_game_full_name(saved_game_name, file_name, IXRAY_DEF_SAVE_EXTENSION);
+	const save_pair239::Paths transaction_paths(file_name);
+	if (save_pair239::Files::exists(transaction_paths.journal)) {
+		if (!save_pair239::recover(transaction_paths)) return false;
+		FS.rescan_path(FS.get_path("$game_saves$")->m_Path, TRUE);
+	}
 	if (!FS.exist(saved_game_full_name(saved_game_name, file_name, IXRAY_DEF_SAVE_EXTENSION)))
 		return false;
 
@@ -64,6 +72,16 @@ CSavedGameWrapper::CSavedGameWrapper			(LPCSTR saved_game_name)
 {
 	string_path					file_name;
     saved_game_full_name(saved_game_name, file_name, IXRAY_DEF_SAVE_EXTENSION);
+    const save_pair239::Paths transaction_paths(file_name);
+    if (save_pair239::Files::exists(transaction_paths.journal)) {
+        const bool recovered = save_pair239::recover(transaction_paths);
+        FS.rescan_path(FS.get_path("$game_saves$")->m_Path, TRUE);
+        if (!recovered || !FS.exist(file_name)) {
+            CALifeTimeManager time_manager(alife_section);
+            m_game_time = time_manager.game_time(); m_actor_health = 1.f;
+            m_level_id = _LEVEL_ID(-1); m_level_name = ""; return;
+        }
+    }
 
     R_ASSERT3(FS.exist(file_name), "There is no saved game ", saved_game_name);
 

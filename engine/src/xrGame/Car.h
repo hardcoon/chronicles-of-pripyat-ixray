@@ -18,6 +18,7 @@
 #include "DelayedActionFuse.h"
 #include "CarDoors.h"
 #include "../xrEngine/VehicleGrass.h"
+#include "../xrScripts/script_space_forward.h"
 
 // refs
 class ENGINE_API			CBoneInstance;
@@ -36,6 +37,7 @@ struct						dSurfaceParameters;
 
 class CScriptEntityAction;
 class car_memory;
+struct VehicleTravelJob;
 
 class CCar : 
 	public CEntity, 
@@ -825,6 +827,17 @@ public:
 	virtual ~CCar(void);
 	virtual BOOL					AlwaysTheCrow						();
 
+public:
+	// COP_ENGINE_PATCH: COP-ENG-240 - occupied-car travel, no detach/respawn.
+	luabind::object TravelRouteBegin(const Fvector& goal, float radius);
+	luabind::object TravelRouteStep();
+	void TravelRouteCancel();
+	luabind::object TravelProbe(const Fvector& floor, float yaw);
+	bool TravelMove(const Fvector& floor, float yaw);
+	bool TravelPose(const Fvector& floor, float yaw, bool dynamic, Fmatrix& pose);
+	Fbox TravelBounds();
+private:
+	VehicleTravelJob* m_travel_job = nullptr;
 public:
 	virtual CEntity*					cast_entity				()						{return this;}
 private:

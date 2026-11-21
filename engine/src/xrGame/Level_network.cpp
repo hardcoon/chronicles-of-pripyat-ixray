@@ -248,7 +248,7 @@ void CLevel::ClientSend()
 	}
 }
 
-void CLevel::ClientSave()
+bool CLevel::ClientSave()
 {
 	u32 Iter = 0;
 	u32 ChunkID = 0;
@@ -271,12 +271,18 @@ void CLevel::ClientSave()
 		Packet.w_chunk_open16(ChunkID);
 		GO->net_Save(Packet);
 		Packet.w_chunk_close16(ChunkID);
+		if (Packet.write_failed())
+		{
+			Msg("! [SAVE239] object packet exceeds %u bytes: id=%u section=%s; save cancelled", NET_PacketSizeLimit - 1, GO->ID(), GO->cNameSect().c_str());
+			return false;
+		}
 
 		if (Packet.B.count > 2)
 		{
 			Send(Packet, net_flags(FALSE));
 		}
 	}
+	return true;
 }
 
 extern BOOL g_SV_Disable_Auth_Check;

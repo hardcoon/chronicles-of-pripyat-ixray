@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "UIHudStatesWnd.h"
+#include "UIHudIconVisibility.h"
 
 #include "../Actor.h"
 #include "../ActorCondition.h"
@@ -23,6 +24,7 @@
 #include "../ai/monsters/basemonster/base_monster.h"
 #include "../PDA.h"
 #include "WeaponMagazinedWGrenade.h"
+#include "../../xrEngine/xr_level_controller.h"
 
 CUIHudStatesWnd::CUIHudStatesWnd()
 :m_b_force_update(true),
@@ -54,6 +56,23 @@ CUIHudStatesWnd::CUIHudStatesWnd()
 	m_arrow = nullptr;
 	m_arrow_shadow = nullptr;
 	UIStackPanelDangers = nullptr;
+
+    // COP_ENGINE_PATCH: COP-ENG-231 - absence of ~dynamic-hud preserves the stock UI.
+    const char* section = "pf_dynamic_hud";
+    m_dynamicHudEnabled = READ_IF_EXISTS(pSettings, r_bool, section, "enabled", false);
+    if (m_dynamicHudEnabled)
+    {
+        m_dynamicHealthThreshold = clampr(READ_IF_EXISTS(pSettings, r_float, section, "health_threshold", 0.8f), 0.0f, 1.0f);
+        m_dynamicStaminaThreshold = clampr(READ_IF_EXISTS(pSettings, r_float, section, "stamina_threshold", 0.35f), 0.0f, 1.0f);
+        m_dynamicHealthHold = _max(0.0f, READ_IF_EXISTS(pSettings, r_float, section, "health_hold", 2.0f));
+        m_dynamicHealthFadeTime = _max(0.01f, READ_IF_EXISTS(pSettings, r_float, section, "health_fade", 2.0f));
+        m_dynamicWeaponHold = _max(0.0f, READ_IF_EXISTS(pSettings, r_float, section, "weapon_hold", 3.0f));
+        m_dynamicWeaponFadeTime = _max(0.01f, READ_IF_EXISTS(pSettings, r_float, section, "weapon_fade", 2.0f));
+        m_dynamicAppearTime = _max(0.01f, READ_IF_EXISTS(pSettings, r_float, section, "appear_time", 0.15f));
+        m_dynamicIconMargin = _max(0.0f, READ_IF_EXISTS(pSettings, r_float, section, "icons_bottom_margin", 12.0f));
+        Msg("[PF DYNAMIC HUD] enabled health=%.2f stamina=%.2f weapon_hold=%.2f weapon_fade=%.2f",
+            m_dynamicHealthThreshold, m_dynamicStaminaThreshold, m_dynamicWeaponHold, m_dynamicWeaponFadeTime);
+    }
 	//-	Load_section();
 }
 
@@ -104,6 +123,23 @@ void CUIHudStatesWnd::InitFromXml( CUIXml& xml, LPCSTR path )
 
 
 	m_back            = UIHelper::CreateStatic( xml, "back", this );
+    // COP_ENGINE_PATCH: COP-ENG-231 - split a shared 4:3 background at runtime.
+    if (m_dynamicHudEnabled && !xml.NavigateToNode("back_v", 0))
+    {
+        const Frect original = m_back->GetTextureRect();
+        Frect left = original;
+        Frect right = original;
+        left.x2 = right.x1 = (original.x1 + original.x2) * 0.5f;
+        const float half_width = m_back->GetWidth() * 0.5f;
+        m_back_v = UIHelper::CreateStatic(xml, "back", this);
+        Fvector2 position = m_back->GetWndPos();
+        position.x += half_width;
+        m_back_v->SetWndPos(position);
+        m_back_v->SetWidth(half_width);
+        m_back_v->SetTextureRect(right);
+        m_back->SetWidth(half_width);
+        m_back->SetTextureRect(left);
+    }
 	m_ui_health_bar   = UIHelper::CreateProgressBar( xml, "progress_bar_health", this );
 	m_ui_health_bar->IsExpressionSystem = xml.ReadAttrib("progress_bar_health", 0, "expression", nullptr) != nullptr;
 
@@ -241,6 +277,9 @@ void CUIHudStatesWnd::InitFromXml( CUIXml& xml, LPCSTR path )
 
 void CUIHudStatesWnd::on_connected()
 {
+	m_dynamicHealth.Reset();
+	m_dynamicWeapon.Reset();
+	m_dynamicLastItem = u16(-1);
 	Load_section();
 }
 
@@ -297,6 +336,182 @@ void CUIHudStatesWnd::Update()
 	UpdateZones();
 
 	inherited::Update();
+    if (m_dynamicHudEnabled)
+        UpdateDynamicHud(actor);
+}
+
+// COP_ENGINE_PATCH: COP-ENG-231 - native state changes also cover scripted actions.
+void CUIHudStatesWnd::UpdateDynamicHud(CActor* actor)
+{
+    // COP_ENGINE_PATCH: COP-ENG-231 - changing Mod Options also resets stale fade timers.
+    if (!DynamicHudEnabled())
+    {
+        m_dynamicHudWasEnabled = false;
+        return;
+    }
+    if (!m_dynamicHudWasEnabled)
+    {
+        m_dynamicHealth.Reset();
+        m_dynamicWeapon.Reset();
+        m_dynamicLastItem = u16(-1);
+        m_dynamicHudWasEnabled = true;
+    }
+    const u32 now = Device.dwTimeGlobal;
+    const float frame_time = clampr(Device.fTimeDelta, 0.0f, 0.1f);
+    const bool health_active = actor->GetfHealth() < m_dynamicHealthThreshold ||
+        actor->conditions().GetPower() < m_dynamicStaminaThreshold;
+    m_dynamicHealth.Update(now, frame_time, health_active,
+        m_dynamicHealthHold, m_dynamicHealthFadeTime, m_dynamicAppearTime);
+
+    PIItem item = actor->inventory().ActiveItem();
+    CWeapon* weapon = item ? item->cast_weapon() : nullptr;
+    CGrenade* grenade = item ? item->cast_grenade() : nullptr;
+    if ((!weapon || weapon->GetAmmoMagSize() <= 0) && !grenade)
+    {
+        m_dynamicLastItem = u16(-1);
+        m_dynamicWeapon.opacity = 0.0f;
+        return;
+    }
+
+    const u16 item_id = item->object().ID();
+    const int ammo = weapon ? weapon->GetAmmoElapsed() : 0;
+    const u8 ammo_type = weapon ? weapon->GetTargetAmmoType() : 0;
+    CWeaponMagazined* magazined = item->cast_weapon_magazined();
+    const int fire_mode = magazined ? magazined->GetCurrentFireMode() : 0;
+    const bool grenade_mode = weapon && weapon->IsGrenadeMode();
+    const u32 state = weapon ? weapon->GetState() : grenade->GetState();
+    bool active = item_id != m_dynamicLastItem || ammo != m_dynamicLastAmmo ||
+        ammo_type != m_dynamicLastAmmoType || fire_mode != m_dynamicLastFireMode ||
+        grenade_mode != m_dynamicLastGrenadeMode;
+    if (weapon)
+    {
+        switch (state)
+        {
+        case CWeapon::eShowing:
+        case CWeapon::eBore:
+        case CWeapon::eFire:
+        case CWeapon::eFire2:
+        case CWeapon::eReload:
+        case CWeapon::eMisfire:
+        case CWeapon::eSwitch:
+        case CWeapon::eSwitchMode:
+        case CWeapon::eEmptyClick:
+        case CWeapon::eDevice:
+        case CWeapon::eLightMis:
+        case CWeapon::eKick:
+        case CWeapon::eMagCheck:
+        case CWeapon::eFiremodeCheck:
+            active = true;
+            break;
+        }
+        active = active || weapon->IsZoomed() || weapon->IsMisfire();
+    }
+    else
+        active = active || (state != CHUDState::eIdle && state != CHUDState::eHidden);
+
+    m_dynamicLastItem = item_id;
+    m_dynamicLastAmmo = ammo;
+    m_dynamicLastAmmoType = ammo_type;
+    m_dynamicLastFireMode = fire_mode;
+    m_dynamicLastGrenadeMode = grenade_mode;
+    m_dynamicWeapon.Update(now, frame_time, active,
+        m_dynamicWeaponHold, m_dynamicWeaponFadeTime, m_dynamicAppearTime);
+}
+
+void CUIHudStatesWnd::NotifyDynamicWeaponAction(int command)
+{
+    if (!DynamicHudEnabled())
+        return;
+
+    // COP_ENGINE_PATCH: COP-ENG-231 - an attempted full-magazine reload still reveals ammo.
+    switch (command)
+    {
+    case kWPN_FIRE:
+    case kWPN_RELOAD:
+    case kWPN_NEXT:
+    case kWPN_ZOOM:
+    case kWPN_FUNC:
+    case kWPN_FIREMODE_PREV:
+    case kWPN_FIREMODE_NEXT:
+    case kMAG_CHECK:
+    case kFIREMODE_CHECK:
+    case kQUICK_KICK:
+    case kTACTICALTORCH:
+    case kLASER:
+        m_dynamicWeapon.Touch(Device.dwTimeGlobal);
+        break;
+    }
+}
+
+void CUIHudStatesWnd::Draw()
+{
+    // COP_ENGINE_PATCH: COP-ENG-233 - filter only rendering; restore every native Show flag.
+    CUIWindow* states[] = {m_indik[ALife::infl_rad], m_indik[ALife::infl_fire],
+        m_indik[ALife::infl_acid], m_indik[ALife::infl_psi], m_ind_starvation,
+        m_bleeding, m_radia_damage, UIStackPanelDangers};
+    const CHudIconVisibility stateVisibility(states, HudStatesVisible());
+    if (!DynamicHudEnabled())
+    {
+        inherited::Draw();
+        return;
+    }
+
+    // COP_ENGINE_PATCH: COP-ENG-231 - restore native colors after each draw, including animation alpha.
+    const float health = m_dynamicHealth.opacity;
+    const float ammo = m_dynamicWeapon.opacity;
+    struct SStaticTint { CUIStatic* window; float opacity; u32 color = 0; };
+    SStaticTint statics[] = {
+        {m_back, health}, {m_static_armor, health},
+        {m_ui_health_bar ? &m_ui_health_bar->m_UIProgressItem : nullptr, health},
+        {m_ui_health_bar ? &m_ui_health_bar->m_UIBackgroundItem : nullptr, health},
+        {m_ui_stamina_bar ? &m_ui_stamina_bar->m_UIProgressItem : nullptr, health},
+        {m_ui_stamina_bar ? &m_ui_stamina_bar->m_UIBackgroundItem : nullptr, health},
+        {m_ui_armor_bar ? &m_ui_armor_bar->m_UIProgressItem : nullptr, health},
+        {m_ui_armor_bar ? &m_ui_armor_bar->m_UIBackgroundItem : nullptr, health},
+        {m_back_v, ammo}, {m_ui_weapon_icon, ammo}
+    };
+    for (auto& entry : statics)
+    {
+        if (!entry.window)
+            continue;
+        entry.color = entry.window->GetTextureColor();
+        entry.window->SetTextureColor(subst_alpha(entry.color, u32(color_get_A(entry.color) * entry.opacity)));
+    }
+
+    CUITextWnd* texts[] = {m_ui_weapon_cur_ammo, m_ui_weapon_fmj_ammo, m_ui_weapon_ap_ammo,
+        m_ui_weapon_third_ammo, m_ui_weapon_sign_ammo, m_fire_mode, m_ui_grenade};
+    u32 text_colors[std::size(texts)] = {};
+    for (size_t i = 0; i < std::size(texts); ++i)
+    {
+        if (!texts[i])
+            continue;
+        text_colors[i] = texts[i]->GetTextColor();
+        texts[i]->SetTextColor(subst_alpha(text_colors[i], u32(color_get_A(text_colors[i]) * ammo)));
+    }
+
+    struct SVisibility { CUIWindow* window; float opacity; bool shown = false; };
+    SVisibility windows[] = {{m_back, health}, {m_static_armor, health}, {m_ui_health_bar, health},
+        {m_ui_stamina_bar, health}, {m_ui_armor_bar, health}, {m_back_v, ammo},
+        {m_ui_weapon_icon, ammo}, {m_ui_weapon_cur_ammo, ammo}, {m_ui_weapon_fmj_ammo, ammo},
+        {m_ui_weapon_ap_ammo, ammo}, {m_ui_weapon_third_ammo, ammo}, {m_ui_weapon_sign_ammo, ammo},
+        {m_fire_mode, ammo}, {m_ui_grenade, ammo}};
+    for (auto& entry : windows)
+    {
+        if (!entry.window)
+            continue;
+        entry.shown = entry.window->IsShown();
+        entry.window->Show(entry.shown && entry.opacity > 0.0f);
+    }
+    inherited::Draw();
+    for (auto& entry : windows)
+        if (entry.window)
+            entry.window->Show(entry.shown);
+    for (auto& entry : statics)
+        if (entry.window)
+            entry.window->SetTextureColor(entry.color);
+    for (size_t i = 0; i < std::size(texts); ++i)
+        if (texts[i])
+            texts[i]->SetTextColor(text_colors[i]);
 }
 
 void CUIHudStatesWnd::UpdateHealth( CActor* actor )
@@ -845,6 +1060,9 @@ float CUIHudStatesWnd::get_zone_cur_power( ALife::EHitType hit_type )
 
 void CUIHudStatesWnd::DrawZoneIndicators()
 {
+    // COP_ENGINE_PATCH: COP-ENG-233 - also respect the preference in manual indicator draws.
+    if (!HudStatesVisible())
+        return;
 	CActor* actor = Level().CurrentViewEntity() ? Level().CurrentViewEntity()->cast_actor() : NULL;
 	if(!actor)
 		return;

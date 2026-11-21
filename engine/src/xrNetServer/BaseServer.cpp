@@ -504,7 +504,7 @@ void BaseServer::SendBroadcast(ClientID exclude, NET_Packet& P, u32 dwFlags)
 
 void BaseServer::_Recieve(const void* data, u32 data_size, u32 param)
 {
-	if (data_size >= NET_PacketSizeLimit) {
+	if (data_size >= NET_TransportPacketSizeLimit) {
 		Msg("! too large packet size[%d] received, DoS attack?", data_size);
 		return;
 	}

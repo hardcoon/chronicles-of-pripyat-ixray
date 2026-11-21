@@ -34,8 +34,35 @@
 #include "Artefact.h"
 #include "sight_manager_space.h"
 #include "../xrScripts/exports/script_ini_file.h"
+#include "Actor.h"
+#include "Level.h"
+#include "memory_manager.h"
+#include "visual_memory_manager.h"
+#include "ai/monsters/basemonster/base_monster.h"
 
 using namespace luabind;
+
+// COP_ENGINE_PATCH: COP-ENG-242 - one real perception record after a failed travel bypass.
+// Unlike the stalker-only make_object_visible_somewhen, this supports base monsters.
+static bool force_detect_actor(CScriptGameObject* object)
+{
+    if (!object || !g_pGameLevel)
+        return false;
+    CBaseMonster* monster = object->object().cast_base_monster();
+    CActor* actor = Actor();
+    if (!monster || !actor || !monster->g_Alive() || !actor->g_Alive() ||
+        monster->getDestroy() || actor->getDestroy())
+        return false;
+    auto& visual = monster->memory().visual();
+    visual.remove_links(actor);
+    visual.add_visible_object(actor, 0.f, true);
+    monster->memory().enable(actor, true);
+    monster->EnemyMemory.add_enemy(actor);
+    // Re-evaluate normal enemy memory; do not leave a permanent script/forced target.
+    monster->EnemyMemory.update();
+    monster->EnemyMan.update();
+    return visual.visible_now(actor);
+}
 
 class_<CScriptGameObject> script_register_game_object2(class_<CScriptGameObject> &&instance)
 {
@@ -58,6 +85,7 @@ class_<CScriptGameObject> script_register_game_object2(class_<CScriptGameObject>
 		.def("path_completed",				&CScriptGameObject::path_completed)
 		.def("patrol_path_make_inactual",	&CScriptGameObject::patrol_path_make_inactual)
 		.def("enable_memory_object",		&CScriptGameObject::enable_memory_object)
+		.def("force_detect_actor", &force_detect_actor)
 		.def("active_sound_count",			(int (CScriptGameObject::*)())(&CScriptGameObject::active_sound_count))
 		.def("active_sound_count",			(int (CScriptGameObject::*)(bool))(&CScriptGameObject::active_sound_count))
 		.def("best_cover",					&CScriptGameObject::best_cover)

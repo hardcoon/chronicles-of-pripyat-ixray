@@ -1113,7 +1113,7 @@ void game_sv_CaptureTheArtefact::AddAnomalyChanges(
 		u_EventGen			(temp_packet, GE_ZONE_STATE_CHANGE, i->second);
 		temp_packet.w_u8	(static_cast<u8>(state));
 		
-		VERIFY2((packet.w_tell() + temp_packet.B.count) < NET_PacketSizeLimit,
+		VERIFY2((packet.w_tell() + temp_packet.B.count) < NET_TransportPacketSizeLimit,
 			"event packet exceeds size !");
 		packet.w_u8		(static_cast<u8>(temp_packet.B.count));
 		packet.w		(&temp_packet.B.data, temp_packet.B.count);
@@ -2024,7 +2024,7 @@ void game_sv_CaptureTheArtefact::MoveLifeActors()
 			
 			if (l_pC->ps->testFlag(GAME_PLAYER_FLAG_VERY_VERY_DEAD))
 				return;
-			VERIFY2(tempPacket.w_tell() < (NET_PacketSizeLimit - 256), "max packet size exceeds !");
+			VERIFY2(tempPacket.w_tell() < (NET_TransportPacketSizeLimit - 256), "max packet size exceeds !");
 			tempPacket.w_u16(l_pC->owner->ID);
 			tempPacket.w_vec3(l_pC->owner->o_Position);
 			tempPacket.w_vec3(l_pC->owner->o_Angle);

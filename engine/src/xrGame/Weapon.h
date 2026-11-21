@@ -16,6 +16,7 @@
 #include "Actor.h"
 #include "script_game_object.h"
 #include "Scope.h"
+#include "WeaponHikeInertia.h"
 
 class CEntity;
 class ENGINE_API CMotionDef;
@@ -456,6 +457,14 @@ protected:
 		float			m_fRTZoomFactor; //run-time zoom factor
 		CUIWindow*		m_UIScope;
 
+	// COP_ENGINE_PATCH: COP-ENG-224 - transient, per-weapon camera motion.
+	weapon_hike::Settings m_hike_inertia_settings;
+	weapon_hike::State m_hike_inertia;
+	bool m_hike_inertia_enabled = false;
+	u32 m_hike_inertia_frame = u32(-1);
+	void LoadHikeInertia();
+	void ResetHikeInertia();
+	void UpdateHikeInertia(Fmatrix& transform, Fvector& offset, const CActor& actor);
 	InertionData	m_base_inertion;
 	InertionData	m_zoom_inertion;
 	bool m_bIAmWeaponRPG7;

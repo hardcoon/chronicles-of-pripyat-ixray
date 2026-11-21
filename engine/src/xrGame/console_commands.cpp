@@ -92,6 +92,16 @@ extern	float	g_fTimeFactor;
 extern	bool	b_toggle_weapon_aim;
 // COP_ENGINE_PATCH: COP-ENG-190 - preserve eng189 behaviour until the user opts out.
 bool g_inventory_fast_transfer = true;
+// COP_ENGINE_PATCH: COP-ENG-231 - client preference, enabled for existing profiles by default.
+bool g_dynamic_hud = true;
+// COP_ENGINE_PATCH: COP-ENG-233 - client-only icon preference, preserve all icons by default.
+u32 g_hud_icons_mode = 0;
+static xr_token hud_icons_mode_token[] = {
+    {"pf_hud_icons_all", 0},
+    {"pf_hud_icons_effects", 1},
+    {"pf_hud_icons_inventory", 2},
+    {nullptr, 0}
+};
 //extern  BOOL	g_old_style_ui_hud;
 
 extern float	g_smart_cover_factor;
@@ -575,6 +585,14 @@ public:
 		Msg("Game save overhead  : %f milliseconds", timer.GetElapsed_sec() * 1000.f);
 #endif
 
+		if (!ai().alife().last_save_succeeded())
+		{
+			if (CurrentGameUI()) {
+				SDrawStaticStruct* notice = CurrentGameUI()->AddCustomStatic("game_saved", true, 6.0f);
+				if (notice) notice->wnd()->TextItemControl()->SetTextST("st_pf_save_failed");
+			}
+			return;
+		}
 		if (EngineExternal()[EEngineExternalUI::UseSavedGameStatic])
 		{
 			SDrawStaticStruct* _s = CurrentGameUI()->AddCustomStatic("game_saved", true, 3.0f);
@@ -2840,6 +2858,10 @@ void CCC_RegisterCommands()
 	CMD2(CCC_Boolean, "wpn_aim_toggle", &b_toggle_weapon_aim);
 	// COP_ENGINE_PATCH: COP-ENG-190 - native options/cfg_save persist the Shift-transfer preference.
 	CMD2(CCC_Boolean, "ui_inventory_fast_transfer", &g_inventory_fast_transfer);
+    // COP_ENGINE_PATCH: COP-ENG-231 - use the normal options backup/apply/cfg_save lifecycle.
+    CMD2(CCC_Boolean, "g_dynamic_hud", &g_dynamic_hud);
+    // COP_ENGINE_PATCH: COP-ENG-233 - native token participates in options backup/apply/cancel/cfg_save.
+    CMD3(CCC_Token, "g_hud_icons", &g_hud_icons_mode, hud_icons_mode_token);
 
 	CMD4(CCC_Integer, "g_fight_fast_respawn", &g_fight_fast_respawn, 0, 1);
 

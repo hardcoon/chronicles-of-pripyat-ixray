@@ -1,10 +1,15 @@
+// COP_ENGINE_PATCH: COP-ENG-234 - persistent native surface-track buffer.
 #include "stdafx.h"
+#ifdef USE_DX11
+#include "WinterTracks.h"
+#endif
 #include "xrRender_console.h"
 #include "dxRenderDeviceRender.h"
 #include "SSSSettings.h"
 #include "../../xrEngine/XR_IOConsole.h"
 #include "../../xrEngine/xr_ioc_cmd.h"
 #include <cmath>
+#include <cstring>
 #ifdef USE_DX11
 #include "../xrRenderDX10/PFOnlineTv.h"
 // COP_ENGINE_PATCH: COP-ENG-194 - transient commands never enter user.ltx.
@@ -55,6 +60,60 @@ Fvector4 ps_ssfx_ao2 = {0.25f, 1.f, 0.9f, 2.f};
 Fvector4 ps_ssfx_options[SSS_vector_count] = {};
 Fvector ps_ssfx_context_weapon = {}, ps_ssfx_context_ui = {};
 Fvector ps_ssfx_bender_positions[24] = {}, ps_ssfx_bender_metadata[24] = {}, ps_ssfx_bender_directions[8] = {};
+
+cop_winter::TrackState cop_winter::tracks;
+
+class CCC_WinterTrackSet : public IConsole_Command
+{
+public:
+    explicit CCC_WinterTrackSet(LPCSTR name) : IConsole_Command(name) {}
+    void Save(IWriter*) override {}
+    void Execute(LPCSTR args) override
+    {
+        unsigned index, immediate;
+        cop_winter::Vector start{}, end{};
+        char trailing;
+        const int count = sscanf(args, "%u,%f,%f,%f,%f,%f,%f,%f,%f,%u %c", &index,
+            &start[0], &start[1], &start[2], &start[3],
+            &end[0], &end[1], &end[2], &end[3], &immediate, &trailing);
+        if (count != 10 || immediate > 1 || !cop_winter::tracks.set(index, start, end, immediate != 0))
+            InvalidSyntax();
+    }
+};
+
+class CCC_WinterTrackLive : public IConsole_Command
+{
+public:
+    explicit CCC_WinterTrackLive(LPCSTR name) : IConsole_Command(name) {}
+    void Save(IWriter*) override {}
+    void Execute(LPCSTR args) override
+    {
+        cop_winter::Vector actor{}, tail{};
+        char trailing;
+        const int count = sscanf(args, "%f,%f,%f,%f,%f,%f,%f %c", &actor[0], &actor[1], &actor[2],
+            &tail[0], &tail[1], &tail[2], &actor[3], &trailing);
+        if (count != 7 || !cop_winter::tracks.live(actor, tail))
+            InvalidSyntax();
+    }
+};
+
+class CCC_WinterTrackCommit : public IConsole_Command
+{
+public:
+    explicit CCC_WinterTrackCommit(LPCSTR name) : IConsole_Command(name) {}
+    void Save(IWriter*) override {}
+    void Execute(LPCSTR args) override
+    {
+        unsigned count;
+        char trailing;
+        if (sscanf(args, "%u %c", &count, &trailing) != 1 || !cop_winter::tracks.commit(count))
+            InvalidSyntax();
+    }
+    void Status(TStatus& status) override
+    {
+        xr_sprintf(status, "%u", cop_winter::max_tracks);
+    }
+};
 class CCC_SSSRuntime4 : public IConsole_Command {
     Fvector4 *value,low,high;
 public:
@@ -87,6 +146,45 @@ public:
         else if (*value != parsed) { *value = parsed; ++ps_ssfx_revision; }
     }
 };
+// COP_ENGINE_PATCH: COP-ENG-235 - animated shader values are not graphics configuration changes.
+// Resolve only declared uniform slots and retain their normal validation bounds.
+class CCC_SSSRuntimeFloat : public IConsole_Command
+{
+public:
+    explicit CCC_SSSRuntimeFloat(LPCSTR name) : IConsole_Command(name) {}
+    void Save(IWriter*) override {}
+    void Status(TStatus& status) override { xr_sprintf(status, "1"); }
+    void Execute(LPCSTR args) override
+    {
+        char option[64], literal[64], trailing;
+        if (sscanf(args, "%63s %63s %c", option, literal, &trailing) != 2)
+        {
+            InvalidSyntax();
+            return;
+        }
+        char* end = nullptr;
+        const float parsed = strtof(literal, &end);
+        u32 bits;
+        std::memcpy(&bits, &parsed, sizeof(bits));
+        // Bitwise finite check also works with the renderer's /fp:fast.
+        if (end == literal || *end || (bits & 0x7f800000u) == 0x7f800000u)
+        {
+            InvalidSyntax();
+            return;
+        }
+#define SSS_OPTION(name, index, initial, low, high) \
+        if (std::strcmp(option, #name) == 0) \
+        { \
+            if (parsed < low || parsed > high) InvalidSyntax(); \
+            else ssfx_option(index) = parsed; \
+            return; \
+        }
+#include "SSSOptions.inc"
+#undef SSS_OPTION
+        InvalidSyntax();
+    }
+};
+
 // COP_ENGINE_PATCH: COP-ENG-139 - read-only runtime value; no preference writes or temporal-history revisions.
 class CCC_SSSPuddleWetness : public CCC_Float
 {
@@ -941,6 +1039,7 @@ void		xrRender_initconsole	()
     // COP_ENGINE_PATCH: COP-ENG-168
     CMD3(CCC_Mask, "r4_bodycam", &ps_r4_bodycam, 1);
     CMD1(CCC_BodycamState, "r4_bodycam_state");
+    CMD1(CCC_SSSRuntimeFloat, "ssfx_runtime"); // COP_ENGINE_PATCH: COP-ENG-235
     CMD4(CCC_SSSEnabled, "ssfx_enabled", &ps_ssfx_enabled, 0, 1);
     CMD4(CCC_SSSPuddleWetness, "pf_sss_puddle_wetness", &ps_pf_sss_puddle_wetness, -1.f, 1.f);
     CMD4(CCC_SSSContext, "ssfx_context_weapon", &ps_ssfx_context_weapon, Fvector().set(0,0,0), Fvector().set(1,1,1));
@@ -988,6 +1087,9 @@ void		xrRender_initconsole	()
     SSS_BENDER_DIRECTION(6)
     SSS_BENDER_DIRECTION(7)
 #undef SSS_BENDER_DIRECTION
+    CMD1(CCC_WinterTrackSet, "pf_winter_track_set");
+    CMD1(CCC_WinterTrackLive, "pf_winter_track_live");
+    CMD1(CCC_WinterTrackCommit, "pf_winter_track_commit");
     CMD4(CCC_SSSFloat, "ssfx_shadow_sun", &ps_ssfx_modules.x, 0.f, 1.f);
     CMD4(CCC_SSSFloat, "ssfx_shadow_local", &ps_ssfx_modules.y, 0.f, 1.f);
     CMD4(CCC_SSSFloat, "ssfx_ao_enabled", &ps_ssfx_modules.z, 0.f, 1.f);

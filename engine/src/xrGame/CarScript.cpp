@@ -35,6 +35,12 @@ void CCar::script_register(lua_State *L)
 		// COP_ENGINE_PATCH: COP-ENG-205 - read-only operator context for native QA/scripts.
 		.def("weapon_external_view_active", &CCar::IsWeaponExternalView)
 		.def("CurrentVel",		&CCar::CurrentVel)
+		// COP_ENGINE_PATCH: COP-ENG-240 - explicit, validated car-only transaction.
+		.def("travel_route_begin", &CCar::TravelRouteBegin)
+		.def("travel_route_step", &CCar::TravelRouteStep)
+		.def("travel_route_cancel", &CCar::TravelRouteCancel)
+		.def("travel_probe", &CCar::TravelProbe)
+		.def("travel_move", &CCar::TravelMove)
 		// COP_ENGINE_PATCH: COP-ENG-197 - native door interaction for scripts/QA.
 		.def("switch_door", &CCar::DoorUse)
 		// COP_ENGINE_PATCH: COP-ENG-094 - GPS reads ignition without polling physics or inventory.

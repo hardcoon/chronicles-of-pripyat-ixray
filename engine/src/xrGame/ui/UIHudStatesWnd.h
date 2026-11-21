@@ -4,6 +4,7 @@
 #include "../../xrEngine/AI/alife_space.h"
 #include "../../xrServerEntities/inventory_space.h"
 #include "../actor_defs.h"
+#include "UIDynamicHud.h"
 
 class CUIStatic;
 class CUITextWnd;
@@ -13,6 +14,8 @@ class CUIXml;
 class CUIArrow;
 class CActor;
 class CUIStackPanel;
+extern bool g_dynamic_hud;
+extern u32 g_hud_icons_mode;
 
 int const it_max = ALife::infl_max_count - 1;
 
@@ -28,7 +31,7 @@ private:
 	CUIStatic*			m_bleeding = nullptr;
 
 	CUIStatic*			m_resist_back[it_max];
-	CUIStatic*			m_indik[it_max];
+	CUIStatic*			m_indik[it_max] = {};
 	CUIStatic*			m_ind_starvation = nullptr;
 	CUIStatic*			m_resist_back_starvation = nullptr;
 
@@ -64,6 +67,27 @@ private:
 	const char*			m_onZoneTouch = {};
 
 	CUIStackPanel*		UIStackPanelDangers;
+
+    // COP_ENGINE_PATCH: COP-ENG-231 - enabled only by the optional addon section.
+    bool m_dynamicHudEnabled = false;
+    bool m_dynamicHudWasEnabled = false;
+    float m_dynamicHealthThreshold = 0.8f;
+    float m_dynamicStaminaThreshold = 0.35f;
+    float m_dynamicHealthHold = 2.0f;
+    float m_dynamicHealthFadeTime = 2.0f;
+    float m_dynamicWeaponHold = 3.0f;
+    float m_dynamicWeaponFadeTime = 2.0f;
+    float m_dynamicAppearTime = 0.15f;
+    float m_dynamicIconMargin = 12.0f;
+    SDynamicHudFade m_dynamicHealth;
+    SDynamicHudFade m_dynamicWeapon;
+    u16 m_dynamicLastItem = u16(-1);
+    int m_dynamicLastAmmo = -1;
+    u8 m_dynamicLastAmmoType = u8(-1);
+    int m_dynamicLastFireMode = 0;
+    bool m_dynamicLastGrenadeMode = false;
+
+    void UpdateDynamicHud(CActor* actor);
 public:
 	
 	CUITextWnd*			m_ui_weapon_cur_ammo = nullptr;
@@ -90,6 +114,16 @@ public:
 			void	InitFromXml			( CUIXml& xml, LPCSTR path );
 			void	Load_section		();
 	virtual void	Update				();
+	virtual void    Draw() override;
+    void NotifyDynamicWeaponAction(int command);
+    bool DynamicHudAvailable() const { return m_dynamicHudEnabled; }
+    // COP_ENGINE_PATCH: COP-ENG-233 - icon modes are independent of the dynamic fade checkbox.
+    bool HudStatesVisible() const { return !DynamicHudAvailable() || g_hud_icons_mode == 0; }
+    bool HudEffectsVisible() const { return !DynamicHudAvailable() || g_hud_icons_mode < 2; }
+    bool HudEffectsInventoryOnly() const { return DynamicHudAvailable() && g_hud_icons_mode == 2; }
+    bool DynamicHudEnabled() const { return m_dynamicHudEnabled && g_dynamic_hud; }
+    float DynamicHealthOpacity() const { return DynamicHudEnabled() ? m_dynamicHealth.opacity : 1.0f; }
+    float DynamicIconMargin() const { return m_dynamicIconMargin; }
 //	virtual void	Draw				();
 
 			void	on_connected		();

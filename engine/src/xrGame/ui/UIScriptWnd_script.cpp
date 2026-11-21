@@ -42,6 +42,8 @@ export_class script_register_ui_window1(export_class &&instance)
 {
 	return std::move(instance)
 		.def(					constructor<>())
+		// COP_ENGINE_PATCH: COP-ENG-238 - opt-in input for paused Lua dialogs.
+		.def_readwrite("work_in_pause", &BaseType::m_bWorkInPause)
 
 		.def("AddCallback",		(void(BaseType::*)(LPCSTR, s16, const luabind::functor<void>&, const luabind::object&))&BaseType::AddCallback)
 

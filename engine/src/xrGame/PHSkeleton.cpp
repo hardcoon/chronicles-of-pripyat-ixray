@@ -225,7 +225,9 @@ void CPHSkeleton::SaveNetState(NET_Packet& P)
 	P.w_vec3(min);
 	P.w_vec3(max);
 
-	P.w_u16(bones_number);
+	// COP_ENGINE_PATCH: COP-ENG-236 - no 8-bit pose compression on save.
+    R_ASSERT(bones_number < SPHBonesData::full_precision_flag);
+    P.w_u16(bones_number | SPHBonesData::full_precision_flag);
 	if(bones_number > 64) {
 		Msg("!![CPhysicsShellHolder::PHSaveState] bones_number is [%u]!", bones_number);
 		P.w_u64(K ? _vm._visimask_ex.flags : u64(-1));
@@ -235,39 +237,29 @@ void CPHSkeleton::SaveNetState(NET_Packet& P)
 	{
 		SPHNetState state;
 		obj->PHGetSyncItem(i)->get_State(state);
-		state.net_Save(P,min,max);
+		state.save_pose(P);
 	}
 }
 
 void CPHSkeleton::LoadNetState(NET_Packet& P)
 {
-	CPhysicsShellHolder* obj=PPhysicsShellHolder();
-	IKinematics* K=smart_cast<IKinematics*>(obj->Visual());
-	P.r_u8 (m_flags.flags);
-
-	u64 _low = 0;
-	u64 _high = 0;
-
-	if(K)
-	{
-		_low = P.r_u64();
-		K->LL_SetBoneRoot(P.r_u16());
-	}
-
-	u16 bones_number = P.r_u16();
-	if(bones_number > 64) {
-		Msg("!![CPhysicsShellHolder::PHLoadState] bones_number is [%u]!", bones_number);
-		_high = P.r_u64();
-	}
-	VisMask _vm(_low, _high);
-	K->LL_SetBonesVisible(_vm);
-
-	for(u16 i=0;i<bones_number;i++)
-	{
-		SPHNetState state;
-		state.net_Load(P);
-		obj->PHGetSyncItem(i)->set_State(state);
-	}
+    // COP_ENGINE_PATCH: COP-ENG-236 - consume the complete tagged/legacy pose.
+    CPhysicsShellHolder* obj = PPhysicsShellHolder();
+    IKinematics* K = smart_cast<IKinematics*>(obj->Visual());
+    P.r_u8(m_flags.flags);
+    SPHBonesData data;
+    data.net_Load(P);
+    // Preserve the holder reader's legacy upper-mask default.
+    if (data.bones.size() <= 64)
+        data.bones_mask._visimask_ex.flags = 0;
+    if (K)
+    {
+        K->LL_SetBoneRoot(data.root_bone);
+        K->LL_SetBonesVisible(data.bones_mask);
+    }
+    R_ASSERT(data.bones.size() <= obj->PHGetSyncItemsNumber());
+    for (u16 index = 0; index < data.bones.size(); ++index)
+        obj->PHGetSyncItem(index)->set_State(data.bones[index]);
 }
 
 void CPHSkeleton::RestoreNetState(CSE_PHSkeleton* po)

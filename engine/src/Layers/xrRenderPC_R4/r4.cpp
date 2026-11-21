@@ -1,5 +1,7 @@
+// COP_ENGINE_PATCH: COP-ENG-234 - persistent native surface-track buffer.
 #include "stdafx.h"
 #include "r4.h"
+#include "PFSkybox.h"
 #include "../xrRenderDX10/PFOnlineTv.h"
 #include "../xrRender/FBasicVisual.h"
 #include "../../xrEngine/xr_object.h"
@@ -248,6 +250,7 @@ void CRender::create()
 
 void CRender::destroy() 
 {
+    PFSkyboxUnload(); // COP_ENGINE_PATCH: COP-ENG-244 - release before renderer resources.
     PFOnlineTv::Shutdown(); // COP_ENGINE_PATCH: COP-ENG-194
 	m_bMakeAsyncSS = false;
 	FluidManager.Destroy();
@@ -263,6 +266,7 @@ void CRender::destroy()
 }
 
 void CRender::reset_begin() {
+    PFSkyboxResetGPU(); // COP_ENGINE_PATCH: COP-ENG-244: recreate lazily after device/size reset.
 	// Update incremental shadowmap-visibility solver
 	// BUG-ID: 10646
 	{
@@ -649,6 +653,7 @@ void CRender::clearAllShaderOptions()
 {
 	//GPU_EVENT(__FUNCTION__)
 	m_ShaderOptions = EngineExternal().ShadersOptions;
+	addShaderOption("PF_WINTER_TRACK_CAPACITY", "128");
 }
 
 void CRender::addShaderOption(const char* name, const char* value) 
