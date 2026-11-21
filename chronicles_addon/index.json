@@ -4,14 +4,15 @@
     {
       "id": "winter",
       "name": "Зима",
-      "version": "1.53",
+      "version": "1.54",
       "directory": "~winter",
       "package": {
-        "assetName": "winter-1.53-f2e2b9cabd5d.zip",
-        "size": 3373400371,
-        "sha256": "f2e2b9cabd5df772f0f8be01ce8796467e389b70a6b9a88d721922c677577f18",
+        "assetName": "winter-1.54-e4ab5f2d1d37.zip",
+        "size": 3373827003,
+        "sha256": "e4ab5f2d1d37ed62a41faef208c091f381f35fbb3b54dca723659fa6c5e57f21",
         "files": [
           "addon.init",
+          "configs/environment/dynamic_weather_graphs.ltx",
           "configs/environment/mod_sound_channels_winter.ltx",
           "configs/environment/weather_effects/full_fx_surge_day.ltx",
           "configs/environment/weather_effects/fx_surge_day_1.ltx",
@@ -99,10 +100,18 @@
           "shaders/d3d11/accum_sun.ps.hlsl",
           "shaders/d3d11/combine_1.ps.hlsl",
           "shaders/d3d11/combine_2.ps.hlsl",
+          "shaders/d3d11/common_iostructs.hlsli",
           "shaders/d3d11/deffer_base.ps.hlsl",
+          "shaders/d3d11/deffer_base.vs.hlsl",
+          "shaders/d3d11/deffer_detail.vs.hlsl",
           "shaders/d3d11/deffer_impl.ps.hlsl",
+          "shaders/d3d11/deffer_lod.vs.hlsl",
           "shaders/d3d11/deffer_model.vs.hlsl",
           "shaders/d3d11/lod.ps.hlsl",
+          "shaders/d3d11/pf_skybox_billboard.ps.hlsl",
+          "shaders/d3d11/pf_skybox_ground.ps.hlsl",
+          "shaders/d3d11/pf_skybox_lighting.hlsli",
+          "shaders/d3d11/pf_skybox_model.ps.hlsl",
           "shaders/d3d11/pf_winter_camera_snow.hlsli",
           "shaders/d3d11/pf_winter_facade.hlsli",
           "shaders/d3d11/pf_winter_fog.hlsli",
@@ -122,6 +131,7 @@
           "shaders/d3d11/pf_winter_world_surface.hlsli",
           "shaders/d3d11/rain_patch_normal.ps.hlsl",
           "shaders/d3d11/sky.ps.hlsl",
+          "shaders/d3d11/sload.hlsli",
           "shaders/d3d11/snowing_main.ps.hlsl",
           "shaders/d3d11/tess.ds.hlsl",
           "shaders/d3d11/tess.hs.hlsl",
@@ -162,10 +172,26 @@
           "sounds/material/actor/step/n_gravel_4.ogg",
           "sounds/material/actor/step/n_gravel_5.ogg",
           "sounds/material/actor/step/n_gravel_6.ogg",
+          "sounds/material/human/step/n_asphalt_1.ogg",
+          "sounds/material/human/step/n_asphalt_2.ogg",
+          "sounds/material/human/step/n_asphalt_3.ogg",
+          "sounds/material/human/step/n_asphalt_4.ogg",
+          "sounds/material/human/step/n_earth_1.ogg",
+          "sounds/material/human/step/n_earth_2.ogg",
+          "sounds/material/human/step/n_earth_3.ogg",
+          "sounds/material/human/step/n_earth_4.ogg",
           "sounds/material/human/step/n_froze_1.ogg",
           "sounds/material/human/step/n_froze_2.ogg",
           "sounds/material/human/step/n_froze_3.ogg",
           "sounds/material/human/step/n_froze_4.ogg",
+          "sounds/material/human/step/n_grass_1.ogg",
+          "sounds/material/human/step/n_grass_2.ogg",
+          "sounds/material/human/step/n_grass_3.ogg",
+          "sounds/material/human/step/n_grass_4.ogg",
+          "sounds/material/human/step/n_gravel_1.ogg",
+          "sounds/material/human/step/n_gravel_2.ogg",
+          "sounds/material/human/step/n_gravel_3.ogg",
+          "sounds/material/human/step/n_gravel_4.ogg",
           "sounds/winter/ambient/owl_01.ogg",
           "sounds/winter/ambient/owl_02.ogg",
           "sounds/winter/ambient/owl_03.ogg",
@@ -1041,6 +1067,21 @@
           "textures/mtl/mtl_walls7_soc.dds",
           "textures/mtl/mtl_walls8_old.dds",
           "textures/mtl/mtl_z_trba.dds",
+          "textures/pf_skybox/detail_asphalt.dds",
+          "textures/pf_skybox/detail_earth.dds",
+          "textures/pf_skybox/detail_grass.dds",
+          "textures/pf_skybox/ground_color.dds",
+          "textures/pf_skybox/tree_0.dds",
+          "textures/pf_skybox/tree_1.dds",
+          "textures/pf_skybox/tree_2.dds",
+          "textures/pf_skybox/tree_3.dds",
+          "textures/pf_skybox/tree_4.dds",
+          "textures/pf_skybox/tree_5.dds",
+          "textures/pf_skybox/tree_6.dds",
+          "textures/pf_skybox/tree_7.dds",
+          "textures/pf_skybox/tree_8.dds",
+          "textures/pf_skybox/tree_9.dds",
+          "textures/pf_skybox/trees_lod.dds",
           "textures/pfx/pfx_smoke_b_001.dds",
           "textures/pfx/pfx_smoke_b_002.dds",
           "textures/pfx/pfx_smoke_b_003.dds",
@@ -1573,14 +1614,14 @@
           "textures/wall/wall_ceiling_01.dds",
           "textures/wall/wall_farm.dds",
           "textures/wall/wall_green_01_snowmask.dds",
-          "textures/wall/wall_house_red_01.dds",
-          "textures/wall/wall_house_red_02.dds",
+          "textures/wall/wall_house_red_01_snowmask.dds",
+          "textures/wall/wall_house_red_02_snowmask.dds",
           "textures/wall/wall_house_red_03_snowmask.dds",
           "textures/wall/wall_house_red_04_snowmask.dds",
           "textures/wall/wall_house_red_05_snowmask.dds",
           "textures/wall/wall_house_red_06_snowmask.dds",
-          "textures/wall/wall_house_white_01.dds",
-          "textures/wall/wall_house_white_02.dds",
+          "textures/wall/wall_house_white_01_snowmask.dds",
+          "textures/wall/wall_house_white_02_snowmask.dds",
           "textures/wall/wall_house_white_03_snowmask.dds",
           "textures/wall/wall_house_white_04_snowmask.dds",
           "textures/wall/wall_house_white_05_snowmask.dds",
@@ -1634,6 +1675,9 @@
           "textures/winter/build/rust.dds",
           "textures/winter/build/rust.thm",
           "textures/winter/build/rust_snowmask.dds",
+          "textures/winter/interior/mtl_plates.dds",
+          "textures/winter/interior/mtl_plates.thm",
+          "textures/winter/interior/mtl_plates_snowmask.dds",
           "textures/winter/nights/blue#small.dds",
           "textures/winter/nights/blue.dds",
           "textures/winter/nights/cloud#small.dds",
@@ -1820,7 +1864,7 @@
         {
           "path": "addon.init",
           "size": 47,
-          "sha256": "6c00168472028bf72f77166e908b48e1a5742023a18a3681875f4243c3509415"
+          "sha256": "886a6b4e155e3a93b29563a7681090e123d57c317542f70aad510c8bc8c17126"
         },
         {
           "path": "configs/environment/dynamic_weather_graphs.ltx",
@@ -1970,7 +2014,7 @@
         {
           "path": "gamemtl.xr",
           "size": 553388,
-          "sha256": "1c306a77c5438fa8a187d79ec51def4771d7ea19319641bb54cb339df0192141"
+          "sha256": "861a23d256f9b9a08d4de243e74f5a2582846082ffd84a7a0ed4b516cf8d2340"
         },
         {
           "path": "levels/pripyat_full/level",
@@ -2623,6 +2667,46 @@
           "sha256": "127abc2acd78ec9e1b7db0efa16fb2f1b77abe894734e9f64a75e6a7ad9805a4"
         },
         {
+          "path": "sounds/material/human/step/n_asphalt_1.ogg",
+          "size": 9968,
+          "sha256": "cc973377bea54a2a19b8cd6a115eb7996b544b2435a94411b6b96d1ed8bc017e"
+        },
+        {
+          "path": "sounds/material/human/step/n_asphalt_2.ogg",
+          "size": 11019,
+          "sha256": "a7c1cca144bbab75e61716730316a773ab9f170c89b5cc027a7079c298da701e"
+        },
+        {
+          "path": "sounds/material/human/step/n_asphalt_3.ogg",
+          "size": 9914,
+          "sha256": "d41ca2a16fc1cabffb91b56e401774f9d0f14fb581b0daf0ee2ef06fc2e2c82c"
+        },
+        {
+          "path": "sounds/material/human/step/n_asphalt_4.ogg",
+          "size": 11346,
+          "sha256": "04a606c348ca1677ac5aab13ae9ee071ea3d65518d2b612bb76e6837344a07da"
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_1.ogg",
+          "size": 9968,
+          "sha256": "c2175618f138ccca6f0ab327c1aa21fe1f8a27ddd163a38b02ee9fe6a57432b6"
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_2.ogg",
+          "size": 9914,
+          "sha256": "3e2d9348f4e210489adfa7eed30f7f52ee1717b3b790138e3392443fd7e58c16"
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_3.ogg",
+          "size": 11019,
+          "sha256": "5f37696f81be1ec602c78738621919d1e7253312625cad152fb7f45d2f501d54"
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_4.ogg",
+          "size": 11346,
+          "sha256": "475b6d8d47b96c43c0160a0d70e1761e5e47b718abc9ce47dadd2a76980f9c22"
+        },
+        {
           "path": "sounds/material/human/step/n_froze_1.ogg",
           "size": 16707,
           "sha256": "4adfdf015c2333307c341f8ddfec5db9d5300893c4878603e4ced97e51a1fac8"
@@ -2641,6 +2725,46 @@
           "path": "sounds/material/human/step/n_froze_4.ogg",
           "size": 18481,
           "sha256": "ad4d535b846b8ea8728d1bd6802be1b301157a3a66905bd8474903d389c3e64f"
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_1.ogg",
+          "size": 11019,
+          "sha256": "89e4a44188213a846f9aef2833005dbe8b655e9e9f0b8ba7fd33550954a707f4"
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_2.ogg",
+          "size": 11346,
+          "sha256": "779351637d3c24b42d4059e418d3afdde52830ae6344a86f9941012aad11e9ed"
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_3.ogg",
+          "size": 11019,
+          "sha256": "c78d466361462695b0705b6306a55120d89d77f40cdc6e4632eb8785764a53f2"
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_4.ogg",
+          "size": 9914,
+          "sha256": "099933e8d8feac0d2dd3a8699d70fad10abb2f8f468e69714acfcc4a7a96556c"
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_1.ogg",
+          "size": 11019,
+          "sha256": "91f533ecca0f6bf34aca248f54132107eeb62c86cbfe32d9df851cfdad3e220a"
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_2.ogg",
+          "size": 11346,
+          "sha256": "123f83e47c7da270c06cf3ac210fd7409265e07d9c60ee1ca2eae98d66c6f97f"
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_3.ogg",
+          "size": 11019,
+          "sha256": "650668559a070f6c18125544c389570b75621c87fffc87f6be8924d252eec8a1"
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_4.ogg",
+          "size": 9914,
+          "sha256": "11fd21c2221ff2679b546d79c88b306915741b7412c99d5765f78d631da6225c"
         },
         {
           "path": "sounds/winter/ambient/owl_01.ogg",
@@ -11063,15 +11187,21 @@
           "size": 71868448,
           "sha256": "4d498271c43c8cbce9044b1e79f8c4605485b4e33d71d8839d4e6a904d9f3812",
           "offset": 3301531923
+        },
+        {
+          "assetName": "winter-1.54-7e0c6c9b038e-append-001.bin",
+          "size": 426632,
+          "sha256": "7e0c6c9b038e3c53ab25fdef0805f83923c25df16c44d5f45c876989c50978be",
+          "offset": 3373400371
         }
       ],
       "fileRangeSchemaVersion": 1,
       "fileRanges": [
         {
           "path": "addon.init",
-          "offset": 3301531963,
+          "offset": 3373400411,
           "compressedSize": 49,
-          "compressedSha256": "e8cda9973f81b37a9fc8396ebc3330a16afa1f32fd02fd9e6c0fada9bc98e90e",
+          "compressedSha256": "f5d6190cfa95cf816ef13617ed136e2bf432818a085c8d5f5ac453adaddddcba",
           "compressionMethod": 8
         },
         {
@@ -11279,9 +11409,9 @@
         },
         {
           "path": "gamemtl.xr",
-          "offset": 36031,
-          "compressedSize": 36623,
-          "compressedSha256": "73b59bdb31c0439d1e6f14db53f71c9b6e52cb0e93903797a439c715531b9f5d",
+          "offset": 3373400500,
+          "compressedSize": 36554,
+          "compressedSha256": "0300e184fcb724d8f05ba7483595dd7393b05e117fdb51e196659749f875aaad",
           "compressionMethod": 8
         },
         {
@@ -12195,6 +12325,62 @@
           "compressionMethod": 8
         },
         {
+          "path": "sounds/material/human/step/n_asphalt_1.ogg",
+          "offset": 3373437126,
+          "compressedSize": 9154,
+          "compressedSha256": "2c28f01cf97c680d556499d2e9ef3c1ac3514eac10ec2962b47a8b53cbba8851",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_asphalt_2.ogg",
+          "offset": 3373446352,
+          "compressedSize": 10209,
+          "compressedSha256": "43e352d2b7568837938cee1116d7262916743a6a431753f785ac6ca38db980e8",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_asphalt_3.ogg",
+          "offset": 3373456633,
+          "compressedSize": 9104,
+          "compressedSha256": "464c9a7d74fa49e3edf479bc631be5eca256e41c2a1e73b747be56bcd2d6db03",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_asphalt_4.ogg",
+          "offset": 3373465809,
+          "compressedSize": 10537,
+          "compressedSha256": "7bbca3e797b35f7478c89efeac497cef048188ed754d9069143bdb41fabd3351",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_1.ogg",
+          "offset": 3373476416,
+          "compressedSize": 9153,
+          "compressedSha256": "6e4067fe670bef51ee958706445899b6e21e1994864a3282ad1f8c8d5a56c858",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_2.ogg",
+          "offset": 3373485639,
+          "compressedSize": 9104,
+          "compressedSha256": "95038794573f71dc51b49edfab1c7a31dffe2495b6ae81f38c90129ea336b697",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_3.ogg",
+          "offset": 3373494813,
+          "compressedSize": 10208,
+          "compressedSha256": "f7d9a894f75d559c751e91123299222dad858d4cd9c8e699104541c23f01ac32",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_earth_4.ogg",
+          "offset": 3373505091,
+          "compressedSize": 10534,
+          "compressedSha256": "8b7a54b822f53524ca73e4734c7c33913799853ae9be395f792e8ab48f136f78",
+          "compressionMethod": 8
+        },
+        {
           "path": "sounds/material/human/step/n_froze_1.ogg",
           "offset": 569331299,
           "compressedSize": 15858,
@@ -12220,6 +12406,62 @@
           "offset": 569382173,
           "compressedSize": 17620,
           "compressedSha256": "9d59e743ab4117173d7a47445619b847fbf33b9a309695168370ddb1b2992676",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_1.ogg",
+          "offset": 3373515695,
+          "compressedSize": 10208,
+          "compressedSha256": "20f9012bb5f7b513d98be294d5c145c874f43ff6c2f5ac88e24ea96c3c6fc65c",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_2.ogg",
+          "offset": 3373525973,
+          "compressedSize": 10538,
+          "compressedSha256": "adfb8ca3adc17fa5e9ec29344b9d464c19e41b792ebec8a8c249c91fe5dc05fc",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_3.ogg",
+          "offset": 3373536581,
+          "compressedSize": 10209,
+          "compressedSha256": "496f8a9495cd0310917d1a828e69b3010b98be64ac741c87338ed728c8e11188",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_grass_4.ogg",
+          "offset": 3373546860,
+          "compressedSize": 9104,
+          "compressedSha256": "0fec3dab922d791508fd5855c28dae39e65281d3cf3e1bb2db74fa3fbaa217f3",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_1.ogg",
+          "offset": 3373556035,
+          "compressedSize": 10209,
+          "compressedSha256": "f53cf423ab9773f940429edf92114394646b840bd6afff34be0d95c27e6e31df",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_2.ogg",
+          "offset": 3373566315,
+          "compressedSize": 10537,
+          "compressedSha256": "fd1445c056c4615104445fce567dac1aee108a0a1610e93b398c026a01998ed6",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_3.ogg",
+          "offset": 3373576923,
+          "compressedSize": 10209,
+          "compressedSha256": "5f6da566b979dfaee1665a749ed74036abc919d69b7427c0b19548a472a61c0e",
+          "compressionMethod": 8
+        },
+        {
+          "path": "sounds/material/human/step/n_gravel_4.ogg",
+          "offset": 3373587203,
+          "compressedSize": 9104,
+          "compressedSha256": "bf64dcb507e97e6d311b50f8055549df12f931ff02d802cde68a61042d144d05",
           "compressionMethod": 8
         },
         {
