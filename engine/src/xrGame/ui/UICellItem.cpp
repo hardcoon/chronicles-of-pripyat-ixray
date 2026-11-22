@@ -14,7 +14,11 @@
 
 CUICellItem* CUICellItem::m_mouse_selected_item = nullptr;
 
-CUICellItem::CUICellItem()
+CUICellItem::CUICellItem() : CUICellItem(false)
+{}
+
+// COP_ENGINE_PATCH: COP-ENG-256 - stack children do not draw their own widgets.
+CUICellItem::CUICellItem(bool deferWidgets)
 {
 	m_pParentList		= nullptr;
 	m_pData				= nullptr;
@@ -36,7 +40,14 @@ CUICellItem::CUICellItem()
 	m_with_custom_text	= false;
 	m_with_custom_mark	= false;
 	
+	if (!deferWidgets) init();
+}
+
+void CUICellItem::EnsureWidgets()
+{
+	if (m_text) return;
 	init();
+	UpdateItemText();
 }
 
 CUICellItem::~CUICellItem()
@@ -374,7 +385,8 @@ void CUICellItem::PushChild(CUICellItem* c)
 	R_ASSERT(c->ChildsCount()==0);
 	VERIFY				(this!=c);
 	m_childs.push_back	(c);
-	UpdateItemText		();
+	// COP_ENGINE_PATCH: COP-ENG-256 - one count/ammo scan per stack and batch.
+	if (!m_pParentList || !m_pParentList->IsItemBatch()) UpdateItemText();
 }
 
 CUICellItem* CUICellItem::PopChild(CUICellItem* needed)
@@ -403,6 +415,7 @@ bool CUICellItem::HasChild(CUICellItem* item)
 
 void CUICellItem::UpdateItemText()
 {
+	if (!m_text) return;
 	if ( ChildsCount() )
 	{
 		string32	str;

@@ -46,6 +46,9 @@ protected:
 			void			init					();
 public:
 							CUICellItem				();
+							CUICellItem(bool deferWidgets);
+				void EnsureWidgets();
+				void RefreshStackText() { UpdateItemText(); }
 	virtual					~CUICellItem			();
 
 	virtual		bool		OnKeyboardAction				(int dik, EUIMessages keyboard_action);

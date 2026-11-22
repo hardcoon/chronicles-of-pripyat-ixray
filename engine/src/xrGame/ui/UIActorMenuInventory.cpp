@@ -37,6 +37,7 @@
 #include "../actor_defs.h"
 #include "../InventoryBox.h"
 #include "../Car.h"
+#include "../../xrUI/Widgets/UI3tButton.h"
 
 #include "../game_sv_single.h"
 #include "ai_object_location.h"
@@ -275,6 +276,13 @@ bool RemoveItemFromList(CUIDragDropListEx* lst, PIItem pItem)
 
 void CUIActorMenu::OnInventoryAction(PIItem pItem, u16 action_type)
 {
+	// COP_ENGINE_PATCH: COP-ENG-253 - live ownership events supersede a snapshot.
+	if (action_type == GE_TRADE_BUY || action_type == GE_OWNERSHIP_TAKE ||
+		action_type == GE_TRADE_SELL || action_type == GE_OWNERSHIP_REJECT)
+	{
+		m_inventoryFill[0].Cancel(pItem->object_id());
+		m_inventoryFill[1].Cancel(pItem->object_id());
+	}
 	CUIDragDropListEx* all_lists[] =
 	{
 		m_pInventoryBeltList,
@@ -527,6 +535,12 @@ void CUIActorMenu::InitInventoryContents(CUIDragDropListEx* pBagList)
 
 	TIItemContainer				ruck_list;
 	ruck_list					= m_pActorInvOwner->inventory().m_ruck;
+	// COP_ENGINE_PATCH: COP-ENG-253 - trade/upgrade keep their complete-list contract.
+	if (BeginInventoryFill(pBagList, ruck_list))
+	{
+		if (m_pQuickSlot) m_pQuickSlot->ReloadReferences(m_pActorInvOwner);
+		return;
+	}
 	std::sort					( ruck_list.begin(), ruck_list.end(), InventoryUtilities::GreaterRoomInRuck );
 
 	curr_list					= pBagList;
@@ -554,6 +568,108 @@ void CUIActorMenu::InitInventoryContents(CUIDragDropListEx* pBagList)
 	}
 	if (m_pQuickSlot)
 	m_pQuickSlot->ReloadReferences(m_pActorInvOwner);
+}
+
+// COP_ENGINE_PATCH: COP-ENG-253 - bounded work at the end of the UI frame.
+bool CUIActorMenu::IsInventoryFillPending(CUIDragDropListEx* list) const
+{
+	if (list == m_pInventoryBagList) return m_inventoryFill[0].Busy();
+	if (list == m_pDeadBodyBagList) return m_inventoryFill[1].Busy();
+	return false;
+}
+
+bool CUIActorMenu::BeginInventoryFill(CUIDragDropListEx* list, const TIItemContainer& items)
+{
+	if (!IsGameTypeSingle() || (m_currMenuMode != mmInventory && m_currMenuMode != mmDeadBodySearch) || items.size() < 64)
+		return false;
+	const u32 index = list == m_pInventoryBagList ? 0 : 1;
+	if (index == 1 && (list != m_pDeadBodyBagList || m_currMenuMode != mmDeadBodySearch)) return false;
+	auto& queue = m_inventoryFill[index];
+	queue.Clear();
+	for (PIItem item : items)
+	{
+		if (index == 0 && smart_cast<CMPPlayersBag*>(&item->object())) continue;
+		queue.Add(item->object_id());
+	}
+	UpdateInventoryFillButtons();
+	return true;
+}
+
+PIItem CUIActorMenu::ResolveInventoryFillItem(u32 index, u16 id) const
+{
+	CObject* object = Level().Objects.net_Find(id);
+	if (!object || object->getDestroy()) return nullptr;
+	PIItem item = object->cast_inventory_item();
+	if (!item || !m_pActorInvOwner) return nullptr;
+	if (index == 0)
+		return item->parent_id() == m_pActorInvOwner->object_id() &&
+			item->m_ItemCurrPlace.type == eItemPlaceRuck ? item : nullptr;
+	const u16 owner = m_pInvBox ? m_pInvBox->ID() : (m_pPartnerInvOwner ? m_pPartnerInvOwner->object_id() : u16(-1));
+	return m_currMenuMode == mmDeadBodySearch && item->parent_id() == owner ? item : nullptr;
+}
+
+void CUIActorMenu::CancelInventoryFill()
+{
+	m_inventoryFill[0].Clear();
+	m_inventoryFill[1].Clear();
+	m_inventoryFillTurn = 0;
+	UpdateInventoryFillButtons();
+}
+
+void CUIActorMenu::UpdateInventoryFillButtons()
+{
+	if (m_takeall_button) m_takeall_button->Enable(!m_inventoryFill[1].Busy());
+	if (m_putall_button) m_putall_button->Enable(!m_inventoryFill[0].Busy() && !m_inventoryFill[1].Busy());
+}
+
+void CUIActorMenu::UpdateInventoryFill()
+{
+	if (!m_inventoryFill[0].Busy() && !m_inventoryFill[1].Busy()) return;
+	if (!IsShown() || (m_currMenuMode != mmInventory && m_currMenuMode != mmDeadBodySearch))
+	{
+		CancelInventoryFill();
+		return;
+	}
+	const bool lootPending = m_inventoryFill[1].Busy();
+	CTimer timer;
+	timer.Start();
+	// COP_ENGINE_PATCH: COP-ENG-256 - large batches, limited by actual work time.
+	// Physical objects inside stacks must not impose a 32-items-per-frame delay.
+	// Leave headroom for the rest of the UI frame. One indivisible resource load
+	// can exceed this soft limit; never drain an unbounded list in one frame.
+	bool batched[2] = {false, false};
+	for (u32 work = 0; work < 4096 && timer.GetElapsed_sec() < 0.006f; ++work)
+	{
+		// Three loot quanta, then one actor quantum. An empty side yields its turn.
+		u32 index = (m_inventoryFillTurn++ % 4) == 3 ? 0 : 1;
+		if (!m_inventoryFill[index].Busy()) index = 1 - index;
+		auto& queue = m_inventoryFill[index];
+		if (!queue.Busy()) break;
+		if (queue.Preparing())
+		{
+			queue.PrepareOne([this, index](u16 id, inventory_fill::Key& key)
+			{
+				PIItem item = ResolveInventoryFillItem(index, id);
+				if (!item) return false;
+				key = InventoryUtilities::InventorySortKey(item);
+				return true;
+			});
+		}
+		else
+		{
+			u16 id;
+			if (!queue.Pop(id)) continue;
+			PIItem item = ResolveInventoryFillItem(index, id);
+			if (!item) continue;
+			CUIDragDropListEx* list = index == 0 ? m_pInventoryBagList : m_pDeadBodyBagList;
+			if (!batched[index]) { list->BeginItemBatch(); batched[index] = true; }
+			list->SetItem(create_cell_item(item, true));
+		}
+	}
+	if (batched[0]) m_pInventoryBagList->EndItemBatch();
+	if (batched[1]) m_pDeadBodyBagList->EndItemBatch();
+	UpdateInventoryFillButtons();
+	if (lootPending && !m_inventoryFill[1].Busy()) UpdateDeadBodyBag();
 }
 
 bool CUIActorMenu::TryActiveSlot(CUICellItem* itm)
@@ -699,6 +815,7 @@ bool CUIActorMenu::ToSlot(CUICellItem* itm, bool force_place, u16 slot_id)
 
 bool CUIActorMenu::ToBag(CUICellItem* itm, bool b_use_cursor_pos)
 {
+	if (IsInventoryFillPending(itm->OwnerList())) return false; // COP-ENG-253
 	// FFx0001
 	if (!IsAllowTakeFromInvBox(itm)) {
 		return false;

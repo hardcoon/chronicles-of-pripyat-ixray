@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "EngineThreading.h"
+#include "TaskCpuMode.h"
 #include "CustomHUD.h"
 #include "IGame_Persistent.h"
 #include "IGame_Level.h"
@@ -9,6 +10,7 @@
 
 void XRay::Engine::PreRenderThread()
 {
+	TaskCpuMode::Ensure(); // COP_ENGINE_PATCH: COP-ENG-255
 	Platform::SetThreadName("X-Ray Pre-Render");
 	PROF_THREAD("X-Ray Pre-Render");
 	{
@@ -38,6 +40,7 @@ void XRay::Engine::PreRenderThread()
 
 void XRay::Engine::GameThread()
 {
+	TaskCpuMode::Ensure(); // COP_ENGINE_PATCH: COP-ENG-255
 	Platform::SetThreadName("X-Ray Game Thread");
 
 	PROF_THREAD("X-Ray Game Thread")

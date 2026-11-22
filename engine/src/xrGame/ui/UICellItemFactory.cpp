@@ -4,12 +4,17 @@
 
 CUICellItem* create_cell_item(CInventoryItem* itm)
 {
+	return create_cell_item(itm, false);
+}
+
+CUICellItem* create_cell_item(CInventoryItem* itm, bool deferWidgets)
+{
 	VERIFY(itm);
 	CUICellItem* cell_item = nullptr;
 
 	if (CWeaponAmmo* pAmmo = itm->cast_weapon_ammo())
 	{
-		cell_item = new CUIAmmoCellItem(pAmmo);
+		cell_item = new CUIAmmoCellItem(pAmmo, deferWidgets);
 	}
 	else if (CWeapon* pWeapon = itm->cast_weapon())
 	{
@@ -17,7 +22,7 @@ CUICellItem* create_cell_item(CInventoryItem* itm)
 	}
 	else
 	{
-		cell_item = new CUIInventoryCellItem(itm);
+		cell_item = new CUIInventoryCellItem(itm, deferWidgets);
 	}
 
 	return cell_item;

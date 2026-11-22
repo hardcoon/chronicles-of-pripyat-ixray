@@ -2,6 +2,7 @@
 #include "stdafx.h"
 #ifdef USE_DX11
 #include "WinterTracks.h"
+#include "WinterHeat.h"
 #endif
 
 
@@ -289,6 +290,33 @@ template<bool previous> class cl_pf_winter_tracks : public R_constant_setup
 };
 static cl_pf_winter_tracks<false> binder_winter_tracks;
 static cl_pf_winter_tracks<true> binder_winter_tracks_previous;
+
+// COP_ENGINE_PATCH: COP-ENG-254 - DS/PS and motion history share one frame snapshot.
+static cop_winter_heat::Buffer winterHeatCurrent{}, winterHeatPrevious{};
+static u32 winterHeatFrame = u32(-1);
+template<bool previous> class cl_pf_winter_heat : public R_constant_setup
+{
+    void setup(R_constant* constant) override
+    {
+        if (winterHeatFrame != Device.dwFrame)
+        {
+            const bool contiguous = winterHeatFrame + 1 == Device.dwFrame;
+            winterHeatPrevious = winterHeatCurrent;
+            cop_winter_heat::sources.snapshot(winterHeatCurrent, Device.dwTimeGlobal, Device.Paused());
+            if (!contiguous)
+                winterHeatPrevious = winterHeatCurrent;
+            winterHeatFrame = Device.dwFrame;
+        }
+        const auto& values = previous ? winterHeatPrevious : winterHeatCurrent;
+        for (u32 index = 0; index < cop_winter_heat::vector_count; ++index)
+        {
+            const auto& value = values[index];
+            RCache.set_ca(constant, index, value[0], value[1], value[2], value[3]);
+        }
+    }
+};
+static cl_pf_winter_heat<false> binder_winter_heat;
+static cl_pf_winter_heat<true> binder_winter_heat_previous;
 // COP_ENGINE_PATCH: COP-ENG-128 - original droplet accumulation uses rain exposure and elapsed time.
 static class cl_pf_sss_hud_rain : public R_constant_setup {
     float animation=0,wetness=0;u32 frame=u32(-1);
@@ -1141,6 +1169,8 @@ void	CBlender_Compile::SetMapping()
     r_Constant("pf_sss_benders_previous", &binder_sss_benders_previous);
     r_Constant("pf_winter_track_data", &binder_winter_tracks);
     r_Constant("pf_winter_track_data_previous", &binder_winter_tracks_previous);
+    r_Constant("pf_winter_heat_data", &binder_winter_heat);
+    r_Constant("pf_winter_heat_previous", &binder_winter_heat_previous);
     r_Constant("pf_sss_shadow", &binder_ssfx_shadow);
     r_Constant("pf_sss_quality", &binder_ssfx_quality);
     r_Constant("pf_sss_ao", &binder_ssfx_ao);

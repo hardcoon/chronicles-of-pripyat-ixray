@@ -98,15 +98,9 @@ void InventoryUtilities::DestroyShaders()
 	_weaponUpgradeIconsShaders.clear();
 }
 
-bool InventoryUtilities::GreaterRoomInRuck(PIItem item1, PIItem item2)
+// COP_ENGINE_PATCH: COP-ENG-253 - one shared resolver for both sorting paths.
+static s32 read_sort_group(PIItem item)
 {
-	// COP_ENGINE_PATCH: COP-ENG-001
-	// Keep the UI deterministic and classify ported items through LTX rather
-	// than through section-name conventions compiled into the engine.
-	// COP_ENGINE_PATCH: COP-ENG-025
-	// Preserve IX-Ray's size-first packing, then keep equal-sized items in
-	// stable named gameplay groups. Registry numbers and inline
-	// inv_sort_group remain accepted for third-party compatibility.
 	constexpr LPCSTR inventorySortRegistry = "inventory_sort_registry";
 	constexpr LPCSTR inventorySortGroups = "inventory_sort_groups";
 	constexpr s32 unknownSortGroup = 1000;
@@ -125,32 +119,39 @@ bool InventoryUtilities::GreaterRoomInRuck(PIItem item1, PIItem item2)
 		return static_cast<long>(result) == parsed;
 	};
 
-	auto read_sort_group = [inventorySortRegistry, inventorySortGroups,
-		unknownSortGroup, parse_sort_rank](PIItem item)
+	LPCSTR section = item->object().cNameSect().c_str();
+
+	if (pSettings->section_exist(inventorySortRegistry) &&
+		pSettings->line_exist(inventorySortRegistry, section))
 	{
-		LPCSTR section = item->object().cNameSect().c_str();
+		LPCSTR registryValue = pSettings->r_string(inventorySortRegistry, section);
+		s32 legacyRank = unknownSortGroup;
+		if (parse_sort_rank(registryValue, legacyRank))
+			return legacyRank;
 
-		if (pSettings->section_exist(inventorySortRegistry) &&
-			pSettings->line_exist(inventorySortRegistry, section))
+		if (pSettings->section_exist(inventorySortGroups) &&
+			pSettings->line_exist(inventorySortGroups, registryValue))
 		{
-			LPCSTR registryValue = pSettings->r_string(inventorySortRegistry, section);
-			s32 legacyRank = unknownSortGroup;
-			if (parse_sort_rank(registryValue, legacyRank))
-				return legacyRank;
-
-			if (pSettings->section_exist(inventorySortGroups) &&
-				pSettings->line_exist(inventorySortGroups, registryValue))
-			{
-				s32 namedRank = unknownSortGroup;
-				if (parse_sort_rank(pSettings->r_string(inventorySortGroups, registryValue), namedRank))
-					return namedRank;
-			}
-
-			return unknownSortGroup;
+			s32 namedRank = unknownSortGroup;
+			if (parse_sort_rank(pSettings->r_string(inventorySortGroups, registryValue), namedRank))
+				return namedRank;
 		}
 
-		return READ_IF_EXISTS(pSettings, r_s32, section, "inv_sort_group", unknownSortGroup);
-	};
+		return unknownSortGroup;
+	}
+
+	return READ_IF_EXISTS(pSettings, r_s32, section, "inv_sort_group", unknownSortGroup);
+}
+
+bool InventoryUtilities::GreaterRoomInRuck(PIItem item1, PIItem item2)
+{
+	// COP_ENGINE_PATCH: COP-ENG-001
+	// Keep the UI deterministic and classify ported items through LTX rather
+	// than through section-name conventions compiled into the engine.
+	// COP_ENGINE_PATCH: COP-ENG-025
+	// Preserve IX-Ray's size-first packing, then keep equal-sized items in
+	// stable named gameplay groups. Registry numbers and inline
+	// inv_sort_group remain accepted for third-party compatibility.
 
 	Ivector2 r1, r2;
 	r1 = item1->GetInvGridRect().rb;
@@ -177,6 +178,20 @@ bool InventoryUtilities::GreaterRoomInRuck(PIItem item1, PIItem item2)
 		return item1->object().ID() > item2->object().ID();
 
 	return item1->object().cNameSect() > item2->object().cNameSect();
+}
+
+// COP_ENGINE_PATCH: COP-ENG-253
+inventory_fill::Key InventoryUtilities::InventorySortKey(PIItem item)
+{
+    inventory_fill::Key key;
+    const Ivector2 size = item->GetInvGridRect().rb;
+    key.width = size.x;
+    key.height = size.y;
+    key.group = read_sort_group(item);
+    key.order = READ_IF_EXISTS(pSettings, r_s32, item->object().cNameSect().c_str(), "inv_sort_order", 0);
+    key.section = reinterpret_cast<std::uintptr_t>(item->object().cNameSect()._get());
+    key.id = item->object_id();
+    return key;
 }
 
 bool InventoryUtilities::FreeRoom_inBelt	(TIItemContainer& item_list, PIItem _item, int width, int height)

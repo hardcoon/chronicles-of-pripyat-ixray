@@ -21,6 +21,11 @@ struct is_helper_pred
 
 
 CUIInventoryCellItem::CUIInventoryCellItem(CInventoryItem* itm)
+: CUIInventoryCellItem(itm, false)
+{}
+
+CUIInventoryCellItem::CUIInventoryCellItem(CInventoryItem* itm, bool deferWidgets)
+: inherited(deferWidgets)
 {
 	m_pData = (void*)itm;
 
@@ -113,6 +118,7 @@ void CUIInventoryCellItem::Update()
 
 void CUIInventoryCellItem::UpdateItemText()
 {
+	if (!m_text) return;
 	const u32	helper_count	=  	(u32)std::count_if(m_childs.begin(), m_childs.end(), ::detail::is_helper_pred()) 
 									+ IsHelper() ? 1 : 0;
 
@@ -135,7 +141,11 @@ void CUIInventoryCellItem::UpdateItemText()
 }
 
 CUIAmmoCellItem::CUIAmmoCellItem(CWeaponAmmo* itm)
-:inherited(itm)
+: CUIAmmoCellItem(itm, false)
+{}
+
+CUIAmmoCellItem::CUIAmmoCellItem(CWeaponAmmo* itm, bool deferWidgets)
+: inherited(itm, deferWidgets)
 {}
 
 bool CUIAmmoCellItem::EqualTo(CUICellItem* itm)
@@ -169,6 +179,7 @@ u32 CUIAmmoCellItem::CalculateAmmoCount()
 
 void CUIAmmoCellItem::UpdateItemText()
 {
+	if (!m_text) return;
 	m_text->Show( false );
 	if ( !m_custom_draw )
 	{

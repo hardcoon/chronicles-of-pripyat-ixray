@@ -2,6 +2,7 @@
 #include "stdafx.h"
 #ifdef USE_DX11
 #include "WinterTracks.h"
+#include "WinterHeat.h"
 #endif
 #include "xrRender_console.h"
 #include "dxRenderDeviceRender.h"
@@ -62,6 +63,44 @@ Fvector ps_ssfx_context_weapon = {}, ps_ssfx_context_ui = {};
 Fvector ps_ssfx_bender_positions[24] = {}, ps_ssfx_bender_metadata[24] = {}, ps_ssfx_bender_directions[8] = {};
 
 cop_winter::TrackState cop_winter::tracks;
+
+// COP_ENGINE_PATCH: COP-ENG-254 - these inputs are transient, never user.ltx.
+cop_winter_heat::State cop_winter_heat::sources;
+class CCC_WinterHeatSet : public IConsole_Command
+{
+public:
+    explicit CCC_WinterHeatSet(LPCSTR name) : IConsole_Command(name) {}
+    void Save(IWriter*) override {}
+    void Execute(LPCSTR args) override
+    {
+        unsigned index;
+        cop_winter_heat::Vector centre{}, parameters{};
+        char trailing;
+        const int count = sscanf(args, "%u,%f,%f,%f,%f,%f,%f,%f %c", &index,
+            &centre[0], &centre[1], &centre[2], &centre[3],
+            &parameters[0], &parameters[1], &parameters[2], &trailing);
+        if (count != 8 || !cop_winter_heat::sources.set(index, centre, parameters))
+            InvalidSyntax();
+    }
+};
+class CCC_WinterHeatCommit : public IConsole_Command
+{
+public:
+    explicit CCC_WinterHeatCommit(LPCSTR name) : IConsole_Command(name) {}
+    void Save(IWriter*) override {}
+    void Execute(LPCSTR args) override
+    {
+        unsigned count;
+        char trailing;
+        if (sscanf(args, "%u %c", &count, &trailing) != 1
+            || !cop_winter_heat::sources.commit(count, Device.dwTimeGlobal))
+            InvalidSyntax();
+    }
+    void Status(TStatus& status) override
+    {
+        xr_sprintf(status, "%u", cop_winter_heat::capacity);
+    }
+};
 
 class CCC_WinterTrackSet : public IConsole_Command
 {
@@ -1090,6 +1129,8 @@ void		xrRender_initconsole	()
     CMD1(CCC_WinterTrackSet, "pf_winter_track_set");
     CMD1(CCC_WinterTrackLive, "pf_winter_track_live");
     CMD1(CCC_WinterTrackCommit, "pf_winter_track_commit");
+    CMD1(CCC_WinterHeatSet, "pf_winter_heat_set");
+    CMD1(CCC_WinterHeatCommit, "pf_winter_heat_commit");
     CMD4(CCC_SSSFloat, "ssfx_shadow_sun", &ps_ssfx_modules.x, 0.f, 1.f);
     CMD4(CCC_SSSFloat, "ssfx_shadow_local", &ps_ssfx_modules.y, 0.f, 1.f);
     CMD4(CCC_SSSFloat, "ssfx_ao_enabled", &ps_ssfx_modules.z, 0.f, 1.f);

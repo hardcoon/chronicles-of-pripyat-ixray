@@ -146,6 +146,7 @@ void CUIActorMenu::SetMenuMode(EMenuMode mode)
 	
 	if ( mode != m_currMenuMode )
 	{
+		CancelInventoryFill(); // COP_ENGINE_PATCH: COP-ENG-253
 		switch(m_currMenuMode)
 		{
 		case mmUndefined:
@@ -307,6 +308,7 @@ void CUIActorMenu::Update()
 	inherited::Update();
 	m_ItemInfo->Update();
 	m_hint_wnd->Update();
+	UpdateInventoryFill(); // COP_ENGINE_PATCH: COP-ENG-253 - after child traversal.
 	// COP_ENGINE_PATCH: COP-ENG-189 - transfer only after child UI traversal has finished.
 	UpdateShiftTransfer();
 }
@@ -932,6 +934,7 @@ void CUIActorMenu::highlight_weapons_for_addon(PIItem addon_item, CUIDragDropLis
 // -------------------------------------------------------------------=
 void CUIActorMenu::ClearAllLists()
 {
+	CancelInventoryFill(); // COP_ENGINE_PATCH: COP-ENG-253
 	m_pInventoryBagList->ClearAll(true);
 	m_pInventoryBeltList->ClearAll(true);
 

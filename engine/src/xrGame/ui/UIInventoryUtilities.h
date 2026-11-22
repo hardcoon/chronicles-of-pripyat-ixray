@@ -4,6 +4,7 @@
 #include "character_info_defs.h"
 
 #include "../../xrUI/ui_defs.h"
+#include "InventoryFillQueue.h"
 
 class CUITextWnd;
 
@@ -35,6 +36,8 @@ namespace InventoryUtilities
 //сравнивает элементы по пространству занимаемому ими в рюкзаке
 //для сортировки
 bool GreaterRoomInRuck	(PIItem item1, PIItem item2);
+// COP_ENGINE_PATCH: COP-ENG-253 - the same ordering, resolved once per queued item.
+inventory_fill::Key InventorySortKey(PIItem item);
 //для проверки свободного места
 bool FreeRoom_inBelt	(TIItemContainer& item_list, PIItem item, int width, int height);
 

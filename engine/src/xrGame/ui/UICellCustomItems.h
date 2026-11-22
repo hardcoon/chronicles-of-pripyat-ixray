@@ -8,6 +8,7 @@ class CUIInventoryCellItem :public CUICellItem
 	typedef  CUICellItem	inherited;
 public:
 								CUIInventoryCellItem		(CInventoryItem* itm);
+								CUIInventoryCellItem(CInventoryItem* itm, bool deferWidgets);
 	virtual		bool			EqualTo						(CUICellItem* itm);
 	virtual		void			UpdateItemText				();
 				CUIDragItem*	CreateDragItem				();
@@ -29,6 +30,7 @@ protected:
 	virtual		void			 UpdateItemText				();
 public:
 								 CUIAmmoCellItem			(CWeaponAmmo* itm);
+								 CUIAmmoCellItem(CWeaponAmmo* itm, bool deferWidgets);
 
 				u32				 CalculateAmmoCount			();
 	virtual		bool			 EqualTo						(CUICellItem* itm);

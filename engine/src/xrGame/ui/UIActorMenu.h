@@ -7,6 +7,7 @@
 
 #include "../script_game_object.h" //Alundaio
 #include <WeaponMagazined.h>
+#include "InventoryFillQueue.h"
 
 class CUICharacterInfo;
 class CUIDragDropListEx;
@@ -216,6 +217,15 @@ private:
 	CUIDragDropListEx* m_shiftTransferList = nullptr;
 	Ivector2 m_shiftTransferCell = {};
 	void UpdateShiftTransfer();
+	// COP_ENGINE_PATCH: COP-ENG-253
+	inventory_fill::Queue m_inventoryFill[2]; // actor, loot
+	u32 m_inventoryFillTurn = 0;
+	bool IsInventoryFillPending(CUIDragDropListEx* list) const;
+	bool BeginInventoryFill(CUIDragDropListEx* list, const TIItemContainer& items);
+	PIItem ResolveInventoryFillItem(u32 queue, u16 id) const;
+	void UpdateInventoryFill();
+	void CancelInventoryFill();
+	void UpdateInventoryFillButtons();
 public:
 	CUIDragDropReferenceList*	m_pQuickSlot;
 

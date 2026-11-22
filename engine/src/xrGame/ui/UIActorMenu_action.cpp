@@ -101,7 +101,7 @@ void CUIActorMenu::UpdateShiftTransfer()
 		m_pTradeActorBagList, m_pTradeActorList, m_pTradePartnerBagList, m_pTradePartnerList};
 	for (CUIDragDropListEx* list : lists)
 	{
-		if (!list || !list->IsShown() || !list->IsEnabled())
+		if (!list || !list->IsShown() || !list->IsEnabled() || IsInventoryFillPending(list)) // COP-ENG-253
 			continue;
 		const EDDListType type = GetListType(list);
 		if (m_currMenuMode == mmDeadBodySearch ? (type != iActorBag && type != iDeadBodyBag) :
@@ -200,6 +200,11 @@ void CUIActorMenu::OnDragItemOnTrash(CUIDragItem* item, bool b_receive)
 
 bool CUIActorMenu::OnItemDrop(CUICellItem* itm)
 {
+	// COP_ENGINE_PATCH: COP-ENG-253 - true consumes the event; false permits the grid's default move.
+	if (IsInventoryFillPending(itm->OwnerList()) ||
+		(IsInventoryFillPending(CUIDragDropListEx::m_drag_item->BackList()) &&
+		CUIDragDropListEx::m_drag_item->BackList() == m_pDeadBodyBagList))
+		return true;
 	InfoCurItem( nullptr );
 	CUIDragDropListEx*	old_owner		= itm->OwnerList();
 	CUIDragDropListEx*	new_owner		= CUIDragDropListEx::m_drag_item->BackList();
@@ -347,12 +352,14 @@ bool CUIActorMenu::OnItemDrop(CUICellItem* itm)
 
 bool CUIActorMenu::OnItemStartDrag(CUICellItem* itm)
 {
+	if (IsInventoryFillPending(itm->OwnerList())) return true; // COP-ENG-253
 	InfoCurItem( nullptr );
 	return false; //default behaviour
 }
 
 bool CUIActorMenu::OnItemDbClick(CUICellItem* itm)
 {
+	if (IsInventoryFillPending(itm->OwnerList())) return true; // COP-ENG-253
 	SetCurrentItem(itm);
 	InfoCurItem( nullptr );
 	CUIDragDropListEx*	old_owner		= itm->OwnerList();
@@ -455,6 +462,7 @@ bool CUIActorMenu::OnItemSelected(CUICellItem* itm)
 
 bool CUIActorMenu::OnItemRButtonClick(CUICellItem* itm)
 {
+	if (IsInventoryFillPending(itm->OwnerList())) return true; // COP-ENG-253
 	SetCurrentItem( itm );
 	InfoCurItem( nullptr );
 	ActivatePropertiesBox();

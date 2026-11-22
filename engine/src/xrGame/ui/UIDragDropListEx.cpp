@@ -440,6 +440,22 @@ int CUIDragDropListEx::ScrollPos()
 	return m_vScrollBar->GetScrollPos();
 }
 
+// COP_ENGINE_PATCH: COP-ENG-256 - refresh visible stack counts once at batch end.
+void CUIDragDropListEx::BeginItemBatch()
+{
+	VERIFY(!m_itemBatch);
+	m_itemBatch = true;
+}
+
+void CUIDragDropListEx::EndItemBatch()
+{
+	VERIFY(m_itemBatch);
+	m_itemBatch = false;
+	xrCriticalSectionGuard guard(m_container->csUi);
+	for (CUIWindow* child : m_container->GetChildWndList())
+		static_cast<CUICellItem*>(child)->RefreshStackText();
+}
+
 void CUIDragDropListEx::SetItem(CUICellItem* itm) //auto
 {
 	if(m_container->AddSimilar(itm)){
@@ -622,6 +638,8 @@ CUICellItem* CUICellContainer::FindSimilar(CUICellItem* itm)
 
 void CUICellContainer::PlaceItemAtPos(CUICellItem* itm, Ivector2& cell_pos)
 {
+	// A former hidden stack child becomes a fully initialized visible root.
+	itm->EnsureWidgets();
 	Ivector2 cs				= itm->GetGridSize();
 	if(m_pParentDragDropList->GetVerticalPlacement())
 		std::swap(cs.x,cs.y);

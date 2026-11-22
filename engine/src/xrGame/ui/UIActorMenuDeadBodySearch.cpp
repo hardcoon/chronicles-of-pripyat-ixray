@@ -87,6 +87,9 @@ void CUIActorMenu::InitDeadBodySearchMode()
 		m_pInvBox->AddAvailableItems( items_list );
 	}
 
+	// COP_ENGINE_PATCH: COP-ENG-253 - the loot queue never waits for the actor bag.
+	if (!BeginInventoryFill(m_pDeadBodyBagList, items_list))
+	{
 	std::sort( items_list.begin(), items_list.end(),InventoryUtilities::GreaterRoomInRuck );
 	
 	TIItemContainer::iterator it	= items_list.begin();
@@ -95,6 +98,7 @@ void CUIActorMenu::InitDeadBodySearchMode()
 	{
 		CUICellItem* itm			= create_cell_item	(*it);
 		m_pDeadBodyBagList->SetItem	(itm);
+	}
 	}
 
 	CBaseMonster* monster = m_pPartnerInvOwner != nullptr ? m_pPartnerInvOwner->cast_base_monster() : nullptr;
@@ -199,6 +203,9 @@ bool CUIActorMenu::IsAllowPlaceToInvBox(CUICellItem* itm)
 
 bool CUIActorMenu::ToDeadBodyBag(CUICellItem* itm, bool b_use_cursor_pos)
 {
+	// COP_ENGINE_PATCH: COP-ENG-253 - incomplete UI weight cannot authorize deposits.
+	if (IsInventoryFillPending(m_pDeadBodyBagList) || IsInventoryFillPending(itm->OwnerList()))
+		return false;
 	PIItem quest_item = (PIItem)itm->m_pData;
 	if (quest_item->IsQuestItem())
 		return false;
@@ -303,6 +310,12 @@ bool CUIActorMenu::ToDeadBodyBag(CUICellItem* itm, bool b_use_cursor_pos)
 
 void CUIActorMenu::UpdateDeadBodyBag()
 {
+	// COP_ENGINE_PATCH: COP-ENG-253 - never display a partial sum as the full weight.
+	if (IsInventoryFillPending(m_pDeadBodyBagList))
+	{
+		m_PartnerWeight->SetText("...");
+		return;
+	}
 	string64 buf;
 
 	LPCSTR kg_str = g_pStringTable->translate( "st_kg" ).c_str();
@@ -337,6 +350,8 @@ void CUIActorMenu::UpdateDeadBodyBag()
 
 void CUIActorMenu::PutAllToPartner(CUIWindow* w, void* d) 
 {
+	// COP_ENGINE_PATCH: COP-ENG-253 - applies to every caller, not only the button.
+	if (IsInventoryFillPending(m_pInventoryBagList) || IsInventoryFillPending(m_pDeadBodyBagList)) return;
 	u32 Iter = 0;
 	while (Iter < m_pInventoryBagList->ItemsCount())
 	{
@@ -359,6 +374,7 @@ void CUIActorMenu::PutAllToPartner(CUIWindow* w, void* d)
 
 void CUIActorMenu::TakeAllFromPartner(CUIWindow* w, void* d)
 {
+	if (IsInventoryFillPending(m_pDeadBodyBagList)) return; // COP-ENG-253
 	VERIFY( m_pActorInvOwner );
 	if ( !m_pPartnerInvOwner )
 	{
@@ -387,6 +403,7 @@ void CUIActorMenu::TakeAllFromPartner(CUIWindow* w, void* d)
 
 void CUIActorMenu::TakeAllFromInventoryBox()
 {
+	if (IsInventoryFillPending(m_pDeadBodyBagList)) return; // COP-ENG-253
 	u16 actor_id = m_pActorInvOwner->object_id();
 	xr_vector<u16> IgnoredItemsIds = {};
 

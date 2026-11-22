@@ -43,6 +43,7 @@ private:
 	Ivector2				m_orig_cell_capacity;
 	Ivector2				m_virtual_cells_alignment;
 	bool					m_bConditionProgBarVisible;
+	bool m_itemBatch = false; // COP_ENGINE_PATCH: COP-ENG-256
 protected:
 	CUICellItem*			m_selected_item;
 	CUICellContainer*		m_container;
@@ -115,6 +116,9 @@ public:
 			void			SetConditionProgBarVisibility(bool b) {m_bConditionProgBarVisible = b;};
 public:
 			// items management
+			void BeginItemBatch();
+			void EndItemBatch();
+			bool IsItemBatch() const { return m_itemBatch; }
 			virtual void	SetItem				(CUICellItem* itm); //auto
 			virtual bool	SetItem				(CUICellItem* itm, Fvector2 abs_pos);  // start at cursor pos
 			virtual void	SetItem				(CUICellItem* itm, Ivector2 cell_pos); // start at cell
