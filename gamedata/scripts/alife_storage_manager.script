@@ -100,8 +100,14 @@ function CALifeStorageManager_before_save(fname, stage_only)
 	local path = getFS():update_path('$game_saves$', '')
 
 	lfs.mkdir(path) -- incase savegame folder doesn't exist yet
-	path = path .. fname:sub(0,-6):lower() .. saved_game_extension_ex
+	-- COP_ENGINE_PATCH: COP-ENG-251 - normalize the filename before joining it to the root.
+	path = getFS():update_path('$game_saves$', fname:sub(0,-6):lower() .. saved_game_extension_ex)
 	if stage_only then path = path .. ".pf64_pending" end
+	if type(write_save_state_file) == "function" then
+		local written = write_save_state_file(path, data)
+		if not written then printf("! [SAVE239] Unable to write custom state: %s", path) end
+		return written
+	end
 
 	local savegame = io.open(path,"wb")
 	if not (io.type(savegame) == "file") then
@@ -168,13 +174,15 @@ function CALifeStorageManager_load(fname)
 
 	--alun_utils.debug_write(strformat("CALifeStorageManager_load %s",path))
 	
-	local savegame = io.open(path,"rb")
-	if not (io.type(savegame) == "file") then
-		return
+	local data
+	if type(read_save_state_file) == "function" then
+		data = read_save_state_file(path)
+	else
+		local savegame = io.open(path,"rb")
+		if not (io.type(savegame) == "file") then return end
+		data = savegame:read("*all")
+		savegame:close()
 	end
-
-	local data = savegame:read("*all")
-	savegame:close()
 
 	if not (data and data ~= "") then
 		printf("Error: Failed to read %s",path)

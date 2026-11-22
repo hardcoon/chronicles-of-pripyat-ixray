@@ -2230,11 +2230,9 @@ function scenario_autosave(actor, npc, p)
 
 	if IsImportantSave() then
 		local translated_name = game.translate_string(save_name)
-		-- XML strings added by IX-Ray addons arrive as UTF-8, while the legacy
-		-- console command parser used by `save` expects CP1251. Stock localized
-		-- strings are already single-byte and the converter preserves them.
-		if lz_new_mechanics and lz_new_mechanics.text_for_legacy then
-			translated_name = lz_new_mechanics.text_for_legacy(translated_name)
+		-- COP-ENG-251 keeps localized save names in UTF-8 through file I/O.
+		if lz_new_mechanics and lz_new_mechanics.text_for_utf8 then
+			translated_name = lz_new_mechanics.text_for_utf8(translated_name)
 		end
 		-- Scenario autosaves use only the event label. Player/profile names make
 		-- the save list needlessly wide and leak into every automatic save.

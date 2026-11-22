@@ -11,7 +11,7 @@ A standalone S.T.A.L.K.E.R. project about exploring Greater Pripyat, finding wha
 | Engine | Modified IX-Ray |
 | Installation | Standalone |
 | Original release | August 27, 2026 |
-| Current game build | `2026.11.22-dev.116` |
+| Current game build | `2026.11.22-dev.117` |
 | Launcher | `1.5.2` |
 | Optional Winter addon | `1.54` — installed separately through the launcher |
 
