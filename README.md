@@ -13,7 +13,7 @@ A standalone S.T.A.L.K.E.R. project about exploring Greater Pripyat, finding wha
 | Original release | August 27, 2026 |
 | Current game build | `2026.11.22-dev.119` |
 | Launcher | `1.6.0` |
-| Optional Winter addon | `1.63` — installed separately through the launcher |
+| Optional Winter addon | `1.64` — installed separately through the launcher |
 
 [Download the launcher](https://github.com/hardcoon/chronicles-of-pripyat-ixray/releases/download/dev-2026.08.26.1/ChroniclesLauncher.exe) · [Official AP-PRO thread](https://ap-pro.ru/forums/topic/15193-chronicles-of-pripyat/) · [Screenshots](https://disk.yandex.ru/d/tP9oWk9lmLc-Wg)
 
