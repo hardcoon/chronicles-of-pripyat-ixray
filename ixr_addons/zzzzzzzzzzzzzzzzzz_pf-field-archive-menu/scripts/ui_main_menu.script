@@ -18,7 +18,7 @@ local function launcher_game_version()
             return version
         end
     end
-    return "2026.11.21-dev.115"
+    return "2026.11.22-dev.116"
 end
 
 class "main_menu" (CUIScriptWnd)
@@ -104,6 +104,10 @@ function main_menu:InitControls()
 	if xml:NodeExist("russian_lang", 0) then
 		btn = xml:Init3tButton("russian_lang", self)
 		self:Register(btn, "russian_lang")
+	end
+	if xml:NodeExist("french_lang", 0) then
+		btn = xml:Init3tButton("french_lang", self)
+		self:Register(btn, "french_lang")
 	end
 	-- IX-Ray end
 end
@@ -252,6 +256,7 @@ function main_menu:InitCallBacks()
 	-- IX-Ray start
 	self:AddCallback("english_lang",	ui_events.BUTTON_CLICKED,				self.OnBtnEnglish,			self)
 	self:AddCallback("russian_lang",	ui_events.BUTTON_CLICKED,				self.OnBtnRussian,			self)
+	self:AddCallback("french_lang", ui_events.BUTTON_CLICKED, self.OnBtnFrench, self)
 	-- IX-Ray end
 
 	-- message box
@@ -449,6 +454,10 @@ end
 function main_menu:OnBtnEnglish()
 	local console = get_console()
 	console:execute("language eng")
+end
+
+function main_menu:OnBtnFrench()
+	get_console():execute("language fra")
 end
 
 function main_menu:OnBtnRussian()

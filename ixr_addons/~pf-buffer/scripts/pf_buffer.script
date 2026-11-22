@@ -209,9 +209,16 @@ local function update_request(now)
     end
     local ui = menu()
     if not ui then cancel_request("pf_buffer_unavailable"); return end
+    -- The backpack restores the previous slot after its outro. Opening a box
+    -- sooner lets the restored PDA push its window over the new loot dialog.
+    if request.phase ~= "hide" and request.phase ~= "active" and
+            db.actor:is_hud_animator_active() then return end
     if request.phase == "hide" then
         -- Run on the actor update after the context-menu callback has returned.
         get_hud():HideActorMenu()
+        request.phase = "settle"
+    elseif request.phase == "settle" then
+        -- RestoreEquipment queues a slot change; let Inventory commit it.
         request.phase = "prepare"
     elseif request.phase == "prepare" then
         if ui:GetMenuMode() ~= 0 then return end

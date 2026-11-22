@@ -182,10 +182,10 @@ function lz_nm_beacon_row:__init(owner, beacon) super()
     self:Register(self.map_button, "row_map")
     self:Register(self.rename_button, "row_name")
     self:Register(self.delete_button, "row_delete")
-    self.name_text:SetText(lz_nm_core.text_for_legacy(beacon.name))
+    self.name_text:SetText(lz_nm_core.text_for_utf8(beacon.name))
     self.distance:SetText(string.format(game.translate_string("pf_bc_distance_caption"), beacon.distance))
-    self.time:SetText(string.format(game.translate_string("pf_bc_time_caption"),
-        lz_nm_core.text_for_legacy(lz_new_mechanics.format_beacon_travel_time(beacon.hours))))
+    self.time:SetText(string.format(lz_nm_core.text_for_utf8(game.translate_string("pf_bc_time_caption")),
+        lz_nm_core.text_for_utf8(lz_new_mechanics.format_beacon_travel_time(beacon.hours))))
     self:AddCallback("row_travel", ui_events.BUTTON_CLICKED, self.AskTravel, self)
     self:AddCallback("row_map", ui_events.BUTTON_CLICKED, self.ShowOnMap, self)
     self:AddCallback("row_name", ui_events.BUTTON_CLICKED, self.Rename, self)

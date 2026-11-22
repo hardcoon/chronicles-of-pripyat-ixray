@@ -142,8 +142,8 @@ end
 
 local function legacy_text(value)
 	value = tostring(value or "")
-	if lz_new_mechanics and lz_new_mechanics.text_for_legacy then
-		return lz_new_mechanics.text_for_legacy(value)
+	if lz_new_mechanics and lz_new_mechanics.text_for_utf8 then
+		return lz_new_mechanics.text_for_utf8(value)
 	end
 	return value
 end

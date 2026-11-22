@@ -546,14 +546,14 @@ function impl.update_context_menu_actions(force)
 			local display_name = target and core.item_display_name(target) or nil
 			local label = nil
 			if display_name then
-				local format_text = core.text_for_legacy(game.translate_string(verb_id))
+				local format_text = core.text_for_utf8(game.translate_string(verb_id))
 				if show_condition then
 					label = string.format(
 						format_text, impl.item_condition_percent(target),
-						core.text_for_legacy(display_name)
+						core.text_for_utf8(display_name)
 					)
 				else
-					label = string.format(format_text, core.text_for_legacy(display_name))
+					label = string.format(format_text, core.text_for_utf8(display_name))
 				end
 			end
 			impl.write_context_action(
@@ -596,9 +596,9 @@ function impl.update_context_menu_actions(force)
 				"lz_nm_action_charge_artefact_detector_named" or
 				"lz_nm_action_charge_metal_detector_named"
 			label = string.format(
-				core.text_for_legacy(game.translate_string(verb_id)),
+				core.text_for_utf8(game.translate_string(verb_id)),
 				impl.item_condition_percent(target),
-				core.text_for_legacy(core.item_display_name(target))
+				core.text_for_utf8(core.item_display_name(target))
 			)
 		end
 		impl.write_context_action(
