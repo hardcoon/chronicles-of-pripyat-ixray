@@ -420,8 +420,8 @@ function impl.write_context_action(section, index, label, functor)
 	end
 	if label then
 		-- CInifile strips ordinary ASCII spaces from dynamically written values.
-		-- Keep visual word spacing with the Windows-1251 non-breaking-space byte.
-		label = string.gsub(label, " ", string.char(0xA0))
+		-- Preserve UTF-8 while keeping spaces inside dynamically written values.
+		label = string.gsub(core.text_for_utf8(label), " ", "\194\160")
 		core.get_sysini():w_string(section, text_line, label, nil)
 		core.get_sysini():w_string(section, functor_line, functor, nil)
 	end

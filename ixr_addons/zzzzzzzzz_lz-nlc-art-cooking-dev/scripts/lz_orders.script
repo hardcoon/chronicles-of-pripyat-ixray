@@ -1919,9 +1919,8 @@ end
 
 local function requirements_text(entry, with_progress)
 	local lines = {}
-	-- This PDA list uses the legacy single-byte text path, unlike the stock
-	-- task-map tooltip. Keep its Alt+255 separator and item names in CP1251.
-	local invisible_space = string.char(160)
+	-- Keep the separator in the same UTF-8 encoding as the translated names.
+	local invisible_space = "\194\160"
 	local inventory = with_progress and collect_eligible_items() or nil
 	for _, requirement in ipairs(entry.items) do
 		local name = legacy_text(requirement_name(requirement))
