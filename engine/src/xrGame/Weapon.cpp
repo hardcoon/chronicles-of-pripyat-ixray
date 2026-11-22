@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "Weapon.h"
+#include "WeaponAmmoIndex250.h"
 #include "entity_alive.h"
 #include "inventory_item_impl.h"
 #include "Inventory.h"
@@ -1041,6 +1042,7 @@ void CWeapon::LoadBulletPattern(LPCSTR section, LPCSTR pattern_name, SRecoilPatt
 BOOL CWeapon::net_Spawn		(CSE_Abstract* DC)
 {
 	BOOL bResult					= inherited::net_Spawn(DC);
+	if (!bResult) return FALSE;
 	CSE_Abstract					*e	= (CSE_Abstract*)(DC);
 	CSE_ALifeItemWeapon			    *E	= smart_cast<CSE_ALifeItemWeapon*>(e);
 
@@ -1048,6 +1050,10 @@ BOOL CWeapon::net_Spawn		(CSE_Abstract* DC)
 	iAmmoElapsed					= E->a_elapsed;
 	m_flagsAddOnState				= E->m_addon_flags.get();
 	m_ammoType						= E->ammo_type;
+	// COP_ENGINE_PATCH: COP-ENG-250 - upgrades are installed; validate the saved magazine index.
+	if (!RestoreWeaponAmmoIndex250(m_ammoType, m_ammoTypes.size(), cNameSect().c_str(), ID(), "spawn-magazine"))
+		return FALSE;
+	E->ammo_type = m_ammoType;
 	SetState						(E->wpn_state);
 	SetNextState					(E->wpn_state);
 	bMisfire						= E->misfire;
@@ -1072,6 +1078,9 @@ BOOL CWeapon::net_Spawn		(CSE_Abstract* DC)
 
 	if (m_bAmmoInChamber)
 	{
+		if (!RestoreWeaponAmmoIndex250(m_ChamberAmmoType, getAmmoTypes().size(), cNameSect().c_str(), ID(), "spawn-chamber"))
+			return FALSE;
+		E->chamber_ammo_type = m_ChamberAmmoType;
 		m_DefaultCartridgeInChamber.Load(*getAmmoTypes()[m_ChamberAmmoType], u8(m_ChamberAmmoType));
 		if (iAmmoChamberElapsed)
 		{
@@ -1194,6 +1203,8 @@ void CWeapon::net_Import(NET_Packet& P)
 
 	u8 chamber_type;
 	P.r_u8(chamber_type);
+	// COP_ENGINE_PATCH: COP-ENG-250 - incoming chamber state can otherwise poison weight/reload lookups.
+	RestoreWeaponAmmoIndex250(chamber_type, getAmmoTypes().size(), cNameSect().c_str(), ID(), "import-chamber");
 	m_ChamberAmmoType = chamber_type;
 
 	u16 chamber_ammo_elapsed = 0;
@@ -1214,9 +1225,7 @@ void CWeapon::net_Import(NET_Packet& P)
 		}break;	
 	default:
 		{
-			if (ammoType >= m_ammoTypes.size())
-				Msg("!! Weapon [%d], State - [%d]", ID(), wstate);
-			else
+			if (RestoreWeaponAmmoIndex250(ammoType, m_ammoTypes.size(), cNameSect().c_str(), ID(), "import-magazine"))
 			{
 				m_ammoType = ammoType;
 				SetAmmoElapsed((ammo_elapsed));
@@ -1305,7 +1314,10 @@ void CWeapon::OnEvent(NET_Packet& P, u16 type)
 			if (NextAmmo == undefined_ammo_type)
 				m_set_next_ammoType_on_reload = undefined_ammo_type;
 			else
+			{
+				RestoreWeaponAmmoIndex250(NextAmmo, m_ammoTypes.size(), cNameSect().c_str(), ID(), "event-next-ammo");
 				m_set_next_ammoType_on_reload = NextAmmo;
+			}
 
 			if (OnClient()) SetAmmoElapsed(int(AmmoElapsed));			
 			OnStateSwitch	(u32(state));
@@ -3330,6 +3342,12 @@ void CWeapon::UpdateHudAdditonal(Fmatrix& trans)
 
 void CWeapon::SetAmmoElapsed(int ammo_count)
 {
+	// COP_ENGINE_PATCH: COP-ENG-250 - setters also receive script/network-restored values.
+	if (!RestoreWeaponAmmoIndex250(m_ammoType, m_ammoTypes.size(), cNameSect().c_str(), ID(), "set-magazine"))
+	{
+		m_magazine.clear();
+		ammo_count = 0;
+	}
 	iAmmoElapsed = ammo_count;
 
 	u32 uAmmo = u32(iAmmoElapsed);
@@ -3358,6 +3376,12 @@ void CWeapon::SetAmmoElapsed(int ammo_count)
 
 void CWeapon::SetChamberAmmoElapsed(int ammo_count)
 {
+	// COP_ENGINE_PATCH: COP-ENG-250 - setters also receive script/network-restored values.
+	if (!RestoreWeaponAmmoIndex250(m_ChamberAmmoType, m_ammoTypes.size(), cNameSect().c_str(), ID(), "set-chamber"))
+	{
+		m_chamber.clear();
+		ammo_count = 0;
+	}
 	iAmmoChamberElapsed = ammo_count;
 
 	u32 uAmmo = u32(iAmmoChamberElapsed);

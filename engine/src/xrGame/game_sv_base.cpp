@@ -14,6 +14,7 @@
 #include "object_broker.h"
 #include "alife_simulator.h"
 #include "debug_renderer.h"
+#include "server_name252.h"
 #include "xrGameSpyServer.h"
 
 ENGINE_API	bool g_dedicated_server;
@@ -1090,9 +1091,9 @@ shared_str game_sv_GameState::parse_level_version			(const shared_str &server_op
 
 shared_str game_sv_GameState::parse_level_name(const shared_str &server_options)
 {
-	string64			l_name = "";
 	VERIFY				(_GetItemCount(*server_options,'/'));
-	return				(_GetItem(*server_options,0,l_name,'/'));
+	// COP_ENGINE_PATCH: COP-ENG-252 - loading must preserve the complete physical filename.
+	return shared_str(server_name252::first(server_options.c_str()).c_str());
 }
 
 void game_sv_GameState::on_death	(CSE_Abstract *e_dest, CSE_Abstract *e_src)

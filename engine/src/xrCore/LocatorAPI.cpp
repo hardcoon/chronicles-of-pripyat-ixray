@@ -67,7 +67,8 @@ CLocatorAPI::~CLocatorAPI()
 
 void CLocatorAPI::Register(LPCSTR name, u32 vfs, u32 crc, u32 ptr, u32 size_real, u32 size_compressed, time_t modif)
 {
-	xr_string TempPath = name;
+	// COP_ENGINE_PATCH: COP-ENG-251 - one UTF-8 VFS key for new and legacy names.
+	xr_string TempPath = Platform::ANSI_TO_UTF8(name);
 	xr_strlwr(TempPath);
 
 	file desc;
@@ -500,16 +501,21 @@ bool CLocatorAPI::Recurse(const char* path)
 		xr_strcpy(N, Platform::ValidPath("./"));
 	}
 
-	if(!std::filesystem::exists(N))
+#ifdef IXR_WINDOWS
+    const std::filesystem::path nativePath(Platform::ANSI_TO_TCHAR_U8(N));
+#else
+    const std::filesystem::path nativePath(N);
+#endif
+    if(!std::filesystem::exists(nativePath))
 		return false;
 
 	rec_files.reserve(512);
 
-	for (const xr_dir_entry& CurrentFile : xr_dir_iter { N })
+	for (const xr_dir_entry& CurrentFile : xr_dir_iter { nativePath })
 	{
 		xr_path currentPath = CurrentFile;
 #ifdef IXR_WINDOWS
-		xr_string ValidFileName = Platform::TCHAR_TO_ANSI_U8(currentPath.generic_wstring().c_str());
+		xr_string ValidFileName = Platform::CP_TCHAR_TO_ANSI_U8(currentPath.generic_wstring().c_str());
 #else
 				xr_string ValidFileName = Platform::TCHAR_TO_ANSI_U8(currentPath.generic_string().c_str());
 #endif
@@ -1272,7 +1278,7 @@ bool CLocatorAPI::check_for_file	(LPCSTR path, LPCSTR _fname, string_path& fname
 	check_pathes			();
 
 	// correct path
-	xr_strcpy				(fname,_fname);
+	xr_strcpy				(fname,Platform::ANSI_TO_UTF8(_fname).c_str());
 	xr_strlwr				(fname);
 	if (path&&path[0])
 		update_path			(fname,path,fname);
@@ -1418,7 +1424,7 @@ CLocatorAPI::files_it CLocatorAPI::file_find_it(LPCSTR fname)
 	file			desc_f;
 	string_path		file_name;
 	VERIFY			(xr_strlen(fname)*sizeof(char) < sizeof(file_name));
-	xr_strcpy		(file_name,sizeof(file_name),fname);
+	xr_strcpy		(file_name,sizeof(file_name),Platform::ANSI_TO_UTF8(fname).c_str());
 	desc_f.name		= file_name;
 	files_it I		= m_files.find(desc_f);
 	return			(I);

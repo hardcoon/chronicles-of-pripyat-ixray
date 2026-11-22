@@ -78,9 +78,10 @@ void CUILines::SetText(const char* text){
 
 	if (text && text[0] != 0)
 	{
-		if(m_text==text) 
-			return;
-        m_text = text;
+        // COP_ENGINE_PATCH: COP-ENG-248 - normalize legacy Lua/LTX text at the UI boundary.
+        const xr_string utf8 = Platform::ANSI_TO_UTF8(text);
+        if (m_text == utf8.c_str()) return;
+        m_text = utf8.c_str();
 		uFlags.set(flNeedReparse, TRUE);
 	}
 	else
@@ -112,7 +113,7 @@ float get_str_width(CGameFont*pFont, int ch)
 		ch = (u8)ch;
 	}
 
-	float ll = pFont->SizeOf_(ch) + pFont->GetLetterSpacing();
+	float ll = pFont->WidthOf(ch) + pFont->GetLetterSpacing();
 	UI().ClientToScreenScaledWidth(ll);
 	return ll;
 }
@@ -242,28 +243,27 @@ void CUILines::ParseText(bool force)
 
 			u32 last_space_idx = 0;
 
-			xr_special_char* utf16text = nullptr;
-
-#ifdef IXR_WINDOWS
-			if (IsUTF8(sbl.m_text.c_str()))
-			{
-				utf16text = Platform::ANSI_TO_TCHAR(sbl.m_text.c_str());
-				sub_len = wcslen(utf16text);
-			}
-#endif
+            // COP_ENGINE_PATCH: COP-ENG-248 - codepoint indices with original byte boundaries.
+            const std::string_view view(sbl.m_text.data(), sbl.m_text.size());
+            xr_vector<uint32_t> codepoints;
+            xr_vector<size_t> offsets;
+            size_t offset = 0;
+            uint32_t value;
+            while (offset < view.size())
+            {
+                offsets.push_back(offset);
+                UTF8Text::Decode(view, offset, value);
+                codepoints.push_back(value);
+            }
+            offsets.push_back(view.size());
+            sub_len = static_cast<u32>(codepoints.size());
 
 			for (u32 idx = 0; idx < sub_len; ++idx)
 			{
 				bool b_last_ch = (idx == sub_len - 1);
 
-				// COP_ENGINE_PATCH: COP-ENG-020
-				// UTF-8 text is measured and sliced with UTF-16 indices on Windows,
-				// so whitespace detection must use the same representation. Mixing a
-				// UTF-16 character index with the original UTF-8 bytes can invent a
-				// false word boundary inside Cyrillic text and leave one letter on the
-				// next line.
-				const int current_ch = utf16text != nullptr ?
-					utf16text[idx] : static_cast<unsigned char>(sbl.m_text[idx]);
+                // COP_ENGINE_PATCH: COP-ENG-020 - whitespace and slicing share one index space.
+                const int current_ch = static_cast<int>(codepoints[idx]);
 				const bool is_space = current_ch == ' ' || current_ch == '\t' ||
 					current_ch == '\r' || current_ch == '\n' || current_ch == '\v' ||
 					current_ch == '\f';
@@ -273,7 +273,7 @@ void CUILines::ParseText(bool force)
 					last_space_idx = idx;
 				}
 
-				float w1 = get_str_width(m_pFont, utf16text != nullptr ? utf16text[idx] : sbl.m_text[idx]);
+				float w1 = get_str_width(m_pFont, current_ch);
 				bool bOver = (curr_width + w1 + __eps > max_width);
 
 				if (bOver || b_last_ch)
@@ -290,21 +290,9 @@ void CUILines::ParseText(bool force)
 					}
 					if (!HandleWrapFromStart)
 					{
-#ifdef IXR_WINDOWS
-						if (utf16text != nullptr)
-						{
-							wchar_t tempbuff[4096] = {};
-							wcsncpy_s(tempbuff, sizeof(buff), utf16text + curr_w_pos, idx - curr_w_pos + 1);
-
-							xr_string ValidUTF8Text = Platform::CP_TCHAR_TO_ANSI_U8(tempbuff);
-							strcpy(buff, ValidUTF8Text.c_str());
-						}
-						else
-#endif
-						{
-							strncpy_s(buff, sizeof(buff), sbl.m_text.c_str() + curr_w_pos, idx - curr_w_pos + 1);
-						}
-						tmp_line.AddSubLine(buff, sbl.m_color);
+                        const xr_string part(sbl.m_text.data() + offsets[curr_w_pos],
+                            static_cast<u32>(offsets[idx + 1] - offsets[curr_w_pos]));
+                        tmp_line.AddSubLine(part.c_str(), sbl.m_color);
 						curr_w_pos = idx + 1;
 					} else
 					{
@@ -396,37 +384,30 @@ void CUILines::SetTextGradient(bool val)
 
 LPCSTR GetElipsisText(CGameFont* pFont, float width, LPCSTR source_text, LPSTR buff, int buff_len)
 {
-	float text_len					= pFont->SizeOf_(source_text);
-	UI().ClientToScreenScaledWidth	(text_len);
-
-	if(text_len<width)
-	{
-		return source_text;
-	}else
-	{
-		buff[0]							= 0;
-		float el_len					= pFont->SizeOf_("..");
-		UI().ClientToScreenScaledWidth	(el_len);
-		float total						= 0.0f;
-		u16		pos						= 0;
-		
-		while(total+el_len < width)
-		{
-			int c					= *(source_text+pos);
-			float ch_len					= pFont->SizeOf_(c);
-			UI().ClientToScreenScaledWidth	(ch_len);
-		
-			if(total+ch_len+el_len < width)
-				buff[pos]				= c;
-
-			total						+= ch_len;
-			++pos;
-			buff[pos]					= 0;
-		}
-
-		xr_strcat						(buff,buff_len,"..");
-		return							buff;
-	}
+    // COP_ENGINE_PATCH: COP-ENG-248 - never cut an encoded character in half.
+    float text_width = pFont->SizeOf_(source_text);
+    UI().ClientToScreenScaledWidth(text_width);
+    if (text_width <= width) return source_text;
+    if (buff_len <= 0) return source_text;
+    buff[0] = 0;
+    if (buff_len < 3) return buff;
+    const std::string_view view(source_text);
+    float dots = pFont->SizeOf_("..");
+    UI().ClientToScreenScaledWidth(dots);
+    size_t offset = 0, accepted = 0;
+    while (offset < view.size())
+    {
+        offset = UTF8Text::Next(view, offset);
+        if (offset > static_cast<size_t>(buff_len - 3)) break;
+        const xr_string prefix(source_text, static_cast<u32>(offset));
+        float length = pFont->SizeOf_(prefix.c_str()) + pFont->GetLetterSpacing();
+        UI().ClientToScreenScaledWidth(length);
+        if (length + dots > width) break;
+        accepted = offset;
+    }
+    std::memcpy(buff, source_text, accepted);
+    std::memcpy(buff + accepted, "..", 3);
+    return buff;
 }
 
 void CUILines::Draw(float x, float y)
@@ -434,7 +415,7 @@ void CUILines::Draw(float x, float y)
 	x		+= m_TextOffset.x;
 	y		+= m_TextOffset.y;
 
-	static string256 passText;
+
 
 	if (m_text.size()==0)
 		return;
@@ -454,20 +435,18 @@ void CUILines::Draw(float x, float y)
 
 		if (uFlags.test(flPasswordMode))
 		{
-			int sz = (int)m_text.size();
-			for (int i = 0; i < sz; i++)
-				passText[i] = '*';
-			passText[sz] = 0;
+            xr_string passText;
+            passText.assign(UTF8Text::Count(m_text.c_str()), '*');
 			m_pFont->SetAligment((CGameFont::EAligment)m_eTextAlign);
 			m_pFont->SetGradientMode(m_eTextGradientMode);
-			m_pFont->Out(text_pos.x, text_pos.y, "%s", passText);
+			m_pFont->Out(text_pos.x, text_pos.y, "%s", passText.c_str());
 		}
 		else{
 			m_pFont->SetAligment((CGameFont::EAligment)m_eTextAlign);
 			m_pFont->SetGradientMode(m_eTextGradientMode);
 			if(uFlags.test(flEllipsis) )
 			{
-				u32 buff_len	= sizeof(char)*xr_strlen(m_text.c_str()) + 1;
+				u32 buff_len	= sizeof(char)*xr_strlen(m_text.c_str()) + 3;
 
 				char* p			= static_cast<char*>(_alloca(buff_len));
 				LPCSTR			str = GetElipsisText(m_pFont, m_wndSize.x, m_text.c_str(), p, buff_len);

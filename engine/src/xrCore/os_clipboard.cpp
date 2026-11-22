@@ -20,7 +20,14 @@ void os_clipboard::paste_from_clipboard	( LPSTR buffer, u32 const& buffer_size )
         return;
 
     char* clipData = SDL_GetClipboardText();
-    strncpy_s(buffer, buffer_size, clipData, buffer_size - 1);
+    // COP_ENGINE_PATCH: COP-ENG-248 - SDL clipboard text is UTF-8; bound whole characters.
+    if (clipData && buffer_size)
+    {
+        const size_t count = UTF8Text::Prefix(clipData, buffer_size - 1);
+        std::memcpy(buffer, clipData, count);
+        buffer[count] = 0;
+    }
+    SDL_free(clipData);
 }
 
 void os_clipboard::update_clipboard(LPCSTR string)

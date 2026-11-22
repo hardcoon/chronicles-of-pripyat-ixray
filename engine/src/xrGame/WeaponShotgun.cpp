@@ -1,6 +1,7 @@
 #include "StdAfx.h"
 #include "script_game_object.h"
 #include "WeaponShotgun.h"
+#include "WeaponAmmoIndex250.h"
 #include "Entity.h"
 #include "Inventory.h"
 #include "Level.h"
@@ -351,6 +352,7 @@ void CWeaponShotgun::PlayAnimCloseWeapon()
 BOOL CWeaponShotgun::net_Spawn(CSE_Abstract* DC)
 {
 	BOOL bResult = inherited::net_Spawn(DC);
+	if (!bResult) return FALSE;
 
 	CSE_ALifeItemWeaponShotGun* E = smart_cast<CSE_ALifeItemWeaponShotGun*>(DC);
 
@@ -364,6 +366,9 @@ BOOL CWeaponShotgun::net_Spawn(CSE_Abstract* DC)
 			continue;
 		}
 
+		// COP_ENGINE_PATCH: COP-ENG-250 - mixed shotgun magazines store an index for each round.
+		if (!RestoreWeaponAmmoIndex250(LocalAmmoType, m_ammoTypes.size(), cNameSect().c_str(), ID(), "shotgun-round"))
+			continue;
 		CCartridge& l_cartridge = *(m_magazine.begin() + i);
 		if (LocalAmmoType == l_cartridge.m_LocalAmmoType)
 		{
@@ -401,6 +406,9 @@ void CWeaponShotgun::net_Import(NET_Packet& P)
 			continue;
 		}
 
+		// COP_ENGINE_PATCH: COP-ENG-250 - mixed shotgun magazines store an index for each round.
+		if (!RestoreWeaponAmmoIndex250(LocalAmmoType, m_ammoTypes.size(), cNameSect().c_str(), ID(), "shotgun-round"))
+			continue;
 		CCartridge& l_cartridge = *(m_magazine.begin() + i);
 		if (LocalAmmoType == l_cartridge.m_LocalAmmoType)
 		{

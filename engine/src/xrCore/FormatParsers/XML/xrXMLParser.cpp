@@ -19,13 +19,21 @@ void CXml::ClearInternal()
 	m_Doc.Clear();
 }
 
-void ParseFile(LPCSTR path, CMemoryWriter& W, IReader *F, CXml* xml )
+void ParseFile(LPCSTR path, CMemoryWriter& W, IReader *input, CXml* xml, LPCSTR source)
 {
-	string4096 str = {};
+    // COP_ENGINE_PATCH: COP-ENG-248 - decode each include separately before merging.
+    // Valid UTF-8 wins over a stale XML encoding declaration. Legacy files retain
+    // their declared codepage; a missing declaration uses the source language.
+    const std::string_view raw(static_cast<const char*>(input->pointer()), input->length());
+    std::string utf8 = UTF8Text::Normalize(raw, UTF8Text::XMLCodepage(raw, source));
+    IReader normalized(utf8.data(), utf8.size());
+    IReader* F = &normalized;
+    xr_string line;
 	
 	while (!F->eof())
 	{
-		F->r_string(str,sizeof(str));
+		F->r_string(line);
+        LPCSTR str = line.c_str();
 
 		if (str[0] && (str[0]=='#') && strstr(str,"#include"))
 		{
@@ -58,7 +66,7 @@ void ParseFile(LPCSTR path, CMemoryWriter& W, IReader *F, CXml* xml )
 								R_ASSERT2(false, str);
 							}
 
-							ParseFile(path, W, I, xml);
+							ParseFile(path, W, I, xml, file_name);
 							FS.r_close(I);
 						}
 						else
@@ -73,7 +81,7 @@ void ParseFile(LPCSTR path, CMemoryWriter& W, IReader *F, CXml* xml )
 								R_ASSERT2(false, str);
 							}
 
-							ParseFile(path, W, I, xml);
+							ParseFile(path, W, I, xml, it->name.c_str());
 							FS.r_close(I);
 						}
 					}
@@ -98,7 +106,7 @@ void ParseFile(LPCSTR path, CMemoryWriter& W, IReader *F, CXml* xml )
 						xr_sprintf(str_, "XML file[%s] parsing failed. Can't find include file:[%s]", path, inc_name);
 						R_ASSERT2(false, str_);
 					}
-					ParseFile(path, W, I, xml);
+					ParseFile(path, W, I, xml, inc_name);
 					FS.r_close(I);
 				}
 			}
@@ -137,7 +145,7 @@ bool CXml::Load(LPCSTR path, LPCSTR xml_filename)
 		return false;
 
 	CMemoryWriter W;
-	ParseFile(path, W, F, this);
+	ParseFile(path, W, F, this, xml_filename);
 	W.w_stringZ("");
 	FS.r_close(F);
 
@@ -153,7 +161,7 @@ bool CXml::Load(LPCSTR path, LPCSTR xml_filename)
 			IReader* AF = FS.r_open("$game_config$", File.name.c_str());
 
 			CMemoryWriter AW;
-			ParseFile(path, AW, AF, this);
+			ParseFile(path, AW, AF, this, File.name.c_str());
 			AW.w_stringZ("");
 			FS.r_close(AF);
 

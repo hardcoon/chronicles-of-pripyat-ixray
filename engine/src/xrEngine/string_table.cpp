@@ -3,6 +3,7 @@
 #include "xr_level_controller.h"
 #include "../xrCore/FormatParsers/XML/xrXMLParser.h"
 #include "XR_IOConsole.h"
+#include "FontManager.h"
 
 ENGINE_API CStringTable* g_pStringTable = nullptr;
 
@@ -200,6 +201,9 @@ void CStringTable::Load	(LPCSTR xml_file_full)
 
 		LPCSTR string_text		= uiXml.Read(uiXml.GetRoot(), "string:text", i,  nullptr);
 
+        // COP_ENGINE_PATCH: COP-ENG-248 - empty/incomplete entries use the fallback table.
+        if (!string_text || !string_text[0]) continue;
+
 		if(m_bWriteErrorsToLog && string_text)
 			Msg("[string table] '%s' no translation in '%s'", string_name, pData->m_sLanguage.c_str() );
 		
@@ -238,7 +242,7 @@ void CStringTable::LoadFallback	(LPCSTR xml_file_full)
 		if(m_bWriteErrorsToLog && string_text)
 			Msg("[fallback string table] '%s' no translation in '%s'", string_name, pData->m_sFallbackLanguage.c_str() );
 		
-		if (string_text != nullptr)
+		if (string_text != nullptr && string_text[0])
 		{
 			STRING_VALUE str_val		= ParseLine(string_text, string_name, false);
 			
@@ -320,6 +324,8 @@ void CStringTable::ReloadLanguage(const char* lang)
 	}
 
 	ReparseKeyBindings();
+    // COP_ENGINE_PATCH: COP-ENG-248 - keep locale-specific fonts in sync at runtime.
+    if (g_FontManager) g_FontManager->OnDeviceReset();
 }
 
 xr_string CStringTable::LangName()
@@ -358,7 +364,8 @@ STRING_VALUE CStringTable::ParseLine(LPCSTR str, LPCSTR skey, bool bFirst)
 		strncpy_s				(srcbuff,b+LEN, len);
 		srcbuff[len]		= 0;
 		GetActionAllBinding	(srcbuff, buff, sizeof(buff) );
-		res.append			(buff, xr_strlen(buff) );
+		// COP_ENGINE_PATCH: COP-ENG-249 - normalize key names before joining the Unicode template.
+		res.append(Platform::ANSI_TO_UTF8(buff));
 
 		k					= (int)(b-str);
 		k					+= len;

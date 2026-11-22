@@ -33,8 +33,9 @@ UI_API u32 cut_string_by_length(CGameFont* pFont, LPCSTR src, LPSTR dst, u32 dst
 
 		while(text_len > length)
 		{
-			dst[xr_strlen(dst)-1]			= 0;
-			VERIFY							(xr_strlen(dst));
+            // COP_ENGINE_PATCH: COP-ENG-248 - retain whole UTF-8 characters.
+            if (!dst[0]) break;
+            dst[UTF8Text::Previous(dst, xr_strlen(dst))] = 0;
 			text_len						= pFont->SizeOf_(dst);
 			UI().ClientToScreenScaledWidth	(text_len);
 		}

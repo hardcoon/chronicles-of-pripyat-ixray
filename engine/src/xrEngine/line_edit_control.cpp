@@ -302,7 +302,12 @@ void line_edit_control::assign_callback(u32 const dik, key_state state, Callback
 
 void line_edit_control::insert_character( char c )
 {
-	m_inserted[0] = c;
+    // COP_ENGINE_PATCH: COP-ENG-248 - keyboard's legacy CP1251 byte enters UTF-8 storage.
+    std::string utf8;
+    UTF8Text::Append(utf8, UTF8Text::LegacyCodepoint(static_cast<unsigned char>(c)));
+    const size_t length = UTF8Text::Prefix(utf8, m_buffer_size - 1);
+    std::memcpy(m_inserted, utf8.data(), length);
+    m_inserted[length] = 0;
 }
 
 void line_edit_control::clear_inserted()
@@ -317,10 +322,10 @@ bool line_edit_control::empty_inserted()
 
 void line_edit_control::set_edit( LPCSTR str )
 {
-	u32 str_size = xr_strlen( str );
-	clamp( str_size, (u32)0, (u32)(m_buffer_size-1) );
-	strncpy_s( m_edit_str, m_buffer_size, str, str_size );
-	m_edit_str[str_size] = 0;
+    const xr_string utf8 = Platform::ANSI_TO_UTF8(str ? str : "");
+    const u32 str_size = static_cast<u32>(UTF8Text::Prefix(utf8.c_str(), m_buffer_size - 1));
+    std::memcpy(m_edit_str, utf8.data(), str_size);
+    m_edit_str[str_size] = 0;
 
 	m_cur_pos      = str_size;
 	m_select_start = m_cur_pos;
@@ -458,7 +463,7 @@ void line_edit_control::update_bufs()
 	m_buf3[0] = 0;
 
 	int edit_size = (int)xr_strlen( m_edit_str );
-	int ds = (m_cursor_view && m_insert_mode && m_p2 < edit_size)? 1 : 0;
+	int ds = (m_cursor_view && m_insert_mode && m_p2 < edit_size) ? static_cast<int>(UTF8Text::Next(m_edit_str, m_p2)) - m_p2 : 0;
 	strncpy_s( m_buf0, m_buffer_size, m_edit_str,             m_cur_pos             );
 	strncpy_s( m_buf1, m_buffer_size, m_edit_str,             m_p1                  );
 	strncpy_s( m_buf2, m_buffer_size, m_edit_str + m_p1,      m_p2 - m_p1 + ds      );
@@ -486,31 +491,19 @@ void line_edit_control::add_inserted_text()
 		}
 	}
 
-	char* buf = (char*)_alloca( (m_buffer_size + 1) * sizeof(char) );
-
-	strncpy_s( buf,        m_buffer_size, m_edit_str,        m_p1        ); // part 1
-	strncpy_s( m_undo_buf, m_buffer_size, m_edit_str + m_p1, m_p2 - m_p1 );
-
-	int new_size = (int)xr_strlen( m_inserted );
-	if ( m_buffer_size - 1 < m_p1 + new_size )
-	{
-		m_inserted[m_buffer_size - 1 - m_p1] = 0;
-		new_size = xr_strlen( m_inserted );
-	}
-	strncpy_s( buf + m_p1, m_buffer_size, m_inserted, _min(new_size, m_buffer_size - m_p1) ); // part 2
-
-	u8 ds = (m_insert_mode && m_p2 < old_edit_size)? 1 : 0;
-	strncpy_s( buf + m_p1 + new_size, m_buffer_size, m_edit_str + m_p2 + ds,
-		_min(old_edit_size - m_p2 - ds, m_buffer_size - m_p1 - new_size) ); // part 3
-	buf[m_buffer_size] = 0;
-
-	int szn = m_p1 + new_size + old_edit_size - m_p2 - ds;
-	if ( szn < m_buffer_size )
-	{
-		strncpy_s( m_edit_str, m_buffer_size, buf, szn ); // part 1+2+3
-		m_edit_str[m_buffer_size-1] = 0;
-		m_cur_pos = m_p1 + new_size;
-	}
+    const xr_string inserted = Platform::ANSI_TO_UTF8(m_inserted);
+    const size_t suffix_start = m_insert_mode && m_p2 < old_edit_size ?
+        UTF8Text::Next(m_edit_str, m_p2) : m_p2;
+    const size_t suffix_size = old_edit_size - suffix_start;
+    const size_t room = m_buffer_size - 1 - m_p1 - suffix_size;
+    const size_t new_size = UTF8Text::Prefix(inserted.c_str(), room);
+    if (!new_size) return;
+    strncpy_s(m_undo_buf, m_buffer_size, m_edit_str + m_p1, suffix_start - m_p1);
+    xr_string result(m_edit_str, m_p1);
+    result.append(inserted.data(), new_size);
+    result.append(m_edit_str + suffix_start);
+    std::memcpy(m_edit_str, result.c_str(), result.size() + 1);
+    m_cur_pos = static_cast<int>(m_p1 + new_size);
 	clamp_cur_pos();
 }
 
@@ -580,16 +573,16 @@ void line_edit_control::delete_selected( bool back )
 	{
 		if ( back )
 		{
-			u8 dp = ( (m_p1 == m_p2) && m_p1 > 0 )? 1 : 0;
+			size_t dp = (m_p1 == m_p2 && m_p1 > 0) ? m_p1 - UTF8Text::Previous(m_edit_str, m_p1) : 0;
 			strncpy_s( m_undo_buf,             m_buffer_size, m_edit_str + m_p1 - dp, m_p2 - m_p1 + dp );
-			strncpy_s( m_edit_str + m_p1 - dp, m_buffer_size, m_edit_str + m_p2,      edit_len - m_p2  );
+			std::memmove(m_edit_str + m_p1 - dp, m_edit_str + m_p2, edit_len - m_p2 + 1);
 			m_cur_pos = m_p1 - dp;
 		}
 		else
 		{
-			u8 dn = ( (m_p1 == m_p2) && m_p2 < edit_len )? 1 : 0;
+			size_t dn = (m_p1 == m_p2 && m_p2 < edit_len) ? UTF8Text::Next(m_edit_str, m_p2) - m_p2 : 0;
 			strncpy_s( m_undo_buf,        m_buffer_size, m_edit_str + m_p1,      m_p2 - m_p1 + dn     );
-			strncpy_s( m_edit_str + m_p1, m_buffer_size, m_edit_str + m_p2 + dn, edit_len - m_p2 - dn );
+			std::memmove(m_edit_str + m_p1, m_edit_str + m_p2 + dn, edit_len - m_p2 - dn + 1);
 			m_cur_pos = m_p1;
 		}
 		clamp_cur_pos();
@@ -632,34 +625,34 @@ void line_edit_control::move_pos_end()
 
 void line_edit_control::move_pos_left()
 {
-	--m_cur_pos;
+	m_cur_pos = static_cast<int>(UTF8Text::Previous(m_edit_str, m_cur_pos));
 }
 
 void line_edit_control::move_pos_right()
 {
-	++m_cur_pos;
+	m_cur_pos = static_cast<int>(UTF8Text::Next(m_edit_str, m_cur_pos));
 }
 
 void line_edit_control::move_pos_left_word()
 {
-	int i = m_cur_pos - 1;
-	while ( i >= 0 && m_edit_str[i] == ' ' ) { --i; }
-	if ( !terminate_char( m_edit_str[i] ) )
-	{
-		while ( i >= 0 && !terminate_char( m_edit_str[i], true )  ) { --i; }
-		++i;
-	}
-	m_cur_pos = i;
+    size_t i = UTF8Text::Previous(m_edit_str, m_cur_pos);
+    while (i > 0 && m_edit_str[i] == ' ') i = UTF8Text::Previous(m_edit_str, i);
+    while (i > 0 && !terminate_char(m_edit_str[i], true))
+    {
+        const size_t previous = UTF8Text::Previous(m_edit_str, i);
+        if (terminate_char(m_edit_str[previous], true)) break;
+        i = previous;
+    }
+    m_cur_pos = static_cast<int>(i);
 }
 
 void line_edit_control::move_pos_right_word()
 {
-	int edit_len = (int)xr_strlen( m_edit_str );
-	int i = m_cur_pos + 1;
-	while( i < edit_len && !terminate_char( m_edit_str[i], true ) )	{ ++i; }
-	//while( i < edit_len && terminate_char( m_edit_str[i] ) )		{ ++i; }
-	while( i < edit_len && m_edit_str[i] == ' ' )					{ ++i; }
-	m_cur_pos = i;
+    const size_t length = xr_strlen(m_edit_str);
+    size_t i = UTF8Text::Next(m_edit_str, m_cur_pos);
+    while (i < length && !terminate_char(m_edit_str[i], true)) i = UTF8Text::Next(m_edit_str, i);
+    while (i < length && m_edit_str[i] == ' ') i = UTF8Text::Next(m_edit_str, i);
+    m_cur_pos = static_cast<int>(i);
 }
 
 void line_edit_control::compute_positions()
@@ -683,7 +676,8 @@ void line_edit_control::compute_positions()
 
 void line_edit_control::clamp_cur_pos()
 {
-	clamp( m_cur_pos, 0, (int)xr_strlen( m_edit_str ) );
+    clamp(m_cur_pos, 0, static_cast<int>(xr_strlen(m_edit_str)));
+    m_cur_pos = static_cast<int>(UTF8Text::Prefix(m_edit_str, m_cur_pos));
 }
 
 void line_edit_control::SwitchKL() {

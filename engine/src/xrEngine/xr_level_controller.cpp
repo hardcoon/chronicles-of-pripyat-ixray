@@ -440,7 +440,8 @@ void remap_keys()
 		buff[0] = 0;
 		_keyboard& kb = keyboards[idx];
 		bool res = pInput->get_dik_name(kb.dik, buff, sizeof(buff));
-		kb.key_local_name = res ? buff : kb.key_local_name;
+		// COP_ENGINE_PATCH: COP-ENG-249 - display labels are UTF-8; raw typing bytes stay in CInput.
+		kb.key_local_name = Platform::ANSI_TO_UTF8(res ? buff : kb.key_local_name.c_str());
 
 		if (kb.key_local_name.starts_with('k'))
 		{
@@ -615,10 +616,10 @@ ENGINE_API void GetActionAllBinding(LPCSTR _action, char* dst_buff, int dst_buff
 	sec[0] = 0;
 
 	if (pbinding->m_keyboard[0])
-		xr_strcpy(prim, pbinding->m_keyboard[0]->key_local_name.c_str());
+		xr_strcpy(prim, Platform::ANSI_TO_UTF8(pbinding->m_keyboard[0]->key_local_name).c_str());
 
 	if (pbinding->m_keyboard[1])
-		xr_strcpy(sec, pbinding->m_keyboard[1]->key_local_name.c_str());
+		xr_strcpy(sec, Platform::ANSI_TO_UTF8(pbinding->m_keyboard[1]->key_local_name).c_str());
 
 	if (nullptr == pbinding->m_keyboard[0] && nullptr == pbinding->m_keyboard[1])
 		xr_sprintf(dst_buff, dst_buff_sz, "%s", g_pStringTable->translate("st_key_notbinded").c_str());

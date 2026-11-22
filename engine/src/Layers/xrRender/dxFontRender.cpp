@@ -37,7 +37,9 @@ void dxFontRender::OnRender(CGameFont& owner)
 	//#TODO mb need use optimization for minimize vertexes allocations?
 	for(CGameFont::String& str : owner.strings)
 	{
-		int length = xr_strlen(str.string);
+        // COP_ENGINE_PATCH: COP-ENG-248 - iterate Unicode, not the UTF-8 byte count.
+        const std::string_view text(str.string_utf8.data(), str.string_utf8.size());
+        const size_t length = UTF8Text::Count(text);
 		if(length)
 		{
 			// lock AGP memory
@@ -51,7 +53,7 @@ void dxFontRender::OnRender(CGameFont& owner)
 
 			if(str.align)
 			{
-				float width = (float)owner.WidthOf(str.string);
+				float width = (float)owner.WidthOf(str.string_utf8.c_str());
 
 				switch(str.align) {
 					case CGameFont::alCenter:
@@ -73,38 +75,15 @@ void dxFontRender::OnRender(CGameFont& owner)
 			Y -= 0.5f;
 			Y2 -= 0.5f;
 
-			xr_special_char* UniStr = nullptr; 
-			bool IsUTF8Str = IsUTF8(str.string);
-			if (IsUTF8Str)
-			{
-				UniStr = Platform::ANSI_TO_TCHAR(str.string);
-			}
-			else
-			{
-				UniStr = Platform::ANSI_TO_TCHAR(str.string_utf8.c_str());
-			}
-
-			for(int i = 0; i < length; i++) 
-			{
-				CGameFont::Glyph* glyphInfo = nullptr;
-
-				if (!IsUTF8Str)
-				{
-					glyphInfo = const_cast<CGameFont::Glyph*>(owner.GetGlyphInfo((u8)str.string[i]));
-				}
-
-				if (glyphInfo == nullptr) 
-				{
-					glyphInfo = const_cast<CGameFont::Glyph*>(owner.GetGlyphInfo(UniStr[i]));
-					if (glyphInfo == nullptr)
-					{
-						continue;
-					}
-				}
-
-				if(i != 0) {
-					X += glyphInfo->Abc.abcA;
-				}
+            size_t offset = 0;
+            uint32_t codepoint;
+            while (offset < text.size())
+            {
+                UTF8Text::Decode(text, offset, codepoint);
+                if (codepoint == '\t' || codepoint == '\n') continue;
+                const CGameFont::Glyph* glyphInfo = owner.GetGlyphInfo(static_cast<int>(codepoint));
+                if (!glyphInfo) continue;
+                X += glyphInfo->Abc.abcA;
 
 				float GlyphY = Y + glyphInfo->yOffset;
 				float GlyphY2 = Y2 + glyphInfo->yOffset;

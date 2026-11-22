@@ -1337,7 +1337,36 @@ Section FilterSectionsWithSearch(const Section& sections, const char* searchBuff
 	if (!searchBuffer || !*searchBuffer)
 		return sections;
 
-	xr_string searchStr = xr_strlwr_rus(Platform::UTF8_to_CP1251(searchBuffer));
+    // COP_ENGINE_PATCH: COP-ENG-248 - translations and search must share UTF-8 storage.
+    const auto lowercase = [](const char* text)
+    {
+        const xr_string utf8 = Platform::ANSI_TO_UTF8(text);
+#ifdef IXR_WINDOWS
+        const std::wstring wide = Platform::ANSI_TO_TCHAR(utf8.c_str());
+        const int count = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE,
+            wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr, 0);
+        if (count <= 0) return utf8;
+        std::wstring lower(count, L'\0');
+        LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE,
+            wide.data(), static_cast<int>(wide.size()), lower.data(), count, nullptr, nullptr, 0);
+        return Platform::CP_TCHAR_TO_ANSI_U8(lower.c_str());
+#else
+        std::string lower;
+        const std::string_view view(utf8.data(), utf8.size());
+        size_t offset = 0;
+        uint32_t value;
+        while (offset < view.size())
+        {
+            UTF8Text::Decode(view, offset, value);
+            if ((value >= 'A' && value <= 'Z') || (value >= 0x410 && value <= 0x42F) ||
+                (value >= 0xC0 && value <= 0xDE && value != 0xD7)) value += 32;
+            if (value == 0x401) value = 0x451;
+            UTF8Text::Append(lower, value);
+        }
+        return xr_string(lower.data(), static_cast<u32>(lower.size()));
+#endif
+    };
+    const xr_string searchStr = lowercase(searchBuffer);
 
 	Section filtered;
 	filtered.reserve(sections.size());
@@ -1351,11 +1380,11 @@ Section FilterSectionsWithSearch(const Section& sections, const char* searchBuff
 
 			const char* sectionKey = pair.first.data();
 
-			xr_string lowerSectionName = xr_strlwr_rus(sectionKey);
+            const xr_string lowerSectionName = lowercase(sectionKey);
 
 			const char* rawName = READ_IF_EXISTS(pSettings, r_string, sectionKey, "inv_name", sectionKey);
 
-			xr_string lowerTranslated = xr_strlwr_rus(g_pStringTable->translate(rawName).c_str());
+            const xr_string lowerTranslated = lowercase(g_pStringTable->translate(rawName).c_str());
 
 			return lowerSectionName.find(searchStr) != xr_string::npos ||
 				lowerTranslated.find(searchStr) != xr_string::npos;

@@ -7,6 +7,7 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #include "StdAfx.h"
+#include "WeaponAmmoIndex250.h"
 #include "pch_script.h"
 #include "script_game_object.h"
 #include "script_entity_action.h"
@@ -564,7 +565,10 @@ void CScriptGameObject::SetAmmoType(u8 type)
 {
 	if (CWeapon* weapon = object().cast_weapon())
 	{
-		weapon->SetAmmoType(type);
+		// COP_ENGINE_PATCH: COP-ENG-250 - script-selected indices use the active magazine's list.
+		const auto& types = weapon->getAmmoTypes(weapon->IsGrenadeMode());
+		if (RestoreWeaponAmmoIndex250(type, types.size(), weapon->cNameSect().c_str(), weapon->ID(), "script-set-ammo"))
+			weapon->SetAmmoType(type);
 	}
 }
 

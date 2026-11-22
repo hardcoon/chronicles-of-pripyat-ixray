@@ -26,14 +26,15 @@ FS_Path::FS_Path	(LPCSTR _Root, LPCSTR _Add, LPCSTR _DefExt, LPCSTR _FilterCapti
 {
 //	VERIFY			(_Root&&_Root[0]);
 	string_path		temp;
-    xr_strcpy		(temp,sizeof(temp),_Root); 
-    if (_Add) 		xr_strcat(temp,_Add);
+    // COP_ENGINE_PATCH: COP-ENG-251 - normalize components before path concatenation.
+    xr_strcpy		(temp,sizeof(temp),Platform::ANSI_TO_UTF8(_Root).c_str());
+    if (_Add) 		xr_strcat(temp,Platform::ANSI_TO_UTF8(_Add).c_str());
 	if (temp[0] && temp[xr_strlen(temp)-1]!='\\') xr_strcat(temp,"\\");
 	m_Path			= xr_strlwr(xr_strdup(temp));
 	m_DefExt		= _DefExt?xr_strlwr(xr_strdup(_DefExt)):0;
 	m_FilterCaption	= _FilterCaption?xr_strlwr(xr_strdup(_FilterCaption)):0;
-	m_Add			= _Add?xr_strlwr(xr_strdup(_Add)):0;
-	m_Root			= _Root?xr_strlwr(xr_strdup(_Root)):0;
+	m_Add			= _Add?xr_strlwr(xr_strdup(Platform::ANSI_TO_UTF8(_Add).c_str())):0;
+	m_Root			= _Root?xr_strlwr(xr_strdup(Platform::ANSI_TO_UTF8(_Root).c_str())):0;
     m_Flags.assign	(flags);
 }
 
@@ -51,7 +52,7 @@ void	FS_Path::_set	(LPCSTR add)
 	// m_Add
 	R_ASSERT		(add);
 	xr_free			(m_Add);
-	m_Add			= xr_strlwr(xr_strdup(add));
+	m_Add			= xr_strlwr(xr_strdup(Platform::ANSI_TO_UTF8(add).c_str()));
 
 	// m_Path
 	string_path		temp;
@@ -64,7 +65,7 @@ void	FS_Path::_set	(LPCSTR add)
 void	FS_Path::_set_root	(LPCSTR root)
 {
 	string_path		temp;
-	xr_strcpy		( temp, root );
+	xr_strcpy		( temp, Platform::ANSI_TO_UTF8(root).c_str() );
 	if (m_Root[0] && m_Root[xr_strlen(m_Root)-1]!='\\') xr_strcat(temp,"\\");
 	xr_free			(m_Root);
 	m_Root			= xr_strlwr(xr_strdup(temp));
@@ -81,7 +82,7 @@ LPCSTR FS_Path::_update(string_path& dest, LPCSTR src)const
 	R_ASSERT			(dest);
     R_ASSERT			(src);
 	string_path			temp;
-	xr_strcpy			(temp, sizeof(temp), src);
+	xr_strcpy			(temp, sizeof(temp), Platform::ANSI_TO_UTF8(src).c_str());
 	xr_strconcat(dest, m_Path, temp);
 	return xr_strlwr	(dest);
 }

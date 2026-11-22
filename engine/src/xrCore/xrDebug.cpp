@@ -200,7 +200,8 @@ void xrDebug::show_dialog(const std::string& message, bool& ignore_always)
 #endif
 	};
 
-	auto utf8_message = Platform::ANSI_TO_UTF8(Platform::UTF8_to_CP1251(message.c_str()));
+    // COP_ENGINE_PATCH: COP-ENG-248 - diagnostics must not lose Unicode through CP1251.
+    auto utf8_message = Platform::ANSI_TO_UTF8(message.c_str());
 
 	const SDL_MessageBoxData messageboxdata = 
 	{

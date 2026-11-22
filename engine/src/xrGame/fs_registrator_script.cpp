@@ -2,8 +2,21 @@
 #include "pch_script.h"
 #include "fs_registrator.h"
 #include "../xrCore/LocatorAPI.h"
+#include "save_path251.h"
 
 using namespace luabind;
+
+// COP_ENGINE_PATCH: COP-ENG-251 - marshal data is binary, never strlen or ANSI fopen.
+static bool write_save_state_file(LPCSTR path, const luabind::internal_string& data)
+{
+    return save_path251::write(path, data.data(), data.size());
+}
+static luabind::internal_string read_save_state_file(LPCSTR path)
+{
+    std::string data;
+    if (!save_path251::read(path, data)) return {};
+    return luabind::internal_string(data.data(), data.size());
+}
 
 LPCSTR get_file_age_str(CLocatorAPI* fs, LPCSTR nm);
 CLocatorAPI* getFS()
@@ -254,6 +267,8 @@ void fs_registrator::script_register(lua_State *L)
 			.def("file_list_open",						&file_list_open_script_2)
 			.def("file_list_open_ex",					&file_list_open_ex),
 
-		def("getFS",									getFS)
+		def("getFS",									getFS),
+		def("write_save_state_file", &write_save_state_file),
+		def("read_save_state_file", &read_save_state_file)
 	];
 }

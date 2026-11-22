@@ -84,8 +84,9 @@ bool Platform::OpenFileWnd(char* buffer, size_t sz_buf, FS_Path* P, int start_fl
 
 size_t Platform::Stat(const char* path, time_t& Time)
 {
-	struct _stat st;
-	_stat(path, &st);
+	// COP_ENGINE_PATCH: COP-ENG-251 - metadata for the same Unicode file as the writer.
+	struct _stat st = {};
+	if (_wstat(Platform::ANSI_TO_TCHAR_U8(path), &st)) { Time = 0; return 0; }
 
 	Time = st.st_mtime;
 	return st.st_size;

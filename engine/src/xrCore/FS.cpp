@@ -17,7 +17,12 @@ void VerifyPath(LPCSTR path)
 			continue;
 		CopyMemory(tmp, path, i);
 		tmp[i] = 0;
+		// COP_ENGINE_PATCH: COP-ENG-251 - create Unicode save/screenshot directories.
+		#ifdef IXR_WINDOWS
+		_wmkdir(Platform::ANSI_TO_TCHAR_U8(tmp));
+		#else
 		_mkdir(tmp);
+		#endif
 	}
 }
 

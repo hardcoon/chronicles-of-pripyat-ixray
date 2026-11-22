@@ -87,7 +87,7 @@ void CGameFont::Prepare(const char* name, const char* shader, const char* style,
 	Initialize2(name, shader, style, size);
 }
 
-wchar_t TranslateSymbolUsingCP1251(char Symbol);
+
 
 xr_vector<xr_string> split(const xr_string& s, char delim)
 {
@@ -185,8 +185,20 @@ void CGameFont::Initialize2(const char* name, const char* shader, const char* st
 		R_ASSERT3(FontFile != nullptr, "Can't find default font: %s", DefPath);
 	}
 
+    // COP_ENGINE_PATCH: COP-ENG-248 - FreeType charmap and glyph keys are Unicode.
+    // FreeType keeps the memory face data until FT_Done_Face, including reloads.
+    if (OurFont) FT_Done_Face(OurFont);
+    OurFont = nullptr;
+    GlyphData.clear();
 	FT_Error FTError = FT_New_Memory_Face(FreetypeLib, (FT_Byte*)FontFile->pointer(), FontFile->length(), 0, &OurFont);
 	R_ASSERT3(FTError == 0, "FT_New_Memory_Face return error", FullPath);
+    OurFont->generic.data = FontFile;
+    OurFont->generic.finalizer = [](void* object)
+    {
+        IReader* file = static_cast<IReader*>(static_cast<FT_Face>(object)->generic.data);
+        FS.r_close(file);
+    };
+    FT_Select_Charmap(OurFont, FT_ENCODING_UNICODE);
 
 	u32 TargetX = 0;
 	u32 TargetY = 0;
@@ -283,22 +295,8 @@ void CGameFont::Initialize2(const char* name, const char* shader, const char* st
 
 	auto LoadGlyph = [&](FT_UInt glyphID)
 	{
-		u32 TrueGlyph = glyphID;
-		if (Data.OpenType)
-		{
-			// Если символ входит в CP1251 (0-255) — конвертируем
-			if (glyphID <= 0xFF)
-			{
-				TrueGlyph = TranslateSymbolUsingCP1251((char)glyphID);
-			}
-		}
-
-		FT_UInt FreetypeCharacter = FT_Get_Char_Index(OurFont, TrueGlyph);
-		if (FreetypeCharacter == 0 && glyphID != 0)
-		{
-			Msg("! Glyph not found: %d, TrueGlyph: %d", glyphID, TrueGlyph);
-			return;
-		}
+        const FT_UInt FreetypeCharacter = FT_Get_Char_Index(OurFont, glyphID);
+        if (FreetypeCharacter == 0 && glyphID != 0) return;
 
 		FTError = FT_Load_Glyph(OurFont, FreetypeCharacter, FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL);
 		R_ASSERT3(FTError == 0, "FT_Load_Glyph return error", FullPath);
@@ -353,7 +351,6 @@ void CGameFont::Initialize2(const char* name, const char* shader, const char* st
 
 	pFontRender->CreateFontAtlas(TextureDimension, TargetDemensionY, textureName, FontBitmap.data());
 
-	FS.r_close(FontFile);
 	pFontRender->Initialize(shader, textureName);
 }
 
@@ -381,14 +378,52 @@ void CGameFont::OnRender()
 
 u16 CGameFont::GetCutLengthPos(float fTargetWidth, const char* pszText)
 {
-
-	return 0;
+    // COP_ENGINE_PATCH: COP-ENG-248 - return a byte boundary for both supported storage formats.
+    const std::string_view text(pszText);
+    const bool utf8 = UTF8Text::IsValid(text);
+    size_t offset = 0, accepted = 0;
+    float width = 0.f;
+    while (offset < text.size())
+    {
+        uint32_t codepoint;
+        if (utf8) UTF8Text::Decode(text, offset, codepoint);
+        else codepoint = UTF8Text::LegacyCodepoint(static_cast<unsigned char>(text[offset++]));
+        width += WidthOf(static_cast<int>(codepoint)) + (accepted ? GetLetterSpacing() : 0.f);
+        if (width > fTargetWidth || offset > 65535) break;
+        accepted = offset;
+    }
+    return static_cast<u16>(accepted);
 }
 
 u16 CGameFont::SplitByWidth(u16* puBuffer, u16 uBufferSize, float fTargetWidth, const char* pszText)
 {
-
-	return 0;
+    // COP_ENGINE_PATCH: COP-ENG-248 - preserve words and complete encoded characters.
+    const std::string_view text(pszText);
+    const bool utf8 = UTF8Text::IsValid(text);
+    size_t offset = 0, start = 0, space = 0;
+    float width = 0.f;
+    u16 count = 0;
+    while (offset < text.size() && count < uBufferSize)
+    {
+        const size_t previous = offset;
+        uint32_t codepoint;
+        if (utf8) UTF8Text::Decode(text, offset, codepoint);
+        else codepoint = UTF8Text::LegacyCodepoint(static_cast<unsigned char>(text[offset++]));
+        const float next = WidthOf(static_cast<int>(codepoint)) + (previous > start ? GetLetterSpacing() : 0.f);
+        if (width + next > fTargetWidth && previous > start)
+        {
+            const size_t split = space > start ? space : previous;
+            if (split > 65535) break;
+            puBuffer[count++] = static_cast<u16>(split);
+            start = offset = split;
+            space = 0;
+            width = 0.f;
+            continue;
+        }
+        width += next;
+        if (codepoint == ' ' || codepoint == '\t') space = offset;
+    }
+    return count;
 }
 
 void CGameFont::MasterOut(
@@ -408,18 +443,19 @@ void CGameFont::MasterOut(
 	rs.align = eCurrentAlignment;
 	rs.gradient = fGradientEnabled;
 	rs.gradientMode = fGradientMode;
-	int vs_sz = vsprintf(rs.string, fmt, p);
-
-	if (!IsUTF8(rs.string))
-	{
-		rs.string_utf8 = Platform::ANSI_TO_UTF8(rs.string);
-	}
-	
-	rs.string[sizeof(rs.string) - 1] = 0;
-	if (vs_sz == -1)
-	{
-		return;
-	}
+    // COP_ENGINE_PATCH: COP-ENG-248 - normalize once, without a fixed byte-size cut.
+    va_list copy;
+    va_copy(copy, p);
+    const int vs_sz = std::vsnprintf(nullptr, 0, fmt, copy);
+    va_end(copy);
+    if (vs_sz < 0) return;
+    xr_vector<char> formatted(static_cast<size_t>(vs_sz) + 1);
+    std::vsnprintf(formatted.data(), formatted.size(), fmt, p);
+    rs.string_utf8 = Platform::ANSI_TO_UTF8(formatted.data());
+    const size_t prefix = UTF8Text::Prefix(rs.string_utf8.c_str(), sizeof(rs.string) - 1);
+    rs.string_utf8.resize(prefix);
+    std::memcpy(rs.string, rs.string_utf8.data(), prefix);
+    rs.string[prefix] = 0;
 
 	if (vs_sz)
 	{
@@ -460,7 +496,7 @@ float CGameFont::SizeOf_(int cChar)
 {
 	if (cChar < 0)
 	{
-		cChar = u8(cChar);
+		cChar = UTF8Text::LegacyCodepoint(u8(cChar));
 	}
 
 	return WidthOf(cChar);
@@ -489,10 +525,13 @@ const CGameFont::Glyph* CGameFont::GetGlyphInfo(int ch)
 	auto symbolInfoIterator = GlyphData.find(ch);
 	if (symbolInfoIterator == GlyphData.end())
 	{
-		return nullptr;
-	}
+        // Use the same visible fallback in measuring and drawing.
+        symbolInfoIterator = GlyphData.find(0xFFFD);
+        if (symbolInfoIterator == GlyphData.end()) symbolInfoIterator = GlyphData.find('?');
+        if (symbolInfoIterator == GlyphData.end()) return nullptr;
+    }
 
-	return &symbolInfoIterator->second;
+    return &symbolInfoIterator->second;
 }
 
 float CGameFont::WidthOf(int ch)
@@ -503,127 +542,23 @@ float CGameFont::WidthOf(int ch)
 	if (const Glyph* glyphInfo = GetGlyphInfo(ch))
 		return float(glyphInfo->Abc.abcA + glyphInfo->Abc.abcB + glyphInfo->Abc.abcC);
 
-	return float(OurFont->glyph->metrics.width) / 64.f;
+	return 0.f;
 }
 
 float CGameFont::WidthOf(const char* str)
 {
-	if (!str || !str[0]) return 0;
-
-	float size = 0;
-	int length = 0;
-	const float spacing = GetLetterSpacing();
-
-	if (IsUTF8(str)) {
-		auto wideStr = Platform::ANSI_TO_TCHAR(str);
-		length = std::wcslen(wideStr);
-		for (int i = 0; i < length; i++)
-		{
-			size += WidthOf(wideStr[i]);
-			size += spacing;
-		}
-
-		size -= spacing;
-	}
-	else
-	{
-		length = xr_strlen(str);
-		for (int i = 0; i < length; i++)
-		{
-			size += WidthOf((u8)str[i]);
-			size += spacing;
-		}
-
-		size -= spacing;
-	}
-
-	return size;
-}
-
-wchar_t CP1251ConvertationTable[] =
-{
-	0x0402, // Ђ
-	0x0403, // Ѓ
-	0x201A, // ‚
-	0x0453, // ѓ
-	0x201E, // „
-	0x2026, // …
-	0x2020, // †
-	0x2021, // ‡
-	0x20AC, // €
-	0x2030, // ‰
-	0x0409, // Љ
-	0x2039, // ‹
-	0x040A, // Њ
-	0x040C, // Ќ
-	0x040B, // Ћ
-	0x040F, // Џ
-
-	0x0452, // ђ
-	0x2018, // ‘
-	0x2019, // ’
-	0x201C, // “
-	0x201D, // ”
-	0x2022, // •
-	0x2013, // –
-	0x2014, // —
-	0x0,    // empty (0x98)
-	0x2122, // ™
-	0x0459, // љ
-	0x203A, // ›
-	0x045A, // њ
-	0x045C, // ќ
-	0x045B, // ћ
-	0x045F, // џ
-
-	0x00A0, //  
-	0x040E, // Ў
-	0x045E, // ў
-	0x0408, // Ј
-	0x00A4, // ¤
-	0x0490, // Ґ
-	0x00A6, // ¦
-	0x00A7, // §
-	0x0401, // Ё
-	0x00A9, // ©
-	0x0404, // Є
-	0x00AB, // «
-	0x00AC, // ¬
-	0x00AD, // 
-	0x00AE, // ®
-	0x0407, // Ї
-
-	0x00B0, // °
-	0x00B1, // ±
-	0x0406, // І
-	0x0456, // і
-	0x0491, // ґ
-	0x00B5, // µ
-	0x00B6, // ¶
-	0x00B7, // ·
-	0x0451, // ё
-	0x2116, // №
-	0x0454, // є
-	0x00BB, // »
-	0x0458, // ј
-	0x0405, // Ѕ
-	0x0455, // ѕ
-	0x0457, // ї
-};
-
-wchar_t TranslateSymbolUsingCP1251(char Symbol)
-{
-	unsigned char RawSymbol = *(unsigned char*)&Symbol;
-
-	if (RawSymbol < 0x80)
-	{
-		return wchar_t(RawSymbol);
-	}
-
-	if (RawSymbol < 0xc0)
-	{
-		return CP1251ConvertationTable[RawSymbol - 0x80];
-	}
-
-	return wchar_t(RawSymbol - 0xc0) + 0x410;
+    // COP_ENGINE_PATCH: COP-ENG-248 - exactly the renderer's codepoint sequence.
+    if (!str || !str[0]) return 0.f;
+    const xr_string text = Platform::ANSI_TO_UTF8(str);
+    const std::string_view view(text.data(), text.size());
+    float width = 0.f;
+    size_t offset = 0;
+    uint32_t codepoint;
+    while (offset < view.size())
+    {
+        UTF8Text::Decode(view, offset, codepoint);
+        width += WidthOf(static_cast<int>(codepoint));
+        if (offset < view.size()) width += GetLetterSpacing();
+    }
+    return width;
 }

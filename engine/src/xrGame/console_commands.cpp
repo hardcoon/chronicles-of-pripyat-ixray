@@ -502,6 +502,7 @@ void get_files_list(xr_vector<shared_str>& files, LPCSTR dir, LPCSTR file_ext)
 
 #include "UIGameCustom.h"
 #include "HUDManager.h"
+#include "save_path251.h"
 
 class CCC_ALifeSave : public IConsole_Command
 {
@@ -716,7 +717,9 @@ public:
 
 		if (saved_game && *saved_game)
 		{
-			xr_strcpy(g_last_saved_game, saved_game);
+			// COP_ENGINE_PATCH: COP-ENG-251 - recover the actual pre-fix last save on config load.
+            const auto restored = save_path251::restored_last_name(saved_game, FS.get_path("$game_saves$")->m_Path, IXRAY_DEF_SAVE_EXTENSION);
+            xr_strcpy(g_last_saved_game, restored.c_str());
 
 			return;
 		}

@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "WeaponMagazinedWGrenade.h"
+#include "WeaponAmmoIndex250.h"
 #include "Entity.h"
 #include "GrenadeLauncher.h"
 #include "xrServer_Objects_ALife_Items.h"
@@ -127,6 +128,7 @@ BOOL CWeaponMagazinedWGrenade::net_Spawn(CSE_Abstract* DC)
 	}
 
 	BOOL l_res = inherited::net_Spawn(DC);
+	if (!l_res) return FALSE;
 
 	UpdateGrenadeVisibility(!!iAmmoElapsed);
 	SetPending(FALSE);
@@ -137,6 +139,13 @@ BOOL CWeaponMagazinedWGrenade::net_Spawn(CSE_Abstract* DC)
 		m_ammoType2 = weapon->a_elapsed_grenades.grenades_type;
 	}
 
+	// COP_ENGINE_PATCH: COP-ENG-250 - secondary ammo is restored independently of the active mode.
+	if (!RestoreWeaponAmmoIndex250(m_ammoType2, m_ammoTypes2.size(), cNameSect().c_str(), ID(), "spawn-secondary"))
+	{
+		m_magazine2.clear();
+		iAmmoElapsed2 = 0;
+		return l_res;
+	}
 	m_DefaultCartridge2.Load(m_ammoTypes2[m_ammoType2].c_str(), m_ammoType2);
 
 	if (!IsGameTypeSingle())
@@ -1019,6 +1028,13 @@ void CWeaponMagazinedWGrenade::load(IReader& input_packet)
 	load_data(m_ammoType2, input_packet);
 
 	CCartridge l_cartridge;
+	// COP_ENGINE_PATCH: COP-ENG-250 - do not index the secondary list with an old client-save value.
+	if (!RestoreWeaponAmmoIndex250(m_ammoType2, m_ammoTypes2.size(), cNameSect().c_str(), ID(), "load-secondary"))
+	{
+		m_magazine2.clear();
+		iAmmoElapsed2 = 0;
+		return;
+	}
 	l_cartridge.Load(m_ammoTypes2[m_ammoType2].c_str(), m_ammoType2);
 
 	while (sz > (u32)m_magazine2.size())

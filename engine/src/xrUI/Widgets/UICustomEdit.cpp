@@ -191,47 +191,38 @@ void  CUICustomEdit::Draw()
 		float str_length	= font->SizeOf_( istr );
 		UI().ClientToScreenScaledWidth( str_length );
 
-		u32 ix = 0;
-		while ( (str_length > ui_width) && (ix < cursor_str_size) )
-		{
-			istr			= cursor_str + ix;
-			str_length		= font->SizeOf_( istr );
-			UI().ClientToScreenScaledWidth( str_length );
-			++ix;
-		}
-		istr				= cursor_str + ix;
-		LPCSTR astr			= ec().str_edit() + ix;
-		u32 str_size		= xr_strlen( ec().str_edit() );
-
-		u32 jx = 1;
-		strncpy_s			(m_out_str, sizeof(m_out_str), astr, jx);
-
-		str_length			= font->SizeOf_(m_out_str);
-		UI().ClientToScreenScaledWidth(str_length);
-
-		while((str_length < ui_width) && (jx < str_size-ix))
-		{
-			strncpy_s		(m_out_str, sizeof(m_out_str), astr, jx);
-			str_length		= font->SizeOf_(m_out_str);
-			UI().ClientToScreenScaledWidth(str_length);
-			++jx;
-		}
-		strncpy_s			(m_out_str, sizeof(m_out_str), astr, jx);
-
-		TextItemControl()->SetText(m_out_str);
-
-		if(TextItemControl()->IsPasswordMode())
-		{
-			string256 passText;
-			shared_str str(istr);
-			int sz = (int)str.size();
-			for (int i = 0; i < sz; i++)
-				passText[i] = '*';
-			passText[sz] = 0;
-			m_dx_cur			= font->SizeOf_(passText); // cursor_str
-		}
-		else
-			m_dx_cur			= font->SizeOf_(istr); // cursor_str
+        // COP_ENGINE_PATCH: COP-ENG-248 - horizontal clipping and cursor use UTF-8 boundaries.
+        const std::string_view before(cursor_str, cursor_str_size);
+        size_t ix = 0;
+        while (str_length > ui_width && ix < before.size())
+        {
+            ix = UTF8Text::Next(before, ix);
+            str_length = font->SizeOf_(cursor_str + ix);
+            UI().ClientToScreenScaledWidth(str_length);
+        }
+        istr = cursor_str + ix;
+        const std::string_view after(ec().str_edit() + ix);
+        size_t end = 0;
+        while (end < after.size())
+        {
+            const size_t next = UTF8Text::Next(after, end);
+            if (next >= sizeof(m_out_str)) break;
+            const xr_string candidate(after.data(), static_cast<u32>(next));
+            float length = font->SizeOf_(candidate.c_str());
+            UI().ClientToScreenScaledWidth(length);
+            if (length > ui_width) break;
+            end = next;
+        }
+        std::memcpy(m_out_str, after.data(), end);
+        m_out_str[end] = 0;
+        TextItemControl()->SetText(m_out_str);
+        if (TextItemControl()->IsPasswordMode())
+        {
+            xr_string mask;
+            mask.assign(UTF8Text::Count(istr), '*');
+            m_dx_cur = font->SizeOf_(mask.c_str());
+        }
+        else m_dx_cur = font->SizeOf_(istr);
 
 		m_force_update		= false;
 	}

@@ -203,7 +203,7 @@ private:
 
 	u32 Size;
 	Style Style;
-	FT_Face OurFont;
+	FT_Face OurFont = nullptr; // COP_ENGINE_PATCH: COP-ENG-248 - safe font reload lifetime.
 
 	xr_map<int, Glyph> GlyphData;
 
