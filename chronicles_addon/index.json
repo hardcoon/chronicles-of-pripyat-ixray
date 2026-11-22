@@ -4,12 +4,12 @@
     {
       "id": "winter",
       "name": "Зима",
-      "version": "1.54",
+      "version": "1.63",
       "directory": "~winter",
       "package": {
-        "assetName": "winter-1.54-e4ab5f2d1d37.zip",
-        "size": 3373827003,
-        "sha256": "e4ab5f2d1d37ed62a41faef208c091f381f35fbb3b54dca723659fa6c5e57f21",
+        "assetName": "winter-1.63-412fb91b04d6.zip",
+        "size": 3404757309,
+        "sha256": "412fb91b04d6775629b48b0e5bf1dce141c99c92d77bd59e7fc81705c37b10a1",
         "files": [
           "addon.init",
           "configs/environment/dynamic_weather_graphs.ltx",
@@ -89,6 +89,7 @@
           "scripts/pf_winter_collision.script",
           "scripts/pf_winter_gear.script",
           "scripts/pf_winter_heat.script",
+          "scripts/pf_winter_melt.script",
           "scripts/pf_winter_nights.script",
           "scripts/pf_winter_resistance.script",
           "scripts/pf_winter_settings.script",
@@ -118,10 +119,12 @@
           "shaders/d3d11/pf_winter_foliage.hlsli",
           "shaders/d3d11/pf_winter_grain.hlsli",
           "shaders/d3d11/pf_winter_ground.hlsli",
+          "shaders/d3d11/pf_winter_ground_material.hlsli",
           "shaders/d3d11/pf_winter_hand_light.hlsli",
           "shaders/d3d11/pf_winter_hand_snow.hlsli",
           "shaders/d3d11/pf_winter_hand_surface.hlsli",
           "shaders/d3d11/pf_winter_ice.hlsli",
+          "shaders/d3d11/pf_winter_melt.hlsli",
           "shaders/d3d11/pf_winter_microstructure.hlsli",
           "shaders/d3d11/pf_winter_model_snow.hlsli",
           "shaders/d3d11/pf_winter_night_sky.hlsli",
@@ -1678,6 +1681,7 @@
           "textures/winter/interior/mtl_plates.dds",
           "textures/winter/interior/mtl_plates.thm",
           "textures/winter/interior/mtl_plates_snowmask.dds",
+          "textures/winter/melt_ground.dds",
           "textures/winter/nights/blue#small.dds",
           "textures/winter/nights/blue.dds",
           "textures/winter/nights/cloud#small.dds",
@@ -1864,7 +1868,7 @@
         {
           "path": "addon.init",
           "size": 47,
-          "sha256": "886a6b4e155e3a93b29563a7681090e123d57c317542f70aad510c8bc8c17126"
+          "sha256": "b215780cbfdc2197507437ecb7535a870f97df0872e3c23487b3ef7c7b276da0"
         },
         {
           "path": "configs/environment/dynamic_weather_graphs.ltx",
@@ -1938,8 +1942,8 @@
         },
         {
           "path": "configs/environment/weathers/default_fog.ltx",
-          "size": 56978,
-          "sha256": "ae5131bf5c524afc0eb58abb117f1e2d1bc020667ee5f8e21fdff03870ced759"
+          "size": 57011,
+          "sha256": "ba574e10ec16f7f51680feca01efae3a9f4a3b6bfb786311c4425f23b2df7f63"
         },
         {
           "path": "configs/environment/weathers/default_pure.ltx",
@@ -2228,8 +2232,8 @@
         },
         {
           "path": "scripts/pf_winter.script",
-          "size": 10553,
-          "sha256": "7bcbdf005df39eadca3d706726c3faddbb328e0dc9c0ef5b0c86e324fbbc4e9e"
+          "size": 10917,
+          "sha256": "1ce92865f7842684b1ce4edf9bc5926eff81cafca4efd96254c6d8ce59026755"
         },
         {
           "path": "scripts/pf_winter_cold.script",
@@ -2252,14 +2256,19 @@
           "sha256": "5a1c69f303c31f42e6c5588eaa45631292f689c815d4acae7f2677926201ff58"
         },
         {
+          "path": "scripts/pf_winter_melt.script",
+          "size": 14560,
+          "sha256": "05557f811099798112ffaa7c65fdf2f513be293c6729e1df1232585a76028b9c"
+        },
+        {
           "path": "scripts/pf_winter_nights.script",
           "size": 2643,
           "sha256": "7bc445e1d5b756824b36542190d173c034ce0d17ef3e0d8a1c66e9f9536b0e30"
         },
         {
           "path": "scripts/pf_winter_resistance.script",
-          "size": 8965,
-          "sha256": "b6b8e737ff7cef4991d0b1e1eda9c4b16e7228da1f57910a1436732fab17d824"
+          "size": 9557,
+          "sha256": "6c99fe8cef830f62aeba31978bc2ae0c5d21b6d02bf3739a918b81769560d2de"
         },
         {
           "path": "scripts/pf_winter_settings.script",
@@ -2313,13 +2322,13 @@
         },
         {
           "path": "shaders/d3d11/deffer_base.ps.hlsl",
-          "size": 9748,
-          "sha256": "638e00abe0b72476acb69ff431a6f31f65381090e84baceee08d0590394e767f"
+          "size": 11923,
+          "sha256": "8cb326fef76fe8c4deb16592ad4c69322546236be1e9e5320777e407f88d1ed7"
         },
         {
           "path": "shaders/d3d11/deffer_base.vs.hlsl",
-          "size": 1322,
-          "sha256": "f0024c82f6b21e6fabba4ec76f8a5132e182ca1266ebf225d1e070226928c59c"
+          "size": 1379,
+          "sha256": "a4e50aadecf54827c53446e8a3fcffde333ae4398c55e279ae3e0480bb81f4fe"
         },
         {
           "path": "shaders/d3d11/deffer_detail.vs.hlsl",
@@ -2328,8 +2337,8 @@
         },
         {
           "path": "shaders/d3d11/deffer_impl.ps.hlsl",
-          "size": 6669,
-          "sha256": "49314a4950edc91e113f30b8c6a54fb042d422a83eb244b12c7118a0b3fe3c14"
+          "size": 6905,
+          "sha256": "f218cfc5e12b1d52561d2d05722dbc2be7946923ee7bfb157f5075c1225a587b"
         },
         {
           "path": "shaders/d3d11/deffer_lod.vs.hlsl",
@@ -2373,8 +2382,8 @@
         },
         {
           "path": "shaders/d3d11/pf_winter_facade.hlsli",
-          "size": 3350,
-          "sha256": "ff5b367b22d453b45cab7c557ddb1223b4d806ad65ea1d2cb7daa773902e7536"
+          "size": 3487,
+          "sha256": "a26355214e62b439272f64ada0a36264b1e2606669502b03b73a63ce0d1c0674"
         },
         {
           "path": "shaders/d3d11/pf_winter_fog.hlsli",
@@ -2397,6 +2406,11 @@
           "sha256": "0008bb0d0bd5989514c1811aad87067da068a3bfbeb34e8319882141e0265c72"
         },
         {
+          "path": "shaders/d3d11/pf_winter_ground_material.hlsli",
+          "size": 1752,
+          "sha256": "d57377c607d717fbd5cef567aab87adfb4db2ca3300ed51d17c1392099f5b958"
+        },
+        {
           "path": "shaders/d3d11/pf_winter_hand_light.hlsli",
           "size": 1370,
           "sha256": "75d8b11ab623889fa9cb57ff9d148fe6021d959715325e4aca83fe7435db48c7"
@@ -2415,6 +2429,11 @@
           "path": "shaders/d3d11/pf_winter_ice.hlsli",
           "size": 206,
           "sha256": "eb8cf58b6fdbe5efaee7e0320112e94840b55f3cd573dc74c019d663575022b8"
+        },
+        {
+          "path": "shaders/d3d11/pf_winter_melt.hlsli",
+          "size": 3130,
+          "sha256": "12d37bd8b587bb75ff73c2792b849f9f10d8ff1fbfe39dd709e22a9511675057"
         },
         {
           "path": "shaders/d3d11/pf_winter_microstructure.hlsli",
@@ -2438,8 +2457,8 @@
         },
         {
           "path": "shaders/d3d11/pf_winter_terrain.hlsli",
-          "size": 6337,
-          "sha256": "af1ddb7e994aa383254ef714712d7e2c4dd340de3e68f9bca5b8f5c8b07bd6db"
+          "size": 6345,
+          "sha256": "dfc5a8ad565b7df56f122140771980d9049473fc319833bbd7b054a3a1ae5bca"
         },
         {
           "path": "shaders/d3d11/pf_winter_tracks.hlsli",
@@ -2473,13 +2492,13 @@
         },
         {
           "path": "shaders/d3d11/tess.ds.hlsl",
-          "size": 3996,
-          "sha256": "3ff8ce35744bab92b9df04eca5f8711761ed5e6fcaddf31a9c463915b6de69ad"
+          "size": 4165,
+          "sha256": "9903f91af1672e01baa2f5d2d01e9139a748f98a3ab4a98e42357285bbc90e7b"
         },
         {
           "path": "shaders/d3d11/tess.hs.hlsl",
-          "size": 2563,
-          "sha256": "be71f7fb4ded0981297464acab998c6ced7737dec6d380f857905f2e2578ba39"
+          "size": 2551,
+          "sha256": "d9d6acb9cf93b2015143d172d7d9609bfd52ea1ad38dc685b05b7a2ffad0ff21"
         },
         {
           "path": "shaders/d3d11/water.ps.hlsl",
@@ -10197,6 +10216,11 @@
           "sha256": "678a4d0f60fb904e16799c37ad94d54bf381fa6dbfac1f28c3525f1c161cdff8"
         },
         {
+          "path": "textures/winter/melt_ground.dds",
+          "size": 44739376,
+          "sha256": "20eda017f9b1b458086276588e50483c5aeaeadb2a3bb966bf4f96470cd0bd92"
+        },
+        {
           "path": "textures/winter/nights/blue#small.dds",
           "size": 24704,
           "sha256": "5a5b52cdeb261d69c6f02529a72b26827b60759e8101dbe1f4b6004c3dd0357b"
@@ -10743,8 +10767,8 @@
         },
         {
           "path": "textures/winter/terrain_pripyat.thm",
-          "size": 156,
-          "sha256": "430f12badb8ac1535800af9ee11539ad1d50779f8ab517359e5f0a83ebe733b4"
+          "size": 187,
+          "sha256": "cda9551fc5fe8744de28ac004bd44a1f4ff2807cccc132761e250c799831890f"
         },
         {
           "path": "textures/winter/terrain_pripyat_snowmask#.dds",
@@ -11193,15 +11217,21 @@
           "size": 426632,
           "sha256": "7e0c6c9b038e3c53ab25fdef0805f83923c25df16c44d5f45c876989c50978be",
           "offset": 3373400371
+        },
+        {
+          "assetName": "winter-1.63-b36e252ad482-append-001.bin",
+          "size": 30930306,
+          "sha256": "b36e252ad482cd9bc8acd9a902f8a22a39c9cf2b257fc051cd92f9ea9b80f767",
+          "offset": 3373827003
         }
       ],
       "fileRangeSchemaVersion": 1,
       "fileRanges": [
         {
           "path": "addon.init",
-          "offset": 3373400411,
+          "offset": 3373827043,
           "compressedSize": 49,
-          "compressedSha256": "f5d6190cfa95cf816ef13617ed136e2bf432818a085c8d5f5ac453adaddddcba",
+          "compressedSha256": "d97106f99d59435280255975f4efbe65121c22ec5ccc5faf10653e9814d6a25b",
           "compressionMethod": 8
         },
         {
@@ -11304,9 +11334,9 @@
         },
         {
           "path": "configs/environment/weathers/default_fog.ltx",
-          "offset": 3301546960,
-          "compressedSize": 2347,
-          "compressedSha256": "40613c955d5263a1b4d28c02bcedd9c7b49420f0bb57461c44b217b6d3ce433c",
+          "offset": 3373827166,
+          "compressedSize": 2333,
+          "compressedSha256": "e428d21ffde8b16b4930886b2014fdd35ecbf262baab7941dd867162d37dff7e",
           "compressionMethod": 8
         },
         {
@@ -11710,9 +11740,9 @@
         },
         {
           "path": "scripts/pf_winter.script",
-          "offset": 3301297672,
-          "compressedSize": 2892,
-          "compressedSha256": "c9377cea8e2f9ad52582a79f16513f4338901dd1e73b1b036c28ca5017233ae8",
+          "offset": 3373829553,
+          "compressedSize": 2966,
+          "compressedSha256": "70016ece18fce6e034f2cb4878d34bb96df42af38b02dba2605dc8b7e151f8cc",
           "compressionMethod": 8
         },
         {
@@ -11744,6 +11774,13 @@
           "compressionMethod": 8
         },
         {
+          "path": "scripts/pf_winter_melt.script",
+          "offset": 3373832578,
+          "compressedSize": 4254,
+          "compressedSha256": "bfc5a1f2420c6cf4113183f52c799f8e1874b33e243b9904f88dcda84105a323",
+          "compressionMethod": 8
+        },
+        {
           "path": "scripts/pf_winter_nights.script",
           "offset": 3301302303,
           "compressedSize": 1066,
@@ -11752,9 +11789,9 @@
         },
         {
           "path": "scripts/pf_winter_resistance.script",
-          "offset": 568839426,
-          "compressedSize": 2885,
-          "compressedSha256": "238f53373ef7cf93a4a8a227a1099f56c1c42e69975db5db74f47a7ce4f962ee",
+          "offset": 3373836897,
+          "compressedSize": 3130,
+          "compressedSha256": "39f3c196bcef2344b09191a599f40e74d2564f0026d6103bf6a4b365bde780a1",
           "compressionMethod": 8
         },
         {
@@ -11829,16 +11866,16 @@
         },
         {
           "path": "shaders/d3d11/deffer_base.ps.hlsl",
-          "offset": 3370531732,
-          "compressedSize": 3062,
-          "compressedSha256": "9789ec3338306bac56ea29354945f2f1b5b2af554f561e3cca7ba13654682dd5",
+          "offset": 3373840090,
+          "compressedSize": 3669,
+          "compressedSha256": "c0feced4027e26ffe92acefca356f8fdff1cf7f62b9a09e998c80cb29a316158",
           "compressionMethod": 8
         },
         {
           "path": "shaders/d3d11/deffer_base.vs.hlsl",
-          "offset": 3370534857,
-          "compressedSize": 591,
-          "compressedSha256": "d70cf966c4b280a937a6badabba4c59655502599a5c2fee29f9287697364914a",
+          "offset": 3373843822,
+          "compressedSize": 609,
+          "compressedSha256": "f25442b44d17b5c9f4a4747945df63ca769c94d007eb2ee413e0aa12bd15c241",
           "compressionMethod": 8
         },
         {
@@ -11850,9 +11887,9 @@
         },
         {
           "path": "shaders/d3d11/deffer_impl.ps.hlsl",
-          "offset": 3370537232,
-          "compressedSize": 2050,
-          "compressedSha256": "78b90b184d694900a710d4e1174d229121e753fd339ff594dd6bf6611193c52e",
+          "offset": 3373844494,
+          "compressedSize": 2114,
+          "compressedSha256": "28a3b8517b8525127254d2c9cad9a31391b982346396328ee27d906afb7fd8ae",
           "compressionMethod": 8
         },
         {
@@ -11913,9 +11950,9 @@
         },
         {
           "path": "shaders/d3d11/pf_winter_facade.hlsli",
-          "offset": 568865473,
-          "compressedSize": 1128,
-          "compressedSha256": "10e326da4094ef514a18f62d294d43b46577f942166277cce283fd7919f307be",
+          "offset": 3373846674,
+          "compressedSize": 1170,
+          "compressedSha256": "0e13599483cf2198f7186e40d54ee925e1f00637005f7ffee9a7265da9769951",
           "compressionMethod": 8
         },
         {
@@ -11947,6 +11984,13 @@
           "compressionMethod": 8
         },
         {
+          "path": "shaders/d3d11/pf_winter_ground_material.hlsli",
+          "offset": 3373847919,
+          "compressedSize": 818,
+          "compressedSha256": "f4ce798fb2edb1bd362121976f3527ebe6e22305ae8c29895239493e6e318166",
+          "compressionMethod": 8
+        },
+        {
           "path": "shaders/d3d11/pf_winter_hand_light.hlsli",
           "offset": 568869525,
           "compressedSize": 613,
@@ -11972,6 +12016,13 @@
           "offset": 568871233,
           "compressedSize": 162,
           "compressedSha256": "046a71be13aaac69d669c4221eed02518ce135ec2dcd512331122b5c6f17a429",
+          "compressionMethod": 8
+        },
+        {
+          "path": "shaders/d3d11/pf_winter_melt.hlsli",
+          "offset": 3373848801,
+          "compressedSize": 983,
+          "compressedSha256": "7ea29b9b1ffa6aca42c2f1d7d8fd74540ce7a5fa2f9f9773ea8229ea8ff09c88",
           "compressionMethod": 8
         },
         {
@@ -12004,9 +12055,9 @@
         },
         {
           "path": "shaders/d3d11/pf_winter_terrain.hlsli",
-          "offset": 568876327,
-          "compressedSize": 2064,
-          "compressedSha256": "73ed87cf1523a2249442c5c6bd68215649355c734507ecc28f15f74e17c5792e",
+          "offset": 3373849851,
+          "compressedSize": 2082,
+          "compressedSha256": "000caf469035b85e1d506dd3d04cf3f867ba287ace983f49a81f608fc84dc2a4",
           "compressionMethod": 8
         },
         {
@@ -12053,16 +12104,16 @@
         },
         {
           "path": "shaders/d3d11/tess.ds.hlsl",
-          "offset": 3370549220,
-          "compressedSize": 1232,
-          "compressedSha256": "ac68f7755609279b0c3dbc5322a490fbcce674f5d7bb2ddc6cf25be14d34a06b",
+          "offset": 3373851989,
+          "compressedSize": 1260,
+          "compressedSha256": "d845abcdb803f64ea3f94cd710a52a7235fac808acfd091c6226386a8003a968",
           "compressionMethod": 8
         },
         {
           "path": "shaders/d3d11/tess.hs.hlsl",
-          "offset": 3370550508,
-          "compressedSize": 953,
-          "compressedSha256": "59ffd7659d0237cf8795e7ceab2b88981250329a4fa97fa0eb4d93decd46b47c",
+          "offset": 3373853305,
+          "compressedSize": 947,
+          "compressedSha256": "d9de9c07f3f472319d3c1229f0bbdc9a709f685d22d2e3a66e3f0b17d8c7d462",
           "compressionMethod": 8
         },
         {
@@ -22867,6 +22918,13 @@
           "compressionMethod": 8
         },
         {
+          "path": "textures/winter/melt_ground.dds",
+          "offset": 3373854313,
+          "compressedSize": 30671861,
+          "compressedSha256": "cfaef84ffbf4896a0c8e11d576bcab8fbf34a9d9f00d56afdb6cb3d4af2f184d",
+          "compressionMethod": 8
+        },
+        {
           "path": "textures/winter/nights/blue#small.dds",
           "offset": 2960700328,
           "compressedSize": 7835,
@@ -23631,9 +23689,9 @@
         },
         {
           "path": "textures/winter/terrain_pripyat.thm",
-          "offset": 3146524955,
-          "compressedSize": 94,
-          "compressedSha256": "911d59390eb54d813d0b487beff7082b1d5c56bec5d0f79cc7924d14ed3d4aea",
+          "offset": 3404526239,
+          "compressedSize": 111,
+          "compressedSha256": "b02d9e5422fdfc8a9ce8d61197f2e9503a83007e798c62632453ade27f74a79e",
           "compressionMethod": 8
         },
         {
