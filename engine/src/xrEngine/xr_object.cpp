@@ -113,6 +113,8 @@ void CObject::processing_deactivate	()
 void CObject::setEnabled(BOOL _enabled)
 {
 	if (Props.bDestroy) return;
+	// COP_ENGINE_PATCH: COP-ENG-258 - a previously inert child must resume on explicit activation.
+	const bool wake = _enabled && !Props.bEnabled && Parent && CanSkipProximityUpdate();
 	if (_enabled)
 	{
 		Props.bEnabled = 1;	
@@ -124,11 +126,15 @@ void CObject::setEnabled(BOOL _enabled)
 		Props.bEnabled = 0;
 		SpatialComponent->spatial.type &= ~STYPE_COLLIDEABLE;
 	}
+	if (wake)
+		MakeMeCrow();
 }
 
 void CObject::setVisible(BOOL _visible, BOOL _visibleshadow)
 {
 	if (Props.bDestroy) return;
+	// COP_ENGINE_PATCH: COP-ENG-258 - visibility changes must not wait for the periodic update.
+	const bool wake = _visible && !Props.bVisible && Parent && CanSkipProximityUpdate();
 	if (_visible)
 	{ // Parent should control object visibility itself (??????)
 		Props.bVisible = 1;
@@ -144,6 +150,8 @@ void CObject::setVisible(BOOL _visible, BOOL _visibleshadow)
 		SpatialComponent->spatial.type |= STYPE_RENDERABLESHADOW;
 	else
 		SpatialComponent->spatial.type &= ~STYPE_RENDERABLESHADOW;
+	if (wake)
+		MakeMeCrow();
 }
 
 //void	CObject::Center					(Fvector& C)	const	{ VERIFY2(renderable.visual,*cName()); renderable.xform.transform_tiny(C,renderable.visual->vis.sphere.P);	}
@@ -333,7 +341,8 @@ void CObject::UpdateCL			()
 		MakeMeCrow	();
 	else if (AlwaysTheCrow())																
 		MakeMeCrow	();
-	else
+	// COP_ENGINE_PATCH: COP-ENG-258 - retain scheduled/event wakes, skip only the repeated proximity request.
+	else if (!CanSkipProximityUpdate())
 	{
 		float dist = Device.vCameraPosition.distance_to_sqr(Position());
 		if (dist < CROW_RADIUS*CROW_RADIUS)	

@@ -199,6 +199,9 @@ void CParticlesPlayer::StartParticles(const shared_str& particles_name, u16 bone
 		particles_info.ps->Play		(false);
 
 	m_bActiveBones = true;
+	// COP_ENGINE_PATCH: COP-ENG-258 - newly active particles need the next client update.
+	if (m_self_object)
+		m_self_object->MakeMeCrow();
 }
 
 void CParticlesPlayer::StartParticles(const shared_str& ps_name, const Fmatrix& xform, u16 sender_id, int life_time, bool auto_stop)
@@ -222,6 +225,9 @@ void CParticlesPlayer::StartParticles(const shared_str& ps_name, const Fmatrix& 
 	}
 
 	m_bActiveBones = true;
+	// COP_ENGINE_PATCH: COP-ENG-258 - also wake the overload that attaches to all configured bones.
+	if (m_self_object)
+		m_self_object->MakeMeCrow();
 }
 
 void CParticlesPlayer::StartParticles(const shared_str& ps_name, const Fvector& dir, u16 sender_id, int life_time, bool auto_stop)

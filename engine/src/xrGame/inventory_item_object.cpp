@@ -152,6 +152,7 @@ bool CInventoryItemObject::install_upgrade_impl(LPCSTR section, bool test)
 	if (result2 && !test)
 	{
 		m_sNewVisualName = str;
+		MakeMeCrow(); // COP_ENGINE_PATCH: COP-ENG-258 - apply deferred upgrade visuals without waiting for a schedule tick.
 	}
 	result |= result2;
 

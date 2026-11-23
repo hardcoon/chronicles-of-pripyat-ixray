@@ -1,6 +1,6 @@
 # Исходники движка Chronicles of Pripyat
 
-Версия игры **2026.11.22-dev.119** · версия движка **IX-Ray Modified [eng-256]**.
+Версия игры **2026.11.23-dev.120** · версия движка **IX-Ray Modified [eng-258]**.
 
 В каталоге [`engine/`](engine/) находится снимок движка, из которого собрана публичная версия игры. В нём сохранены исходники игровых модулей и редакторов, рендереров, шейдеров, заголовки SDK и файлы CMake. Архивы игры, лаунчер и обновления для игроков доступны в [Releases](https://github.com/hardcoon/chronicles-of-pripyat-ixray/releases).
 
@@ -24,6 +24,6 @@ cmake --build --preset Engine-x64-Windows-RelWithDebInfo --target xrEngine xrCor
 
 ### Происхождение кода
 
-За основу взята [ревизия IX-Ray 1.6 STCoP](https://github.com/ixray-team/ixray-1.6-stcop/tree/955cc805fd8e5609389598b57dff765fbc205b29). Снимок соответствует публичной сборке eng-256 выпуска dev.119. Шейдеры движка находятся в [`engine/gamedata/shaders/`](engine/gamedata/shaders/). Дополнительные игровые настройки, аддоны и их переопределения поставляются с самой игрой.
+За основу взята [ревизия IX-Ray 1.6 STCoP](https://github.com/ixray-team/ixray-1.6-stcop/tree/955cc805fd8e5609389598b57dff765fbc205b29). Снимок соответствует публичной сборке eng-258 выпуска dev.120. Шейдеры движка находятся в [`engine/gamedata/shaders/`](engine/gamedata/shaders/). Дополнительные игровые настройки, аддоны и их переопределения поставляются с самой игрой.
 
 Авторские уведомления IX-Ray и сторонних библиотек сохранены в исходных файлах. [Лицензия IX-Ray](engine/doc/LICENSE.rus.md) · [Участники проекта](engine/doc/CONTRIBUTORS.rus.md)

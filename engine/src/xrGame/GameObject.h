@@ -184,6 +184,7 @@ public:
 	virtual void			net_Destroy			();
 	virtual	void			net_Relcase			( CObject* O );	
 	virtual void			UpdateCL			( );
+	virtual bool CanSkipProximityUpdate() override; // COP_ENGINE_PATCH: COP-ENG-258
 	virtual void			OnChangeVisual		( );
 	//object serialization
 	virtual void			net_Save			(NET_Packet &net_packet);

@@ -32,6 +32,9 @@
 #include "animation_movement_controller.h"
 #include "../xrEngine/xr_collide_form.h"
 #include "../xrScripts/script_callback_ex.h"
+#include "../xrServerEntities/clsid_game.h"
+#include "PhysicsShellHolder.h"
+#include "ParticlesPlayer.h"
 
 extern MagicBox3 MagicMinBox (int iQuantity, const Fvector* akPoint);
 
@@ -1029,6 +1032,50 @@ IC	bool similar						(const Fmatrix &matrix0, const Fmatrix &matrix1, const floa
 
 	// note: we do not compare projection here
 	return							(true);
+}
+
+// COP_ENGINE_PATCH: COP-ENG-258 - explicit native allowlist, never infer safety from a section name or condition.
+bool CGameObject::CanSkipProximityUpdate()
+{
+	if (!IsGameTypeSingle() || !H_Parent() || getDestroy() || getVisible() || getEnabled())
+		return false;
+
+	switch (CLS_ID)
+	{
+	case CLSID_OBJECT_AMMO:
+	case CLSID_IITEM_ATTACH:
+	case CLSID_IITEM_MEDKIT:
+	case CLSID_IITEM_BANDAGE:
+	case CLSID_IITEM_ANTIRAD:
+	case CLSID_IITEM_FOOD:
+	case CLSID_IITEM_BOTTLE:
+	// COP_ENGINE_PATCH: COP-ENG-258 - audited class_registrator aliases use these same unwrapped native clients.
+	// Their Lua server classes and scheduled updates are retained unchanged.
+	case MK_CLSID('A','M','M','O','_','S',' ',' '):
+	case MK_CLSID('S','_','V','O','G','2','5',' '):
+	case MK_CLSID('S','_','O','G','7','B',' ',' '):
+	case MK_CLSID('S','_','M','2','0','9',' ',' '):
+	case MK_CLSID('S','_','M','E','D','K','I',' '):
+	case MK_CLSID('S','_','B','A','N','D','G',' '):
+	case MK_CLSID('S','_','A','N','T','I','R',' '):
+	case MK_CLSID('S','_','F','O','O','D',' ',' '):
+	case MK_CLSID('S','_','B','O','T','T','L',' '):
+		break;
+	default:
+		return false;
+	}
+
+	auto* parent = H_Parent()->cast_game_object();
+	if (!parent || !parent->cast_inventory_box() || CScriptBinder::object() ||
+		!m_visual_callback.empty() || m_anim_mov_ctrl)
+		return false;
+
+	auto* holder = cast_physics_shell_holder();
+	if (!holder || holder->PPhysicsShell())
+		return false;
+
+	auto* particles = cast_particles_player();
+	return !particles || !particles->IsPlaying();
 }
 
 void CGameObject::UpdateCL			()

@@ -323,6 +323,8 @@ public:
 public:
 	virtual	Fvector				get_new_local_point_on_mesh	( u16& bone_id ) const;
 	virtual	Fvector				get_last_local_point_on_mesh( Fvector const& last_point, u16 bone_id ) const;
+	// COP_ENGINE_PATCH: COP-ENG-258 - append the opt-in policy to preserve all existing CObject virtual slots.
+	virtual bool CanSkipProximityUpdate() { return false; }
 };
 
 #pragma pack(pop)
