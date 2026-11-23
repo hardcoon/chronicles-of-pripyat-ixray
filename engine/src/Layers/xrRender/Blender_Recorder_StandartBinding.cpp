@@ -3,6 +3,7 @@
 #ifdef USE_DX11
 #include "WinterTracks.h"
 #include "WinterHeat.h"
+#include "WinterPressure.h"
 #endif
 
 
@@ -317,6 +318,39 @@ template<bool previous> class cl_pf_winter_heat : public R_constant_setup
 };
 static cl_pf_winter_heat<false> binder_winter_heat;
 static cl_pf_winter_heat<true> binder_winter_heat_previous;
+
+// COP_ENGINE_PATCH: COP-ENG-259 - read the addon profile once, never per draw/save.
+static const cop_winter_pressure::Values& winter_pressure_values()
+{
+    static const auto values = []
+    {
+        string_path path;
+        if (FS.exist(path, "$game_config$", "pf_winter_pressure.ltx"))
+        {
+            CInifile profile(path, TRUE, TRUE, FALSE);
+            return cop_winter_pressure::load([&](const char* section, const char* key)
+            {
+                return profile.line_exist(section, key) ? profile.r_string(section, key) : nullptr;
+            });
+        }
+        return cop_winter_pressure::load([](const char*, const char*) -> const char* { return nullptr; });
+    }();
+    return values;
+}
+
+template<unsigned group> class cl_pf_winter_pressure : public R_constant_setup
+{
+    void setup(R_constant* constant) override
+    {
+        const auto& values = winter_pressure_values();
+        const unsigned i = group * 4;
+        RCache.set_c(constant, values[i], values[i + 1], values[i + 2], values[i + 3]);
+    }
+};
+static cl_pf_winter_pressure<0> binder_winter_pressure_actor;
+static cl_pf_winter_pressure<1> binder_winter_pressure_vehicle;
+static cl_pf_winter_pressure<2> binder_winter_pressure_creature;
+static cl_pf_winter_pressure<3> binder_winter_pressure_shape;
 // COP_ENGINE_PATCH: COP-ENG-128 - original droplet accumulation uses rain exposure and elapsed time.
 static class cl_pf_sss_hud_rain : public R_constant_setup {
     float animation=0,wetness=0;u32 frame=u32(-1);
@@ -1171,6 +1205,10 @@ void	CBlender_Compile::SetMapping()
     r_Constant("pf_winter_track_data_previous", &binder_winter_tracks_previous);
     r_Constant("pf_winter_heat_data", &binder_winter_heat);
     r_Constant("pf_winter_heat_previous", &binder_winter_heat_previous);
+    r_Constant("pf_winter_pressure_actor", &binder_winter_pressure_actor);
+    r_Constant("pf_winter_pressure_vehicle", &binder_winter_pressure_vehicle);
+    r_Constant("pf_winter_pressure_creature", &binder_winter_pressure_creature);
+    r_Constant("pf_winter_pressure_shape", &binder_winter_pressure_shape);
     r_Constant("pf_sss_shadow", &binder_ssfx_shadow);
     r_Constant("pf_sss_quality", &binder_ssfx_quality);
     r_Constant("pf_sss_ao", &binder_ssfx_ao);

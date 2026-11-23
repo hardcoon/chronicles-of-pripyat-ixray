@@ -166,6 +166,8 @@ void uber_deffer(CBlender_Compile& C, bool hq, LPCSTR vs, LPCSTR ps, BOOL aref, 
 		if(bump) {
 			C.r_dx10Texture("s_tbump", fnameA);
 			C.r_dx10Texture("s_tbumpX", fnameB);
+			// COP_ENGINE_PATCH: COP-ENG-259 - HS and DS need different resource names.
+			C.r_dx10Texture("pf_winter_hull_marker", fnameB);
 		}
 
 		if (bHasDetailBump) {
