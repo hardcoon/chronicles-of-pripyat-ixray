@@ -192,11 +192,31 @@ function options_dialog:UpdateDependControls()
 
 end
 
+-- Native mouse dispatch still holds iterators into the clicked scroll's children.
+-- Apply category changes from Update, after input dispatch has returned.
+function options_dialog:QueueSectionToggle(panel, id)
+    local pending = self.pending_section_toggles
+    if not pending then
+        pending = {}
+        self.pending_section_toggles = pending
+    end
+    pending[#pending + 1] = {panel=panel, id=id}
+end
+
+function options_dialog:ApplySectionToggles()
+    local pending = self.pending_section_toggles
+    if not pending then return end
+    self.pending_section_toggles = nil
+    for _, request in ipairs(pending) do
+        request.panel:ToggleSection(request.id)
+    end
+end
+
 function options_dialog:InitCallBacks()
     for _, section in ipairs(self.dlg_alife.sections) do
         local id = section.id
         self:AddCallback("alife_category_"..id,ui_events.BUTTON_CLICKED,function()
-            self.dlg_alife:ToggleSection(id)
+            self:QueueSectionToggle(self.dlg_alife, id)
         end,self)
     end
     for side in pairs(self.dlg_alife.presets) do
@@ -213,7 +233,7 @@ function options_dialog:InitCallBacks()
         for _,section in ipairs(self.dlg_sss.sections) do
             local id=section.id
             self:AddCallback("sss_category_"..id,ui_events.BUTTON_CLICKED,function()
-                self.dlg_sss:ToggleSection(id)
+                self:QueueSectionToggle(self.dlg_sss, id)
             end,self)
         end
         -- CUICheckButton sends BUTTON_CLICKED after changing its checked state.
@@ -445,6 +465,7 @@ function options_dialog:OnKeyboard(dik, keyboard_action)
 end
 
 function options_dialog:Update()
+	self:ApplySectionToggles()
 	CUIScriptWnd.Update(self)
     if self:IsShown() and self.dlg_alife and self.dlg_alife:IsShown() then
         self.dlg_alife:RefreshCounters()
