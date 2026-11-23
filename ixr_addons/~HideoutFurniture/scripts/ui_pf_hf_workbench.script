@@ -398,7 +398,7 @@ function pf_hf_workbench_dialog:InitControls()
 	end
 	self.craft_filter_button = xml:Init3tButton(
 		"main:left:craft_filter_button", self.left)
-	self.craft_filter_arrow = xml:InitTextWnd(
+	self.craft_filter_arrow = xml:InitStatic(
 		"main:left:craft_filter_arrow", self.left)
 	self.craft_filter_arrow:Enable(false)
 	self.craft_filter_panel = xml:InitStatic(
@@ -717,7 +717,11 @@ function pf_hf_workbench_dialog:Refresh()
 	end
 	self.craft_filter_button_bg:SetWndPos(vector2():set(0, 42))
 	self.craft_filter_button:SetWndPos(vector2():set(0, 42))
-	self.craft_filter_arrow:SetWndPos(vector2():set(151, 42))
+	local filter_view = device()
+	local arrow_width = 16 * (1024 / 768) * (tonumber(filter_view.height) or 768) /
+		math.max(tonumber(filter_view.width) or 1024, 1)
+	self.craft_filter_arrow:SetWndSize(vector2():set(arrow_width, 16))
+	self.craft_filter_arrow:SetWndPos(vector2():set(164.5 - arrow_width * 0.5, 51.5))
 	self.craft_filter_panel:SetWndPos(vector2():set(0, 79))
 	local filter_open = self.tab == "craft" and self.craft_filter_open
 	self.craft_filter_panel:Show(filter_open)
