@@ -238,7 +238,7 @@ function I.plan_item(q,returning,section,need,reserved,plan)
     for _,item in ipairs(I.inventory()[section] or {}) do
         local id=item:id()
         local exact=not q.item or I.same(item,q.item)
-        local full=not has_uses or item:get_remaining_uses()>=item:get_max_uses()
+        local full=not has_uses or not item:cast_EatableItem() or item:get_remaining_uses()>=item:get_max_uses()
         if exact and not reserved[id] and full and (not minimum or item:condition()+.0001>=minimum) then
             local units=q.spec.ammo and item:ammo_get_count() or 1
             local take=math.min(need,units)
