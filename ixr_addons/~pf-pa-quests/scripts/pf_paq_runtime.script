@@ -330,14 +330,19 @@ function I.budget(q)
             value=value+200*(species and danger[species] or 2)
         end
     end
-    local target=q.person or q.targets and q.targets[1]
-    local distance=target and I.distance(I.position(q.giver),I.position(target)) or 0
-    value=value+math.min(1500,math.floor(distance/100)*50)
+    if q.escort_distance then
+        value=value+q.escort_distance*C.escort_reward_per_meter
+    else
+        local target=q.targets and q.targets[1]
+        local distance=target and I.distance(I.position(q.giver),I.position(target)) or 0
+        value=value+math.min(1500,math.floor(distance/100)*50)
+    end
     return math.ceil(value/50)*50
 end
 function I.reward_pair(q)
     if q.rewards then return end
-    local candidates={{kind='cash',cash=q.budget}}
+    local cash={kind='cash',cash=q.budget}
+    local candidates=q.person and {} or {cash}
     local target=math.floor(q.budget*1.2)
     for _,section in ipairs(C.rewards) do
         if system_ini():section_exist(section) and C.groups[section]~=q.spec.group then
@@ -349,8 +354,8 @@ function I.reward_pair(q)
             end
         end
     end
-    q.rewards={}
-    for n=1,2 do
+    q.rewards=q.person and {cash} or {}
+    for n=#q.rewards+1,2 do
         if #candidates==0 then break end
         local pos=I.random(q,#candidates); q.rewards[n]=table.remove(candidates,pos)
     end
@@ -423,7 +428,7 @@ function I.group_done(q)
     end
     return complete
 end
-function I.active(q)
+function I.active(q,starting)
     local spec=q.spec
     if not I.handoff(q,'giver',q.giver_group) then return end
     if q.submitted then return end
@@ -451,14 +456,26 @@ function I.active(q)
         I.handoff(q,'recipient',q.receiver_group)
     elseif spec.kind=='escort' or spec.kind=='rescue' then
         if not I.alive(q.person) then I.close(q,'failed','escort_dead'); return end
+        local p=I.position(q.person)
+        local destination=I.position(q.giver)
+        if not q.escort_distance then
+            local distance=I.distance(q.anchor or p,destination)
+            if distance<math.huge then
+                q.escort_distance=distance
+                q.budget=I.budget(q)
+                q.rewards=nil
+            end
+        end
         if spec.kind=='rescue' and not q.rescued then
             local done=I.group_done(q)
             if done==nil then I.close(q,'failed','threat_lost'); return end
             q.rescued=done; if not done then return end
         end
-        local p=I.position(q.person)
-        if not q.joined and I.distance(S.actor_position,p)<=8 then q.joined=true end
-        if q.joined and I.distance(p,I.position(q.giver))<=15 and I.distance(S.actor_position,p)<=25 then q.stage='ready' end
+        if q.joined then
+            if I.distance(p,destination)<=15 and I.distance(S.actor_position,p)<=25 then q.stage='ready' end
+        elseif not starting and I.distance(S.actor_position,p)<=8 then
+            q.joined=true
+        end
     end
     if q.stage=='ready' then I.reward_pair(q) end
 end
@@ -737,8 +754,9 @@ function accept(a,b)
         local object=I.alive(q.person); local p=I.position(q.person)
         q.anchor={x=p.x,y=p.y,z=p.z,lv=object.m_level_vertex_id,gv=object.m_game_vertex_id}
     end
-    q.stage='active'; q.step=1; q.accepted_at=I.now(); q.budget=q.budget or I.budget(q)
-    S.inventory=nil; S.actor_position=db.actor:position(); I.active(q)
+    q.stage='active'; q.step=1; q.accepted_at=I.now()
+    if not q.person then q.budget=q.budget or I.budget(q) end
+    S.inventory=nil; S.actor_position=db.actor:position(); I.active(q,true)
     I.task(q)
     local accepted=({fetch='pf_paq_accepted_fetch',courier='pf_paq_accepted_courier',repair='pf_paq_accepted_repair'})[q.spec.kind]
     I.message(I.tr(accepted or 'pf_paq_accepted_target'))

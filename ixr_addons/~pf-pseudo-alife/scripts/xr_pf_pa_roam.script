@@ -61,7 +61,10 @@ function pf_pa_roam_action:execute()
     if command.kind == "rest" then
         state_mgr.set_state(self.object, command.pose or "sit", nil, nil,
             {look_position = vector():set(command.look.x, command.look.y, command.look.z)})
-    else state_mgr.set_state(self.object, command.kind == "idle" and "guard_na" or "patrol") end
+    else
+        local state = command.kind == "idle" and "guard_na" or command.run and "rush" or "patrol"
+        state_mgr.set_state(self.object, state)
+    end
     if self.serial ~= command.serial then
         if time_global() < (self.retry_at or 0) then return end
         if command.kind == "level" and (not level.valid_vertex_id(command.lv)
@@ -75,7 +78,6 @@ function pf_pa_roam_action:execute()
         if command.kind == "idle" or command.kind == "rest" then
             self.object:set_path_type(game_object.no_path)
         elseif command.kind == "game" then
-            state_mgr.set_state(self.object, "patrol")
             -- A new order must restart a stale native path even to the same ID.
             -- The serial guard keeps this out of the per-frame state refresh.
             self.object:inactualize_game_path()
@@ -83,7 +85,6 @@ function pf_pa_roam_action:execute()
             self.object:set_path_type(game_object.game_path)
             self.object:set_dest_game_vertex_id(command.gv)
         elseif level.valid_vertex_id(command.lv) and self.object:accessible(command.lv) then
-            state_mgr.set_state(self.object, "patrol")
             self.object:inactualize_level_path()
             self.object:set_path_type(game_object.level_path)
             self.object:set_dest_level_vertex_id(command.lv)

@@ -1495,10 +1495,10 @@ function impl.offline(record, server, elapsed, actor_position)
     impl.finish_leg(record)
 end
 
-function impl.command(record, npc, kind, lv, gv, p)
+function impl.command(record, npc, kind, lv, gv, p, run)
     if rt.orders_left <= 0 then return false end
     record.serial = (record.serial or 0) + 1
-    record.command = {serial = record.serial, kind = kind, lv = lv, gv = gv, x = p.x, y = p.y, z = p.z}
+    record.command = {serial = record.serial, kind = kind, lv = lv, gv = gv, x = p.x, y = p.y, z = p.z, run = run}
     db.storage[record.id].pf_pa_command = record.command
     record.progress = impl.coordinates(npc:position())
     record.progress_at = rt.root.clock
@@ -1682,10 +1682,10 @@ function impl.quest_control(record, server, npc)
     elseif time_global() >= (record.quest_order_at or 0) then
         local lv=order.follow and db.actor:level_vertex_id() or point.lv
         local gv=order.follow and db.actor:game_vertex_id() or point.gv
-        if level.valid_vertex_id(lv) and npc:accessible(lv) then
-            impl.command(record,npc,"level",lv,gv,point)
-        else impl.command(record,npc,"game",lv,gv,point) end
-        record.quest_order_at=time_global()+1500
+        local kind = level.valid_vertex_id(lv) and npc:accessible(lv) and "level" or "game"
+        if impl.command(record,npc,kind,lv,gv,point,order.follow) then
+            record.quest_order_at=time_global()+1500
+        end
     end
     return true
 end
