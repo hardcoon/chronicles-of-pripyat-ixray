@@ -5,6 +5,7 @@ local state = {data = nil, last = nil}
 function impl.owned_section(section)
     return string.match(section, "^pf_pa_s_%d+$") ~= nil
         or string.match(section, "^pf_pa_s_[dfobeac]_%d+$") ~= nil
+        or string.match(section, "^pf_paq_target_") ~= nil
 end
 
 -- Shared on-bind policy, also queried read-only for an offline travel encounter.
@@ -222,7 +223,9 @@ function configure(npc)
     if meet and type(meet.meet_on_talking) == "table" then
         meet.meet_on_talking = xr_logic.pick_section_from_condlist(db.actor, npc, meet.meet_on_talking) == "true"
     end
-    npc:set_start_dialog("pf_pa_city_news")
+    local quest_api = rawget(_G, "pf_paq_test")
+    npc:set_start_dialog(xr_wounded.is_wounded(npc) and "pf_pa_city_news"
+        or (quest_api and quest_api.start_dialog(npc) or "pf_pa_city_news"))
     npc:disable_trade()
     local relation,goodwill=forced_actor_relation(npc:section(),character_community(npc))
     if db.actor and relation~=nil then

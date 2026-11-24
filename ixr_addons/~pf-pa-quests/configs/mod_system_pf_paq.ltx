@@ -1,0 +1,67 @@
+![dialogs]
+>files = dialogs_pf_paq
+![profiles]
+; Legacy scene profiles remain loadable only so saved TEST objects can be retired.
+>files = npc_profile_pf_paq
+>specific_characters_files = character_desc_pf_paq
+
+[pf_paq_test]
+enabled = true
+developer_only = false
+tick_ms = 1000
+
+[pf_paq_tester]:stalker
+$spawn = ""
+character_profile = pf_paq_tester
+script_binding = bind_stalker.init
+custom_data = scripts\pf_paq_tester.ltx
+can_select_items = off
+
+[pf_paq_packet]:device_pda
+$spawn = "quest_items\pf_paq_packet"
+inv_name = pf_paq_packet_name
+inv_name_short = pf_paq_packet_name
+description = pf_paq_packet_descr
+quest_item = false
+cost = 0
+inv_weight = 0.2
+inv_grid_x = 0
+inv_grid_y = 0
+inv_grid_width = 1
+inv_grid_height = 1
+inv_scale = 2.0
+icons_texture = ui\ui_lz_field_backpack
+
+; Compatibility with the earlier disabled test. New repairs use ordinary items.
+[wpn_pf_paq_pm]:wpn_pm
+inv_name = pf_paq_repair_name
+inv_name_short = pf_paq_repair_name
+description = pf_paq_repair_descr
+quest_item = false
+cost = 0
+
+[pf_paq_target_loner]:stalker
+$spawn = ""
+character_profile = pf_paq_target_loner
+script_binding = bind_stalker.init
+pf_pa_manual_kind = s
+custom_data = scripts\pf_pseudo_alife\stalker.ltx
+
+[pf_paq_target_bandit]:stalker
+$spawn = ""
+character_profile = pf_paq_target_bandit
+script_binding = bind_stalker.init
+pf_pa_manual_kind = s
+custom_data = scripts\pf_pseudo_alife\stalker.ltx
+
+[pf_paq_target_killer]:stalker
+$spawn = ""
+character_profile = pf_paq_target_killer
+script_binding = bind_stalker.init
+pf_pa_manual_kind = s
+custom_data = scripts\pf_pseudo_alife\stalker.ltx
+
+[pf_paq_target_boar]:boar_weak
+$spawn = ""
+pf_pa_manual_kind = m
+custom_data = scripts\pf_pseudo_alife\monster.ltx

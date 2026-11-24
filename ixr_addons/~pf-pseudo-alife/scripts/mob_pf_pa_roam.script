@@ -38,6 +38,9 @@ function pf_pa_monster_roam:deactivate()
     self.object:remove_home()
     if xr_logic.mob_captured(self.object) then xr_logic.mob_release(self.object) end
 end
+function pf_pa_monster_roam:death_callback()
+    pf_pa_world.quest_death(alife():object(self.object:id()))
+end
 function add_to_binder(npc, ini, scheme, section, storage)
     xr_logic.subscribe_action_for_events(npc, storage, pf_pa_monster_roam(npc, storage))
 end

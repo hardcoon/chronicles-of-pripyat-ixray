@@ -1,0 +1,63 @@
+-- Data only. Pools have ordinary loot/trade/cooking sources; never the F1 list.
+-- Faction codes: loner='', Duty=d, Freedom=f, ecologist=e, army=a.
+function build()
+    local all = {['']=true,d=true,f=true,e=true,a=true}
+    local C = {scenarios={}, groups={}, rewards={}}
+    local function pool(group, sections)
+        local result={}
+        for section in sections:gmatch('%S+') do
+            result[#result+1]=section; C.groups[section]=group
+        end
+        return result
+    end
+    local function variant(key, group, sections, extra)
+        local v=extra or {}; v.key=key; v.group=group; v.pool=pool(group,sections)
+        return v
+    end
+    C.scenarios={
+        {kind='fetch',factions=all,variants={variant('medicine','medicine',
+            'bandage medkit medkit_army medkit_scientic antirad drug_antidot drug_coagulant drug_radioprotector drug_psy_blockade drug_booster')}},
+        {kind='fetch',factions=all,variants={
+            variant('food','food','bread kolbasa conserva',{min=2,max=5,mix_min=1,bulk_max=10}),
+            variant('drinks','food','energy_drink mineral_water flyaga vodka',{min=2,max=5,mix_min=1,bulk_max=10}),
+            variant('hercules','medicine','drug_booster',{max=2}),
+            variant('cooked','food','mutant_part_boar_chop_cook mutant_part_psevdodog_meat_cook',{max=5,bulk_max=10}),
+            variant('rare_meat','food','mutant_part_krovosos_meat_cook mutant_part_chimera_meat_cook',{max=1})}},
+        {kind='fetch',factions=all,variants={
+            variant('artifact1','artefacts','af_medusa af_vyvert af_blood af_electra_sparkler af_rusty_thorn af_drops af_ameba_slime',{max=1,floor=3600}),
+            variant('artifact2','artefacts','af_cristall_flower af_gravi af_mincer_meat af_dummy_spring af_rusty_kristall af_fireball af_ameba_slug',{max=1,floor=5760}),
+            variant('artifact3','artefacts','af_night_star af_dummy_simbion af_gold_fish af_electra_moonlight lz_nlc_af_dummy_battery af_cristall af_ameba_mica',{max=1,floor=8640}),
+            variant('artifact4','artefacts','af_soul af_electra_flash af_rusty_sea-urchin af_dummy_kolobok lz_nlc_af_dummy_glassbeads lz_nlc_af_dummy_dummy af_dummy_pellicle',{max=1,floor=7200})}},
+        {kind='mutants',factions=all,variants={{key='mutants'}}},
+        {kind='kill',factions={['']=true,d=true,f=true,a=true},variants={{key='bandit',enemy='b'},{key='merc',enemy='c'}}},
+        {kind='scout',factions=all,variants={{key='scout'}}},
+        {kind='fetch',factions=all,variants={
+            variant('trophies','mutant_parts','mutant_part_boar_leg mutant_part_psevdodog_tail mutant_part_snork_hand',{max=3}),
+            variant('rare_samples','mutant_parts','mutant_part_krovosos_jaw mutant_part_chimera_claw mutant_part_burer_hand',{max=1,floor=3000})}},
+        {kind='fetch',factions=all,variants={
+            variant('detectors','electronics','detector_simple detector_advanced detector_elite detector_scientific',{max=1}),
+            variant('weapons','weapons','wpn_pm wpn_pmm wpn_pb wpn_fort wpn_hpsa wpn_walther wpn_tt33 wpn_aps wpn_bm16 wpn_bm16_full wpn_izh18 wpn_toz34_obrez wpn_kiparis wpn_ppsh41',{max=1,minimum=.8}),
+            variant('armor','armor','novice_outfit bandit_outfit bandit_brownrain_outfit bandit_blackrain_outfit bandit_light_outfit merc_outfit stalker_outfit svoboda_light_outfit svoboda_outfit dolg_outfit specops_outfit svoboda_heavy_outfit monolith_outfit cs_heavy_outfit dolg_scientific_outfit scientific_outfit dolg_heavy_outfit military_outfit svoboda_scientific_outfit monolith_scientific_outfit ecolog_outfit',{max=1,minimum=.8}),
+            variant('helmets','helmets','helm_respirator helm_hardhat helm_protective helm_tactic helm_battle',{max=1,minimum=.8}),
+            variant('ammo','ammo','ammo_9x18_fmj ammo_9x19_fmj ammo_5.45x39_fmj ammo_5.56x45_ss190 ammo_7.62x54_7h1 ammo_12x70_buck',{ammo=true,max=3}),
+            variant('packs','containers','itm_backpack itm_sleepbag',{max=1}),
+            variant('tools','repair_tools','itm_gunsmith_toolkit itm_outfit_toolkit',{max=1})}},
+        {kind='courier',factions=all,variants={{key='courier'}}},
+        {kind='escort',factions=all,variants={{key='escort'}}},
+        {kind='repair',factions=all,variants={
+            variant('repair_weapon','weapons','wpn_pm wpn_tt33 wpn_bm16 wpn_izh18',{max=1,minimum=.9}),
+            variant('repair_armor','armor','novice_outfit bandit_outfit bandit_brownrain_outfit bandit_blackrain_outfit stalker_outfit',{max=1,minimum=.9}),
+            variant('repair_helmet','helmets','helm_respirator helm_hardhat',{max=1,minimum=.9})}},
+        {kind='battle',factions={['']=true,d=true,f=true,a=true},variants={{key='battle',enemy='b'}}},
+        {kind='rescue',factions=all,variants={{key='rescue',enemy='b'}}},
+    }
+    C.groups.pf_paq_packet='quest_items'; C.groups.wpn_pf_paq_pm='weapons'
+    -- Retail-valued alternatives. The requested semantic group is excluded.
+    for _,section in ipairs({'bandage','medkit','antirad','drug_coagulant','bread','conserva','mineral_water',
+        'energy_drink','ammo_9x18_fmj','ammo_5.45x39_fmj','ammo_12x70_buck','helm_respirator',
+        'helm_hardhat','novice_outfit','wpn_pm','wpn_bm16','detector_simple','itm_backpack'}) do
+        C.rewards[#C.rewards+1]=section
+    end
+    C.cash={500,500,1000,1000,1000,1400,700,700,700,1000,1000,1500,1500}
+    return C
+end

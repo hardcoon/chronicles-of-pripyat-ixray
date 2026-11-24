@@ -1,0 +1,930 @@
+<?xml version="1.0" encoding="utf-8"?>
+<game_dialogs>
+  <dialog id="pf_paq_dialog">
+    <precondition>pf_paq_test.allowed</precondition>
+    <phrase_list>
+      <phrase id="0">
+        <text>pf_paq_hello</text>
+        <next>1</next>
+        <next>2</next>
+        <next>3</next>
+        <next>5</next>
+        <next>9</next>
+      </phrase>
+      <phrase id="1">
+        <text>pf_paq_ask_work</text>
+        <action>pf_paq_test.request_job</action>
+        <next>20</next>
+      </phrase>
+      <phrase id="2">
+        <text>pf_paq_about_work</text>
+        <action>pf_paq_test.request_progress</action>
+        <precondition>pf_paq_test.has_progress</precondition>
+        <next>30</next>
+      </phrase>
+      <phrase id="3">
+        <text>pf_pa_city_news_question</text>
+        <action>pf_pa_dialogs.request_news</action>
+        <precondition>pf_pa_dialogs.has_news</precondition>
+        <next>4</next>
+      </phrase>
+      <phrase id="4">
+        <text />
+        <script_text>pf_pa_dialogs.news_text</script_text>
+        <next>1</next>
+        <next>2</next>
+        <next>3</next>
+        <next>5</next>
+        <next>9</next>
+      </phrase>
+      <phrase id="5">
+        <text>pf_pa_help_remind</text>
+        <action>pf_pa_help.claim_reward</action>
+        <precondition>pf_pa_help.owed</precondition>
+        <next>6</next>
+      </phrase>
+      <phrase id="6">
+        <text />
+        <script_text>pf_pa_help.answer_text</script_text>
+        <next>1</next>
+        <next>2</next>
+        <next>3</next>
+        <next>5</next>
+        <next>9</next>
+      </phrase>
+      <phrase id="20">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>200</next>
+        <next>201</next>
+        <next>202</next>
+      </phrase>
+      <phrase id="200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>21</next>
+      </phrase>
+      <phrase id="21">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>299</next>
+      </phrase>
+      <phrase id="299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>1020</next>
+      </phrase>
+      <phrase id="202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="30">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>305</next>
+        <next>300</next>
+        <next>301</next>
+        <next>304</next>
+        <next>309</next>
+      </phrase>
+      <phrase id="300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>31</next>
+      </phrase>
+      <phrase id="301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>31</next>
+      </phrase>
+      <phrase id="304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>1030</next>
+      </phrase>
+      <phrase id="31">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>399</next>
+      </phrase>
+      <phrase id="309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="1020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>1200</next>
+        <next>1201</next>
+        <next>1202</next>
+      </phrase>
+      <phrase id="1200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>1021</next>
+      </phrase>
+      <phrase id="1021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>1299</next>
+      </phrase>
+      <phrase id="1299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="1201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>2020</next>
+      </phrase>
+      <phrase id="1202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="1030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>1305</next>
+        <next>1300</next>
+        <next>1301</next>
+        <next>1304</next>
+        <next>1309</next>
+      </phrase>
+      <phrase id="1300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>1031</next>
+      </phrase>
+      <phrase id="1301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>1031</next>
+      </phrase>
+      <phrase id="1304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>2030</next>
+      </phrase>
+      <phrase id="1031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>1399</next>
+      </phrase>
+      <phrase id="1309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="1399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="2020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>2200</next>
+        <next>2201</next>
+        <next>2202</next>
+      </phrase>
+      <phrase id="2200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>2021</next>
+      </phrase>
+      <phrase id="2021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>2299</next>
+      </phrase>
+      <phrase id="2299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="2201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>3020</next>
+      </phrase>
+      <phrase id="2202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="2030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>2305</next>
+        <next>2300</next>
+        <next>2301</next>
+        <next>2304</next>
+        <next>2309</next>
+      </phrase>
+      <phrase id="2300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>2031</next>
+      </phrase>
+      <phrase id="2301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>2031</next>
+      </phrase>
+      <phrase id="2304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>3030</next>
+      </phrase>
+      <phrase id="2031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>2399</next>
+      </phrase>
+      <phrase id="2309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="2399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="3020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>3200</next>
+        <next>3201</next>
+        <next>3202</next>
+      </phrase>
+      <phrase id="3200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>3021</next>
+      </phrase>
+      <phrase id="3021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>3299</next>
+      </phrase>
+      <phrase id="3299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="3201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>4020</next>
+      </phrase>
+      <phrase id="3202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="3030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>3305</next>
+        <next>3300</next>
+        <next>3301</next>
+        <next>3304</next>
+        <next>3309</next>
+      </phrase>
+      <phrase id="3300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>3031</next>
+      </phrase>
+      <phrase id="3301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>3031</next>
+      </phrase>
+      <phrase id="3304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>4030</next>
+      </phrase>
+      <phrase id="3031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>3399</next>
+      </phrase>
+      <phrase id="3309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="3399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="4020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>4200</next>
+        <next>4201</next>
+        <next>4202</next>
+      </phrase>
+      <phrase id="4200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>4021</next>
+      </phrase>
+      <phrase id="4021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>4299</next>
+      </phrase>
+      <phrase id="4299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="4201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>5020</next>
+      </phrase>
+      <phrase id="4202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="4030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>4305</next>
+        <next>4300</next>
+        <next>4301</next>
+        <next>4304</next>
+        <next>4309</next>
+      </phrase>
+      <phrase id="4300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>4031</next>
+      </phrase>
+      <phrase id="4301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>4031</next>
+      </phrase>
+      <phrase id="4304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>5030</next>
+      </phrase>
+      <phrase id="4031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>4399</next>
+      </phrase>
+      <phrase id="4309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="4399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="5020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>5200</next>
+        <next>5201</next>
+        <next>5202</next>
+      </phrase>
+      <phrase id="5200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>5021</next>
+      </phrase>
+      <phrase id="5021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>5299</next>
+      </phrase>
+      <phrase id="5299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="5201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>6020</next>
+      </phrase>
+      <phrase id="5202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="5030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>5305</next>
+        <next>5300</next>
+        <next>5301</next>
+        <next>5304</next>
+        <next>5309</next>
+      </phrase>
+      <phrase id="5300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>5031</next>
+      </phrase>
+      <phrase id="5301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>5031</next>
+      </phrase>
+      <phrase id="5304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>6030</next>
+      </phrase>
+      <phrase id="5031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>5399</next>
+      </phrase>
+      <phrase id="5309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="5399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="6020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>6200</next>
+        <next>6201</next>
+        <next>6202</next>
+      </phrase>
+      <phrase id="6200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>6021</next>
+      </phrase>
+      <phrase id="6021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>6299</next>
+      </phrase>
+      <phrase id="6299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="6201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>7020</next>
+      </phrase>
+      <phrase id="6202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="6030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>6305</next>
+        <next>6300</next>
+        <next>6301</next>
+        <next>6304</next>
+        <next>6309</next>
+      </phrase>
+      <phrase id="6300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>6031</next>
+      </phrase>
+      <phrase id="6301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>6031</next>
+      </phrase>
+      <phrase id="6304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>7030</next>
+      </phrase>
+      <phrase id="6031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>6399</next>
+      </phrase>
+      <phrase id="6309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="6399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="7020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>7200</next>
+        <next>7201</next>
+        <next>7202</next>
+      </phrase>
+      <phrase id="7200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>7021</next>
+      </phrase>
+      <phrase id="7021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>7299</next>
+      </phrase>
+      <phrase id="7299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="7201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>8020</next>
+      </phrase>
+      <phrase id="7202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="7030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>7305</next>
+        <next>7300</next>
+        <next>7301</next>
+        <next>7304</next>
+        <next>7309</next>
+      </phrase>
+      <phrase id="7300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>7031</next>
+      </phrase>
+      <phrase id="7301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>7031</next>
+      </phrase>
+      <phrase id="7304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>8030</next>
+      </phrase>
+      <phrase id="7031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7399</next>
+      </phrase>
+      <phrase id="7309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="7399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="8020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>8200</next>
+        <next>8201</next>
+        <next>8202</next>
+      </phrase>
+      <phrase id="8200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>8021</next>
+      </phrase>
+      <phrase id="8021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>8299</next>
+      </phrase>
+      <phrase id="8299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="8201">
+        <text>pf_paq_another_job</text>
+        <action>pf_paq_test.another_job</action>
+        <precondition>pf_paq_test.more_jobs</precondition>
+        <next>9020</next>
+      </phrase>
+      <phrase id="8202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="8030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>8305</next>
+        <next>8300</next>
+        <next>8301</next>
+        <next>8304</next>
+        <next>8309</next>
+      </phrase>
+      <phrase id="8300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>8031</next>
+      </phrase>
+      <phrase id="8301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>8031</next>
+      </phrase>
+      <phrase id="8304">
+        <text>pf_paq_another_progress</text>
+        <action>pf_paq_test.another_progress</action>
+        <precondition>pf_paq_test.more_progress</precondition>
+        <next>9030</next>
+      </phrase>
+      <phrase id="8031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>8399</next>
+      </phrase>
+      <phrase id="8309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="8399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="9020">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>9200</next>
+        <next>9202</next>
+      </phrase>
+      <phrase id="9200">
+        <text>pf_paq_accept</text>
+        <action>pf_paq_test.accept</action>
+        <precondition>pf_paq_test.can_accept</precondition>
+        <next>9021</next>
+      </phrase>
+      <phrase id="9021">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>7</next>
+        <next>9299</next>
+      </phrase>
+      <phrase id="9299">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="9202">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="9030">
+        <text />
+        <script_text>pf_paq_test.detail_text</script_text>
+        <next>9305</next>
+        <next>9300</next>
+        <next>9301</next>
+        <next>9309</next>
+      </phrase>
+      <phrase id="9300">
+        <text />
+        <script_text>pf_paq_test.cancel_text</script_text>
+        <action>pf_paq_test.cancel</action>
+        <precondition>pf_paq_test.can_cancel</precondition>
+        <next>9031</next>
+      </phrase>
+      <phrase id="9301">
+        <text>pf_paq_deliver</text>
+        <action>pf_paq_test.deliver</action>
+        <precondition>pf_paq_test.can_deliver</precondition>
+        <next>9031</next>
+      </phrase>
+      <phrase id="9031">
+        <text />
+        <script_text>pf_paq_test.result_text</script_text>
+        <next>9399</next>
+      </phrase>
+      <phrase id="9309">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="9399">
+        <text>pf_paq_thanks</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="9">
+        <text>pf_paq_bye</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+      <phrase id="305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="1305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="2305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="3305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="4305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="5305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="6305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="7305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="8305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="9305">
+        <text />
+        <script_text>pf_paq_test.submit_text</script_text>
+        <action>pf_paq_test.submit</action>
+        <precondition>pf_paq_test.can_submit</precondition>
+        <next>40</next>
+      </phrase>
+      <phrase id="7">
+        <text>pf_paq_ask_more_work</text>
+        <action>pf_paq_test.request_job</action>
+        <precondition>pf_paq_test.can_ask_more_work</precondition>
+        <next>20</next>
+      </phrase>
+      <phrase id="40">
+        <text />
+        <script_text>pf_paq_test.reward_prompt</script_text>
+        <next>400</next>
+        <next>401</next>
+        <next>409</next>
+      </phrase>
+      <phrase id="400">
+        <text />
+        <script_text>pf_paq_test.reward_1_text</script_text>
+        <action>pf_paq_test.claim_1</action>
+        <precondition>pf_paq_test.can_claim</precondition>
+        <next>31</next>
+      </phrase>
+      <phrase id="401">
+        <text />
+        <script_text>pf_paq_test.reward_2_text</script_text>
+        <action>pf_paq_test.claim_2</action>
+        <precondition>pf_paq_test.can_claim</precondition>
+        <next>31</next>
+      </phrase>
+      <phrase id="409">
+        <text>pf_paq_back</text>
+        <action>dialogs.break_dialog</action>
+        <is_final>1</is_final>
+      </phrase>
+    </phrase_list>
+  </dialog>
+</game_dialogs>

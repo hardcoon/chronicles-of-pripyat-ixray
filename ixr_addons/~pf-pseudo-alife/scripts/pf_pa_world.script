@@ -316,7 +316,8 @@ end
 
 -- Explicit F1 members use the same route/order functions, outside automatic quotas.
 function impl.manual_kind(section)
-    if not section:match("^pf_f1_npc_") and not section:match("^pf_f1_m_") and not section:match("^pf_irc_npc_") then return end
+    if not section:match("^pf_f1_npc_") and not section:match("^pf_f1_m_") and not section:match("^pf_irc_npc_")
+        and not section:match("^pf_paq_target_") then return end
     local ini = system_ini()
     if not ini:line_exist(section, "pf_pa_manual_kind") then return end
     local kind = ini:r_string(section, "pf_pa_manual_kind")
@@ -404,6 +405,9 @@ function spawn_manual(request)
     if not request or impl.manual_kind(request.section or "") ~= request.kind then
         return nil, "pf_f1_status_not_allowed"
     end
+    if request.section:match("^pf_paq_target_") and not pf_stash_qa.is_developer_mode() then
+        return nil, "pf_f1_status_not_allowed"
+    end
     if not level.valid_vertex_id(request.lv) then return nil, "pf_f1_npc_status_no_space" end
     local cell = impl.cross_cell(request.lv)
     if not cell or not rt.graph.vertices[cell.gv] or not game_graph():accessible(cell.gv) then
@@ -417,7 +421,8 @@ function spawn_manual(request)
             assert(server:community() == request.community, "manual NPC faction mismatch")
             assert(server:set_visual(request.visual) == true, "manual NPC model rejected")
         end
-        impl.register_manual(server, request.kind, nil, request.community)
+        local record = impl.register_manual(server, request.kind, nil, request.community)
+        if request.section:match("^pf_paq_target_") then record.quest_fixture = request.quest_fixture end
     end)
     if not ok then
         rt.root.manual[impl.manual_key(server)] = nil
@@ -820,8 +825,13 @@ function impl.route(start, goal)
 end
 
 function impl.make_record(server, kind)
-    return {id = server.id, name = server:name(), section = server:section_name(), kind = kind,
+    rt.root.quest_serial = (rt.root.quest_serial or 0) + 1
+    local record = {id = server.id, name = server:name(), section = server:section_name(), kind = kind,
+        quest_life = rt.root.quest_serial,
         last_tick = rt.root.clock, rest_until = rt.root.clock + impl.random(20), serial = 0}
+    rt.quest_index = rt.quest_index or {}
+    rt.quest_index[record.id] = record
+    return record
 end
 
 function impl.wait_respawn(record)
@@ -1641,10 +1651,50 @@ function impl.release_owned(record, server, actor_position)
     return true
 end
 
+-- Optional test-quest bridge. Orders expire rather than retaining a saved NPC.
+-- No change to population, factions, online radius or native GOAP priorities.
+function set_quest_orders(orders)
+    rt.quest_orders = {}
+    rt.quest_until = time_global() + 3000
+    for _,order in ipairs(orders or {}) do rt.quest_orders[order.ref.id] = order end
+end
+
+function impl.quest_control(record, server, npc)
+    local order = rt.quest_orders and rt.quest_orders[record.id]
+    if not order or time_global() > (rt.quest_until or 0)
+        or order.ref.name ~= record.name or order.ref.section ~= record.section then
+        if record.quest_controlled then
+            record.quest_controlled, record.command, record.follow_at = nil, nil, nil
+            if db.storage[record.id] then db.storage[record.id].pf_pa_command = nil end
+        end
+        return false
+    end
+    record.quest_controlled = true
+    if impl.busy(record,npc) or not npc then return true end
+    local point = order.follow and db.actor:position() or order.anchor
+    if not point then return true end
+    if impl.distance2(npc:position(),point) <= 25 then
+        if not record.command or record.command.kind ~= "idle" then
+            record.serial=(record.serial or 0)+1
+            record.command={serial=record.serial,kind="idle"}
+            if db.storage[record.id] then db.storage[record.id].pf_pa_command=record.command end
+        end
+    elseif time_global() >= (record.quest_order_at or 0) then
+        local lv=order.follow and db.actor:level_vertex_id() or point.lv
+        local gv=order.follow and db.actor:game_vertex_id() or point.gv
+        if level.valid_vertex_id(lv) and npc:accessible(lv) then
+            impl.command(record,npc,"level",lv,gv,point)
+        else impl.command(record,npc,"game",lv,gv,point) end
+        record.quest_order_at=time_global()+1500
+    end
+    return true
+end
+
 function impl.process(key, actor_position, records)
     local record = (records or rt.root.slots)[key]
     if not record then return end
     local server = alife():object(record.id)
+    if impl.identity(record, server) and not server:alive() then quest_death(server) end
     local g = impl.group(record)
     if record.manual and (not impl.identity(record, server) or not server:alive()) then
         if impl.identity(record, server) and db.storage[record.id] then db.storage[record.id].pf_pa_command = nil end
@@ -1707,6 +1757,7 @@ function impl.process(key, actor_position, records)
         if storage then storage.pf_pa_command = nil end
     end
     record.leader_id = leader_id
+    if impl.quest_control(record, server, npc) then return end
     if impl.activity(record, server, npc, elapsed, actor_position) then return end
     -- A partly spawned group may already be online. Let it leave the player;
     -- missing members are still created only at a safe, offline position.
@@ -1913,4 +1964,109 @@ function drain()
     if not rt.root then impl.log("drain unavailable before population initialization"); return end
     rt.root.draining = true
     impl.log("drain enabled; only owned distant offline objects will be released")
+end
+
+-- Bounded quest observations. Only referenced deaths are retained; no ALife scan.
+-- A new physical spawn gets a new lifetime even when its logical slot/ID repeats.
+function impl.quest_life(record)
+    if not record.quest_life then
+        rt.root.quest_serial = (rt.root.quest_serial or 0) + 1
+        record.quest_life = rt.root.quest_serial
+    end
+    rt.quest_index = rt.quest_index or {}
+    rt.quest_index[record.id] = record
+    return record.quest_life
+end
+function quest_snapshot()
+    local result = {}
+    if not rt.initialized or not alife() then return result end
+    for _, records in ipairs({rt.root.slots, rt.root.manual}) do
+        for key, record in pairs(records) do
+            local server = alife():object(record.id)
+            if impl.identity(record, server) then
+                local life = impl.quest_life(record)
+                if server:alive() then
+                    local group = not record.manual and impl.group(record)
+                    local faction = record.manual and record.faction or
+                        (record.section:match('^pf_pa_s_([dfobeacz])_') or '')
+                    local npc = server.online and level.object_by_id(record.id)
+                    local p = npc and npc:position() or server.position
+                    result[#result+1] = {id=record.id,name=record.name,section=record.section,life=life,
+                        kind=record.kind,faction=faction,species=record.species or tonumber(record.section:match('^pf_pa_m_(%d%d)_')),
+                        group=record.quest_fixture or (group and group.id) or ('manual:'..key),
+                        fixture=record.quest_fixture~=nil,x=p.x,y=p.y,z=p.z}
+                end
+            end
+        end
+    end
+    table.sort(result,function(a,b) return a.id<b.id end)
+    return result
+end
+function quest_watch(refs)
+    rt.quest_watch = {}
+    if not rt.root then return end
+    rt.root.quest_dead = rt.root.quest_dead or {}
+    local keep = {}
+    for _, ref in ipairs(refs or {}) do
+        if ref.life then rt.quest_watch[ref.id]=ref; keep[ref.life]=true end
+    end
+    for life in pairs(rt.root.quest_dead) do if not keep[life] then rt.root.quest_dead[life]=nil end end
+end
+function quest_death(server)
+    local ref = server and rt.quest_watch and rt.quest_watch[server.id]
+    if not ref or not rt.root or server:name()~=ref.name or server:section_name()~=ref.section then return end
+    local record = rt.quest_index and rt.quest_index[server.id]
+    if record and record.quest_life==ref.life then
+        rt.root.quest_dead = rt.root.quest_dead or {}
+        rt.root.quest_dead[ref.life]=true
+    end
+end
+function quest_states(refs)
+    local states = {}
+    for _, ref in ipairs(refs or {}) do
+        if ref.life then
+            local server = alife():object(ref.id)
+            local record = rt.quest_index and rt.quest_index[ref.id]
+            if rt.root and rt.root.quest_dead and rt.root.quest_dead[ref.life] then states[ref.life]='dead'
+            elseif not record or record.quest_life~=ref.life then states[ref.life]='replaced'
+            elseif not impl.identity(record,server) then states[ref.life]='missing'
+            elseif not server:alive() then quest_death(server); states[ref.life]='dead'
+            else states[ref.life]='alive' end
+        end
+    end
+    return states
+end
+function quest_hostile(refs)
+    for _,ref in ipairs(refs or {}) do
+        local server=alife():object(ref.id)
+        local record=rt.quest_index and rt.quest_index[ref.id]
+        local identity=server and server:name()==ref.name and server:section_name()==ref.section
+        if identity and server:alive() and (not ref.life or record and record.quest_life==ref.life) then
+            local npc=server.online and level.object_by_id(ref.id)
+            if npc then
+                local storage=db.storage[ref.id]
+                if storage and not storage.pf_paq_hostile then
+                    storage.pf_paq_hostile=true
+                    local id=npc:id()
+                    npc:change_team(56+math.floor(id/8192),math.floor(id/32)%256,id%32)
+                    npc:set_sympathy(0)
+                    if storage.combat_ignore then storage.combat_ignore.enabled=false end
+                    local manager=storage.state_mgr
+                    if manager then
+                        npc:clear_animations()
+                        manager.animation:set_state(nil,true); manager.animation:set_control()
+                        manager.animstate:set_state(nil,true); manager.animstate:set_control()
+                        manager:set_state('idle',nil,nil,nil,{fast_set=true})
+                    end
+                end
+                local threshold=system_ini():r_s32('game_relations','attitude_neutal_threshold')
+                npc:force_set_goodwill(0,db.actor)
+                npc:force_set_goodwill(threshold-1000-npc:general_goodwill(db.actor),db.actor)
+                db.actor:force_set_goodwill(0,npc)
+                db.actor:force_set_goodwill(threshold-1000-db.actor:general_goodwill(npc),npc)
+                npc:enable_vision(true); npc:register_in_combat(); npc:disable_talk()
+                npc:make_object_visible_somewhen(db.actor); npc:enable_memory_object(db.actor,true)
+            end
+        end
+    end
 end

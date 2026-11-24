@@ -190,7 +190,7 @@ local action_descr_by_type = {
 								updated = "general_update_task"
 							 }
 
-function send_task(actor, type, task)
+function send_task(actor, type, task, detail)
 	if db.actor == nil then
 		return false
 	end
@@ -200,13 +200,16 @@ function send_task(actor, type, task)
 	end
 	xr_sound.set_sound_play(db.actor:id(), "pda_task")
 	local news_caption = game.translate_string(action_descr_by_type[type])
-	local news_text = game.translate_string(task:get_title())
+	local news_text = game.translate_string(task:get_title()).."."
+	if detail and detail ~= "" then
+		news_text = news_text.." "..detail
+	end
 	local icon = "pf_news_task"
 
 	if db.actor:is_talking() then
-		db.actor:give_talk_message2(news_caption, news_text..".", icon, "iconed_answer_item")
+		db.actor:give_talk_message2(news_caption, news_text, icon, "iconed_answer_item")
 	else
-		db.actor:give_game_news(news_caption, news_text..".", icon, 0, time_on_screen)
+		db.actor:give_game_news(news_caption, news_text, icon, 0, time_on_screen)
 	end
 
 end

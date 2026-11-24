@@ -1,0 +1,32 @@
+-- Compatibility cleanup for the retired developer scene. Never spawns anything.
+local S={cleaned=false}
+function enabled() return false end
+function tester() return nil end
+function prepare() return false end
+function update()
+    if S.cleaned or not db.actor or not alife() then return end
+    -- One migration pass, then a scalar save flag. No per-frame registry scan.
+    local remove={}
+    for _,server in alife():objects() do
+        local section=server:section_name()
+        if section=='pf_paq_tester' or section:match('^pf_paq_target_') then
+            remove[#remove+1]={id=server.id,name=server:name(),section=section}
+        end
+    end
+    for _,ref in ipairs(remove) do
+        local server=alife():object(ref.id)
+        if server and server:name()==ref.name and server:section_name()==ref.section then
+            if level.map_has_object_spot(ref.id,'ui_pda2_quest_npc_location')~=0 then
+                level.map_remove_object_spot(ref.id,'ui_pda2_quest_npc_location')
+            end
+            alife():release(server,true)
+        end
+    end
+    S.cleaned=true
+end
+function reset() S={cleaned=S.pending==true} end
+function save(data) data.pf_paq_scene_v1={retired=S.cleaned==true} end
+function load(data)
+    local scene=data and data.pf_paq_scene_v1
+    S.pending=scene and scene.retired==true or false
+end

@@ -1,0 +1,89 @@
+-- Public names retained for saves/XML. Ordinary NPC jobs; no developer spawns.
+local S={registered=false,configured=false,next_roster=0}
+function configure()
+    if not S.configured then pf_paq_runtime.configure(pf_paq_catalog.build());S.configured=true end
+end
+function on_game_start()
+    if S.registered or type(RegisterScriptCallback)~='function' then return end
+    RegisterScriptCallback('update',update);RegisterScriptCallback('load',on_load)
+    RegisterScriptCallback('save_state',on_save_state);RegisterScriptCallback('load_state',on_load_state)
+    S.registered=true
+end
+function refresh()
+    if not pf_pa_world.irc_ready() then return end
+    pf_paq_runtime.roster(pf_pa_world.quest_snapshot());S.next_roster=time_global()+10000
+end
+function pin_dialog(npc)
+    if npc:is_talking() then return end
+    local wanted=xr_wounded.is_wounded(npc) and 'pf_pa_city_news' or pf_paq_runtime.start_dialog(npc)
+    local st=db.storage[npc:id()]
+    local manager=st and st.meet and st.meet.meet_manager
+    if manager and manager.a and manager.startdialog~=wanted then
+        manager.a.meet_dialog=xr_logic.parse_condlist(npc,'[pf_paq_test.script]','meet_dialog',wanted)
+        manager.startdialog=wanted
+    end
+    npc:set_start_dialog(wanted)
+end
+function sync()
+    if not pf_pa_world.irc_ready() then return end
+    local refs=pf_paq_runtime.watch_refs()
+    pf_pa_world.quest_watch(refs)
+    pf_paq_runtime.update(nil,pf_pa_world.quest_states(refs))
+    pf_pa_world.quest_watch(pf_paq_runtime.watch_refs())
+    pf_pa_world.set_quest_orders(pf_paq_runtime.orders())
+    pf_pa_world.quest_hostile(pf_paq_runtime.hostile_refs())
+    local seen={}
+    for _,list in ipairs({refs,pf_paq_runtime.dialog_refs()}) do
+        for _,ref in ipairs(list) do
+            if not seen[ref.id] then
+                seen[ref.id]=true
+                local npc=level.object_by_id(ref.id)
+                if npc and npc:name()==ref.name and npc:section()==ref.section and npc:alive() then pin_dialog(npc) end
+            end
+        end
+    end
+end
+function update()
+    configure();pf_paq_scene.update();pf_paq_runtime.prepare_items()
+    if not pf_paq_runtime.due() then return end
+    if time_global()>=S.next_roster then refresh() end
+    sync()
+end
+function on_load()
+    configure();pf_paq_runtime.reset();pf_paq_scene.reset();S.next_roster=0
+    pf_pa_world.set_quest_orders({})
+end
+function on_save_state(data) pf_paq_runtime.save(data);pf_paq_scene.save(data) end
+function on_load_state(data) pf_paq_runtime.load(data);pf_paq_scene.load(data) end
+function start_dialog(npc) configure();return pf_paq_runtime.start_dialog(npc) end
+function allowed(a,b) configure();return pf_paq_runtime.allowed(a,b) end
+function detail_text() return pf_paq_runtime.detail_text() end
+function result_text() return pf_paq_runtime.result_text() end
+function request_job(a,b) refresh();sync();return pf_paq_runtime.request_job(a,b) end
+function another_job(a,b) return pf_paq_runtime.another_job(a,b) end
+function request_progress(a,b) return pf_paq_runtime.request_progress(a,b) end
+function another_progress(a,b) return pf_paq_runtime.another_progress(a,b) end
+function more_jobs(a,b) return pf_paq_runtime.more_jobs(a,b) end
+function can_ask_more_work(a,b) return pf_paq_runtime.can_ask_more_work(a,b) end
+function has_progress(a,b) return pf_paq_runtime.has_progress(a,b) end
+function more_progress(a,b) return pf_paq_runtime.more_progress(a,b) end
+function can_accept() return pf_paq_runtime.can_accept() end
+function can_cancel() return pf_paq_runtime.can_cancel() end
+function cancel_text() return pf_paq_runtime.cancel_text() end
+function can_deliver() return pf_paq_runtime.can_deliver() end
+function can_submit() return pf_paq_runtime.can_submit() end
+function submit_text() return pf_paq_runtime.submit_text() end
+function can_claim() return pf_paq_runtime.can_claim() end
+function reward_prompt() return pf_paq_runtime.reward_prompt() end
+function accept(a,b) refresh();pf_paq_runtime.accept(a,b);sync() end
+function cancel(a,b) pf_paq_runtime.cancel(a,b);sync() end
+function deliver(a,b) pf_paq_runtime.deliver(a,b);sync() end
+function submit(a,b) pf_paq_runtime.submit(a,b);sync() end
+function reward_1_text() return pf_paq_runtime.reward_text(1) end
+function reward_2_text() return pf_paq_runtime.reward_text(2) end
+function claim_1(a,b) pf_paq_runtime.claim(1,a,b);sync() end
+function claim_2(a,b) pf_paq_runtime.claim(2,a,b);sync() end
+function start() return pf_paq_runtime.start() end
+function stop() pf_paq_runtime.stop();pf_pa_world.set_quest_orders({}) end
+function status() return pf_paq_runtime.status() end
+on_game_start()

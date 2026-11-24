@@ -1,0 +1,1015 @@
+-- Quest state machine. The facade owns callbacks, scene/world/stash adapters.
+-- Persistent data is scalar tables. Active objectives keep physical lifetimes.
+local KEY='pf_paq_test_v1'
+local I={}
+local C=nil
+local S={data={version=3,serial=0,quests={},hostile={},cooldowns={}},native={},controls={},states={},rows={},next_tick=0}
+
+function configure(catalog) C=catalog end
+function I.tr(key) return game.translate_string(key) end
+function I.title(n) return I.tr(string.format('pf_paq_%02d_title',n)) end
+function I.now() return math.max(0,game.get_game_time():diffSec(level.get_start_time())) end
+function I.enabled()
+    return C and db.actor and alife() and level.name()=='pripyat_full' and S.data.enabled~=false
+end
+function I.message(text) S.last=text; return text end
+function I.log(text) log('[PF_PAQ] '..tostring(text)) end
+function I.copy(t)
+    if type(t)~='table' then return t end
+    local out={}; for k,v in pairs(t) do out[k]=I.copy(v) end; return out
+end
+function I.random(q,n)
+    q.seed=(q.seed*48271)%2147483647
+    return q.seed%n+1
+end
+function I.ref(o,row)
+    return o and {id=o.id,name=o:name(),section=o:section_name(),life=row and row.life,
+        faction=row and row.faction,test_token=row and row.test_token} or nil
+end
+function I.object(ref)
+    if not ref or ref.test_token or not alife() then return end
+    local row=S.row_id and S.row_id[ref.id]
+    if ref.life and row and row.life~=ref.life then return end
+    if ref.life and S.states[ref.life] and S.states[ref.life]~='alive' and S.states[ref.life]~='dead' then return end
+    local o=alife():object(ref.id)
+    if o and o:name()==ref.name and o:section_name()==ref.section then return o end
+end
+function I.state(ref)
+    if ref and ref.test_token then return 'replaced' end
+    if ref and ref.life and S.states[ref.life] then return S.states[ref.life] end
+    local row=ref and S.row_id and S.row_id[ref.id]
+    if ref and ref.life and row and ref.life~=row.life then return 'replaced' end
+    local o=I.object(ref)
+    return not o and 'missing' or o:alive() and 'alive' or 'dead'
+end
+function I.alive(ref) local o=I.object(ref); return I.state(ref)=='alive' and o or nil end
+function I.same(npc,ref)
+    return npc and ref and npc:id()==ref.id and npc:name()==ref.name and npc:section()==ref.section and I.object(ref)~=nil
+end
+function I.speaker(a,b)
+    for _,npc in pairs({a,b}) do
+        if npc and (type(npc)=='userdata' or type(npc)=='table') and npc.section
+            and npc:section():match('^pf_pa_s_') then return npc end
+    end
+end
+function I.position(ref)
+    local o=I.object(ref); if not o then return end
+    local npc=o.online and level.object_by_id(o.id)
+    return npc and npc:position() or o.position
+end
+function I.distance(a,b)
+    if not a or not b then return math.huge end
+    local x,y,z=a.x-b.x,a.y-b.y,a.z-b.z; return math.sqrt(x*x+y*y+z*z)
+end
+function I.item_name(section)
+    local ini=system_ini()
+    local name=ini:line_exist(section,'inv_name') and I.tr(ini:r_string(section,'inv_name')) or section
+    return (name:gsub('%%c%[[^%]]*%]', ''))
+end
+function I.item_label(section,count,ammo,show_count)
+    local name=I.item_name(section)
+    if ammo then return string.format(I.tr('pf_paq_ammo_count'),name,count) end
+    if count and (count>1 or show_count) then return string.format(I.tr('pf_paq_item_count'),name,count) end
+    return name
+end
+function I.highlight(label)
+    return '%c[255,238,153,26]'..label..'%c[default]'
+end
+function I.request_label(spec,colored)
+    local label=I.item_label(spec.section,spec.count,spec.ammo,spec.extra~=nil)
+    if spec.extra then
+        label=label..', '..I.item_label(spec.extra.section,spec.extra.count,false,true)
+    end
+    return colored and I.highlight(label) or label
+end
+function I.terminal(q) return q.stage=='done' or q.stage=='failed' or q.stage=='canceled' end
+function I.live(q) return q.stage=='active' or q.stage=='ready' end
+function I.catalog(n) return C.scenarios[n] end
+function I.new(n,row,slot)
+    S.data.serial=S.data.serial+1
+    local q={index=n,stage='offer',seed=173+S.data.serial*1297,serial=S.data.serial,
+        slot=slot,offered_at=I.now(),task_id='pf_paq_'..n..'_'..S.data.serial,
+        giver=I.row_ref(row),giver_group=I.cohort(row)}
+    q.issuer=I.copy(q.giver)
+    q.variant=I.random(q,#I.catalog(n).variants)
+    I.roll(q)
+    S.data.quests[q.serial]=q
+    return q
+end
+function I.roll_count(q,minimum,maximum,bulk_max)
+    if bulk_max and bulk_max>maximum and I.random(q,10)==1 then
+        return maximum+I.random(q,bulk_max-maximum)
+    end
+    return minimum+I.random(q,maximum-minimum+1)-1
+end
+function I.roll(q)
+    local v=I.catalog(q.index).variants[q.variant]
+    q.spec=I.copy(v); q.spec.kind=I.catalog(q.index).kind
+    if v.pool then
+        local eligible={}
+        for _,section in ipairs(v.pool) do if system_ini():section_exist(section) then eligible[#eligible+1]=section end end
+        if #eligible==0 then q.spec.invalid=true; return end
+        local first=I.random(q,#eligible)
+        q.spec.section=eligible[first]
+        local max=v.max
+        if not max then max=I.random(q,10)<=7 and 4 or 10 end
+        local min=v.min or (max==10 and 5 or 1)
+        if v.mix_min and #eligible>1 and I.random(q,2)==1 then
+            local second=I.random(q,#eligible-1)
+            if second>=first then second=second+1 end
+            min=v.mix_min
+            q.spec.extra={section=eligible[second],count=I.roll_count(q,min,max,v.bulk_max)}
+        end
+        q.spec.count=I.roll_count(q,min,max,v.bulk_max)
+        if v.ammo then q.spec.count=q.spec.count*system_ini():r_u32(q.spec.section,'box_size') end
+    end
+    q.rewards=nil; q.budget=nil
+end
+function I.cohort(row)
+    local result={}
+    if not row then return result end
+    for _,other in ipairs(S.rows) do
+        if other.id==row.id or row.group and other.group==row.group then
+            local o=alife():object(other.id)
+            if o and o:alive() then result[#result+1]=I.ref(o,other) end
+        end
+    end
+    table.sort(result,function(a,b) if (a.faction=='a')~=(b.faction=='a') then return a.faction=='a' end; return a.id<b.id end)
+    return result
+end
+function I.handoff(q,key,cohort)
+    if I.alive(q[key]) then return true end
+    local all_dead=true
+    for _,ref in ipairs(cohort or {}) do
+        if I.alive(ref) then q[key]=I.copy(ref); return true end
+        if I.state(ref)~='dead' then all_dead=false end
+    end
+    if all_dead then I.close(q,'failed',key..'_group_dead') end
+    return false
+end
+function I.reserved(except)
+    local out={}
+    for _,q in pairs(S.data.quests) do
+        if q~=except and I.live(q) and not q.submitted then
+            for _,ref in ipairs(q.targets or {}) do out[ref.id]=true end
+            if q.person then out[q.person.id]=true end
+        end
+    end
+    return out
+end
+function I.row_ref(row) return I.ref(alife():object(row.id),row) end
+function I.friendly(row)
+    return row.kind=='s' and ({['']=true,d=true,f=true,e=true,a=true})[row.faction]
+        and I.alive(I.row_ref(row)) and not I.is_hostile(I.row_ref(row))
+end
+function I.prepare(q)
+    local spec=q.spec; q.targets={}; q.person=nil
+    if spec.kind=='fetch' or spec.kind=='repair' then return not spec.invalid end
+    local reserved=I.reserved(q)
+    local giver=I.position(q.giver)
+    if spec.kind=='courier' or spec.kind=='scout' then
+        local groups={}
+        local giver_row=S.row_id and S.row_id[q.giver.id]
+        for _,row in ipairs(S.rows) do
+            if row.id~=q.giver.id and (not giver_row or row.group~=giver_row.group)
+                and (spec.kind~='courier' or row.section:match('^pf_pa_s_'))
+                and I.friendly(row) and not reserved[row.id] and not groups[row.group or row.id] then
+                q.targets[#q.targets+1]=I.row_ref(row); groups[row.group or row.id]=true
+                if #q.targets==(spec.kind=='courier' and 1 or 2) then
+                    if spec.kind=='courier' then q.recipient=I.copy(q.targets[1]); q.receiver_group=I.cohort(row) end
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    if spec.kind=='escort' or spec.kind=='rescue' then
+        local counts={}
+        for _,row in ipairs(S.rows) do counts[row.group or row.id]=(counts[row.group or row.id] or 0)+1 end
+        for _,row in ipairs(S.rows) do
+            local threat=spec.kind~='rescue'
+            if not threat then
+                for _,enemy in ipairs(S.rows) do
+                    if enemy.kind=='s' and enemy.faction==(spec.enemy or 'b') and not reserved[enemy.id]
+                        and I.alive(I.row_ref(enemy)) and I.distance(row,enemy)<=150 then threat=true; break end
+                end
+            end
+            if row.faction=='' and I.friendly(row) and not reserved[row.id] and row.id~=q.giver.id
+                and counts[row.group or row.id]==1 and I.distance(row,giver)>=50 and threat then
+                q.person=I.row_ref(row); break
+            end
+        end
+        if not q.person then return false end
+        if spec.kind=='escort' then return true end
+    end
+    local blocked={}
+    for _,row in ipairs(S.rows) do if reserved[row.id] then blocked[row.group or row.id]=true end end
+    local chosen
+    for _,row in ipairs(S.rows) do
+        if not reserved[row.id] and not blocked[row.group or row.id]
+            and ((spec.kind=='mutants' and row.kind=='m')
+                or (spec.kind~='mutants' and row.kind=='s' and row.faction==(spec.enemy or 'b')))
+            and (not q.person or I.distance(row,I.position(q.person))<=150)
+            and I.alive(I.row_ref(row)) then chosen=row; break end
+    end
+    if not chosen then return false end
+    if spec.kind=='kill' then q.targets={I.row_ref(chosen)}; return true end
+    for _,row in ipairs(S.rows) do
+        if row.id==chosen.id or chosen.group and row.group==chosen.group then
+            if reserved[row.id] then return false end
+            if I.alive(I.row_ref(row)) then q.targets[#q.targets+1]=I.row_ref(row) end
+        end
+    end
+    return #q.targets>0
+end
+function I.inventory()
+    if S.inventory then return S.inventory end
+    local result={}
+    db.actor:iterate_inventory(function(_,item)
+        local section=item:section(); result[section]=result[section] or {}
+        result[section][#result[section]+1]=item; return false
+    end,db.actor)
+    S.inventory=result
+    return result
+end
+function I.plan_item(q,returning,section,need,reserved,plan)
+    local minimum=not returning and q.spec.minimum
+    local has_uses=system_ini():line_exist(section,'max_uses')
+    for _,item in ipairs(I.inventory()[section] or {}) do
+        local id=item:id()
+        local exact=not q.item or I.same(item,q.item)
+        local full=not has_uses or item:get_remaining_uses()>=item:get_max_uses()
+        if exact and not reserved[id] and full and (not minimum or item:condition()+.0001>=minimum) then
+            local units=q.spec.ammo and item:ammo_get_count() or 1
+            local take=math.min(need,units)
+            if take>0 then
+                plan[#plan+1]={item=item,count=take,units=units}
+                reserved[id]=true
+                need=need-take
+            end
+            if need==0 then return true end
+        end
+    end
+    return false
+end
+function I.plan(q,returning)
+    local spec=q.spec
+    local need=spec.kind=='courier' and 1 or spec.count
+    local section=spec.kind=='courier' and 'pf_paq_packet' or spec.section
+    local reserved={}
+    for _,other in pairs(S.data.quests) do if other~=q and I.live(other) and other.item then reserved[other.item.id]=true end end
+    local plan={}
+    if not I.plan_item(q,returning,section,need,reserved,plan) then return end
+    local extra=spec.extra
+    if extra and not I.plan_item(q,returning,extra.section,extra.count,reserved,plan) then return end
+    return plan
+end
+function I.spawn(section,parent,rounds)
+    local p=parent or db.actor
+    if rounds then return alife():create_ammo(section,p:position(),p:level_vertex_id(),p:game_vertex_id(),p:id(),rounds) end
+    return alife():create(section,p:position(),p:level_vertex_id(),p:game_vertex_id(),p:id())
+end
+function I.transfer(q,npc,returning)
+    -- The giver may have picked up the dropped original before the actor
+    -- acknowledges its return. The second result distinguishes this case.
+    if returning and q.item then
+        local original=I.object(q.item)
+        if original and original.parent_id==npc:id() then S.inventory=nil;return true,true end
+    end
+    S.inventory=nil
+    local plan=I.plan(q,returning)
+    if not plan then return false end
+    local clones={}
+    for _,p in ipairs(plan) do
+        if p.count<p.units then
+            local o=I.spawn(p.item:section(),npc,p.count)
+            if not o then for _,clone in ipairs(clones) do alife():release(clone,true) end; return false end
+            clones[#clones+1]=o
+        end
+    end
+    for _,p in ipairs(plan) do
+        if p.count<p.units then p.item:ammo_set_count(p.units-p.count)
+        else db.actor:transfer_item(p.item,npc) end
+    end
+    S.inventory=nil
+    return true
+end
+function I.coeff(section,selling)
+    S.trade=S.trade or ini_file('misc\\trade\\trade_pf_yanov_hawaiian.ltx')
+    local key=selling and 'trade_pf_yanov_hawaiian_sell' or 'trade_pf_yanov_hawaiian_buy'
+    local raw=S.trade:line_exist(key,section) and S.trade:r_string(key,section) or ''
+    return tonumber(raw:match('[%d%.]+')) or (selling and 1.25 or .15)
+end
+function I.price(section,selling,count,ammo)
+    local ini=system_ini()
+    local cost=ini:line_exist(section,'cost') and ini:r_float(section,'cost') or 0
+    local coeff=I.coeff(section,selling)
+    if not selling and C.groups[section]=='artefacts' then coeff=.6 end
+    if not selling and C.groups[section]=='mutant_parts' then coeff=.2 end
+    if ammo then cost=cost/ini:r_u32(section,'box_size') end
+    return cost*coeff*(count or 1)
+end
+function I.budget(q)
+    local value=C.cash[q.index]
+    local s=q.spec
+    if s.kind=='fetch' then
+        local price=I.price(s.section,false,s.count,s.ammo)
+        local count=s.count
+        if s.extra then
+            price=price+I.price(s.extra.section,false,s.extra.count)
+            count=count+s.extra.count
+        end
+        value=math.max(value+price*1.2,(s.floor or 0)*count)
+        if s.minimum then value=value*.9 end
+    elseif s.kind=='repair' then value=value+I.price(s.section,false)*.2
+    elseif s.kind=='kill' and s.enemy=='c' then value=1500
+    elseif s.kind=='mutants' or s.kind=='battle' or s.kind=='rescue' then
+        local danger={1,2,1,2,3,4,5,6,8,10,1}
+        for _,ref in ipairs(q.targets) do
+            local species=tonumber(ref.section:match('^pf_pa_m_(%d%d)_'))
+            value=value+200*(species and danger[species] or 2)
+        end
+    end
+    local target=q.person or q.targets and q.targets[1]
+    local distance=target and I.distance(I.position(q.giver),I.position(target)) or 0
+    value=value+math.min(1500,math.floor(distance/100)*50)
+    return math.ceil(value/50)*50
+end
+function I.reward_pair(q)
+    if q.rewards then return end
+    local candidates={{kind='cash',cash=q.budget}}
+    local target=math.floor(q.budget*1.2)
+    for _,section in ipairs(C.rewards) do
+        if system_ini():section_exist(section) and C.groups[section]~=q.spec.group then
+            local price=I.price(section,true)
+            if price>0 and price<=target then
+                local count=math.min(4,math.max(1,math.floor(target/price)))
+                local topup=math.max(0,math.floor((target-count*price)/50)*50)
+                candidates[#candidates+1]={kind='items',section=section,count=count,cash=topup}
+            end
+        end
+    end
+    q.rewards={}
+    for n=1,2 do
+        if #candidates==0 then break end
+        local pos=I.random(q,#candidates); q.rewards[n]=table.remove(candidates,pos)
+    end
+    -- A useful item can always accompany money in the audited first-wave pool.
+    if #q.rewards<2 then q.rewards[2]={kind='cash',cash=math.max(50,q.budget-50)} end
+end
+function I.reward_text(r)
+    if not r then return I.tr('pf_paq_unavailable') end
+    if r.kind=='cash' then return string.format(I.tr('pf_paq_reward_cash'),r.cash) end
+    local item=I.highlight(I.item_label(r.section,r.count))
+    return string.format(I.tr('pf_paq_reward_item'),item)
+end
+function I.closed_description(q,reason)
+    -- A wiped-out giver group already closes the task in the PDA.
+    if reason=='giver_group_dead' then return end
+    if reason=='overdue_group' and (not q.deadline or q.returned or I.now()<q.deadline) then
+        return I.tr('pf_paq_reason_overdue_other')
+    end
+    return I.tr('pf_paq_reason_'..reason)
+end
+function I.close(q,stage,reason)
+    local native=db.actor:get_task(q.task_id,true)
+    local description=native and reason and I.closed_description(q,reason)
+    if native then
+        if description then native:set_description(description) end
+        db.actor:set_task_state(stage=='done' and task.completed or task.fail,q.task_id)
+    end
+    S.native[q.task_id]=nil; q.stage=stage; q.reason=reason; q.closed_at=I.now()
+    if q.issuer and q.issuer.life and q.slot then
+        local key=tostring(q.issuer.life)
+        S.data.cooldowns[key]=S.data.cooldowns[key] or {}
+        S.data.cooldowns[key][q.slot]=I.now()+43200
+    end
+    I.log(q.task_id..' '..stage..' '..tostring(reason or ''))
+    if native and stage=='canceled' then
+        news_manager.send_task(db.actor,'reversed',native)
+    elseif native and stage=='failed' then
+        news_manager.send_task(db.actor,'fail',native,description)
+    end
+end
+function I.is_hostile(ref)
+    for _,other in ipairs(S.data.hostile) do
+        if ref and other.id==ref.id and other.name==ref.name and other.life==ref.life and other.test_token==ref.test_token then return true end
+    end
+    return false
+end
+function I.overdue(q)
+    for _,ref in ipairs(q.giver_group) do
+        if I.alive(ref) and not I.is_hostile(ref) then S.data.hostile[#S.data.hostile+1]=I.copy(ref) end
+    end
+    for _,other in pairs(S.data.quests) do
+        if I.live(other) then
+            for _,ref in ipairs(other.giver_group or {}) do
+                if I.is_hostile(ref) then I.close(other,'failed','overdue_group'); break end
+            end
+        end
+    end
+end
+function I.group_done(q)
+    q.dead=q.dead or {}
+    local complete=true
+    for _,ref in ipairs(q.targets or {}) do
+        local key=ref.life or ref.name
+        if not q.dead[key] then
+            local state=I.state(ref)
+            if state=='dead' then q.dead[key]=true
+            elseif state~='alive' then return nil
+            else complete=false end
+        end
+    end
+    return complete
+end
+function I.active(q)
+    local spec=q.spec
+    if not I.handoff(q,'giver',q.giver_group) then return end
+    if q.submitted then return end
+    if q.deadline and not q.returned and I.now()>=q.deadline then I.overdue(q); return end
+    if q.needs_damage then
+        local item=q.item and level.object_by_id(q.item.id)
+        if item and I.same(item,q.item) then item:set_condition(q.repair_condition or .25); q.needs_damage=nil; S.inventory=nil end
+    end
+    if spec.kind=='repair' and not q.needs_damage then
+        local item=q.item and level.object_by_id(q.item.id)
+        if item and I.same(item,q.item) then q.repair_condition=item:condition() end
+    end
+    if spec.kind=='fetch' or spec.kind=='repair' then
+        q.stage=not q.needs_damage and I.plan(q,false) and 'ready' or 'active'
+    elseif spec.kind=='mutants' or spec.kind=='kill' or spec.kind=='battle' then
+        local done=I.group_done(q)
+        if done==nil then I.close(q,'failed','target_lost') elseif done then q.stage='ready' end
+    elseif spec.kind=='scout' and q.stage=='active' then
+        local ref=q.targets[q.step]
+        if not I.alive(ref) then I.close(q,'failed','scout_target_lost'); return end
+        if I.distance(S.actor_position,I.position(ref))<=20 then
+            q.step=q.step+1; if q.step>#q.targets then q.stage='ready' end
+        end
+    elseif spec.kind=='courier' and not q.returned then
+        I.handoff(q,'recipient',q.receiver_group)
+    elseif spec.kind=='escort' or spec.kind=='rescue' then
+        if not I.alive(q.person) then I.close(q,'failed','escort_dead'); return end
+        if spec.kind=='rescue' and not q.rescued then
+            local done=I.group_done(q)
+            if done==nil then I.close(q,'failed','threat_lost'); return end
+            q.rescued=done; if not done then return end
+        end
+        local p=I.position(q.person)
+        if not q.joined and I.distance(S.actor_position,p)<=8 then q.joined=true end
+        if q.joined and I.distance(p,I.position(q.giver))<=15 and I.distance(S.actor_position,p)<=25 then q.stage='ready' end
+    end
+    if q.stage=='ready' then I.reward_pair(q) end
+end
+function prepare_items()
+    if not S.pending_damage or not I.enabled() then return end
+    S.pending_damage=nil
+    for _,q in pairs(S.data.quests) do
+        if I.live(q) and q.needs_damage then
+            local item=q.item and level.object_by_id(q.item.id)
+            if item and I.same(item,q.item) then
+                item:set_condition(q.repair_condition or .25); q.needs_damage=nil; S.inventory=nil
+            else S.pending_damage=true end
+        end
+    end
+end
+function I.target(q)
+    if q.stage=='ready' then return I.alive(q.giver) and q.giver.id end
+    local spec=q.spec
+    if (spec.kind=='repair' or spec.kind=='courier') and q.item and not I.plan(q,true) then
+        local o=I.object(q.item)
+        if o then
+            local parent=o.parent_id and o.parent_id~=65535 and alife():object(o.parent_id)
+            return parent and parent.id or o.id, not parent or parent.id~=db.actor:id()
+        end
+    end
+    if spec.kind=='fetch' or spec.kind=='repair' then return I.alive(q.giver) and q.giver.id end
+    if spec.kind=='courier' then return I.alive(q.recipient) and q.recipient.id end
+    if spec.kind=='scout' then local ref=q.targets[q.step]; return ref and I.alive(ref) and ref.id end
+    if q.person and q.joined then return I.alive(q.giver) and q.giver.id end
+    if spec.kind~='escort' and not q.rescued then
+        for _,ref in ipairs(q.targets) do if I.alive(ref) then return ref.id end end
+    end
+    return q.person and I.alive(q.person) and q.person.id
+end
+function I.variant_key(q)
+    return q.index==3 and 'artifact' or q.spec.key
+end
+function I.pda_text(q,recover_item)
+    local spec=q.spec
+    local kind=spec.kind
+    if q.submitted then return I.tr('pf_paq_pda_collect_reward') end
+    if q.stage=='ready' then
+        if kind=='courier' then return I.tr('pf_paq_pda_paid_at_giver') end
+        if kind=='repair' then return I.tr('pf_paq_pda_return_repaired') end
+        if kind=='fetch' then
+            return string.format(I.tr('pf_paq_pda_bring_items'),I.request_label(spec))
+        end
+        return I.tr('pf_paq_pda_report')
+    end
+    if recover_item then return I.tr('pf_paq_pda_recover_'..kind) end
+    if q.joined and (kind=='escort' or kind=='rescue') then return I.tr('pf_paq_pda_follow') end
+    if kind=='rescue' and q.rescued then return I.tr('pf_paq_pda_rescued') end
+    if kind=='scout' and q.step==2 then return I.tr('pf_paq_pda_scout_second') end
+    local key=kind=='repair' and 'repair' or I.variant_key(q)
+    local text=I.tr('pf_paq_pda_'..key)
+    if spec.section then
+        local item=I.request_label(spec)
+        if spec.minimum then return string.format(text,item,math.floor(spec.minimum*100+.5)) end
+        return string.format(text,item)
+    end
+    return text
+end
+function I.dialog_text(q)
+    if not q then return I.tr('pf_paq_no_work') end
+    local spec=q.spec
+    if q.stage=='offer' then
+        local text=I.tr('pf_paq_offer_'..I.variant_key(q))
+        if spec.section then return string.format(text,I.request_label(spec,true)) end
+        if spec.kind=='courier' then return string.format(text,I.highlight(I.tr('pf_paq_packet_in_speech'))) end
+        return text
+    end
+    if q.stage=='failed' and q.reason=='recipient_group_dead' then return I.tr('pf_paq_recipient_dead') end
+    if not I.live(q) then return I.tr('pf_paq_no_work') end
+    if q.submitted then return I.tr('pf_paq_submitted_prompt') end
+    if q.stage=='ready' then return I.tr('pf_paq_submit_prompt') end
+    if spec.kind=='courier' and I.same_speaker(q.recipient) then
+        return I.tr('pf_paq_recipient_waiting')
+    end
+    local text=I.tr('pf_paq_active_'..spec.kind)
+    if spec.kind=='fetch' or spec.kind=='repair' then
+        return string.format(text,I.request_label(spec,true))
+    end
+    return text
+end
+function I.task(q,advanced)
+    if not I.live(q) then return end
+    local target,recover_item=I.target(q)
+    local description=I.pda_text(q,recover_item)
+    local native=db.actor:get_task(q.task_id,true)
+    local last=S.native[q.task_id]
+    local target_changed=not last or target~=last.target
+    local description_changed=not last or description~=last.description
+    if not native then
+        native=CGameTask(); native:set_id(q.task_id); native:set_type(task.additional); native:set_priority(1)
+        native:set_icon_name('ui_inGame2_PD_Diplomat'); native:set_title(I.title(q.index)); native:set_description(description)
+        if target then native:set_map_location('secondary_task_location'); native:set_map_object_id(target) end
+        db.actor:give_task(native,0,false,0)
+    else
+        if target_changed then
+            if target then native:change_map_location('secondary_task_location',target) else native:remove_map_locations(false) end
+        end
+        if description_changed then native:set_description(description) end
+        -- The first sync after loading restores the map and text quietly.
+        if advanced or last and (target_changed or description_changed) then
+            news_manager.send_task(db.actor,'updated',native,description)
+        end
+    end
+    if target_changed or description_changed then
+        S.native[q.task_id]={target=target,description=description}
+    end
+end
+function due()
+    if not db.actor or not alife() or time_global()<S.next_tick then return false end
+    S.next_tick=time_global()+1000; return true
+end
+function roster(rows)
+    S.rows=rows or {}; S.row_id={}
+    for _,row in ipairs(S.rows) do S.row_id[row.id]=row end
+end
+function update(_,states)
+    S.states=states or {}; S.controls={}; S.inventory=nil
+    if not I.enabled() then return end
+    S.actor_position=db.actor:position()
+    local now=I.now()
+    for key,q in pairs(S.data.quests) do
+        if q.stage=='offer' then
+            if now-q.offered_at>=43200 or not I.alive(q.giver) or I.is_hostile(q.giver) then S.data.quests[key]=nil end
+        elseif I.live(q) then
+            local stage,step,giver,recipient=q.stage,q.step,q.giver,q.recipient
+            local joined,rescued=q.joined==true,q.rescued==true
+            I.active(q)
+            if I.live(q) then
+                local advanced=q.stage~=stage or q.step~=step or q.giver~=giver or q.recipient~=recipient
+                    or (q.joined==true)~=joined or (q.rescued==true)~=rescued
+                I.task(q,advanced)
+                if not q.submitted and q.person and I.alive(q.person) then
+                    S.controls[#S.controls+1]={ref=q.person,follow=q.joined==true,anchor=q.anchor}
+                end
+            end
+        elseif q.stage=='failed' and q.item and not q.returned and not I.is_hostile(q.giver) then
+            if not I.alive(q.giver) then
+                for _,ref in ipairs(q.giver_group or {}) do if I.alive(ref) then q.giver=I.copy(ref);break end end
+            end
+            if not I.alive(q.giver) and now-(q.closed_at or now)>60 and key~=S.selected then S.data.quests[key]=nil end
+        elseif now-(q.closed_at or now)>60 and key~=S.selected then S.data.quests[key]=nil end
+    end
+    for owner,slots in pairs(S.data.cooldowns) do
+        for slot,until_at in pairs(slots) do if until_at<=now then slots[slot]=nil end end
+        if next(slots)==nil then S.data.cooldowns[owner]=nil end
+    end
+    local keep={}
+    for _,ref in ipairs(S.data.hostile) do
+        local state=I.state(ref)
+        if state~='dead' and state~='replaced' then keep[#keep+1]=ref end
+    end
+    S.data.hostile=keep
+    local created=0
+    for _,row in ipairs(S.rows) do
+        if created>=4 then break end
+        if row.kind=='s' and row.section:match('^pf_pa_s_') and I.distance(row,S.actor_position)<=65 then
+            local o=alife():object(row.id)
+            if o and o.online then created=created+I.fill_npc(row,4-created) end
+        end
+    end
+end
+function orders() return S.controls end
+function watch_refs()
+    local result,seen={},{}
+    local function add(ref) if ref and ref.life and not seen[ref.life] then result[#result+1]=ref; seen[ref.life]=true end end
+    for _,q in pairs(S.data.quests) do
+        if q.stage=='offer' or I.live(q) then
+            for _,ref in ipairs(q.giver_group or {}) do add(ref) end
+            if I.live(q) and not q.submitted then
+                for _,refs in ipairs({q.receiver_group or {},q.targets or {}}) do for _,ref in ipairs(refs) do add(ref) end end
+                add(q.person)
+            end
+        end
+    end
+    for _,ref in ipairs(S.data.hostile) do add(ref) end
+    return result
+end
+function hostile_refs()
+    local result={}
+    if I.enabled() then for _,ref in ipairs(S.data.hostile) do if I.alive(ref) then result[#result+1]=ref end end end
+    return result
+end
+function tester_hostile() return false end
+function select(n,a,b)
+    if not I.enabled() then return end
+    local npc=I.speaker(a,b); if not npc then return end
+    local q=I.find(n,npc)
+    S.selected=q and q.serial or nil
+    S.selected_npc=I.ref(alife():object(npc:id()),S.row_id and S.row_id[npc:id()])
+    I.message(I.dialog_text(q))
+end
+function current() return S.selected and S.data.quests[S.selected] end
+function selected_variant() local q=current(); return q and q.variant or 1 end
+function selected_index() local q=current(); return q and q.index end
+function detail_text() return I.dialog_text(current()) end
+function result_text() return S.last or detail_text() end
+function hello_text() return I.tr('pf_paq_hello') end
+function variant_text()
+    local q=current(); return q and I.tr('pf_paq_variant_'..q.spec.key) or ''
+end
+function cycle_variant() return false end
+function can_cycle() return false end
+function can_accept()
+    local q=current()
+    return q and q.stage=='offer' and not q.spec.invalid and I.enabled()
+        and I.same_speaker(q.giver) and not I.is_hostile(q.giver) or false
+end
+function can_cancel()
+    local q=current()
+    return q and not q.submitted and (I.live(q) or q.stage=='failed' and q.item and not q.returned)
+        and I.same_speaker(q.giver) and not I.is_hostile(q.giver) or false
+end
+function cancel_text()
+    local q=current()
+    local item=q and not q.returned and I.object(q.item)
+    local carrying=item and item.parent_id==db.actor:id()
+    return I.tr(carrying and 'pf_paq_cancel_return' or 'pf_paq_cancel')
+end
+function I.same_speaker(ref)
+    local npc=S.selected_npc
+    return npc and ref and npc.id==ref.id and npc.name==ref.name and I.object(ref)~=nil
+end
+function can_deliver()
+    local q=current(); return q and q.spec.kind=='courier' and q.stage=='active' and I.same_speaker(q.recipient) or false
+end
+function can_submit()
+    local q=current(); return q and q.stage=='ready' and I.same_speaker(q.giver) or false
+end
+function submit_text()
+    local q=current()
+    if q then
+        if q.submitted then return I.tr('pf_paq_collect_reward') end
+        local spec=q.spec
+        if spec.kind=='fetch' or spec.kind=='repair' then
+            return string.format(I.tr('pf_paq_submit_'..spec.kind),I.request_label(spec,true))
+        end
+    end
+    return I.tr('pf_paq_submit')
+end
+function can_claim()
+    return can_submit() and current().submitted==true
+end
+function reward_prompt()
+    if can_claim() then return I.tr('pf_paq_ready_'..current().spec.kind) end
+    return result_text()
+end
+function can_repeat() return false end
+function accept(a,b)
+    I.message(I.tr('pf_paq_wait_stage'))
+    if not can_accept() then return false end
+    local q=current(); local npc=I.speaker(a,b)
+    if not npc or not I.same(npc,q.giver) or not I.alive(q.giver) or I.is_hostile(q.giver) then return false end
+    local active,issued=0,0
+    for _,other in pairs(S.data.quests) do
+        if I.live(other) then
+            active=active+1
+            if other.giver.life==q.giver.life then issued=issued+1 end
+        end
+    end
+    if active>=32 then I.message(I.tr('pf_paq_limit')); return false end
+    if issued>=3 then I.message(I.tr('pf_paq_busy')); return false end
+    if not I.prepare(q) then I.message(I.tr('pf_paq_wait_stage')); return false end
+    q.giver_group=I.cohort(S.row_id[npc:id()])
+    if q.spec.kind=='repair' or q.spec.kind=='courier' then
+        local object=I.spawn(q.spec.kind=='courier' and 'pf_paq_packet' or q.spec.section)
+        if not object then I.message(I.tr('pf_paq_spawn_failed')); return false end
+        q.item=I.ref(object)
+        if q.spec.kind=='repair' then q.repair_condition=.25; q.needs_damage=true; S.pending_damage=true end
+        q.deadline=I.now()+(q.spec.kind=='repair' and 43200 or 86400)
+    end
+    if q.person then
+        local object=I.alive(q.person); local p=I.position(q.person)
+        q.anchor={x=p.x,y=p.y,z=p.z,lv=object.m_level_vertex_id,gv=object.m_game_vertex_id}
+    end
+    q.stage='active'; q.step=1; q.accepted_at=I.now(); q.budget=q.budget or I.budget(q)
+    S.inventory=nil; S.actor_position=db.actor:position(); I.active(q)
+    I.task(q)
+    local accepted=({fetch='pf_paq_accepted_fetch',courier='pf_paq_accepted_courier',repair='pf_paq_accepted_repair'})[q.spec.kind]
+    I.message(I.tr(accepted or 'pf_paq_accepted_target'))
+    return true
+end
+function cancel(a,b)
+    I.message(I.tr('pf_paq_wait_stage'))
+    if not can_cancel() or not I.enabled() then return false end
+    local q=current(); local npc=I.speaker(a,b)
+    if not I.same(npc,q.giver) then return false end
+    if I.live(q) and q.deadline and not q.returned and I.now()>=q.deadline then
+        I.overdue(q); I.message(I.tr('pf_paq_too_late')); return false
+    end
+    local reply='pf_paq_canceled'
+    if q.item and not q.returned then
+        local returned,already_held=I.transfer(q,npc,true)
+        if not returned then
+            local missing=q.spec.kind=='courier' and 'pf_paq_return_packet_first' or 'pf_paq_return_first'
+            I.message(I.tr(missing))
+            return false
+        end
+        reply=already_held and 'pf_paq_already_returned' or 'pf_paq_returned'
+    end
+    q.returned=true; q.deadline=nil
+    I.close(q,'canceled','canceled'); I.message(I.tr(reply)); return true
+end
+function deliver(a,b)
+    I.message(I.tr('pf_paq_wait_stage'))
+    if not can_deliver() or not I.enabled() then return false end
+    local q=current(); local npc=I.speaker(a,b)
+    if q.deadline and I.now()>=q.deadline then I.overdue(q); I.message(I.tr('pf_paq_too_late')); return false end
+    if not I.same(npc,q.recipient) then return false end
+    if not I.transfer(q,npc,false) then I.message(I.tr('pf_paq_missing_packet')); return false end
+    q.returned=true; q.stage='ready'; q.deadline=nil; I.reward_pair(q); I.task(q,true)
+    I.message(I.tr('pf_paq_delivered')); return true
+end
+function reward_text(n) local q=current(); return q and I.reward_text(q.rewards and q.rewards[n]) or '' end
+function submit(a,b)
+    I.message(I.tr('pf_paq_wait_stage'))
+    if not can_submit() or not I.enabled() then return false end
+    local q=current(); local npc=I.speaker(a,b)
+    if not I.same(npc,q.giver) or q.paid then return false end
+    if q.submitted then return true end
+    if q.deadline and not q.returned and I.now()>=q.deadline then
+        I.overdue(q); I.message(I.tr('pf_paq_too_late')); return false
+    end
+    local kind=q.spec.kind
+    if (kind=='fetch' or kind=='repair') and not I.transfer(q,npc,false) then
+        I.message(I.tr(kind=='repair' and 'pf_paq_missing_repair' or 'pf_paq_missing_items'))
+        return false
+    end
+    -- Submission and payout are separate. Save the debt even if the player
+    -- leaves the conversation before choosing their reward.
+    q.submitted=true; q.returned=true; q.deadline=nil
+    I.reward_pair(q)
+    I.task(q,true)
+    return true
+end
+function claim(n,a,b)
+    I.message(I.tr('pf_paq_wait_stage'))
+    if not can_claim() or not I.enabled() then return false end
+    local q=current(); local npc=I.speaker(a,b)
+    if not I.same(npc,q.giver) or q.paid then return false end
+    local reward=q.rewards[n]; if not reward then return false end
+    local created={}
+    if reward.kind=='items' then
+        for _=1,reward.count do
+            local object=I.spawn(reward.section,nil,C.groups[reward.section]=='ammo' and system_ini():r_u32(reward.section,'box_size') or nil)
+            if not object then
+                for _,o in ipairs(created) do alife():release(o,true) end
+                I.message(I.tr('pf_paq_spawn_failed')); return false
+            end
+            created[#created+1]=object
+        end
+    end
+    q.paid=true; q.chosen_reward=n
+    if reward.cash>0 then db.actor:give_money(reward.cash) end
+    I.close(q,'done'); I.message(I.tr('pf_paq_paid')); return true
+end
+function repeat_test() return false end
+function has(n,a,b)
+    if not I.enabled() then return false end
+    local npc=I.speaker(a,b)
+    return npc and I.find(n,npc)~=nil or false
+end
+function text(n) return I.title(n) end
+function allowed(a,b)
+    if not I.enabled() then return false end
+    local npc=I.speaker(a,b)
+    local row=npc and S.row_id and S.row_id[npc:id()]
+    return row and I.friendly(row) and not row.fixture or false
+end
+function start_dialog(npc) return allowed(npc) and 'pf_paq_dialog' or 'pf_pa_city_news' end
+function start() S.data.enabled=true; S.next_tick=0; return true end
+function stop()
+    S.data.enabled=false; S.controls={}
+    for _,q in pairs(S.data.quests) do if I.live(q) then I.close(q,'failed','test_disabled') end end
+end
+function reset()
+    local data=S.pending or {version=3,serial=0,quests={},hostile={},cooldowns={}}
+    if data.version~=3 then
+        for _,q in pairs(data.quests or {}) do
+            if db.actor then
+                local native=q.task_id and db.actor:get_task(q.task_id,true)
+                if native then
+                    if q.spec then native:set_title(I.title(q.index)) end
+                    if q.stage~='done' and q.stage~='failed' and q.stage~='canceled' then
+                        native:set_description(I.tr('pf_paq_reason_test_disabled'))
+                        db.actor:set_task_state(task.fail,q.task_id)
+                    end
+                end
+            end
+        end
+        -- Retire developer contracts without taking anything from actor inventory.
+        data={version=3,serial=data.serial or 0,quests={},hostile={},cooldowns={}}
+    end
+    data.cooldowns=data.cooldowns or {}
+    S={data=data,native={},controls={},states={},rows={},row_id={},next_tick=0}
+    for _,q in pairs(data.quests) do
+        if C and q.stage=='offer' and q.index==2 then
+            local variant=I.catalog(2).variants[q.variant]
+            if variant and variant.key==q.spec.key and variant.max then
+                local minimum=q.spec.extra and variant.mix_min or variant.min
+                local maximum=variant.bulk_max or variant.max
+                for _,item in ipairs({q.spec,q.spec.extra}) do
+                    local count=item.count
+                    if count then
+                        local adjusted=math.max(minimum or 1,math.min(count,maximum))
+                        if adjusted~=count then
+                            item.count=adjusted
+                            q.budget=nil
+                        end
+                    end
+                end
+            end
+        end
+        if I.live(q) and not q.submitted and q.spec.kind=='repair' and (q.needs_damage or type(q.repair_condition)=='number') then
+            q.needs_damage=true;S.pending_damage=true
+        end
+    end
+end
+function save(data)
+    -- Keep the borrowed item's actual state even when native inventory reload
+    -- normalizes a newly spawned weapon. Never reset genuine repair progress.
+    for _,q in pairs(S.data.quests) do
+        if I.live(q) and not q.submitted and q.spec.kind=='repair' and not q.needs_damage then
+            local item=q.item and level.object_by_id(q.item.id)
+            if item and I.same(item,q.item) then q.repair_condition=item:condition() end
+        end
+    end
+    data[KEY]=S.data
+end
+function load(data) S.pending=data and data[KEY]; if S.pending then S.data=S.pending end end
+function status()
+    local lines={}
+    for id,q in pairs(S.data.quests) do lines[#lines+1]=string.format('%d type=%02d %s giver=%d',id,q.index,q.stage,q.giver.id) end
+    table.sort(lines); return table.concat(lines,'\n')
+end
+
+-- Three stable offers per encountered ordinary NPC; active contracts keep their
+-- original group and physical lifetimes. Browsing never rerolls an offer.
+function I.fill_npc(row,limit)
+    if not row or not row.life or row.fixture or not row.section:match('^pf_pa_s_') or not I.friendly(row) then return 0 end
+    local npc=level.object_by_id(row.id)
+    if not npc or (npc.best_enemy and npc:best_enemy()) then return 0 end
+    local used,slots={},{}
+    local active,offers,global_offers=0,{},0
+    for _,q in pairs(S.data.quests) do
+        if q.stage=='offer' then global_offers=global_offers+1 end
+        if not I.terminal(q) and q.giver.life==row.life then
+            used[q.index]=true
+            if q.issuer.life==row.life then slots[q.slot]=true end
+            if q.stage=='offer' then offers[#offers+1]=q else active=active+1 end
+        end
+    end
+    -- Inherited accepted contracts remain valid even above the issuance quota.
+    table.sort(offers,function(a,b) return a.serial<b.serial end)
+    while #offers>math.max(0,3-active) do
+        local q=table.remove(offers); S.data.quests[q.serial]=nil; global_offers=global_offers-1
+    end
+    local count=active+#offers
+    local cooldown=S.data.cooldowns[tostring(row.life)] or {}
+    local created=0
+    for slot=1,3 do
+        if count>=3 or created>=(limit or 3) or global_offers>=96 then break end
+        if not slots[slot] and (not cooldown[slot] or cooldown[slot]<=I.now()) then
+            local candidates={}
+            local preferred=({d={[4]=true,[5]=true,[12]=true},f={[5]=true,[8]=true,[6]=true},
+                e={[1]=true,[3]=true,[7]=true},a={[6]=true,[10]=true,[12]=true},
+                ['']={[2]=true,[8]=true,[9]=true}})[row.faction] or {}
+            for n,spec in ipairs(C.scenarios) do
+                if spec.factions[row.faction] and not used[n] then candidates[#candidates+1]={index=n,weight=preferred[n] and 3 or 1} end
+            end
+            local roll={seed=(row.life*97+S.data.serial*1297+slot*31)%2147483646+1}
+            while #candidates>0 do
+                local total=0; for _,entry in ipairs(candidates) do total=total+entry.weight end
+                local draw=I.random(roll,total); local pick=1
+                for n,entry in ipairs(candidates) do draw=draw-entry.weight; if draw<=0 then pick=n; break end end
+                local entry=table.remove(candidates,pick)
+                local q=I.new(entry.index,row,slot)
+                if not q.spec.invalid and I.prepare(q) then
+                    q.budget=I.budget(q);used[q.index]=true;slots[slot]=true
+                    count=count+1;global_offers=global_offers+1;created=created+1;break
+                end
+                S.data.quests[q.serial]=nil
+            end
+        end
+    end
+    return created
+end
+function I.jobs(npc,mode)
+    local result={}
+    for _,q in pairs(S.data.quests) do
+        local giver=I.same(npc,q.giver)
+        local delivery=q.spec.kind=='courier' and q.stage=='active' and I.same(npc,q.recipient)
+        local returning=q.stage=='failed' and q.item and not q.returned and giver and not I.is_hostile(q.giver)
+        if (mode=='offer' and giver and q.stage=='offer')
+            or (mode=='progress' and (giver and I.live(q) or delivery or returning))
+            or (mode=='all' and (giver and (q.stage=='offer' or I.live(q)) or delivery or returning)) then
+            result[#result+1]={quest=q,priority=delivery and 0 or q.stage=='ready' and 1 or 2}
+        end
+    end
+    table.sort(result,function(a,b) if a.priority~=b.priority then return a.priority<b.priority end;return a.quest.serial<b.quest.serial end)
+    return result
+end
+function I.find(n,npc)
+    for _,entry in ipairs(I.jobs(npc,'all')) do if entry.quest.index==n then return entry.quest end end
+end
+function I.choose(mode,a,b,next_job)
+    if not I.enabled() then return false end
+    local npc=I.speaker(a,b)
+    if not npc or not allowed(npc) then return false end
+    if mode=='offer' then I.fill_npc(S.row_id[npc:id()],3) end
+    local jobs=I.jobs(npc,mode)
+    local index=1
+    if next_job then
+        for n,entry in ipairs(jobs) do if entry.quest.serial==S.selected then index=n%#jobs+1;break end end
+    end
+    S.selected=jobs[index] and jobs[index].quest.serial or nil
+    S.selected_npc=I.ref(alife():object(npc:id()),S.row_id[npc:id()])
+    I.message(detail_text()); return S.selected~=nil
+end
+function request_job(a,b) return I.choose('offer',a,b,false) end
+function another_job(a,b) return I.choose('offer',a,b,true) end
+function request_progress(a,b) return I.choose('progress',a,b,false) end
+function another_progress(a,b) return I.choose('progress',a,b,true) end
+function more_jobs(a,b)
+    local npc=I.speaker(a,b)
+    if not npc or not I.enabled() then return false end
+    local jobs=I.jobs(npc,'offer');local q=current()
+    return #jobs>(q and q.stage=='offer' and 1 or 0)
+end
+function can_ask_more_work(a,b)
+    local q=current()
+    return q and I.live(q) and I.same_speaker(q.giver) and more_jobs(a,b) or false
+end
+function has_progress(a,b)
+    local npc=I.speaker(a,b);return I.enabled() and npc and #I.jobs(npc,'progress')>0 or false
+end
+function more_progress(a,b)
+    local npc=I.speaker(a,b);return I.enabled() and npc and #I.jobs(npc,'progress')>1 or false
+end
+function dialog_refs()
+    local result={}
+    if not I.enabled() then return result end
+    local actor_position=S.actor_position or db.actor:position()
+    for _,row in ipairs(S.rows) do
+        if row.kind=='s' and row.section:match('^pf_pa_s_') and I.distance(row,actor_position)<=70 then
+            local o=alife():object(row.id)
+            if o and o.online then result[#result+1]=I.row_ref(row) end
+        end
+    end
+    return result
+end
