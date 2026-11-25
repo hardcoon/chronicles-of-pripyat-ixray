@@ -20,15 +20,12 @@
 	</line_devider>
 
 	<center_background x="35" y="124" width="955" height="30">
-		<auto_static x="914" y="0" width="41" height="27">
-			<texture>ui_inGame2_pda_smallbuttons_rightside</texture>
-		</auto_static>
 	</center_background>
 
-	<btn_second_task x="52" y="132" width="147" height="19" stretch="1" hint="ui_show_second_task_wnd">
+	<btn_second_task x="52.000000" y="132" width="128.000000" height="19" stretch="1" hint="ui_show_second_task_wnd">
 		<window_name>btn_second_task</window_name>
 		<texture>ui_lz_pda_task_list</texture>
-        <text align="c" vert_align="c" x="0" y="0" width="147" height="19" font="letterica16">missions_list</text>
+        <text align="c" vert_align="c" x="0" y="0" width="128" height="19" font="letterica16">missions_list</text>
         <text_color>
             <t r="255" g="255" b="255"/>
             <d r="255" g="255" b="255"/>
@@ -70,50 +67,85 @@
 		</map_hint_item>
 	</map_wnd>
 
-	<filter_treasures x="199" y="132" width="147" height="19" stretch="1">
-		<window_name>filter_treasures</window_name>
-        <texture>ui_lz_pda_filter</texture>
-		<text x="-179" y="0" align="c" vert_align="c" font="letterica16">filter_treasures_text</text>
-        <text_color>
-            <t r="255" g="255" b="255"/>
-            <d r="255" g="255" b="255"/>
-            <e r="170" g="170" b="170"/>
-            <h r="255" g="255" b="255"/>
-        </text_color>
-	</filter_treasures>
-	<filter_primary_objects x="346" y="132" width="147" height="19" stretch="1">
-		<window_name>filter_primary_objects</window_name>
-        <texture>ui_lz_pda_filter</texture>
-		<text x="-179" y="0" align="c" vert_align="c" font="letterica16">filter_primary_objects_text</text>
-        <text_color>
-            <t r="255" g="255" b="255"/>
-            <d r="255" g="255" b="255"/>
-            <e r="170" g="170" b="170"/>
-            <h r="255" g="255" b="255"/>
-        </text_color>
-	</filter_primary_objects>
-	<filter_secondary_tasks x="493" y="132" width="147" height="19" stretch="1">
-		<window_name>filter_secondary_tasks</window_name>
-        <texture>ui_lz_pda_filter</texture>
-		<text x="-179" y="0" align="c" vert_align="c" font="letterica16">filter_secondary_tasks_text</text>
-        <text_color>
-            <t r="255" g="255" b="255"/>
-            <d r="255" g="255" b="255"/>
-            <e r="170" g="170" b="170"/>
-            <h r="255" g="255" b="255"/>
-        </text_color>
-	</filter_secondary_tasks>
-	<filter_quest_npcs x="640" y="132" width="147" height="19" stretch="1">
-		<window_name>filter_quest_npcs</window_name>
-        <texture>ui_lz_pda_filter</texture>
-		<text x="-179" y="0" align="c" vert_align="c" font="letterica16">filter_quest_npcs_text</text>
-        <text_color>
-            <t r="255" g="255" b="255"/>
-            <d r="255" g="255" b="255"/>
-            <e r="170" g="170" b="170"/>
-            <h r="255" g="255" b="255"/>
-        </text_color>
-	</filter_quest_npcs>
+    <map_filters>
+        <filter group="common_stashes" x="180.000000" y="132" width="110.428571" height="19" stretch="1">
+            <window_name>filter_treasures</window_name>
+            <texture>ui_lz_pda_filter</texture>
+            <text y="0" align="c" vert_align="c" font="letterica16" padding_left="17" padding_right="3">pf_pda_filter_common_stashes</text>
+            <text_color>
+                <t r="255" g="255" b="255"/>
+                <d r="255" g="255" b="255"/>
+                <e r="170" g="170" b="170"/>
+                <h r="255" g="255" b="255"/>
+            </text_color>
+        </filter>
+        <filter group="rare_stashes" x="290.428571" y="132" width="110.428571" height="19" stretch="1">
+            <window_name>filter_rare_treasures</window_name>
+            <texture>ui_lz_pda_filter</texture>
+            <text y="0" align="c" vert_align="c" font="letterica16" padding_left="17" padding_right="3">pf_pda_filter_rare_stashes</text>
+            <text_color>
+                <t r="255" g="255" b="255"/>
+                <d r="255" g="255" b="255"/>
+                <e r="170" g="170" b="170"/>
+                <h r="255" g="255" b="255"/>
+            </text_color>
+        </filter>
+        <filter group="anomalies" x="400.857143" y="132" width="110.428571" height="19" stretch="1">
+            <window_name>filter_primary_objects</window_name>
+            <texture>ui_lz_pda_filter</texture>
+            <text y="0" align="c" vert_align="c" font="letterica16" padding_left="17" padding_right="3">pf_pda_filter_anomalies</text>
+            <text_color>
+                <t r="255" g="255" b="255"/>
+                <d r="255" g="255" b="255"/>
+                <e r="170" g="170" b="170"/>
+                <h r="255" g="255" b="255"/>
+            </text_color>
+        </filter>
+        <filter group="radio_beacons" x="511.285714" y="132" width="110.428571" height="19" stretch="1">
+            <window_name>filter_radio_beacons</window_name>
+            <texture>ui_lz_pda_filter</texture>
+            <text y="0" align="c" vert_align="c" font="letterica16" padding_left="17" padding_right="3">pf_pda_filter_radio_beacons</text>
+            <text_color>
+                <t r="255" g="255" b="255"/>
+                <d r="255" g="255" b="255"/>
+                <e r="170" g="170" b="170"/>
+                <h r="255" g="255" b="255"/>
+            </text_color>
+        </filter>
+        <filter group="tasks" x="621.714286" y="132" width="110.428571" height="19" stretch="1">
+            <window_name>filter_secondary_tasks</window_name>
+            <texture>ui_lz_pda_filter</texture>
+            <text y="0" align="c" vert_align="c" font="letterica16" padding_left="17" padding_right="3">pf_pda_filter_tasks</text>
+            <text_color>
+                <t r="255" g="255" b="255"/>
+                <d r="255" g="255" b="255"/>
+                <e r="170" g="170" b="170"/>
+                <h r="255" g="255" b="255"/>
+            </text_color>
+        </filter>
+        <filter group="important" x="732.142857" y="132" width="110.428571" height="19" stretch="1">
+            <window_name>filter_quest_npcs</window_name>
+            <texture>ui_lz_pda_filter</texture>
+            <text y="0" align="c" vert_align="c" font="letterica16" padding_left="17" padding_right="3">pf_pda_filter_important</text>
+            <text_color>
+                <t r="255" g="255" b="255"/>
+                <d r="255" g="255" b="255"/>
+                <e r="170" g="170" b="170"/>
+                <h r="255" g="255" b="255"/>
+            </text_color>
+        </filter>
+        <filter group="user_markers" x="842.571429" y="132" width="110.428571" height="19" stretch="1">
+            <window_name>filter_user_markers</window_name>
+            <texture>ui_lz_pda_filter</texture>
+            <text y="0" align="c" vert_align="c" font="letterica16" padding_left="17" padding_right="3">pf_pda_filter_user_markers</text>
+            <text_color>
+                <t r="255" g="255" b="255"/>
+                <d r="255" g="255" b="255"/>
+                <e r="170" g="170" b="170"/>
+                <h r="255" g="255" b="255"/>
+            </text_color>
+        </filter>
+    </map_filters>
 
 	<storyline_task_item x="58" y="98" width="800" height="26">
 		<window_name>pda_task_item1</window_name>

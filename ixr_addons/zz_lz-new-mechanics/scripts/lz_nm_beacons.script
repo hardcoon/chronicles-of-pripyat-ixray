@@ -2,7 +2,6 @@
 -- Engine callbacks and the serialized binder class remain in the facade.
 local state = {
 	beacon_next_update = 0,
-	beacon_filter_next_update = 0,
 	beacon_name_dialog_due = nil,
 	beacon_name_dialog_target = nil,
 	beacon_install_item_sections = {},
@@ -33,7 +32,6 @@ local BEACON_SPOT = "lz_nm_beacon_location"
 local BEACON_FOCUS_SPOT = "lz_nm_beacon_focus_location"
 local BEACON_LEGACY_SPOT = "secondary_task_location"
 local BEACON_UPDATE_MS = 2000
-local BEACON_FILTER_UPDATE_MS = 100
 local BEACON_HOLD_MS = 5000
 local BEACON_USE_DISTANCE = 3
 local BEACON_TRAVEL_DELAY_MS = 2000
@@ -602,37 +600,6 @@ function impl.refresh_beacon_marker(force)
 	for _, id in ipairs(missing) do impl.clear_beacon(id) end
 end
 
--- The stock PDA filter only changes spots whose type is "primary_object".
--- Mirror that actual state onto our custom beacon icons, keeping their own
--- artwork while making the ordinary beacon markers part of Locations.
-function impl.sync_beacon_location_filter(now)
-	if now < state.beacon_filter_next_update then return end
-	state.beacon_filter_next_update = now + BEACON_FILTER_UPDATE_MS
-	local manager = level.map_manager()
-	if not manager then return end
-	local locations_enabled = nil
-	manager:AllLocationsForEach(function(location, spot_type)
-		if spot_type == "primary_object" then
-			locations_enabled = location:SpotEnabled()
-			return true
-		end
-		return false
-	end)
-	if locations_enabled == nil then return end
-	manager:AllLocationsForEach(function(location, spot_type)
-		if spot_type == BEACON_SPOT then
-			if location:SpotEnabled() ~= locations_enabled then
-				if locations_enabled then
-					location:EnableSpot()
-				else
-					location:DisableSpot()
-				end
-			end
-		end
-		return false
-	end)
-end
-
 function impl.complete_beacon_placement(item)
 	if not item or not db.actor or not core.is_actor_owned_item(item) then return false end
 	local actor_position = db.actor:position()
@@ -1069,7 +1036,6 @@ end
 
 function reset_runtime_on_load()
 	state.pending_beacon_placement = nil
-	state.beacon_filter_next_update = 0
 	state.beacon_last_hints = {}
 	state.beacon_discovery_done = false
 	state.personal_stash_ids = {}
@@ -1135,7 +1101,6 @@ function update_actions(now)
 		state.ui_name_dialog_id = state.beacon_name_dialog_target
 		state.beacon_name_dialog_target = nil
 	end
-	impl.sync_beacon_location_filter(now)
 end
 
 function update_marker(now)
