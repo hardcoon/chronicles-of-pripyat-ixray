@@ -43,6 +43,7 @@ local BEACON_TRAVEL_DELAY_MS = 2000
 local STASH_BEACON_SECTION = "lz_nm_stash_beacon"
 local PERSONAL_STASH_SECTION = "lz_nm_backpack_box"
 local PERSONAL_STASH_SPOT = "ui_pda2_actor_box_location"
+local VEHICLE_GPS_SPOT = "pf_vehicle_gps_location"
 local PERSONAL_STASH_ROWS_PER_COLUMN = 18
 local PERSONAL_STASH_MAX_ENTRIES = PERSONAL_STASH_ROWS_PER_COLUMN * 2
 local PERSONAL_STASH_COLUMN_CHARS = 38
@@ -343,7 +344,7 @@ end
 
 function impl.hide_vehicle_stash(id, record)
 	if record.visible then
-		level.map_remove_object_spot(id, PERSONAL_STASH_SPOT)
+		level.map_remove_object_spot(id, VEHICLE_GPS_SPOT)
 		record.visible = false
 	end
 end
@@ -373,13 +374,13 @@ function impl.refresh_vehicle_stash(server, record)
 		return
 	end
 	local hint = entries and impl.personal_stash_hint(entries) or record.hint
-	if level.map_has_object_spot(id, PERSONAL_STASH_SPOT) == 0 then
+	if level.map_has_object_spot(id, VEHICLE_GPS_SPOT) == 0 then
 		-- Bind directly to the car. Native map code resolves its current online
 		-- or saved offline position, so the previous parking place is never reused.
 		-- This runtime spot is rebuilt on load and adds no serialized marker state.
-		level.map_add_object_spot(id, PERSONAL_STASH_SPOT, hint)
+		level.map_add_object_spot(id, VEHICLE_GPS_SPOT, hint)
 	elseif hint ~= record.hint then
-		level.map_change_spot_hint(id, PERSONAL_STASH_SPOT, hint)
+		level.map_change_spot_hint(id, VEHICLE_GPS_SPOT, hint)
 	end
 	record.visible = true
 	record.fingerprint = fingerprint
