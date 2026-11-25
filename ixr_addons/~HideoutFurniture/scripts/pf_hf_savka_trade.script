@@ -7,6 +7,9 @@ local interactive_kinds = {workbench=true, radio=true, piano=true, bed=true, fan
 -- Placement variants share the same inventory item and therefore one category.
 local storage_items = {pf_hfe_fridge_item=true, pf_hfg_fridge_item=true}
 local material_items = {
+    pf_hfn_wallfence_item=true,
+    pf_hfn_bag_item=true,
+    pf_hfn_roadblock_item=true,
     pf_hfm_wall_divider_item=true,
     pf_hfm_wooden_board_item=true,
     pf_hfm_wooden_plank_item=true,
@@ -34,7 +37,7 @@ local function category_map()
     categories = {}
     local catalogs = {pf_hf_furniture_catalog, pf_hf_expansion_catalog,
         pf_hf_even_more_catalog, pf_hf_native_doors_catalog,
-        pf_hf_campfire_catalog, pf_hf_stock_catalog, pf_hf_appliances_catalog, pf_hf_map_catalog}
+        pf_hf_campfire_catalog, pf_hf_stock_catalog, pf_hf_appliances_catalog, pf_hf_map_catalog, pf_hf_nf_catalog}
     for _, catalog in ipairs(catalogs) do
         for _, entry in pairs(catalog.by_item or catalog.entries) do
             local section = entry.item

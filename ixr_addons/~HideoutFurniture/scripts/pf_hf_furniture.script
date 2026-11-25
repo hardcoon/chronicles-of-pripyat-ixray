@@ -24,6 +24,10 @@ end
 for _,entry in ipairs(pf_hf_building_catalog.entries) do
     catalog.by_item[entry.item]=entry;catalog.by_object[entry.object]=entry
 end
+for _,entry in ipairs(pf_hf_nf_catalog.entries) do
+    if not entry.variant or entry.variant=="v1" then catalog.by_item[entry.item]=entry end
+    catalog.by_object[entry.object]=entry
+end
 local pending={}
 local data={}
 local generation=0
