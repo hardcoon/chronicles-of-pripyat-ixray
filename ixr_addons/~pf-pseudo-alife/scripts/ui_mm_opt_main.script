@@ -141,14 +141,15 @@ end
 function options_dialog:SetCurrentValues()
 	local opt = COptionsManager()
 
-	opt:SetCurrentValues("mm_opt_video_preset")
-	opt:SaveBackupValues("mm_opt_video_preset")
+	pf_video_settings.set_current_preset(self)
 
 	opt:SetCurrentValues("mm_opt_video")
 	opt:SaveBackupValues("mm_opt_video")
 
 	opt:SetCurrentValues("mm_opt_video_adv")
+	opt:SetCurrentValues("mm_opt_video_quality")
 	opt:SaveBackupValues("mm_opt_video_adv")
+	opt:SaveBackupValues("mm_opt_video_quality")
 
 	opt:SetCurrentValues("mm_opt_gameplay")
 	opt:SaveBackupValues("mm_opt_gameplay")
@@ -279,14 +280,12 @@ function options_dialog:OnBtnKeybDefault()
 end
 
 function options_dialog:OnPresetChanged()
-	local opt					= COptionsManager()
-	opt:SetCurrentValues		("mm_opt_video_adv")
+    pf_video_settings.queue_preset(self, self.combo_preset:CurrentID())
 end
 
 
 function options_dialog:OnBtnDefGraph()
-	local opt = COptionsManager()
-	opt:SendMessage2Group("mm_opt_video","set_default_value")
+    pf_video_settings.queue_preset(self, 3)
 end
 
 function options_dialog:OnBtnDefSound()
@@ -325,6 +324,7 @@ function options_dialog:OnSSSDefaults()
 end
 
 function options_dialog:OnBtnAccept()
+    pf_video_settings.update_preset(self)
     -- SSS page applies only its own drafts: no cfg_save, native resets or ALIFE saves.
     if self.dlg_sss and self.tab:GetActiveId() == "sss" then
         local saved, why = pf_sss_settings.save(self.dlg_sss:GetValues())
@@ -334,6 +334,7 @@ function options_dialog:OnBtnAccept()
             self.message_box:ShowDialog(true)
             return
         end
+        pf_video_settings.rollback_preset(self)
         self.owner:ShowDialog(true)
         self:HideDialog()
         self.owner:Show(true)
@@ -352,11 +353,12 @@ function options_dialog:OnBtnAccept()
 	local console	= get_console()
 
    	console:execute("cfg_save tmp")
+    pf_video_settings.apply_preset(self)
 
-	opt:SaveValues("mm_opt_video_preset")
 	opt:SaveValues("key_binding")
 	opt:SaveValues("mm_opt_video")
 	opt:SaveValues("mm_opt_video_adv")
+	opt:SaveValues("mm_opt_video_quality")
 	opt:SaveValues("mm_opt_gameplay")
 	opt:SaveValues("mm_opt_sound")
 	opt:SaveValues("mm_opt_controls")
@@ -372,16 +374,16 @@ function options_dialog:OnBtnAccept()
 
 	opt:OptionsPostAccept()
 
-	console:execute("cfg_save")
 end
 
 function options_dialog:OnBtnCancel()
 	local opt				= COptionsManager()
-	opt:UndoGroup			("mm_opt_video_preset")
 	opt:UndoGroup			("mm_opt_video")
 	opt:UndoGroup			("mm_opt_video_adv")
+	opt:UndoGroup("mm_opt_video_quality")
 	opt:UndoGroup			("mm_opt_sound")
     opt:UndoGroup("mm_opt_gameplay")
+    pf_video_settings.rollback_preset(self)
 	opt:OptionsPostAccept	()
 
 	self.owner:ShowDialog(true)
@@ -452,9 +454,7 @@ function options_dialog:OnKeyboard(dik, keyboard_action)
 					self.btn_advanced_footer:Show(true)
 					self.btn_simple_footer:Show(false)
 				else
-					self.owner:ShowDialog(true)
-					self:HideDialog()
-					self.owner:Show(true)
+					self:OnBtnCancel()
 				end
 			end
 
@@ -466,6 +466,7 @@ end
 
 function options_dialog:Update()
 	self:ApplySectionToggles()
+	pf_video_settings.update_preset(self)
 	CUIScriptWnd.Update(self)
     if self:IsShown() and self.dlg_alife and self.dlg_alife:IsShown() then
         self.dlg_alife:RefreshCounters()
@@ -550,12 +551,14 @@ function options_dialog:OnApplyChanges()
 
 	if false==self.b_restart_system_shown then
 		local opt = COptionsManager()
-		if opt:NeedSystemRestart() then
+		if opt:NeedSystemRestart() or pf_video_settings.preset_needs_restart(self) then
 			self.b_restart_system_shown = true
 			self.message_box:InitMessageBox("message_box_restart_game")
 			self.message_box:ShowDialog(true)
 		end
 	end
+    get_console():execute("cfg_save")
+    pf_video_settings.finish_preset(self)
 end
 
 function options_dialog:OnDiscardChanges()
@@ -564,6 +567,7 @@ function options_dialog:OnDiscardChanges()
 
 	local c = get_console()
    	c:execute("cfg_load tmp")
+    pf_video_settings.rollback_preset(self)
 
 	self:SetCurrentValues()
 

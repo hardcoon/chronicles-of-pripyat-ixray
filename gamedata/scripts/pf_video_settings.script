@@ -56,3 +56,118 @@ function apply_defaults_once()
     end
     printf("[PF VIDEO] Applied recommended default: r2_volumetric_lights off")
 end
+
+-- The four visible presets retain the engine's stable token names. Legacy
+-- Minimum/Ultra configs remain readable; their files mirror Low/Extreme.
+local PRESETS = {"Low", "Default", "High", "Extreme"}
+local QUALITY_GROUP = "mm_opt_video_quality"
+local QUALITY_KEYS = {
+    "r1_dlights_clip", "r1_glows_per_frame", "r2_detail_bump",
+    "r2_dof_enable", "enable_dof_reload", "enable_dof_talk",
+    "r2_ls_squality", "r2_slight_fade", "r2_soft_particles", "r2_soft_water",
+    "r2_ssao_mode", "r2_steep_parallax", "r2_sun_quality", "r2_sun_shafts",
+    "r2_volumetric_lights", "r3_dynamic_wet_surfaces", "r3_volumetric_smoke",
+    "r__detail_density", "r__detail_radius", "r__geometry_lod", "r2_smap_size",
+    "r__tf_aniso", "r__wallmark_ttl", "rs_vis_distance", "texture_lod",
+    "r_actor_shadow", "r2_sun", "r2_sun_details", "r2_lights_details",
+    "r4_hud_shadows", "r4_hashed_alpha_test", "r4_sslr_water",
+    "r2_cloud_shadows", "r4_enable_tessellation", "r2_aref_quality",
+    "rs_far_view_profile", "r4_full_detail_distance_scale",
+}
+
+local function snapshot_quality()
+    local console = get_console()
+    local snapshot = {token=console:get_token("_preset"), values={}}
+    for _, key in ipairs(QUALITY_KEYS) do
+        snapshot.values[key] = console:get_string(key)
+    end
+    return snapshot
+end
+
+local function restore_quality(snapshot)
+    local console = get_console()
+    console:execute("_preset " .. snapshot.token)
+    -- Loading a preset also sets its values. Restore the actual custom values
+    -- afterwards, including keys without a visible control in this renderer.
+    for _, key in ipairs(QUALITY_KEYS) do
+        local value = snapshot.values[key]
+        if value then console:execute(key .. " " .. value) end
+    end
+end
+
+function init_preset_list(combo, current)
+    combo:ClearList()
+    local selected = 3
+    current = string.lower(current or "High")
+    if current == "minimum" then current = "low" end
+    if current == "ultra" then current = "extreme" end
+    for id, token in ipairs(PRESETS) do
+        combo:AddItem(token, id)
+        if string.lower(token) == current then selected = id end
+    end
+    combo:SetCurrentIdx(selected - 1)
+    combo:SetText(game.translate_string(PRESETS[selected]))
+end
+
+function set_current_preset(dialog)
+    dialog.pf_queued_preset = nil
+    dialog.pf_preset_token = nil
+    dialog.pf_applied_preset_snapshot = nil
+    init_preset_list(dialog.combo_preset, get_console():get_token("_preset"))
+end
+
+function queue_preset(dialog, id)
+    if not PRESETS[id] then return end
+    dialog.pf_queued_preset = id
+end
+
+function update_preset(dialog)
+    local id = dialog.pf_queued_preset
+    if not id then return end
+    dialog.pf_queued_preset = nil
+    local snapshot = snapshot_quality()
+    local ok, why = pcall(function()
+        get_console():execute("_preset " .. PRESETS[id])
+        local opt = COptionsManager()
+        opt:SetCurrentValues(QUALITY_GROUP)
+        -- Manual edits must be compared with this preset, not with the values
+        -- from opening the menu. Otherwise restoring an old value is lost.
+        opt:SaveBackupValues(QUALITY_GROUP)
+    end)
+    -- Preview only the controlled UI fields. Runtime and user.ltx remain as
+    -- they were until Apply; unrelated advanced drafts are not refreshed.
+    restore_quality(snapshot)
+    if not ok then
+        printf("[PF VIDEO] Cannot preview graphics preset: %s", tostring(why))
+        return
+    end
+    dialog.pf_preset_token = PRESETS[id]
+    dialog.combo_preset:SetCurrentIdx(id - 1)
+    dialog.combo_preset:SetText(game.translate_string(PRESETS[id]))
+    dialog:UpdateDependControls()
+end
+
+function apply_preset(dialog)
+    local token = dialog.pf_preset_token
+    if not token then return end
+    dialog.pf_applied_preset_snapshot = dialog.pf_applied_preset_snapshot or snapshot_quality()
+    get_console():execute("_preset " .. token)
+    dialog.pf_preset_token = nil
+end
+
+function preset_needs_restart(dialog)
+    return dialog.pf_applied_preset_snapshot ~= nil
+end
+
+function finish_preset(dialog)
+    dialog.pf_queued_preset = nil
+    dialog.pf_preset_token = nil
+    dialog.pf_applied_preset_snapshot = nil
+end
+
+function rollback_preset(dialog)
+    if dialog.pf_applied_preset_snapshot then
+        restore_quality(dialog.pf_applied_preset_snapshot)
+    end
+    finish_preset(dialog)
+end

@@ -129,8 +129,7 @@
     <cap_preset x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_quality_presets</text>
     </cap_preset>
-    <list_presets x="228" y="2" width="184" height="30" list_length="6" always_show_scroll="0">
-      <options_item entry="_preset" group="mm_opt_video_preset" depend="restart"/>
+    <list_presets x="228" y="2" width="184" height="30" list_length="4" always_show_scroll="0">
       <list_font r="190" g="184" b="169" font="letterica16"/>
       <text_color>
         <e r="190" g="184" b="169"/>
@@ -233,13 +232,13 @@
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_vis_distance</text>
     </cap_vis_dist>
     <track_vis_dist x="228" y="13" width="184" height="18" step="0.1" show_value="0">
-      <options_item entry="rs_vis_distance" group="mm_opt_video_adv"/>
+      <options_item entry="rs_vis_distance" group="mm_opt_video_quality"/>
     </track_vis_dist>
     <cap_far_view_profile x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_far_view_profile</text>
     </cap_far_view_profile>
     <list_far_view_profile x="228" y="2" width="184" height="30" list_length="5" always_show_scroll="0" complex_text="1">
-      <options_item entry="rs_far_view_profile" group="mm_opt_video_adv"/>
+      <options_item entry="rs_far_view_profile" group="mm_opt_video_quality"/>
       <list_font r="190" g="184" b="169" font="letterica16"/>
       <text_color>
         <e r="190" g="184" b="169"/>
@@ -250,37 +249,37 @@
       <text r="110" g="200" b="110" font="letterica16" align="l" vert_align="c">ui_mm_r4_full_detail_distance</text>
     </cap_r4_full_detail_distance>
     <track_r4_full_detail_distance x="294" y="13" width="118" height="18" step="0.1" show_value="1">
-      <options_item entry="r4_full_detail_distance_scale" group="mm_opt_video_adv"/>
+      <options_item entry="r4_full_detail_distance_scale" group="mm_opt_video_quality"/>
     </track_r4_full_detail_distance>
     <cap_geometry_lod x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_geometry_lod</text>
     </cap_geometry_lod>
     <track_geometry_lod x="228" y="13" width="184" height="18" step="0.1" show_value="0">
-      <options_item entry="r__geometry_lod" group="mm_opt_video_adv"/>
+      <options_item entry="r__geometry_lod" group="mm_opt_video_quality"/>
     </track_geometry_lod>
     <cap_detail_density x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_detail_density</text>
     </cap_detail_density>
     <track_detail_density x="228" y="13" width="184" height="18" step="0.02" invert="1" show_value="0">
-      <options_item entry="r__detail_density" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r__detail_density" group="mm_opt_video_quality" depend="vid"/>
     </track_detail_density>
     <cap_detail_radius x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_grass_distance</text>
     </cap_detail_radius>
     <track_detail_radius x="228" y="13" width="184" height="18" step="10" is_integer="1" show_value="1">
-      <options_item entry="r__detail_radius" group="mm_opt_video_adv"/>
+      <options_item entry="r__detail_radius" group="mm_opt_video_quality"/>
     </track_detail_radius>
     <cap_texture_lod x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_texture_quality</text>
     </cap_texture_lod>
     <track_texture_lod x="228" y="13" width="184" height="18" invert="1" step="1" is_integer="1" show_value="0">
-      <options_item entry="texture_lod" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="texture_lod" group="mm_opt_video_quality" depend="vid"/>
     </track_texture_lod>
     <cap_aniso x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_anisotropic</text>
     </cap_aniso>
     <track_aniso x="228" y="13" width="184" height="18" step="1" is_integer="1" show_value="0">
-      <options_item entry="r__tf_aniso" group="mm_opt_video_adv"/>
+      <options_item entry="r__tf_aniso" group="mm_opt_video_quality"/>
     </track_aniso>
     <cap_r_scale_mode x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r_scale_mode</text>
@@ -338,7 +337,7 @@
     </cap_r2_sun>
     <check_r2_sun x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_sun" depend="restart" group="mm_opt_video_adv"/>
+      <options_item entry="r2_sun" depend="restart" group="mm_opt_video_quality"/>
     </check_r2_sun>
     <cap_r1_detail_textures x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r1_detail_textures</text>
@@ -352,20 +351,20 @@
     </cap_r2_detail_bump>
     <check_r2_detail_bump x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_detail_bump" group="mm_opt_video_adv"/>
+      <options_item entry="r2_detail_bump" group="mm_opt_video_quality"/>
     </check_r2_detail_bump>
     <cap_r2_steep_parallax x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r2_steep_parallax</text>
     </cap_r2_steep_parallax>
     <check_r2_steep_parallax x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_steep_parallax" group="mm_opt_video_adv"/>
+      <options_item entry="r2_steep_parallax" group="mm_opt_video_quality"/>
     </check_r2_steep_parallax>
     <cap_r2_sun_quality x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r2_sun_quality</text>
     </cap_r2_sun_quality>
     <list_r2_sun_quality x="228" y="2" width="184" height="30" list_length="6" always_show_scroll="0">
-      <options_item entry="r2_sun_quality" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r2_sun_quality" group="mm_opt_video_quality" depend="vid"/>
       <list_font r="190" g="184" b="169" font="letterica16"/>
       <text_color>
         <e r="190" g="184" b="169"/>
@@ -377,56 +376,56 @@
     </cap_r2_sun_details>
     <check_r2_sun_details x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_sun_details" group="mm_opt_video_adv"/>
+      <options_item entry="r2_sun_details" group="mm_opt_video_quality"/>
     </check_r2_sun_details>
     <cap_r2_lights_details x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_lights_details</text>
     </cap_r2_lights_details>
     <check_r2_lights_details x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_lights_details" group="mm_opt_video_adv"/>
+      <options_item entry="r2_lights_details" group="mm_opt_video_quality"/>
     </check_r2_lights_details>
     <cap_r_actor_shadow x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r_actor_shadow</text>
     </cap_r_actor_shadow>
     <check_r_actor_shadow x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r_actor_shadow" group="mm_opt_video_adv"/>
+      <options_item entry="r_actor_shadow" group="mm_opt_video_quality"/>
     </check_r_actor_shadow>
     <cap_r4_hud_shadows x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r4_hud_shadows</text>
     </cap_r4_hud_shadows>
     <check_r4_hud_shadows x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r4_hud_shadows" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r4_hud_shadows" group="mm_opt_video_quality" depend="vid"/>
     </check_r4_hud_shadows>
     <cap_r4_hashed_aref x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_hashed_alpha_test</text>
     </cap_r4_hashed_aref>
     <check_r4_hashed_aref x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r4_hashed_alpha_test" group="mm_opt_video_adv" depend="restart"/>
+      <options_item entry="r4_hashed_alpha_test" group="mm_opt_video_quality" depend="restart"/>
     </check_r4_hashed_aref>
     <cap_r2_cloud_shadows x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r2_cloud_shadows</text>
     </cap_r2_cloud_shadows>
     <check_r2_cloud_shadows x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_cloud_shadows" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r2_cloud_shadows" group="mm_opt_video_quality" depend="vid"/>
     </check_r2_cloud_shadows>
     <cap_r3_dynamic_wet_surfaces x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r3_dynamic_wet_surfaces</text>
     </cap_r3_dynamic_wet_surfaces>
     <check_r3_dynamic_wet_surfaces x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r3_dynamic_wet_surfaces" group="mm_opt_video_adv"/>
+      <options_item entry="r3_dynamic_wet_surfaces" group="mm_opt_video_quality"/>
     </check_r3_dynamic_wet_surfaces>
     <cap_r3_volumetric_smoke x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r3_volumetric_smoke</text>
     </cap_r3_volumetric_smoke>
     <check_r3_volumetric_smoke x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r3_volumetric_smoke" group="mm_opt_video_adv"/>
+      <options_item entry="r3_volumetric_smoke" group="mm_opt_video_quality"/>
     </check_r3_volumetric_smoke>
     <cap_r4_puddles x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_puddles</text>
@@ -439,13 +438,13 @@
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_light_distance</text>
     </cap_light_distance>
     <track_light_distance x="228" y="13" width="184" height="18" show_value="0">
-      <options_item entry="r2_slight_fade" group="mm_opt_video_adv"/>
+      <options_item entry="r2_slight_fade" group="mm_opt_video_quality"/>
     </track_light_distance>
     <cap_smap_size x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r__smap_size</text>
     </cap_smap_size>
     <combo_smap_size x="228" y="2" width="184" height="30" list_length="5" always_show_scroll="0">
-      <options_item entry="r2_smap_size" group="mm_opt_video_adv" depend="restart"/>
+      <options_item entry="r2_smap_size" group="mm_opt_video_quality" depend="restart"/>
       <list_font r="190" g="184" b="169" font="letterica16"/>
       <text_color>
         <e r="190" g="184" b="169"/>
@@ -463,7 +462,7 @@
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_sun_quality</text>
     </cap_particles_distance>
     <track_particles_distance x="228" y="13" width="184" height="18" step="0.1" show_value="0">
-      <options_item entry="r2_ls_squality" group="mm_opt_video_adv"/>
+      <options_item entry="r2_ls_squality" group="mm_opt_video_quality"/>
     </track_particles_distance>
     <cap_mt_tex_load x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_mt_tex_load</text>
@@ -476,7 +475,7 @@
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_sun_shafts</text>
     </cap_sun_shafts>
     <combo_sun_shafts x="228" y="2" width="184" height="30" list_length="5" always_show_scroll="0">
-      <options_item entry="r2_sun_shafts" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r2_sun_shafts" group="mm_opt_video_quality" depend="vid"/>
       <list_font r="190" g="184" b="169" font="letterica16"/>
       <text_color>
         <e r="190" g="184" b="169"/>
@@ -487,7 +486,7 @@
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_ssao_text</text>
     </cap_ao>
     <combo_ao_options x="228" y="2" width="184" height="30" list_length="5" always_show_scroll="0">
-      <options_item entry="r2_ssao_mode" group="mm_opt_video_adv" depend="restart"/>
+      <options_item entry="r2_ssao_mode" group="mm_opt_video_quality" depend="restart"/>
       <list_font r="190" g="184" b="169" font="letterica16"/>
       <text_color>
         <e r="190" g="184" b="169"/>
@@ -527,56 +526,56 @@
     </cap_sslr_water>
     <check_sslr_water x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r4_sslr_water" group="mm_opt_video_adv" depend="restart"/>
+      <options_item entry="r4_sslr_water" group="mm_opt_video_quality" depend="restart"/>
     </check_sslr_water>
     <cap_soft_water x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_soft_water</text>
     </cap_soft_water>
     <check_soft_water x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_soft_water" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r2_soft_water" group="mm_opt_video_quality" depend="vid"/>
     </check_soft_water>
     <cap_soft_particles x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_soft_particles</text>
     </cap_soft_particles>
     <check_soft_particles x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_soft_particles" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r2_soft_particles" group="mm_opt_video_quality" depend="vid"/>
     </check_soft_particles>
     <cap_dof x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_dof</text>
     </cap_dof>
     <check_dof x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_dof_enable" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r2_dof_enable" group="mm_opt_video_quality" depend="vid"/>
     </check_dof>
     <cap_dof_reload x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_dof_reload</text>
     </cap_dof_reload>
     <check_dof_reload x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="enable_dof_reload" group="mm_opt_video_adv"/>
+      <options_item entry="enable_dof_reload" group="mm_opt_video_quality"/>
     </check_dof_reload>
     <cap_dof_talk x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_dof_talk</text>
     </cap_dof_talk>
     <check_dof_talk x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="enable_dof_talk" group="mm_opt_video_adv"/>
+      <options_item entry="enable_dof_talk" group="mm_opt_video_quality"/>
     </check_dof_talk>
     <cap_volumetric_light x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_volumetric_light</text>
     </cap_volumetric_light>
     <check_volumetric_light x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r2_volumetric_lights" group="mm_opt_video_adv"/>
+      <options_item entry="r2_volumetric_lights" group="mm_opt_video_quality"/>
     </check_volumetric_light>
     <cap_r4_tessellation x="16" y="2" width="204" height="30">
       <text r="190" g="184" b="169" font="letterica16" align="l" vert_align="c">pf_fa_opt_ui_mm_r4_enable_tessellation</text>
     </cap_r4_tessellation>
     <check_r4_tessellation x="228" y="3" width="20" stretch="1" height="27">
       <texture>pf_fa_checkbox</texture>
-      <options_item entry="r4_enable_tessellation" group="mm_opt_video_adv" depend="vid"/>
+      <options_item entry="r4_enable_tessellation" group="mm_opt_video_quality" depend="vid"/>
     </check_r4_tessellation>
     <btn_to_simply x="-2048" y="-2048" width="210" height="40" stretch="1">
       <text align="c" font="ui_font_pf_fa_button" vert_align="c" r="190" g="184" b="169">pf_fa_opt_ui_mm_simply</text>
