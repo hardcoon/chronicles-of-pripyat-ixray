@@ -4,6 +4,7 @@
 #include "../../xrCore/associative_vector.h"
 #include "../GameTaskDefs.h"
 #include "../../xrUI/Widgets/UICheckButton.h"
+#include "../PdaMapFilters.h"
 
 class CUIMapWnd;
 class CUIStatic;
@@ -14,6 +15,8 @@ class CUI3tButton;
 class CUIFrameLineWnd;
 class CUIFrameWindow;
 class CUICheckButton;
+class CPdaMapFilterButton;
+class CGameFont;
 class UITaskListWnd;
 class UIMapLegend;
 class UIHint;
@@ -43,14 +46,16 @@ private:
 	CUI3tButton*			m_btn_focus;
 	CUI3tButton*			m_btn_focus2;
 
-	CUICheckButton*			m_cbTreasures;
-	CUICheckButton*			m_cbQuestNpcs;
-	CUICheckButton*			m_cbSecondaryTasks;
-	CUICheckButton*			m_cbPrimaryObjects;
-	bool					m_bTreasuresEnabled;
-	bool					m_bQuestNpcsEnabled;
-	bool					m_bSecondaryTasksEnabled;
-	bool					m_bPrimaryObjectsEnabled;
+    // COP_ENGINE_PATCH: COP-ENG-260 - native controls owned by the Tasks page.
+    struct MapFilterButton
+    {
+        CPdaMapFilterButton* control;
+        PdaMapFilters::Category category;
+        float captionLeft;
+        float captionRight;
+    };
+    xr_vector<MapFilterButton> m_mapFilterButtons;
+    CGameFont* m_mapFilterCaptionFont = nullptr;
 
 	UITaskListWnd*			m_task_wnd;
 	bool					m_task_wnd_show;
@@ -77,34 +82,7 @@ public:
 			void				ShowMapLegend			(bool status);
 			void				Switch_ShowMapLegend	();
 
-			bool IsTreasuresEnabled() const { return m_bTreasuresEnabled; };
-			bool IsQuestNpcsEnabled() const { return m_bQuestNpcsEnabled; };
-			bool IsSecondaryTasksEnabled() const { return m_bSecondaryTasksEnabled; };
-			bool IsPrimaryObjectsEnabled() const { return m_bPrimaryObjectsEnabled; };
-			void TreasuresEnabled(bool enable)
-			{
-				m_bTreasuresEnabled = enable;
-				if (m_cbTreasures)
-					m_cbTreasures->SetCheck(enable);
-			};
-			void QuestNpcsEnabled(bool enable)
-			{
-				m_bQuestNpcsEnabled = enable;
-				if (m_cbQuestNpcs)
-					m_cbQuestNpcs->SetCheck(enable);
-			};
-			void SecondaryTasksEnabled(bool enable)
-			{
-				m_bSecondaryTasksEnabled = enable;
-				if (m_cbSecondaryTasks)
-					m_cbSecondaryTasks->SetCheck(enable);
-			};
-			void PrimaryObjectsEnabled(bool enable)
-			{
-				m_bPrimaryObjectsEnabled = enable;
-				if (m_cbPrimaryObjects)
-					m_cbPrimaryObjects->SetCheck(enable);
-			};
+    void SyncMapFilters();
 
 			void				Show_TaskListWnd		(bool status);
 
@@ -120,10 +98,10 @@ private:
 	void 				OnTask1DbClicked		(CUIWindow*, void*);
 	void				OnTask2DbClicked		(CUIWindow*, void*);
 
-	void 				OnShowTreasures			(CUIWindow*, void*);
-	void 				OnShowPrimaryObjects	(CUIWindow*, void*);
-	void 				OnShowSecondaryTasks	(CUIWindow*, void*);
-	void 				OnShowQuestNpcs			(CUIWindow*, void*);
+    void OnMapFilterClicked(CUIWindow*, void*);
+    void InitMapFilters(CUIXml& xml);
+    void FitMapFilterCaptions();
+
 };
 
 class CUITaskItem : public CUIWindow

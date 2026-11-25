@@ -1,8 +1,10 @@
 #include "stdafx.h"
 #include "UITaskWnd.h"
 #include "PdaGpsLayout.h"
+#include "PdaMapFilterButton.h"
 #include "UIMapWnd.h"
 #include "object_broker.h"
+#include "../../xrEngine/FontManager.h"
 #include "../../xrUI/UIXmlInit.h"
 #include "../../xrUI/Widgets/UIStatic.h"
 #include "../../xrUI/Widgets/UI3tButton.h"
@@ -30,10 +32,6 @@ CUITaskWnd::CUITaskWnd()
 	m_BtnTaskListWnd(nullptr), m_second_task_index(nullptr),
 	m_devider(nullptr), m_actual_frame(0),
 	m_btn_focus(nullptr), m_btn_focus2(nullptr),
-	m_cbTreasures(nullptr), m_cbQuestNpcs(nullptr),
-	m_cbSecondaryTasks(nullptr), m_cbPrimaryObjects(nullptr),
-	m_bTreasuresEnabled(false), m_bQuestNpcsEnabled(false),
-	m_bSecondaryTasksEnabled(false), m_bPrimaryObjectsEnabled(false),
 	m_task_wnd(nullptr), m_task_wnd_show(false),
 	m_map_legend_wnd(nullptr), hint_wnd(nullptr)
 {
@@ -58,38 +56,8 @@ void CUITaskWnd::Init()
 	if (xml.NavigateToNode("task_split"))
 		m_task_split = UIHelper::CreateFrameLine(xml, "task_split", this);
 
-	if (xml.NavigateToNode("filter_treasures"))
-	{
-		m_cbTreasures = UIHelper::CreateCheck(xml, "filter_treasures", this);
-		m_cbTreasures->SetCheck(true);
-		AddCallback(m_cbTreasures, BUTTON_CLICKED, CUIWndCallback::void_function(this, &CUITaskWnd::OnShowTreasures));
-	}
-	m_bTreasuresEnabled = true;
+    InitMapFilters(xml);
 
-	if (xml.NavigateToNode("filter_primary_objects"))
-	{
-		m_cbPrimaryObjects = UIHelper::CreateCheck(xml, "filter_primary_objects", this);
-		m_cbPrimaryObjects->SetCheck(true);
-		AddCallback(m_cbPrimaryObjects, BUTTON_CLICKED, CUIWndCallback::void_function(this, &CUITaskWnd::OnShowPrimaryObjects));
-	}
-	m_bPrimaryObjectsEnabled		= true;
-
-	if (xml.NavigateToNode("filter_secondary_tasks"))
-	{
-		m_cbSecondaryTasks = UIHelper::CreateCheck(xml, "filter_secondary_tasks", this);
-		m_cbSecondaryTasks->SetCheck(true);
-		AddCallback(m_cbSecondaryTasks, BUTTON_CLICKED, CUIWndCallback::void_function(this, &CUITaskWnd::OnShowSecondaryTasks));
-	}
-	m_bSecondaryTasksEnabled		= true;
-
-	if (xml.NavigateToNode("filter_quest_npcs"))
-	{
-		m_cbQuestNpcs = UIHelper::CreateCheck(xml, "filter_quest_npcs", this);
-		m_cbQuestNpcs->SetCheck(true);
-		AddCallback(m_cbQuestNpcs, BUTTON_CLICKED, CUIWndCallback::void_function(this, &CUITaskWnd::OnShowQuestNpcs));
-	}
-	m_bQuestNpcsEnabled				= true;
-	
 	m_pMapWnd						= new CUIMapWnd(); 
 	m_pMapWnd->SetAutoDelete		(false);
 	m_pMapWnd->hint_wnd				= hint_wnd;
@@ -129,6 +97,7 @@ void CUITaskWnd::Init()
         AddCallback(m_btn_focus2, BUTTON_DOWN, CUIWndCallback::void_function(this, &CUITaskWnd::OnTask2DbClicked));
     }
 	m_BtnTaskListWnd		= UIHelper::Create3tButton( xml, "btn_second_task", this );
+    m_mapFilterCaptionFont = m_BtnTaskListWnd->TextItemControl()->GetFont();
 	AddCallback				(m_BtnTaskListWnd, BUTTON_CLICKED, CUIWndCallback::void_function(this, &CUITaskWnd::OnShowTaskListWnd));
 
 	if (xml.NavigateToNode("second_task_index"))
@@ -151,6 +120,7 @@ void CUITaskWnd::Init()
 	m_pMapWnd->AttachChild				(m_map_legend_wnd);
 	m_map_legend_wnd->SetMessageTarget	(this);
 	m_map_legend_wnd->Show				(false);
+    FitMapFilterCaptions();
 }
 
 void CUITaskWnd::Update()
@@ -195,7 +165,7 @@ void CUITaskWnd::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
 		TaskSetTargetMap( task );
 		return;
 	}
-	if ( msg == PDA_TASK_SHOW_MAP_SPOT && pData && m_bSecondaryTasksEnabled)
+	if ( msg == PDA_TASK_SHOW_MAP_SPOT && pData)
 	{
 		CGameTask* task = static_cast<CGameTask*>( pData );
 		TaskShowMapSpot( task, true );
@@ -257,26 +227,8 @@ void CUITaskWnd::ReloadTaskInfo()
 			m_btn_focus2->Show(true);
 	}
 
-	Locations map_locs			= Level().MapManager().Locations();
-	Locations_it b				= map_locs.begin(), 
-				 e				= map_locs.end();
-	for(;b!=e;b++)
-	{
-		shared_str spot = b->spot_type;
-		if(spot=="treasure")
-			m_bTreasuresEnabled?b->location->EnableSpot():b->location->DisableSpot();
-		// COP_ENGINE_PATCH: COP-ENG-004
-		// Radio beacons belong to the PDA's Locations filter.
-		else if(spot=="primary_object" || spot=="lz_nm_beacon_location" || spot=="lz_nm_beacon_focus_location")
-			m_bPrimaryObjectsEnabled?b->location->EnableSpot():b->location->DisableSpot();
-		else if(spot=="secondary_task_location" || spot=="secondary_task_location_complex_timer")
-			(/*b->location->SpotEnabled() && */m_bSecondaryTasksEnabled)?b->location->EnableSpot():b->location->DisableSpot();
-		else if(spot=="ui_pda2_trader_location" || spot=="ui_pda2_mechanic_location" ||
-		   spot=="ui_pda2_scout_location" || spot=="ui_pda2_quest_npc_location" || 
-		   spot=="ui_pda2_medic_location" || spot=="ui_pda2_actor_box_location" ||
-		   spot=="ui_pda2_actor_sleep_location")
-			m_bQuestNpcsEnabled?b->location->EnableSpot():b->location->DisableSpot();
-	}
+    FitMapFilterCaptions();
+    SyncMapFilters();
 
 	if (storyTask || additionalTask)
 	{
@@ -372,7 +324,7 @@ void CUITaskWnd::Show_TaskListWnd(bool status)
 
 void CUITaskWnd::TaskSetTargetMap( CGameTask* task )
 {
-	if (!task || !m_bSecondaryTasksEnabled)
+	if (!task)
 	{
 		return;
 	}
@@ -388,13 +340,8 @@ void CUITaskWnd::TaskSetTargetMap( CGameTask* task )
 
 void CUITaskWnd::TaskShowMapSpot( CGameTask* task, bool show )
 {
-	if (!task || !m_bSecondaryTasksEnabled)
-	{
-		return;
-	}
-
-	CMapLocation* ml = task->LinkedMapLocation();
-	if ( ml )
+	CMapLocation* ml = task ? task->LinkedMapLocation() : nullptr;
+	if (ml && ml->PdaFilterEnabled())
 	{
 		if ( show )
 		{
@@ -431,25 +378,103 @@ void CUITaskWnd::Switch_ShowMapLegend()
 	m_map_legend_wnd->Show( !m_map_legend_wnd->IsShown() );
 }
 
-void CUITaskWnd::OnShowTreasures(CUIWindow* ui, void* d)
+
+// COP_ENGINE_PATCH: COP-ENG-263 - a layout lists its native controls and group IDs.
+void CUITaskWnd::InitMapFilters(CUIXml& xml)
 {
-	m_bTreasuresEnabled = !m_bTreasuresEnabled;
-	ReloadTaskInfo();
+    using namespace PdaMapFilters;
+    if (!g_pGameLevel) return;
+    auto& manager = Level().MapManager();
+    Mask controls = 0;
+    if (auto* row = xml.NavigateToNode("map_filters"))
+    {
+        auto* savedRoot = xml.GetLocalRoot();
+        xml.SetLocalRoot(row);
+        const int count = xml.GetNodesNum(row, "filter");
+        for (int i = 0; i < count; ++i)
+        {
+            const auto* name = xml.ReadAttrib("filter", i, "group", "");
+            const auto category = manager.PdaFilterGroup(name);
+            if (category == Category::None || Enabled(controls, category))
+            {
+                Msg("! Unknown or repeated PDA map filter button: %s", name);
+                continue;
+            }
+            auto* button = new CPdaMapFilterButton();
+            button->SetAutoDelete(true);
+            AttachChild(button);
+            CUIXmlInit::InitCheck(xml, "filter", i, button);
+            const float captionLeft = std::max(0.f, xml.ReadAttribFlt("filter:text", i, "padding_left",
+                PdaFilterLayout::LeftSkinCap + PdaFilterLayout::TextPadding));
+            const float captionRight = std::max(0.f, xml.ReadAttribFlt("filter:text", i, "padding_right",
+                PdaFilterLayout::RightSkinCap + PdaFilterLayout::TextPadding));
+            m_mapFilterButtons.push_back({button, category, captionLeft, captionRight});
+            controls = With(controls, category, true);
+            AddCallback(button, BUTTON_CLICKED,
+                CUIWndCallback::void_function(this, &CUITaskWnd::OnMapFilterClicked));
+        }
+        xml.SetLocalRoot(savedRoot);
+    }
+    manager.SetPdaFilterControls(controls);
+    SyncMapFilters();
 }
-void CUITaskWnd::OnShowPrimaryObjects(CUIWindow* ui, void* d)
+
+// COP_ENGINE_PATCH: COP-ENG-260 - native controls live and die with CUITaskWnd.
+void CUITaskWnd::SyncMapFilters()
 {
-	m_bPrimaryObjectsEnabled = !m_bPrimaryObjectsEnabled;
-	ReloadTaskInfo();
+    for (const auto& filter : m_mapFilterButtons)
+        filter.control->SetCheck(Level().MapManager().PdaFilterEnabled(filter.category));
 }
-void CUITaskWnd::OnShowSecondaryTasks(CUIWindow* ui, void* d)
+
+
+// COP_ENGINE_PATCH: COP-ENG-263 - button bounds come from the PDA XML template.
+// Fit one font size to the configured row and center captions clear of the indicators.
+void CUITaskWnd::FitMapFilterCaptions()
 {
-	m_bSecondaryTasksEnabled = !m_bSecondaryTasksEnabled ;
-	ReloadTaskInfo();
+    if (!m_mapFilterCaptionFont) return;
+    const float kx = UI().get_current_kx();
+    const auto captionFits = [](CGameFont* font, CUIStatic* control, float available)
+    {
+        float captionWidth = font->SizeOf_(control->TextItemControl()->GetText());
+        UI().ClientToScreenScaledWidth(captionWidth);
+        return captionWidth <= available;
+    };
+    const auto captionsFit = [&](CGameFont* font)
+    {
+        if (!captionFits(font, m_BtnTaskListWnd,
+            m_BtnTaskListWnd->GetWidth() - 2.f * PdaFilterLayout::TextPadding * kx)) return false;
+        for (const auto& filter : m_mapFilterButtons)
+            if (!captionFits(font, filter.control,
+                filter.control->PlaceCaption(filter.captionLeft, filter.captionRight, kx).width))
+                return false;
+        return true;
+    };
+    auto* font = m_mapFilterCaptionFont;
+    if (!captionsFit(font))
+    {
+        font = UI().Font().GetFont("font_default");
+        if (!captionsFit(font))
+            font = UI().Font().pFontStat;
+    }
+    m_BtnTaskListWnd->TextItemControl()->SetFont(font);
+    for (const auto& filter : m_mapFilterButtons)
+    {
+        auto* text = filter.control->TextItemControl();
+        text->SetFont(font);
+        text->m_TextOffset.x = filter.control->PlaceCaption(filter.captionLeft, filter.captionRight, kx).offset;
+    }
 }
-void CUITaskWnd::OnShowQuestNpcs(CUIWindow* ui, void* d)
+
+void CUITaskWnd::OnMapFilterClicked(CUIWindow* control, void*)
 {
-	m_bQuestNpcsEnabled = !m_bQuestNpcsEnabled;
-	ReloadTaskInfo();
+    for (const auto& filter : m_mapFilterButtons)
+        if (control == filter.control)
+        {
+            Level().MapManager().SetPdaFilter(filter.category, filter.control->GetCheck());
+            m_pMapWnd->HideCurHint();
+            ReloadTaskInfo();
+            return;
+        }
 }
 // --------------------------------------------------------------------------------------------------
 CUITaskItem::CUITaskItem() : m_owner(nullptr), show_hint_can(false), show_hint(false), m_hint_wt(500) {}

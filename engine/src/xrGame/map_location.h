@@ -3,6 +3,7 @@
 #include "object_interfaces.h"
 #include "alife_space.h"
 #include "game_graph_space.h"
+#include "PdaMapFilters.h"
 
 class CMapSpot;
 class CMiniMapSpot;
@@ -30,6 +31,7 @@ enum ELocationFlags
 protected:
     // COP_ENGINE_PATCH: COP-ENG-109 - own the spot type; GetType must never read an uninitialized pointer.
     shared_str              m_type;
+    PdaMapFilters::Category m_pdaFilterCategory;
 	flags32					m_flags;
 	shared_str				m_hint;
 	CMapSpot*				m_level_spot;
@@ -97,7 +99,9 @@ public:
 	IC void					DisablePointer					()					{m_flags.set(ePointerEnabled,FALSE);};
 
 	IC bool					Collidable						() const			{return !!m_flags.test(eCollidable);}
-	IC bool					SpotEnabled						()					{return !!m_flags.test(eSpotEnabled);};
+    // COP_ENGINE_PATCH: COP-ENG-260 - effective native visibility, including script-created spots.
+    bool SpotEnabled();
+    bool PdaFilterEnabled() const;
 	void					EnableSpot						()					{m_flags.set(eSpotEnabled,TRUE);};
 	void					DisableSpot						()					{m_flags.set(eSpotEnabled,FALSE);};
 	virtual void			UpdateMiniMap					(CUICustomMap* map);

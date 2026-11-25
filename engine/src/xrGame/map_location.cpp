@@ -32,7 +32,8 @@
 
 CMapLocation::CMapLocation(LPCSTR type, u16 object_id, bool is_user_loc)
     // COP_ENGINE_PATCH: COP-ENG-109 - capture the type before any marker interaction or save/load binding.
-    : m_type(type)
+    : m_type(type), m_pdaFilterCategory(g_pGameLevel ?
+        Level().MapManager().PdaSpotGroup(m_type) : PdaMapFilters::Category::None)
 {
 	m_flags.zero			();
 
@@ -611,6 +612,18 @@ void CMapLocation::UpdateSpotPointer(CUICustomMap* map, CMapSpotPointer* sp)
 
 		sp->SetTextureColor(subst_alpha(clr, a));
 	}
+}
+
+// COP_ENGINE_PATCH: COP-ENG-260 - cached category plus one bit test; no periodic scan.
+bool CMapLocation::SpotEnabled()
+{
+    return m_flags.test(eSpotEnabled) && PdaFilterEnabled();
+}
+
+bool CMapLocation::PdaFilterEnabled() const
+{
+    return !g_pGameLevel || Level().MapManager().PdaFilterEnabled(
+        PdaMapFilters::EffectiveCategory(m_pdaFilterCategory, IsUserDefined()));
 }
 
 void CMapLocation::UpdateMiniMap(CUICustomMap* map)

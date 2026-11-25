@@ -1,6 +1,7 @@
 #pragma once
 #include "object_interfaces.h"
 #include "map_location_defs.h"
+#include "PdaMapFilters.h"
 
 class CMapLocationWrapper;
 class CInventoryOwner;
@@ -11,6 +12,13 @@ class CMapManager
 	CMapLocationWrapper*	m_locations_wrapper;
 	Locations*				m_locations;
 	xr_vector<CMapLocation*> m_deffered_destroy_queue;
+    // COP_ENGINE_PATCH: COP-ENG-260 - level-owned values, never borrowed UI/Lua handles.
+    PdaMapFilters::Mask m_pdaMapFilters = PdaMapFilters::All;
+    PdaMapFilters::Mask m_pdaFilterControls = PdaMapFilters::All;
+    xr_map<shared_str, PdaMapFilters::Category> m_pdaGroups;
+    xr_map<shared_str, PdaMapFilters::Category> m_pdaSpotGroups;
+    void LoadPdaFilterGroups();
+    void LoadUserMarkerPreference();
 public:
 
 							CMapManager					();
@@ -40,5 +48,13 @@ public:
 
 	void MapLocationsForEach(LPCSTR spot_type, u16 id, const luabind::functor<bool>& functor);
 	void AllLocationsForEach(const luabind::functor<bool>& functor);
+    PdaMapFilters::Mask PdaFilterMask() const { return m_pdaMapFilters; }
+    void SetPdaFilterControls(PdaMapFilters::Mask controls) { m_pdaFilterControls = controls; }
+    bool PdaFilterEnabled(PdaMapFilters::Category category) const
+        { return PdaMapFilters::Visible(m_pdaMapFilters, m_pdaFilterControls, category); }
+    PdaMapFilters::Category PdaFilterGroup(const shared_str& name) const;
+    PdaMapFilters::Category PdaSpotGroup(const shared_str& type) const;
+    bool SetPdaFilter(PdaMapFilters::Category category, bool enabled);
+    void LoadPdaFilters(const u8 (&bytes)[4]);
 	static void script_register(lua_State* L);
 };

@@ -1,6 +1,7 @@
 #include "StdAfx.h"
 #include "pch_script.h"
 #include "map_manager.h"
+#include "../xrCore/FormatParsers/XML/xrXMLParser.h"
 #include "alife_registry_wrappers.h"
 #include "InventoryOwner.h"
 #include "Level.h"
@@ -47,7 +48,7 @@ void SLocationKey::save(IWriter &stream)
 
 	stream.w_stringZ(spot_type);
 	stream.w_u8(location->IsUserDefined() ? 1 : 0);
-	stream.w_u8		(0);
+	stream.w_u8(PdaMapFilters::IndependentSpotFlags);
 	location->save	(stream);
 }
 	
@@ -56,22 +57,14 @@ void SLocationKey::load(IReader &stream)
 	stream.r		(&object_id,sizeof(object_id));
 
 	stream.r_stringZ(spot_type);
-	u8	bUserDefined = stream.r_u8();
-	stream.r_u8		();
-
-	if (bUserDefined)
-	{
+	const bool userDefined = stream.r_u8() != 0;
+	const u8 spotFlagsVersion = stream.r_u8();
+	if (userDefined)
 		Level().Server->PerformIDgen(object_id);
-		location = new CMapLocation(*spot_type, object_id, true);
-	}
-	else
-	{
-		location = new CMapLocation(*spot_type, object_id);
-	}
-
-	location  = new CMapLocation(*spot_type, object_id);
-
-	location->load	(stream);
+	location = new CMapLocation(*spot_type, object_id, userDefined);
+	location->load(stream);
+	if (PdaMapFilters::NeedsLegacySpotReset(spotFlagsVersion, *spot_type, userDefined))
+		location->EnableSpot();
 }
 
 void SLocationKey::destroy()
@@ -111,6 +104,95 @@ CMapManager::CMapManager()
 	m_locations_wrapper = new CMapLocationWrapper();
 	m_locations_wrapper->registry().init(1);
 	m_locations = nullptr;
+    LoadPdaFilterGroups();
+    LoadUserMarkerPreference();
+}
+
+// COP_ENGINE_PATCH: COP-ENG-263 - a spot type belongs to one configured group.
+void CMapManager::LoadPdaFilterGroups()
+{
+    using namespace PdaMapFilters;
+    CXml xml;
+    if (!xml.Load(CONFIG_PATH, UI_PATH, "pda_filter_groups.xml"))
+        return;
+
+    Mask allocated = 0;
+    for (auto* group = xml.GetRoot()->FirstChildElement("group"); group;
+        group = group->NextSiblingElement("group"))
+    {
+        const auto* name = xml.ReadAttrib(group, "id", "");
+        int slot = -1;
+        const auto category = group->QueryIntAttribute("slot", &slot) == tinyxml2::XML_SUCCESS ?
+            FromSlot(slot) : Category::None;
+        if (!*name || category == Category::None || Enabled(allocated, category) ||
+            m_pdaGroups.find(name) != m_pdaGroups.end() ||
+            (category == Category::UserMarkers) != Is(name, "user_markers"))
+        {
+            Msg("! Invalid or repeated PDA map filter group: %s", name);
+            continue;
+        }
+        m_pdaGroups.emplace(name, category);
+        allocated = With(allocated, category, true);
+        for (auto* spot = group->FirstChildElement("spot"); spot; spot = spot->NextSiblingElement("spot"))
+        {
+            const auto* type = xml.ReadAttrib(spot, "type", "");
+            if (!*type || !m_pdaSpotGroups.emplace(type, category).second)
+                Msg("! Invalid or repeated PDA map filter spot: %s", type);
+        }
+    }
+}
+
+PdaMapFilters::Category CMapManager::PdaFilterGroup(const shared_str& name) const
+{
+    const auto group = m_pdaGroups.find(name);
+    return group == m_pdaGroups.end() ? PdaMapFilters::Category::None : group->second;
+}
+
+PdaMapFilters::Category CMapManager::PdaSpotGroup(const shared_str& type) const
+{
+    const auto group = m_pdaSpotGroups.find(type);
+    return group == m_pdaSpotGroups.end() ? PdaMapFilters::Category::None : group->second;
+}
+
+// COP_ENGINE_PATCH: COP-ENG-260 - retain the existing install-local user-marker preference.
+void CMapManager::LoadUserMarkerPreference()
+{
+    bool enabled = true;
+    if (IReader* file = FS.r_open("$app_data_root$", "pf_user_map_filter.cfg"))
+    {
+        xr_string value;
+        if (file->length()) file->r_string(value);
+        enabled = value != "off";
+        FS.r_close(file);
+    }
+    m_pdaMapFilters = PdaMapFilters::With(m_pdaMapFilters, PdaMapFilters::Category::UserMarkers, enabled);
+}
+
+bool CMapManager::SetPdaFilter(PdaMapFilters::Category category, bool enabled)
+{
+    if (category == PdaMapFilters::Category::None ||
+        PdaMapFilters::Enabled(m_pdaMapFilters, category) == enabled) return true;
+    if (category == PdaMapFilters::Category::UserMarkers)
+    {
+        IWriter* file = FS.w_open("$app_data_root$", "pf_user_map_filter.cfg");
+        if (!file)
+        {
+            Msg("! Unable to save native PDA user-marker preference");
+            return false;
+        }
+        const char* value = enabled ? "on\n" : "off\n";
+        file->w(value, xr_strlen(value));
+        FS.w_close(file);
+    }
+    m_pdaMapFilters = PdaMapFilters::With(m_pdaMapFilters, category, enabled);
+    return true;
+}
+
+void CMapManager::LoadPdaFilters(const u8 (&bytes)[4])
+{
+    m_pdaMapFilters = PdaMapFilters::Decode(bytes);
+    // This one preference has always applied to all saves of the installation.
+    LoadUserMarkerPreference();
 }
 
 CMapManager::~CMapManager()

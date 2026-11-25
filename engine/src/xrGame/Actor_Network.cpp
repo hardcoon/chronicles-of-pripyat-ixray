@@ -1460,11 +1460,10 @@ void CActor::save(NET_Packet &output_packet)
 	inherited::save(output_packet);
 	CInventoryOwner::save(output_packet);
 	output_packet.w_u8(u8(m_bOutBorder));
-	CUITaskWnd* task_wnd = HUD().GetGameUI()->PdaMenu().pUITaskWnd;
-	output_packet.w_u8(task_wnd->IsTreasuresEnabled() ? 1 : 0);
-	output_packet.w_u8(task_wnd->IsQuestNpcsEnabled() ? 1 : 0);
-	output_packet.w_u8(task_wnd->IsSecondaryTasksEnabled() ? 1 : 0);
-	output_packet.w_u8(task_wnd->IsPrimaryObjectsEnabled() ? 1 : 0);
+    // COP_ENGINE_PATCH: COP-ENG-260 - PDA filter state fits the four legacy actor bytes.
+    u8 filterBytes[4];
+    PdaMapFilters::Encode(Level().MapManager().PdaFilterMask(), filterBytes);
+    for (const u8 value : filterBytes) output_packet.w_u8(value);
 
 	cam_Active()->save(output_packet);
 	output_packet.w_u8(cam_active);
@@ -1488,10 +1487,11 @@ void CActor::load(IReader &input_packet)
 	CInventoryOwner::load(input_packet);
 	m_bOutBorder=!!(input_packet.r_u8());
 	CUITaskWnd* task_wnd = HUD().GetGameUI()->PdaMenu().pUITaskWnd;
-	task_wnd->TreasuresEnabled(!!input_packet.r_u8());
-	task_wnd->QuestNpcsEnabled(!!input_packet.r_u8());
-	task_wnd->SecondaryTasksEnabled(!!input_packet.r_u8());
-	task_wnd->PrimaryObjectsEnabled(!!input_packet.r_u8());
+    // COP_ENGINE_PATCH: COP-ENG-260 - old 0/1 values and new packed values are both accepted.
+    u8 filterBytes[4];
+    for (u8& value : filterBytes) value = input_packet.r_u8();
+    Level().MapManager().LoadPdaFilters(filterBytes);
+    task_wnd->SyncMapFilters();
 
 	cam_Active()->load(input_packet);
 	cam_Set(EActorCameras(input_packet.r_u8()));

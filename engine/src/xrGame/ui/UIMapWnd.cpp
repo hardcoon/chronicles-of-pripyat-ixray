@@ -878,7 +878,8 @@ CMapLocation* CUIMapWnd::UnderSpot(Fvector RealPosition, CUILevelMap* curr_map)
 
 	for (it = Spots.begin(); it != Spots.end(); ++it)
 	{
-		if ((*it).location->IsUserDefined())
+		// COP_ENGINE_PATCH: COP-ENG-260 - hidden marks must not capture map clicks.
+		if ((*it).location->IsUserDefined() && (*it).location->SpotEnabled())
 		{
 			// COP_ENGINE_PATCH: COP-ENG-092 - keep user marker hit-testing silent.
 			m_position_on_map = curr_map->ConvertRealToLocal((*it).location->CalcPosition(), false);
