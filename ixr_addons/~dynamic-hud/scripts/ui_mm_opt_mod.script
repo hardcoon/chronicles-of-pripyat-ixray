@@ -83,6 +83,7 @@ function opt_mod:SetValues()
     if self.interface_mode then
         self.applied_interface_mode = pf_inventory_ui.get_mode()
         self.interface_mode:SetCurrentIdx(self.applied_interface_mode)
+        self.interface_mode:SetText(self.interface_mode:GetTextOf(self.applied_interface_mode))
     end
 end
 

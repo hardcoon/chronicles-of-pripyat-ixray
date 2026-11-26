@@ -1,38 +1,56 @@
 -- Installation-local choice. Do not put this preference in actor save data.
 local opaque_mode, translucent_mode, combined_mode = 0, 1, 2
 local saved_modes = {["0"] = opaque_mode, ["1"] = translucent_mode, ["2"] = combined_mode}
+local format_marker = "mode_format=2"
 local cached_mode = nil
 
 local function setting_path()
     return getFS():update_path("$app_data_root$", "pf_transparent_interface.setting")
 end
 
-function get_mode()
-    if cached_mode ~= nil then return cached_mode end
-    local file = io.open(setting_path(), "r")
-    cached_mode = combined_mode
-    if file then
-        local value = file:read("*l")
-        cached_mode = saved_modes[value] or combined_mode
-        file:close()
-    end
-    return cached_mode
-end
-
-function set_mode(mode)
-    if mode ~= opaque_mode and mode ~= translucent_mode and mode ~= combined_mode then return false end
-    if mode == get_mode() then return true end
-    local file = io.open(setting_path(), "w")
+local function write_mode(path, mode)
+    -- An existing preference keeps its marker if an in-place write is interrupted.
+    local file = io.open(path, "r+b") or io.open(path, "wb")
     if not file then
         printf("[PF TRANSPARENT UI] Unable to save client preference")
         return false
     end
-    local written = file:write(mode, "\n")
+    local written = file:write(mode, "\n", format_marker, "\n")
     local closed = file:close()
     if not written or not closed then
         printf("[PF TRANSPARENT UI] Unable to finish saving client preference")
         return false
     end
+    return true
+end
+
+function get_mode()
+    if cached_mode ~= nil then return cached_mode end
+    local path = setting_path()
+    local file = io.open(path, "r")
+    if not file then
+        cached_mode = combined_mode
+        return cached_mode
+    end
+
+    cached_mode = saved_modes[file:read("*l")] or combined_mode
+    local marker = file:read("*l")
+    file:close()
+    if marker ~= format_marker and write_mode(path, combined_mode) then
+        cached_mode = combined_mode
+    end
+    return cached_mode
+end
+
+-- script.ltx runs this before the native inventory reads the first line.
+function _G.pf_inventory_ui_initialize()
+    get_mode()
+end
+
+function set_mode(mode)
+    if mode ~= opaque_mode and mode ~= translucent_mode and mode ~= combined_mode then return false end
+    if mode == get_mode() then return true end
+    if not write_mode(setting_path(), mode) then return false end
     cached_mode = mode
     printf("[PF TRANSPARENT UI] Client interface mode saved: %d", mode)
     -- The game UI picks up the saved layout when it is created or reloaded.
