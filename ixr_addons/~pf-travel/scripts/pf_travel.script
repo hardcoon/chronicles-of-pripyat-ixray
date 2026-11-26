@@ -260,7 +260,7 @@ function impl.finish(reason)
         state.result.vehicle_id=trip.vehicle.id;state.result.fuel=settlement.fuel
         state.result.fuel_remaining=settlement.fuel_remaining
     end
-    if level_weathers and level_weathers.get_weather_manager then
+    if minutes > 0 and level_weathers and level_weathers.get_weather_manager then
         level_weathers.get_weather_manager():forced_weather_change()
     end
     if trip.bypass_failed and trip.event and trip.event.enemy_type=="mutant" then pf_travel_events.alert_mutants(trip.event)
