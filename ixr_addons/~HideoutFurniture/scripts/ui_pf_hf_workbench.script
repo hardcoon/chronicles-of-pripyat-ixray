@@ -1375,7 +1375,13 @@ function pf_hf_workbench_dialog:OnUpgradeTab()
 end
 
 function pf_hf_workbench_dialog:QueueInventoryRefresh(ok, message, consumed)
-	if ok then play_action_sound() end
+	if ok then
+		if self.tab == "repair" or self.tab == "craft" then
+			pf_workshop_action_sound.play()
+		else
+			play_action_sound()
+		end
+	end
 	-- Online ALife release queues GE_DESTROY; both inventories can still contain
 	-- the consumed objects in this callback. Wait for these specific IDs only,
 	-- then rebuild counts and availability once, without a timed inventory scan.

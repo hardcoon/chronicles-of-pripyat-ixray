@@ -3059,6 +3059,15 @@ function impl.add_lore_coordinate_note(loot, slot)
 	end
 end
 
+function impl.add_vehicle_spark_plugs(loot, slot)
+	local chances = { cyan = 5, purple = 20, orange = 50, red = 100 }
+	local chance = chances[slot.tier]
+	if not chance or not system_ini():section_exist("pf_vehicle_spark_plugs") then return end
+	if impl.slot_deterministic_percent(slot, "pf_stash_vehicle_spark_plugs_v1") <= chance then
+		table.insert(loot, { section = "pf_vehicle_spark_plugs" })
+	end
+end
+
 function impl.build_slot_loot(slot)
 	if not slot or not slot.state then return {} end
 	if type(slot.state.loot_manifest) == "table" and #slot.state.loot_manifest > 0 then
@@ -3110,6 +3119,7 @@ function impl.build_slot_loot(slot)
 			tostring(slot.index or "?"), tostring(slot.tier or "?")))
 	end
 	impl.add_lore_coordinate_note(loot, slot)
+	impl.add_vehicle_spark_plugs(loot, slot)
 	local hunter_boots_state = impl.add_hunter_boots_reward(loot, slot.tier)
 	for _, entry in ipairs(resources or {}) do loot[#loot + 1] = entry end
 	slot.state.loot_manifest = loot

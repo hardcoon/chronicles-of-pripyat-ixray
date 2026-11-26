@@ -254,6 +254,10 @@ function actor_binder:lz_nm_key_press(dik)
 	if pf_door_qa and pf_door_qa.on_key_press and pf_door_qa.on_key_press(dik) then
 		return
 	end
+	-- IX-Ray's EGameActions places kDETECTOR just after kNIGHT_VISION and omits it from Lua.
+	if dik_to_bind(dik) == key_bindings.kNIGHT_VISION + 1 then
+		pf_vehicle_service.on_engine_key_press(self.object)
+	end
 	if lz_new_mechanics and lz_new_mechanics.beacon_on_key_press then
 		lz_new_mechanics.beacon_on_key_press(dik)
 	end

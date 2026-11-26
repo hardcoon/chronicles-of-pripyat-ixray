@@ -1,0 +1,20 @@
+local variant_count = 4
+local sounds = {}
+local last_variant
+
+function play()
+    if not db.actor or not sound_object then return end
+
+    local variant = math.random(last_variant and variant_count - 1 or variant_count)
+    if last_variant and variant >= last_variant then
+        variant = variant + 1
+    end
+
+    local sound = sounds[variant]
+    if not sound then
+        sound = sound_object("interface\\pf_workshop\\metal_" .. variant)
+        sounds[variant] = sound
+    end
+    sound:play_no_feedback(nil, sound_object.s2d, 0, vector():set(0, 0, 0), 1)
+    last_variant = variant
+end

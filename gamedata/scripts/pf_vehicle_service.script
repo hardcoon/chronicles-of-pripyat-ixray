@@ -1,0 +1,607 @@
+local prefix = "pf_vehicle_service_"
+local canister_capacity = 20
+local readout_refresh_ms = 1000
+local camera_effect = "camera_effects\\pf_hf_campfire_view.anm"
+local camera_first, camera_second = 73461, 73462
+-- Module IDs follow the engine API. The order here is only for display.
+local rows = {
+    { key = "hull", module = 0, action = "repair", items = { "pf_hf_scrap" } },
+    { key = "battery", module = 2, action = "charge" },
+    { key = "coolant", module = 1, action = "water", items = { "flyaga", "mineral_water" } },
+    { key = "plugs", module = 3, action = "replace", items = { "pf_vehicle_spark_plugs" } },
+    { key = "belt", module = 4, action = "repair", items = { "pf_hf_rubber", "pf_hf_straps" } }
+}
+
+local meter_gold = GetARGB(238, 212, 164, 90)
+local meter_track = GetARGB(150, 67, 66, 59)
+local percent_gold = GetARGB(255, 220, 187, 126)
+local warning_red = GetARGB(255, 234, 106, 91)
+local warning_track = GetARGB(168, 110, 51, 43)
+local material_labels = {
+    pf_hf_scrap = prefix .. "scrap",
+    flyaga = prefix .. "plain_water",
+    mineral_water = prefix .. "mineral_water",
+    pf_vehicle_spark_plugs = prefix .. "spark_set",
+    pf_hf_rubber = prefix .. "rubber",
+    pf_hf_straps = "pf_hf_straps_name"
+}
+
+local dialog
+local pending_start_id
+
+local function tr(key)
+    return game.translate_string(prefix .. key)
+end
+
+local function litres(value)
+    if value > 0 and value < .1 then return "<0.1 " .. tr("litre") end
+    return string.format("%.1f %s", value, tr("litre"))
+end
+
+local function item_name(section)
+    local ini = system_ini()
+    return ini:line_exist(section, "inv_name") and game.translate_string(ini:r_string(section, "inv_name")) or section
+end
+
+function can_charge(section)
+    local catalog = lz_nlc_art_spawn_config
+    if not catalog or not catalog.artifact_class then return false end
+    local rank = catalog.artifact_class(section)
+    return rank ~= nil and rank >= 1 and rank <= 3
+end
+
+local function list_icon(entry, texture, x, y, width, height)
+    local icon = entry:AddIconField(width)
+    icon:InitTexture(texture)
+    icon:SetStretchTexture(true)
+    icon:SetWndPos(vector2():set(x, y))
+    icon:SetWndSize(vector2():set(width, height))
+    icon:Enable(false)
+    return icon
+end
+
+local function inventory_icon_aspect()
+    local view = device()
+    return (1024 / 768) * (tonumber(view.height) or 768) / math.max(tonumber(view.width) or 1024, 1)
+end
+
+local function set_inventory_icon(icon, section, height, aspect)
+    local ini = system_ini()
+    local function number(key, default)
+        return ini:line_exist(section, key) and (tonumber(ini:r_string(section, key)) or default) or default
+    end
+    local cell = 50 * math.max(.01, number("inv_scale", 1))
+    local x, y = cell * number("inv_grid_x", 0), cell * number("inv_grid_y", 0)
+    local source_w = cell * math.max(1, number("inv_grid_width", 1))
+    local source_h = cell * math.max(1, number("inv_grid_height", 1))
+    local texture = ini:line_exist(section, "icons_texture") and ini:r_string(section, "icons_texture")
+        or "ui\\ui_icon_equipment"
+    icon:InitTexture(texture)
+    icon:SetTextureRect(Frect():set(x, y, x + source_w, y + source_h))
+    local scale = math.min(24 / (source_w * aspect), (height - 6) / source_h, 1)
+    local width, icon_height = source_w * aspect * scale, source_h * scale
+    icon:SetWndSize(vector2():set(width, icon_height))
+    icon:SetWndPos(vector2():set(18 + (24 - width) * .5, (height - icon_height) * .5))
+end
+
+local function camera_pose(focus, t)
+    local direction = vector():set(focus.target):sub(focus.origin)
+    local distance = direction:magnitude()
+    if distance < .001 then return focus.origin, focus.look end
+    direction:div(distance)
+    local advance = math.min(.7, math.max(distance - .9, 0)) * t
+    local position = vector():set(focus.origin.x + direction.x * advance,
+        focus.origin.y + direction.y * advance, focus.origin.z + direction.z * advance)
+    local from_yaw = math.atan2(-focus.look.x, focus.look.z)
+    local yaw = from_yaw + ((math.atan2(-direction.x, direction.z) - from_yaw + math.pi) % (2 * math.pi) - math.pi) * t
+    local from_pitch = math.atan2(-focus.look.y, math.sqrt(focus.look.x ^ 2 + focus.look.z ^ 2))
+    local pitch = from_pitch + (math.atan2(-direction.y, math.sqrt(direction.x ^ 2 + direction.z ^ 2)) - from_pitch) * t
+    return position, vector():set(-math.sin(yaw) * math.cos(pitch), -math.sin(pitch), math.cos(yaw) * math.cos(pitch))
+end
+
+class "pf_vehicle_service_window" (CUIScriptWnd)
+
+local function show_decoration(widget, visible)
+    widget:Show(visible)
+    widget:Enable(false)
+end
+
+local function condition_readout(value)
+    local whole = math.floor(value * 100 + .00001)
+    local text = value > 0 and value < .01 and "<1%" or string.format("%d%%", whole)
+    return text, whole < 20
+end
+
+function pf_vehicle_service_window:__init() super()
+    self:SetAutoDelete(false)
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_pf_vehicle_service.xml")
+    xml:InitWindow("main", 0, self)
+    for _, name in ipairs({ "fade", "title_rule", "detail_rule", "footer_rule" }) do
+        xml:InitStatic("main:" .. name, self):Enable(false)
+    end
+    self.action_background = xml:InitStatic("main:action_background", self)
+    self.action_background:Enable(false)
+    self.fields = {}
+    for _, name in ipairs({ "title", "vehicle", "action_title", "stat_title", "stat_value",
+        "description", "resource_heading", "feedback", "empty" }) do
+        local field = xml:InitTextWnd("main:" .. name, self)
+        field:Enable(false)
+        self.fields[name] = field
+    end
+
+    self.parts = {}
+    local part_path = "main:part_card"
+    for index, row in ipairs(rows) do
+        local slot = index
+        local root = xml:InitStatic(part_path, self)
+        local position = root:GetWndPos()
+        root:SetWndPos(vector2():set(position.x, position.y + (slot - 1) * 58))
+        local button = xml:Init3tButton(part_path .. ":button", root)
+        local selected = xml:InitStatic(part_path .. ":selected", root)
+        local icon = xml:InitStatic(part_path .. ":icon", root)
+        icon:InitTexture("ui_pf_vs_icon_" .. row.key)
+        local label = xml:InitTextWnd(part_path .. ":name", root)
+        label:SetText(tr(row.key))
+        local value = xml:InitTextWnd(part_path .. ":percent", root)
+        local track = xml:InitStatic(part_path .. ":track", root)
+        local fill = xml:InitStatic(part_path .. ":fill", root)
+        track:InitTexture("ui_pf_vs_meter")
+        fill:InitTexture("ui_pf_vs_meter")
+        for _, decoration in ipairs({ selected, icon, label, value, track, fill }) do
+            decoration:Enable(false)
+        end
+        self.parts[slot] = { root = root, value = value, selected = selected,
+            track = track, fill = fill, bar_width = track:GetWidth() }
+        self:Register(button, row.key)
+        self:AddCallback(row.key, ui_events.BUTTON_CLICKED, function() self:SelectPart(slot) end, self)
+    end
+
+    self.material_rows = {}
+    local material_path = "main:material_row"
+    for index = 1, 2 do
+        local choice = index
+        local root = xml:InitStatic(material_path, self)
+        local position = root:GetWndPos()
+        root:SetWndPos(vector2():set(position.x, position.y + (choice - 1) * 34))
+        local button = xml:Init3tButton(material_path .. ":button", root)
+        local radio = xml:InitStatic(material_path .. ":radio", root)
+        local icon = xml:InitStatic(material_path .. ":icon", root)
+        local label = xml:InitTextWnd(material_path .. ":name", root)
+        local count = xml:InitTextWnd(material_path .. ":count", root)
+        for _, decoration in ipairs({ radio, icon, label, count, xml:InitStatic(material_path .. ":rule", root) }) do
+            decoration:Enable(false)
+        end
+        self.material_rows[choice] = {
+            root = root, button = button, radio = radio, icon = icon, label = label, count = count
+        }
+        local event = "material_" .. choice
+        self:Register(button, event)
+        self:AddCallback(event, ui_events.BUTTON_CLICKED, function() self:SelectMaterial(choice) end, self)
+    end
+
+    self.artifacts = xml:InitListBox("main:artifact_list", self)
+    self:Register(self.artifacts, "artifact_list")
+    self:AddCallback("artifact_list", ui_events.LIST_ITEM_SELECT, self.RefreshPart, self)
+
+    local fuel_path = "main:fuel_panel"
+    self.fuel_panel = xml:InitStatic(fuel_path, self)
+    xml:InitStatic(fuel_path .. ":panel_rule", self.fuel_panel):Enable(false)
+    self.fields.tank = xml:InitTextWnd(fuel_path .. ":tank", self.fuel_panel)
+    self.fields.amount = xml:InitTextWnd(fuel_path .. ":amount", self.fuel_panel)
+    self.amount = xml:InitTrackBar(fuel_path .. ":drain_amount", self.fuel_panel)
+    -- The XML aligns the rail. The input area covers the full 28-unit handle.
+    self.amount:SetWndSize(vector2():set(self.amount:GetWidth(), 28))
+    self.drain_button = xml:Init3tButton(fuel_path .. ":drain", self.fuel_panel)
+    self.drain_button:SetText(tr("amount"))
+
+    self.action_button = xml:Init3tButton("main:apply", self)
+    local close = xml:Init3tButton("main:close", self)
+    close:SetText(tr("close"))
+
+    self:Register(self.action_button, "apply")
+    self:Register(self.drain_button, "drain")
+    self:Register(self.amount, "drain_amount")
+    self:Register(close, "close")
+    self:AddCallback("apply", ui_events.BUTTON_CLICKED, self.Apply, self)
+    self:AddCallback("drain", ui_events.BUTTON_CLICKED, self.Drain, self)
+    self:AddCallback("drain_amount", ui_events.BUTTON_CLICKED, self.ShowDrainAmount, self)
+    self:AddCallback("close", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+function pf_vehicle_service_window:Car()
+    if not self.id or not db.actor or not db.actor:alive() or db.actor:id() ~= self.actor_id or
+        level.name() ~= self.world then return nil end
+    local object = level.object_by_id(self.id)
+    local car = object and object:get_car()
+    if car and car:service_hood_ready() then return car end
+end
+
+function pf_vehicle_service_window:RefreshInventory()
+    self.materials = {}
+    self.artefact_rows = {}
+    self.canister_id, self.canister_room = nil, 0
+    db.actor:iterate_inventory(function(_, item)
+        local id = item:id()
+        if self.spent[id] then return end
+        local section = item:section()
+        if section == "pf_vehicle_fuel_canister" then
+            local stored = item:fuel_canister_litres()
+            if stored >= 0 then
+                local room = canister_capacity - stored
+                if room > self.canister_room or
+                    (room == self.canister_room and self.canister_id and id < self.canister_id) then
+                    self.canister_room, self.canister_id = room, id
+                end
+            end
+        elseif can_charge(section) then
+            self.artefact_rows[#self.artefact_rows + 1] = { id = id, section = section }
+        elseif material_labels[section] and
+            ((section ~= "flyaga" and section ~= "mineral_water") or item:get_remaining_uses() > 0) then
+            local material = self.materials[section]
+            if material then
+                material.count = material.count + 1
+                material.id = math.min(material.id, id)
+            else
+                self.materials[section] = { id = id, count = 1 }
+            end
+        end
+    end, db.actor)
+    table.sort(self.artefact_rows, function(a, b)
+        if a.section == b.section then return a.id < b.id end
+        return a.section < b.section
+    end)
+    self:RefreshArtifactList()
+end
+
+function pf_vehicle_service_window:RefreshArtifactList()
+    self.artefact_selected = nil
+    self.artifacts:RemoveAll()
+    if #self.artefact_rows == 0 then return end
+
+    for _, item in ipairs(self.artefact_rows) do
+        item.entry = self.artifacts:AddTextItem(item_name(item.section))
+    end
+    -- The native scroll view adjusts row widths once all entries are present.
+    self.artifacts:ScrollToBegin()
+    local height = self.artifacts:GetItemHeight()
+    local aspect = inventory_icon_aspect()
+    for _, item in ipairs(self.artefact_rows) do
+        local entry = item.entry
+        local width = entry:GetWidth()
+        entry:SetColor(GetARGB(65, 207, 169, 104))
+        local name = entry:GetTextItem()
+        name:SetWndPos(vector2():set(46, 0))
+        name:SetWidth(math.max(1, width - 48))
+        name:Enable(false)
+        item.radio = list_icon(entry, "ui_pf_vs_radio", 1, (height - 15) * .5, 11, 15)
+
+        local icon = entry:AddIconField(24)
+        icon:SetStretchTexture(true)
+        icon:Enable(false)
+        set_inventory_icon(icon, item.section, height, aspect)
+        list_icon(entry, "ui_pf_hf_repair_rule", 0, height - 1, width, 1)
+    end
+end
+
+function pf_vehicle_service_window:RefreshArtifactSelection()
+    local selected = self.artifacts:GetSelectedIndex() + 1
+    if selected == self.artefact_selected then return end
+    local old = self.artefact_rows[self.artefact_selected]
+    if old and old.radio then
+        old.radio:InitTexture("ui_pf_vs_radio")
+        old.entry:SetTextColor(GetARGB(255, 216, 210, 195))
+    end
+    local current = self.artefact_rows[selected]
+    if current and current.radio then
+        current.radio:InitTexture("ui_pf_vs_radio_selected")
+        current.entry:SetTextColor(GetARGB(255, 225, 170, 86))
+    end
+    self.artefact_selected = selected
+end
+
+function pf_vehicle_service_window:Resource()
+    local row = rows[self.slot]
+    if row.key == "battery" then
+        local item = self.artefact_rows[self.artifacts:GetSelectedIndex() + 1]
+        return item and item.id, item and item.section
+    end
+    local selected = self.materials[self.selected_material]
+    if selected then return selected.id, self.selected_material end
+    for _, section in ipairs(row.items) do
+        local item = self.materials[section]
+        if item then return item.id, section end
+    end
+end
+
+function pf_vehicle_service_window:RefreshPart()
+    local car = self:Car()
+    if not car or not self.materials then return end
+    if not car:service_has_module(rows[self.slot].module) then
+        self.slot, self.selected_material = 1, nil
+    end
+    local selected = self.slot
+    local available_color = GetARGB(255, 207, 223, 194)
+    local selected_color = GetARGB(255, 225, 170, 86)
+    local missing_color = GetARGB(255, 231, 121, 104)
+    for index, card in ipairs(self.parts) do
+        local row = rows[index]
+        local available = car:service_has_module(row.module)
+        card.root:Show(available)
+        if available then
+            local value = car:service_condition(row.module)
+            local text, low = condition_readout(value)
+            card.value:SetText(text)
+            card.value:SetTextColor(low and warning_red or percent_gold)
+            card.track:SetTextureColor(low and warning_track or meter_track)
+            card.fill:SetTextureColor(low and warning_red or meter_gold)
+            show_decoration(card.selected, index == selected)
+            show_decoration(card.fill, value > 0)
+            card.fill:SetWidth(math.max(1, card.bar_width * value))
+        end
+    end
+    local row = rows[selected]
+    local condition = car:service_condition(row.module)
+    local text, low = condition_readout(condition)
+    self.fields.action_title:SetText(tr(row.key .. "_heading"))
+    self.fields.stat_title:SetText(tr(row.key .. "_stat"))
+    self.fields.stat_value:SetText(text)
+    self.fields.stat_value:SetTextColor(low and warning_red or percent_gold)
+    self.fields.description:SetText(tr(row.key .. "_desc"))
+    local battery = row.key == "battery"
+    self.fields.resource_heading:SetText(tr(battery and "artifacts" or
+        (row.key == "coolant" and "waters" or "materials")))
+    local id, section = self:Resource()
+    local aspect = inventory_icon_aspect()
+    for index, widgets in ipairs(self.material_rows) do
+        local material_section = row.items and row.items[index]
+        local visible = material_section ~= nil
+        widgets.root:Show(visible)
+        if visible then
+            local entry = self.materials[material_section]
+            local chosen = entry ~= nil and section == material_section
+            widgets.button:Enable(entry ~= nil)
+            widgets.radio:InitTexture(chosen and "ui_pf_vs_radio_selected" or "ui_pf_vs_radio")
+            widgets.radio:Enable(false)
+            if widgets.icon_section ~= material_section or widgets.icon_aspect ~= aspect then
+                set_inventory_icon(widgets.icon, material_section, widgets.root:GetHeight(), aspect)
+                widgets.icon_section, widgets.icon_aspect = material_section, aspect
+            end
+            widgets.label:SetText(game.translate_string(material_labels[material_section]))
+            widgets.count:SetText(string.format(tr("item_count"), entry and entry.count or 0))
+            local text_color = chosen and selected_color or (entry and available_color or missing_color)
+            widgets.label:SetTextColor(text_color)
+            widgets.count:SetTextColor(text_color)
+        end
+    end
+    self.artifacts:Show(battery and #self.artefact_rows > 0)
+    if battery then self:RefreshArtifactSelection() end
+    show_decoration(self.fields.empty, battery and #self.artefact_rows == 0)
+    self.action_button:SetText(tr(row.action))
+    self.action_button:Enable(condition < 1 and id ~= nil)
+end
+
+function pf_vehicle_service_window:SelectPart(slot)
+    local car = self:Car()
+    if not car or not car:service_has_module(rows[slot].module) then return end
+    if self.slot ~= slot then self.selected_material = nil end
+    self.slot = slot
+    self.fields.feedback:SetText("")
+    self:RefreshPart()
+end
+
+function pf_vehicle_service_window:SelectMaterial(index)
+    local items = rows[self.slot].items
+    local section = items and items[index]
+    if not section or not self.materials[section] then return end
+    self.selected_material = section
+    self.fields.feedback:SetText("")
+    self:RefreshPart()
+end
+
+function pf_vehicle_service_window:RefreshFuel(reset)
+    local car = self:Car()
+    if not car then return end
+    self.maximum = math.max(0, math.min(car.fuel, self.canister_room))
+    local limit = math.max(1, math.ceil(self.maximum * 10))
+    self.amount:SetOptIBounds(0, limit)
+    self.amount:Enable(self.maximum > 0)
+    self.amount:SetIValue(reset and 0 or math.min(limit, self.amount:GetIValue()))
+    self.fields.tank:SetText(tr("tank") .. "  " .. litres(car.fuel) .. " / " .. litres(car.fuel_tank))
+    self:ShowDrainAmount()
+end
+
+function pf_vehicle_service_window:ShowDrainAmount()
+    local value = math.min(self.maximum, self.amount:GetIValue() / 10)
+    local text = tr("amount") .. "   " .. litres(value)
+    if self.maximum <= 0 then
+        text = tr(self.canister_room > 0 and "tank_empty" or "no_canister_space")
+    end
+    if text ~= self.drain_text then
+        self.fields.amount:SetText(text)
+        self.drain_button:Enable(value > 0 and self.canister_id ~= nil)
+        self.drain_text = text
+    end
+    return value
+end
+
+function pf_vehicle_service_window:Apply()
+    local car = self:Car()
+    local id, section = self:Resource()
+    if not car or not id then return end
+    local item = level.object_by_id(id)
+    local keep = item and (section == "flyaga" or section == "mineral_water") and item:get_remaining_uses() > 1
+    local success = car:service_apply(rows[self.slot].module, id)
+    if success then
+        if not keep then self.spent[id] = true end
+        pf_workshop_action_sound.play()
+    end
+    self.fields.feedback:SetText(tr(success and "done" or "failed"))
+    self:RefreshInventory()
+    self:RefreshPart()
+    self:RefreshFuel(false)
+end
+
+function pf_vehicle_service_window:Drain()
+    local car = self:Car()
+    if not car or not self.canister_id then return end
+    local moved = car:service_transfer_fuel(self.canister_id, self:ShowDrainAmount(), true)
+    self.fields.feedback:SetText(moved > 0 and litres(moved) or tr("failed"))
+    self:RefreshInventory()
+    self:RefreshPart()
+    self:RefreshFuel(true)
+end
+
+function pf_vehicle_service_window:LayoutAction(view)
+    -- Use the same screen-space width as the campfire and workbench action frame.
+    local width = 200 * (1024 / 768) * (tonumber(view.height) or 768) /
+        math.max(tonumber(view.width) or 1024, 1)
+    if self.action_width == width then return end
+    self.action_width = width
+    for _, widget in ipairs({ self.action_button, self.action_background }) do
+        widget:SetWidth(width)
+        widget:SetWndPos(vector2():set((1024 - width) * .5, 632))
+    end
+end
+
+function pf_vehicle_service_window:Open(id)
+    if self.id or not db.actor or level.main_input_receiver() then return end
+    self.id, self.actor_id, self.world = id, db.actor:id(), level.name()
+    local car = self:Car()
+    if not car then self.id = nil return end
+    local view = device()
+    self:LayoutAction(view)
+    local ini = system_ini()
+    local balance = "pf_vehicle_service_balance"
+    if ini:line_exist(balance, "camera_approach_enabled") and ini:r_bool(balance, "camera_approach_enabled") then
+        local origin, look = vector():set(view.cam_pos), vector():set(view.cam_dir)
+        local duration = level.add_cam_effector_at(camera_effect, camera_first, false, "", origin, look)
+        if not duration or duration <= 0 then self.id = nil return end
+        self.focus = { origin = origin, look = look, target = car:service_camera_target(), elapsed = 0, frame = view.frame }
+        self.camera = camera_first
+    end
+    self.slot, self.spent, self.drain_text = 1, {}, nil
+    local hud = get_hud()
+    if hud then hud:HideActorMenu() end
+    level.show_weapon(false)
+    self.fields.title:SetText(tr("title"))
+    local section = level.object_by_id(self.id):section()
+    local model_key = prefix .. "model_" .. section
+    local model_name = game.translate_string(model_key)
+    self.fields.vehicle:SetText(model_name ~= model_key and model_name or tr("vehicle"))
+    self.selected_material = nil
+    self.fields.empty:SetText(tr("no_artifacts"))
+    self.fields.feedback:SetText("")
+    self:RefreshInventory()
+    self:RefreshPart()
+    self:RefreshFuel(true)
+    self.next_readout_update = time_global() + readout_refresh_ms
+    self:ShowDialog(true)
+end
+
+function pf_vehicle_service_window:UpdateCamera()
+    local focus = self.focus
+    if not focus or focus.frame == device().frame then return end
+    focus.frame = device().frame
+    if focus.remove then
+        level.remove_cam_effector_at(focus.remove)
+        self.focus = nil
+        return
+    end
+    local now = time_global()
+    if focus.time then focus.elapsed = math.min(600, focus.elapsed + math.max(0, math.min(50, now - focus.time))) end
+    focus.time = now
+    local t = focus.elapsed / 600
+    local position, direction = camera_pose(focus, t * t * (3 - 2 * t))
+    local previous = self.camera
+    local next_id = previous == camera_first and camera_second or camera_first
+    local duration = level.add_cam_effector_at(camera_effect, next_id, false, "", position, direction)
+    if not duration or duration <= 0 then self:Close() return end
+    self.camera = next_id
+    if t >= 1 then focus.remove = previous end
+end
+
+function pf_vehicle_service_window:Update()
+    CUIScriptWnd.Update(self)
+    if not self.id then return end
+    if not self:Car() then self:Close() return end
+    self:UpdateCamera()
+    if not self.id then return end
+    local now = time_global()
+    if now >= self.next_readout_update then
+        self.next_readout_update = now + readout_refresh_ms
+        self:LayoutAction(device())
+        self:RefreshPart()
+        self:RefreshFuel(false)
+    end
+end
+
+function pf_vehicle_service_window:OnKeyboard(key, action)
+    if action == ui_events.WINDOW_KEY_PRESSED then
+        local bind = dik_to_bind(key)
+        if bind == key_bindings.kQUIT or key == DIK_keys.DIK_ESCAPE then self:Close() return true end
+        if bind == key_bindings.kQUICK_SAVE or bind == key_bindings.kQUICK_LOAD or bind == key_bindings.kUSE then return true end
+    end
+    return CUIScriptWnd.OnKeyboard(self, key, action)
+end
+
+function pf_vehicle_service_window:Close()
+    if not self.id then return end
+    self:HideDialog()
+    if self.camera then
+        level.remove_cam_effector_at(camera_first)
+        level.remove_cam_effector_at(camera_second)
+    end
+    if db.actor and db.actor:id() == self.actor_id then level.show_weapon(true) end
+    self.id, self.camera, self.focus = nil, nil, nil
+end
+
+function show(id)
+    if not dialog then dialog = pf_vehicle_service_window() end
+    dialog:Open(id)
+end
+
+local function mounted_vehicle(actor)
+    return actor and actor:alive() and actor:IsInCar() and actor:get_attached_vehicle()
+end
+
+local function check_start_result()
+    local id = pending_start_id
+    pending_start_id = nil
+    UnregisterScriptCallback("update", check_start_result)
+
+    local actor = db.actor
+    local vehicle = mounted_vehicle(actor)
+    if not vehicle or vehicle:id() ~= id or vehicle:get_car().engine_running then return end
+    actor:give_game_news(game.translate_string("st_tip"), tr("start_failed"),
+        "pf_news_item_received", 0, 3500)
+end
+
+function on_engine_key_press(actor)
+    if device():is_paused() or level.main_input_receiver() or actor:is_talking() then return end
+    local vehicle = mounted_vehicle(actor)
+    if not vehicle then return end
+    if vehicle:get_car().engine_running then
+        -- A second press before the update may be switching off a successful start.
+        if pending_start_id then
+            pending_start_id = nil
+            UnregisterScriptCallback("update", check_start_result)
+        end
+        return
+    end
+    if pending_start_id then return end
+    -- The actor key callback precedes the engine's ignition handler.
+    pending_start_id = vehicle:id()
+    RegisterScriptCallback("update", check_start_result)
+end
+
+function on_game_start()
+    RegisterScriptCallback("load", function()
+        if pending_start_id then
+            pending_start_id = nil
+            UnregisterScriptCallback("update", check_start_result)
+        end
+        if dialog then dialog:Close() end
+    end)
+end

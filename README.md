@@ -578,6 +578,7 @@ Materials and work used in the project include:
 - Hideout Furniture Expansion.
 - Even More Hideout Furniture [Update 2].
 - [Secret Trails OGSR](https://ap-pro.ru/forums/topic/820-secret-trails/) — wristwatch.
+- Vehicle maintenance and workbench sound effects by [ZapSplat](https://www.zapsplat.com/).
 
 Music selection: **MoozE**. Main-menu track: **Chikoi The Maid — Reflection**.
 

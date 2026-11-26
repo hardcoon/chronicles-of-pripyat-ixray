@@ -3,6 +3,7 @@
 -- but is not recreated after the player moves or destroys it.
 
 local UPDATE_INTERVAL = 500
+local WORLD_HULL_MAX_PERCENT = 50
 
 local spawns = {
 	{
@@ -42,6 +43,32 @@ local function save(key, value)
 	if db.actor ~= nil then
 		xr_logic.pstor_store(db.actor, key, value)
 	end
+end
+
+function seed_service_condition(object, active, simulator)
+	simulator = simulator or alife()
+	if simulator and type(simulator.seed_vehicle_service) == "function" then
+		return simulator:seed_vehicle_service(object.id, active)
+	end
+	if type(object.seed_vehicle_service) == "function" then
+		object:seed_vehicle_service(active)
+		return true
+	end
+	return false
+end
+
+function prepare_spawn_condition(object, hull_key, simulator)
+	if not seed_service_condition(object, false, simulator) then
+		printf("! [PF VEHICLES] condition initialization unavailable for vehicle id=%s", tostring(object.id))
+	end
+	save(hull_key, math.random(0, WORLD_HULL_MAX_PERCENT))
+end
+
+function apply_spawn_condition(car, hull_key)
+	local percentage = stored(hull_key, false)
+	if type(percentage) ~= "number" then return end
+	car:SetfHealth(percentage / 100)
+	save(hull_key, false)
 end
 
 local function existing_vehicle_at_point(entry)
@@ -95,6 +122,7 @@ local function ensure_spawn(entry)
 			entry.angle.y,
 			entry.angle.z
 		)
+		prepare_spawn_condition(object, state_key(entry, "initial_hull"), simulator)
 	end
 
 	save(spawned_key, true)
@@ -131,6 +159,10 @@ local function ensure_initial_fuel(entry)
 		runtime.fuel_complete[entry.id] = true
 		return true
 	end
+	if server_object:section_name() ~= entry.section then
+		runtime.fuel_complete[entry.id] = true
+		return true
+	end
 	if level == nil or type(level.object_by_id) ~= "function" then return false end
 	local client_object = level.object_by_id(object_id)
 	if client_object == nil then return false end
@@ -138,6 +170,7 @@ local function ensure_initial_fuel(entry)
 	local ok, applied = pcall(function()
 		local car = client_object:get_car()
 		if car == nil then return false end
+		apply_spawn_condition(car, state_key(entry, "initial_hull"))
 		local capacity = tonumber(car.fuel_tank) or 0
 		car.fuel = math.max(0, math.min(tonumber(entry.initial_fuel) or 0, capacity))
 		return true

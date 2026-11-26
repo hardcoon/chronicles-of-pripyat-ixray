@@ -245,6 +245,8 @@ function impl.finish(reason)
     if not trip.vehicle then
         db.actor:set_actor_position(destination)
         pf_travel_route.apply_wear(db.actor,trip.quote.wear*ratio)
+    elseif settlement then
+        pf_travel_vehicle.apply_service_wear(trip.vehicle,minutes)
     end
     if minutes>0 then level.change_game_time(0,math.floor(minutes/60),minutes%60) end
     state.result={reason=reason,ratio=ratio,minutes=minutes,wear=trip.quote.wear*ratio,

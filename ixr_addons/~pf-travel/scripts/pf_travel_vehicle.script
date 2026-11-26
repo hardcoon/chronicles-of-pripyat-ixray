@@ -141,6 +141,12 @@ function settle(context,landing,route)
     local p=object:position()
     return {fuel=used,fuel_remaining=car.fuel,x=p.x,y=p.y,z=p.z,ratio=landing.ratio}
 end
+function apply_service_wear(context,minutes)
+    local _,car=impl.object(context,db.actor)
+    if car and type(car.service_apply_travel_wear)=="function" then
+        car:service_apply_travel_wear(minutes)
+    end
+end
 function fuel_at(context,route,progress)
     return math.max(0,context.fuel-route.total*progress/1000*context.rate),context.tank
 end

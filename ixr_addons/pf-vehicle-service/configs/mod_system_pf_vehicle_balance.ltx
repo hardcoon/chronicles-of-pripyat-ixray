@@ -1,0 +1,32 @@
+; Vehicle servicing gains in percentage points per use.
+; A valid value is greater than 0 and no more than 100.
+
+![pf_vehicle_service_balance]
+hull_repair_percent = 10     ; Scrap metal
+coolant_refill_percent = 50  ; One use of drinking water or mineral water
+belt_repair_percent = 10     ; Rubber or straps and fasteners
+
+; Move the camera toward the service point when opening the window.
+camera_approach_enabled = false
+
+; Minutes from 100% during headlight use or engine operation.
+battery_headlight_minutes = 240
+coolant_engine_minutes = 120
+
+; The belt takes 200 real minutes to wear out at its maximum rate (5 points per 10 minutes).
+; RPM fractions measure the interval from the model's idle RPM to its maximum RPM.
+; Wear is zero through idle, rises linearly through the control points, and caps at the high point.
+; Vehicle travel uses the working factor.
+timing_belt_engine_minutes = 200
+timing_belt_idle_rpm_fraction = 0.05
+timing_belt_low_rpm_fraction = 0.25
+timing_belt_working_rpm_fraction = 0.55
+timing_belt_high_rpm_fraction = 0.85
+timing_belt_low_wear_factor = 0.40
+timing_belt_working_wear_factor = 0.70
+
+; Successful engine starts from 100% for each vehicle class.
+spark_plug_starts_passenger = 300
+spark_plug_starts_offroad = 250
+spark_plug_starts_heavy = 200
+spark_plug_starts_armored = 150

@@ -1,6 +1,7 @@
 local CANISTER_SECTION = "pf_vehicle_fuel_canister"
 local RAY_DISTANCE = 10.0
 local pending = {}
+local amount_dialog
 
 local function notify(string_id, ...)
 	if not db.actor then return end
@@ -13,8 +14,6 @@ local function notify(string_id, ...)
 end
 
 local function aimed_car()
-	if not db.actor then return nil, nil, "pf_vehicle_fuel_refuel_no_target" end
-
 	local ray = ray_pick()
 	ray:set_flags(3)
 	ray:set_range(RAY_DISTANCE)
@@ -26,28 +25,29 @@ local function aimed_car()
 	local object = ray:get_object()
 	if not object then return nil, nil, "pf_vehicle_fuel_refuel_no_target" end
 	local ok, car = pcall(function() return object:get_car() end)
-	if not ok or not car then return nil, nil, "pf_vehicle_fuel_refuel_unsupported" end
-	if not car:fuel_system_enabled() then
+	if not ok or not car or not car:fuel_system_enabled() or car.fuel_tank <= 0 then
 		return nil, nil, "pf_vehicle_fuel_refuel_unsupported"
 	end
 	if ray:get_distance() > car:fuel_refuel_distance() then
 		return nil, nil, "pf_vehicle_fuel_refuel_too_far"
 	end
 	if car:GetfHealth() <= 0 then return nil, nil, "pf_vehicle_fuel_refuel_destroyed" end
-	if not car:can_refuel_canister() then return nil, nil, "pf_vehicle_fuel_refuel_full" end
+	if car.fuel >= car.fuel_tank then return nil, nil, "pf_vehicle_service_tank_full" end
 
-	return object, car, nil
+	return object, car
 end
 
-local function perform_refuel(item_id, car_id)
+local function perform_refuel(item_id, car_id, requested)
 	pending[item_id] = nil
-	if not db.actor or db.actor:get_current_holder() then
+	if not db.actor or not db.actor:alive() then return end
+	if db.actor:get_current_holder() then
 		notify("pf_vehicle_fuel_refuel_inside")
 		return
 	end
 
 	local server_item = alife():object(item_id, true)
-	if not server_item or server_item:section_name() ~= CANISTER_SECTION or
+	local canister = level.object_by_id(item_id)
+	if not canister or not server_item or server_item:section_name() ~= CANISTER_SECTION or
 		tonumber(server_item.parent_id) ~= db.actor:id() then
 		notify("pf_vehicle_fuel_refuel_item_missing")
 		return
@@ -59,36 +59,145 @@ local function perform_refuel(item_id, car_id)
 		return
 	end
 
-	local ok, amount = pcall(function() return car:try_refuel_canister() end)
-	if not ok or not amount or amount <= 0 then
-		notify("pf_vehicle_fuel_refuel_failed")
+	local litres = canister:fuel_canister_litres()
+	if litres <= 0 then
+		notify("pf_vehicle_service_empty_canister")
 		return
 	end
 
-	alife():release(server_item, true)
+	local amount = car:service_transfer_fuel(item_id, requested or litres, false)
+	if not amount or amount <= 0 then
+		notify("pf_vehicle_fuel_refuel_failed")
+		return
+	end
 	notify("pf_vehicle_fuel_refuel_success", amount, car.fuel, car.fuel_tank)
 end
 
-function use_canister(item)
-	if not item or not db.actor then return false end
+local function queue_refuel(item_id, car_id, requested)
+	if pending[item_id] then return end
+	pending[item_id] = true
+	level.add_call(
+		function() return true end,
+		function() perform_refuel(item_id, car_id, requested) end
+	)
+end
+
+class "pf_vehicle_refuel_dialog" (CUIScriptWnd)
+function pf_vehicle_refuel_dialog:__init() super()
+	self:SetAutoDelete(false)
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+
+	-- Reuse the existing slider dialog's frame and buttons.
+	local view = device()
+	local wide = view.width / view.height > (1024 / 768 + .01)
+	local xml = CScriptXmlInit()
+	xml:ParseFile(wide and "ui_sleep_dialog_16.xml" or "ui_sleep_dialog.xml")
+	local panel = xml:InitStatic("background", self)
+	local title = xml:InitStatic("title", panel)
+	title:TextControl():SetText(game.translate_string("pf_vehicle_service_refuel_title"))
+	self.amount_label = xml:InitStatic("subtitle", panel):TextControl()
+	self.apply = xml:Init3tButton("btn_sleep", panel)
+	self.apply:SetText(game.translate_string("pf_vehicle_service_refuel_apply"))
+	local cancel = xml:Init3tButton("btn_cancel", panel)
+
+	-- The refuelling track bar needs its own bounds and options entry.
+	xml:ParseFile("ui_pf_vehicle_refuel.xml")
+	self.slider = xml:InitTrackBar(wide and "wide" or "standard", panel)
+	self:Register(self.slider, "refuel_amount")
+	self:Register(self.apply, "refuel_apply")
+	self:Register(cancel, "refuel_cancel")
+	self:AddCallback("refuel_amount", ui_events.TRACK_VALUE_CHANGED, self.RefreshAmount, self)
+	self:AddCallback("refuel_apply", ui_events.BUTTON_CLICKED, self.Confirm, self)
+	self:AddCallback("refuel_cancel", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+function pf_vehicle_refuel_dialog:Amount()
+	return self.slider:GetIValue()
+end
+
+function pf_vehicle_refuel_dialog:RefreshAmount()
+	if not self.item_id then return end
+	local amount = self:Amount()
+	self.amount_label:SetText(string.format("%d / %d %s", amount, self.maximum,
+		game.translate_string("pf_vehicle_service_litre")))
+	self.apply:Enable(amount > 0)
+end
+
+function pf_vehicle_refuel_dialog:Open(item_id, car_id, limit)
+	if self:IsShown() then return end
+	self.item_id, self.car_id, self.maximum = item_id, car_id, limit
+	self.slider:SetOptIBounds(0, limit)
+	self.slider:SetIValue(0)
+	self:RefreshAmount()
+	self:ShowDialog(false)
+end
+
+function pf_vehicle_refuel_dialog:Confirm()
+	if not self.item_id then return end
+	local amount = self:Amount()
+	if amount <= 0 then return end
+	queue_refuel(self.item_id, self.car_id, amount)
+	self:Close()
+end
+
+function pf_vehicle_refuel_dialog:Close()
+	self.item_id = nil
+	self:HideDialog()
+end
+
+function pf_vehicle_refuel_dialog:OnKeyboard(key, action)
+	if action == ui_events.WINDOW_KEY_PRESSED then
+		if key == DIK_keys.DIK_ESCAPE then
+			self:Close()
+			return true
+		end
+		if key == DIK_keys.DIK_RETURN then
+			self:Confirm()
+			return true
+		end
+	end
+	return CUIScriptWnd.OnKeyboard(self, key, action)
+end
+
+local function use(item, partial)
+	if not item or not db.actor or not db.actor:alive() then return false end
 	if db.actor:get_current_holder() then
 		notify("pf_vehicle_fuel_refuel_inside")
 		return false
 	end
-	if pending[item:id()] then return false end
 
+	local item_id = item:id()
+	if pending[item_id] then return false end
 	local object, car, error_id = aimed_car()
-	if not object or not car then
-		notify(error_id or "pf_vehicle_fuel_refuel_no_target")
+	if not object then
+		notify(error_id)
 		return false
 	end
 
-	local item_id = item:id()
-	local car_id = object:id()
-	pending[item_id] = true
-	level.add_call(
-		function() return true end,
-		function() perform_refuel(item_id, car_id) end
-	)
+	local litres = item:fuel_canister_litres()
+	if litres <= 0 then
+		notify("pf_vehicle_service_empty_canister")
+		return false
+	end
+
+	if partial then
+		local limit = math.floor(math.min(litres, car.fuel_tank - car.fuel))
+		if limit < 1 then
+			notify("pf_vehicle_service_refuel_litre_min")
+			return false
+		end
+		amount_dialog = amount_dialog or pf_vehicle_refuel_dialog()
+		amount_dialog:Open(item_id, object:id(), limit)
+	else
+		queue_refuel(item_id, object:id())
+	end
 	return false
+end
+
+function use_canister(item)
+	return use(item, false)
+end
+
+function use_canister_partial(item)
+	return use(item, true)
 end

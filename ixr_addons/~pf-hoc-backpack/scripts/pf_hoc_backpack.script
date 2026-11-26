@@ -23,6 +23,16 @@ local function own_animation(actor)
     return section == "pf_hoc_backpack_open"
 end
 
+local function bypass_in_car(actor)
+    if not actor:IsInCar() then return false end
+    if own_animation(actor) then
+        actor:stop_hud_animator()
+        actor:set_hud_animator_force_hide_items(false)
+    end
+    state.phase, state.timeout_at, state.open_motion_finished = "idle", nil, false
+    return true
+end
+
 local function start_animation(actor, section, phase)
     if actor:is_hud_animator_active() then return false end
     state.phase = phase
@@ -44,12 +54,13 @@ end
 -- Native ShowActorMenu calls this before rebuilding inventory cells.
 function on_inventory_open_request()
     if not actor_ready() then return end
+    local actor = db.actor
+    if bypass_in_car(actor) then return end
 
     local menu = actor_menu_window()
     local pda = ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu() or nil
     if not menu or menu:IsShown() or (pda and pda:IsShown()) then return end
 
-    local actor = db.actor
     if type(actor.is_inventory_disabled) == "function" and actor:is_inventory_disabled() then return end
     if own_animation(actor) and state.phase == "closing" then
         actor:stop_hud_animator()
@@ -71,8 +82,11 @@ end
 
 function on_inventory_opened()
     local actor = db.actor
+    local ready = actor_ready()
+    if ready and bypass_in_car(actor) then return end
+
     local menu = actor_menu_window()
-    if not actor_ready() or not menu or menu:IsShown() then
+    if not ready or not menu or menu:IsShown() then
         state.phase = "opened"
         return
     end
@@ -135,9 +149,10 @@ end
 
 function update()
     install_menu_hooks()
-    if not state.hooked or not actor_ready() then return end
+    if not state.hooked or state.phase == "idle" or not actor_ready() then return end
 
     local actor = db.actor
+    if bypass_in_car(actor) then return end
     local menu = actor_menu_window()
     if not menu then return end
     recover_stalled_animation(actor)

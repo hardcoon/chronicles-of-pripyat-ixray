@@ -41,6 +41,7 @@ local function new_vehicle_sale(id, price, section, marker_hint, position, angle
 		marker_reached_key = key_prefix .. "marker_reached",
 		marker_reveal_distance_sqr = VEHICLE_MARKER_REVEAL_DISTANCE_SQR,
 		discoverable_spawned_key = key_prefix .. "discoverable_spawned",
+		initial_hull_key = key_prefix .. "initial_hull",
 		initial_fuel_key = key_prefix .. "initial_fuel",
 		initial_fuel_applied_key = key_prefix .. "initial_fuel_applied"
 	}
@@ -158,20 +159,28 @@ local VEHICLE_SALES = {
 		{ x = -0.048988, y = -0.004753, z = -0.003157 }, 15209094, 578, false)
 }
 local VEHICLE_SALES_BY_ID = {}
+local DISCOVERABLE_SECTIONS = {}
 for _, sale in ipairs(VEHICLE_SALES) do
 	VEHICLE_SALES_BY_ID[sale.id] = sale
+	if sale.discoverable then
+		DISCOVERABLE_SECTIONS[sale.section] = true
+	end
 end
 local UAZ_VAN_SALE = VEHICLE_SALES_BY_ID.uaz_van_broken
 local runtime = {
 	selected_vehicle_sale_id = nil,
 	marker_cleanup_complete = {},
-	fuel_complete = {}
+	pending_markers = {},
+	pending_fuel = {}
 }
 
 function reset_vehicle_sales_runtime()
 	runtime.selected_vehicle_sale_id = nil
+	runtime.sales_restored = nil
+	runtime.discoverable_complete = nil
 	runtime.marker_cleanup_complete = {}
-	runtime.fuel_complete = {}
+	runtime.pending_markers = {}
+	runtime.pending_fuel = {}
 end
 
 function reset_uaz_van_marker_runtime()
@@ -187,6 +196,26 @@ local function save(key, value)
 	if db.actor ~= nil then xr_logic.pstor_store(db.actor, key, value) end
 end
 
+local function restore_vehicle_sales(simulator)
+	for _, sale in ipairs(VEHICLE_SALES) do
+		local purchased = stored(sale.purchased_key, false) == true
+		local discoverable = stored(sale.discoverable_spawned_key, false) == true
+		local fuel_applied = stored(sale.initial_fuel_applied_key, false) == true
+		local object_id = tonumber(stored(sale.object_id_key, -1)) or -1
+		local object = object_id >= 0 and simulator:object(object_id, true) or nil
+		if object and object:section_name() == sale.section then
+			pf_world_vehicle_spawns.seed_service_condition(object, fuel_applied or not discoverable, simulator)
+			if (purchased or discoverable) and not fuel_applied then
+				runtime.pending_fuel[sale.id] = sale
+			end
+		end
+		if purchased and not runtime.marker_cleanup_complete[sale.id] then
+			runtime.pending_markers[sale.id] = sale
+		end
+	end
+	runtime.sales_restored = true
+end
+
 local function prepare_vehicle_sale_fuel(sale)
 	local amount = math.random(
 		VEHICLE_SALE_FUEL.minimum_liters,
@@ -194,7 +223,7 @@ local function prepare_vehicle_sale_fuel(sale)
 	)
 	save(sale.initial_fuel_key, amount)
 	save(sale.initial_fuel_applied_key, false)
-	runtime.fuel_complete[sale.object_id_key] = nil
+	runtime.pending_fuel[sale.id] = sale
 	return amount
 end
 
@@ -212,29 +241,19 @@ local function vehicle_sale_fuel_amount(sale)
 end
 
 local function update_vehicle_sale_fuel(sale)
-	local runtime_key = sale.object_id_key
-	if runtime.fuel_complete[runtime_key] or
-			(stored(sale.purchased_key, false) ~= true and
-			stored(sale.discoverable_spawned_key, false) ~= true) then
-		return
-	end
-	if stored(sale.initial_fuel_applied_key, false) == true then
-		runtime.fuel_complete[runtime_key] = true
-		return
-	end
-
 	local object_id = tonumber(stored(sale.object_id_key, -1)) or -1
 	if object_id < 0 or level == nil or
 			type(level.object_by_id) ~= "function" then
 		return
 	end
 	local client_object = level.object_by_id(object_id)
-	if client_object == nil then return end
+	if client_object == nil or client_object:section() ~= sale.section then return end
 
 	local requested = vehicle_sale_fuel_amount(sale)
 	local ok, applied = pcall(function()
 		local car = client_object:get_car()
 		if car == nil then return nil end
+		pf_world_vehicle_spawns.apply_spawn_condition(car, sale.initial_hull_key)
 		local capacity = tonumber(car.fuel_tank) or 0
 		if capacity <= 0 then return nil end
 		local amount = math.min(requested, capacity)
@@ -244,7 +263,7 @@ local function update_vehicle_sale_fuel(sale)
 	if not ok or applied == nil then return end
 
 	save(sale.initial_fuel_applied_key, true)
-	runtime.fuel_complete[runtime_key] = true
+	runtime.pending_fuel[sale.id] = nil
 	printf(
 		"[PF YANOV NIMBLE] initial vehicle fuel applied section=%s object_id=%s fuel=%d",
 		sale.section,
@@ -512,10 +531,14 @@ function cannot_afford_selected_vehicle(first_speaker, second_speaker)
 		db.actor:money() < sale.price
 end
 
-local function existing_vehicle_at_sale_point(sale)
-	local simulator = alife()
-	if simulator == nil then return nil end
+local function at_sale_point(sale, position)
+	local dx = position.x - sale.position.x
+	local dy = position.y - sale.position.y
+	local dz = position.z - sale.position.z
+	return dx * dx + dy * dy + dz * dz <= sale.match_distance_sqr
+end
 
+local function existing_vehicle_at_sale_point(sale, simulator, candidates)
 	local saved_object_id = tonumber(stored(sale.object_id_key, -1)) or -1
 	if saved_object_id >= 0 then
 		local saved_object = simulator:object(saved_object_id)
@@ -524,25 +547,25 @@ local function existing_vehicle_at_sale_point(sale)
 		end
 	end
 
+	if candidates then
+		for _, object in ipairs(candidates(sale.section)) do
+			if at_sale_point(sale, object.position) then return object end
+		end
+		return nil
+	end
+
 	for _, object in simulator:objects() do
-		if object:section_name() == sale.section then
-			local current = object.position
-			local dx = current.x - sale.position.x
-			local dy = current.y - sale.position.y
-			local dz = current.z - sale.position.z
-			if dx * dx + dy * dy + dz * dz <= sale.match_distance_sqr then
-				return object
-			end
+		if object:section_name() == sale.section and at_sale_point(sale, object.position) then
+			return object
 		end
 	end
 	return nil
 end
 
-local function create_or_reuse_vehicle(sale)
-	local simulator = alife()
+local function create_or_reuse_vehicle(sale, simulator, candidates)
 	if simulator == nil then return nil, false end
 
-	local object = existing_vehicle_at_sale_point(sale)
+	local object = existing_vehicle_at_sale_point(sale, simulator, candidates)
 	if object ~= nil then return object, false end
 
 	local position = vector():set(
@@ -563,22 +586,29 @@ local function create_or_reuse_vehicle(sale)
 		sale.angle.y,
 		sale.angle.z
 	)
+	if candidates then
+		local same_section = candidates(sale.section)
+		same_section[#same_section + 1] = object
+	end
 	return object, true
 end
 
 local function buy_vehicle_sale(sale, first_speaker, second_speaker)
+	local simulator = alife()
 	if not vehicle_sale_available(sale, first_speaker, second_speaker) or
-		db.actor:money() < sale.price or alife() == nil or dialogs == nil or
+		db.actor:money() < sale.price or simulator == nil or dialogs == nil or
 		type(dialogs.relocate_money_from_actor) ~= "function" then
 		return false
 	end
 
-	local object, created = create_or_reuse_vehicle(sale)
+	local object, created = create_or_reuse_vehicle(sale, simulator)
 	if object == nil then
 		printf("! [PF YANOV NIMBLE] failed to create %s", sale.section)
 		return false
 	end
-	if not created then
+	if created then
+		pf_world_vehicle_spawns.seed_service_condition(object, true, simulator)
+	else
 		printf(
 			"[PF YANOV NIMBLE] reusing sale vehicle section=%s object_id=%s",
 			sale.section,
@@ -591,6 +621,7 @@ local function buy_vehicle_sale(sale, first_speaker, second_speaker)
 	save(sale.object_id_key, object.id)
 	save(sale.marker_reached_key, false)
 	runtime.marker_cleanup_complete[sale.id] = nil
+	runtime.pending_markers[sale.id] = sale
 	local initial_fuel = prepare_vehicle_sale_fuel(sale)
 
 	if map_spot_api_available() then
@@ -607,23 +638,28 @@ local function buy_vehicle_sale(sale, first_speaker, second_speaker)
 	return true
 end
 
-local function spawn_discoverable_vehicle(sale)
-	if not sale.discoverable then return end
-	if stored(sale.discoverable_spawned_key, false) == true then return end
+local function spawn_discoverable_vehicle(sale, simulator, candidates)
+	if stored(sale.discoverable_spawned_key, false) == true then return true end
 
-	local object, created = create_or_reuse_vehicle(sale)
+	local object, created = create_or_reuse_vehicle(sale, simulator, candidates)
 	if object == nil then
 		printf("! [PF VEHICLES] failed to spawn %s", sale.section)
-		return
+		return false
 	end
 
+	local purchased = stored(sale.purchased_key, false) == true
+	if created and not purchased then
+		pf_world_vehicle_spawns.prepare_spawn_condition(object, sale.initial_hull_key, simulator)
+	else
+		pf_world_vehicle_spawns.seed_service_condition(object, true, simulator)
+	end
 	save(sale.discoverable_spawned_key, true)
 	save(sale.object_id_key, object.id)
 
 	-- Purchased vehicles keep the normal Nimble marker and fuel state. A free
 	-- world spawn only reuses the same placement data; it never completes the
 	-- purchase or reveals the red map marker.
-	if stored(sale.purchased_key, false) ~= true then
+	if not purchased then
 		prepare_vehicle_sale_fuel(sale)
 		if map_spot_api_available() then
 			remove_map_spots(object.id, sale.marker_type)
@@ -636,19 +672,40 @@ local function spawn_discoverable_vehicle(sale)
 		sale.section,
 		tostring(object.id)
 	)
+	return true
 end
 
-local function update_discoverable_vehicle_spawns()
-	if pf_vehicle_settings == nil or
+local function update_discoverable_vehicle_spawns(simulator)
+	if runtime.discoverable_complete or pf_vehicle_settings == nil or
 			type(pf_vehicle_settings.is_discoverable_vehicle_spawning_enabled) ~=
 			"function" or
 			not pf_vehicle_settings.is_discoverable_vehicle_spawning_enabled() then
 		return
 	end
 
-	for _, sale in ipairs(VEHICLE_SALES) do
-		spawn_discoverable_vehicle(sale)
+	-- Scan once, only if a vehicle is missing its saved object reference.
+	local by_section
+	local function candidates(section)
+		if by_section == nil then
+			by_section = {}
+			for name in pairs(DISCOVERABLE_SECTIONS) do
+				by_section[name] = {}
+			end
+			for _, object in simulator:objects() do
+				local list = by_section[object:section_name()]
+				if list then list[#list + 1] = object end
+			end
+		end
+		return by_section[section]
 	end
+
+	local complete = true
+	for _, sale in ipairs(VEHICLE_SALES) do
+		if sale.discoverable and not spawn_discoverable_vehicle(sale, simulator, candidates) then
+			complete = false
+		end
+	end
+	runtime.discoverable_complete = complete
 end
 
 local function set_discoverable_vehicle_markers(visible)
@@ -825,9 +882,21 @@ function update_uaz_van_marker()
 end
 
 function update_vehicle_sales()
-	update_discoverable_vehicle_spawns()
-	for _, sale in ipairs(VEHICLE_SALES) do
+	if db.actor == nil then return end
+	local simulator = alife()
+	if simulator == nil then return end
+
+	if not runtime.sales_restored then
+		restore_vehicle_sales(simulator)
+	end
+	update_discoverable_vehicle_spawns(simulator)
+	for id, sale in pairs(runtime.pending_markers) do
 		update_vehicle_sale_marker(sale)
+		if runtime.marker_cleanup_complete[id] then
+			runtime.pending_markers[id] = nil
+		end
+	end
+	for _, sale in pairs(runtime.pending_fuel) do
 		update_vehicle_sale_fuel(sale)
 	end
 end
