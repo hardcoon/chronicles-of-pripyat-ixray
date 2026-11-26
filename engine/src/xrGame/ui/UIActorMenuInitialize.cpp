@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "UIActorMenu.h"
 #include "../../xrUI/UIXmlInit.h"
+#include "../../xrUI/UITextureMaster.h"
 #include "../../xrUI/xrUIXmlParser.h"
 #include "UICharacterInfo.h"
 #include "UIDragDropListEx.h"
@@ -64,38 +65,135 @@ CUIActorMenu::~CUIActorMenu()
 	ClearAllLists		();
 }
 
-LPCSTR CUIActorMenu::SelectInterfaceXml(LPCSTR original, LPCSTR transparent)
+namespace
 {
-	// COP_ENGINE_PATCH: COP-ENG-209 - client preference, independent of saves.
-	// Keep stock XML and its resolution fallback intact when disabled or absent.
-	bool enabled = false;
-	// Lua creates this file with io.open. A new installation-local file is not
-	// necessarily in the VFS index yet, so read the physical path on each reload.
-	string_path setting_path;
-	FS.update_path(setting_path, "$app_data_root$", "pf_transparent_interface.setting");
+constexpr char translucentActorMenuXml[] = "actor_menu_transparent.xml";
+
+enum class ActorInterfaceMode
+{
+	Opaque,
+	Translucent,
+	Combined,
+};
+
+ActorInterfaceMode ReadActorInterfaceMode()
+{
+	// COP_ENGINE_PATCH: COP-ENG-209 - installation-local preference, independent of saves.
+	// Read the physical path because a file just saved by Lua may not be indexed yet.
+	string_path settingPath;
+	FS.update_path(settingPath, "$app_data_root$", "pf_transparent_interface.setting");
 	FILE* setting = nullptr;
-	if (fopen_s(&setting, setting_path, "rb") == 0 && setting)
-	{
-		char value[16] = {};
-		if (fgets(value, sizeof(value), setting))
-		{
-			value[strcspn(value, "\r\n")] = 0;
-			enabled = xr_strcmp(value, "1") == 0;
-		}
-		fclose(setting);
-	}
+	if (fopen_s(&setting, settingPath, "rb") != 0 || !setting)
+		return ActorInterfaceMode::Combined;
+
+	char value[16] = {};
+	if (fgets(value, sizeof(value), setting))
+		value[strcspn(value, "\r\n")] = 0;
+	fclose(setting);
+
+	if (xr_strcmp(value, "0") == 0)
+		return ActorInterfaceMode::Opaque;
+	if (xr_strcmp(value, "1") == 0)
+		return ActorInterfaceMode::Translucent;
+	return ActorInterfaceMode::Combined;
+}
+}
+
+LPCSTR CUIActorMenu::SelectInterfaceXml(LPCSTR original, LPCSTR transparent, bool translucent)
+{
 	string_path path;
-	LPCSTR selected = enabled && FS.exist(path, "$game_config$", "ui\\", transparent)
+	LPCSTR selected = translucent && FS.exist(path, "$game_config$", "ui\\", transparent)
 		? transparent : original;
 	Msg("[PF TRANSPARENT UI] COP-ENG-209 layout=%s", UI().get_xml_name(selected).c_str());
 	return selected;
 }
 
+bool CUIActorMenu::PrepareCombinedSkin(CUIXml& opaqueXml)
+{
+	// COP_ENGINE_PATCH: COP-ENG-277 - prepare both appearances once with the game UI.
+	string_path path;
+	if (!FS.exist(path, "$game_config$", "ui\\", translucentActorMenuXml))
+		return false;
+
+	CUIXml translucentXml;
+	if (!translucentXml.Load(CONFIG_PATH, UI_PATH, translucentActorMenuXml))
+		return false;
+
+	const auto capture = [](CUIStaticItem& item)
+	{
+		SkinTexture::Variant variant;
+		variant.shader = item.GetShader();
+		variant.hasAtlasRect = item.uFlags.test(CUIStaticItem::flValidTextureRect);
+		if (variant.hasAtlasRect)
+			variant.rect = item.GetTextureRect();
+		return variant;
+	};
+
+	xr_vector<SkinTexture> textures;
+	const auto addTexture = [&](CUIStatic* widget, LPCSTR texture)
+	{
+		if (!widget || !texture || !*texture)
+			return false;
+
+		const TEX_INFO atlas = CUITextureMaster::FindItem(texture);
+		const LPCSTR atlasFile = atlas.file.c_str();
+		const LPCSTR file = atlasFile && *atlasFile ? atlasFile : texture;
+		if (!FS.exist(path, "$game_textures$", file, ".dds"))
+			return false;
+
+		CUIStatic variant;
+		variant.InitTexture(texture);
+		auto* item = widget->GetStaticItem();
+		textures.push_back({item, capture(*item), capture(*variant.GetStaticItem())});
+		return true;
+	};
+
+	auto* opaqueMain = opaqueXml.NavigateToNode("main", 0);
+	auto* translucentMain = translucentXml.NavigateToNode("main", 0);
+	if (!opaqueMain || !translucentMain)
+		return false;
+
+	const int count = opaqueXml.GetNodesNum(opaqueMain, "auto_static");
+	if (translucentXml.GetNodesNum(translucentMain, "auto_static") != count)
+		return false;
+	textures.reserve(count + 5);
+	for (int index = 0; index < count; ++index)
+	{
+		const LPCSTR original = opaqueXml.Read(opaqueMain, "auto_static:texture", index, "");
+		const LPCSTR alternate = translucentXml.Read(translucentMain, "auto_static:texture", index, "");
+		if (xr_strcmp(original, alternate) == 0)
+			continue;
+
+		string32 name;
+		xr_sprintf(name, "auto_static_%d", index);
+		auto* child = FindChild(name);
+		if (!addTexture(child ? child->ui_cast_static() : nullptr, alternate))
+			return false;
+	}
+
+	if (!addTexture(m_LeftBackground, translucentXml.Read("left_background:texture", 0, nullptr)))
+		return false;
+
+	auto* exitBackground = m_exit_button->m_background;
+	if (!exitBackground ||
+		!addTexture(exitBackground->Get(S_Enabled), translucentXml.Read("exit_button:texture_e", 0, nullptr)) ||
+		!addTexture(exitBackground->Get(S_Disabled), translucentXml.Read("exit_button:texture_d", 0, nullptr)) ||
+		!addTexture(exitBackground->Get(S_Touched), translucentXml.Read("exit_button:texture_t", 0, nullptr)) ||
+		!addTexture(exitBackground->Get(S_Highlighted), translucentXml.Read("exit_button:texture_h", 0, nullptr)))
+		return false;
+
+	m_combinedSkin = std::move(textures);
+	Msg("[PF TRANSPARENT UI] Combined vehicle textures prepared");
+	return true;
+}
+
 void CUIActorMenu::Construct()
 {
-	CUIXml								uiXml;
+	const ActorInterfaceMode interfaceMode = ReadActorInterfaceMode();
+	const bool translucent = interfaceMode == ActorInterfaceMode::Translucent;
+	CUIXml uiXml;
 	uiXml.Load(CONFIG_PATH, UI_PATH,
-		SelectInterfaceXml("actor_menu.xml", "actor_menu_transparent.xml"));
+		SelectInterfaceXml("actor_menu.xml", translucentActorMenuXml, translucent));
 
 	CUIXmlInit							xml_init;
 
@@ -110,7 +208,7 @@ void CUIActorMenu::Construct()
 	m_pUpgradeWnd						= new CUIInventoryUpgradeWnd(); 
 	AttachChild							(m_pUpgradeWnd);
 	m_pUpgradeWnd->SetAutoDelete		(true);
-	m_pUpgradeWnd->Init					();
+	m_pUpgradeWnd->Init(translucent);
 
 	m_ActorCharacterInfo				= new CUICharacterInfo();
 	m_ActorCharacterInfo->SetAutoDelete	(true);
@@ -348,6 +446,8 @@ void CUIActorMenu::Construct()
 	}
 	
 	m_exit_button		= UIHelper::Create3tButton(uiXml, "exit_button", this);
+	if (interfaceMode == ActorInterfaceMode::Combined && !PrepareCombinedSkin(uiXml))
+		Msg("[PF TRANSPARENT UI] Combined vehicle textures unavailable; using the opaque layout");
 
 	if (uiXml.NavigateToNode("clock_value", 0))
 	m_clock_value						= UIHelper::CreateStatic(uiXml, "clock_value", this);

@@ -66,6 +66,26 @@ private:
 	void UnregisterProfileCollisionSoundOwner();
 
 	collide::rq_results		RQR;
+	// COP_ENGINE_PATCH: COP-ENG-265 - service profiles share the native car lifecycle.
+	u16 m_service_hood = BI_NONE;
+	Fobb m_service_use_box{};
+	Fobb m_trunk_use_box{};
+	bool m_service_impact_damage = true;
+	bool m_service_has_plugs = true;
+	bool m_service_has_belt = true;
+	bool m_service_hull_disabled = false;
+	float m_service_spark_plug_wear = 0.f;
+	void InitServiceProfile(IKinematics& model);
+	void UpdateService();
+	void WearServiceSparkPlugs();
+	void ApplyServiceHit(float hull_loss);
+	bool CanRunServiceEngine() const;
+	bool CanStartServiceEngine() const;
+	bool ServiceElectricalPower() const;
+	bool ServiceApproachable();
+	float ServiceUseDistance() const;
+	CSE_ALifeCar* ServiceServerCar() const;
+
 	u16						m_bone_trunk;
 	xr_vector<u16> m_trunk_aux_bones;
 	xr_vector<u16> m_recursive_door_bones;
@@ -274,6 +294,8 @@ protected:
 	};
 public:
 
+	enum class UseArea : u8 { None, Service, Trunk };
+	UseArea PickUseArea(const Fvector& start, const Fvector& direction, float* distance = nullptr);
 	bool TryTrunk();
 	bool HasTrunkWeightLimit() const { return m_trunk_max_weight > EPS; }
 	float TrunkMaxWeight() const { return m_trunk_max_weight; }
@@ -514,6 +536,7 @@ virtual void ApplyDamage			(u16 level);
 		void	UpdateDrive			()							;
 		void	UpdateDcpProfile	()							;
 		void	StartDcpLoops		()							;
+		void RefreshEngineSoundOwner();
 		void	StopDcpLoops			()							;
 		void	QueueDoorSound		(u16 bone_id, bool opening)		;
 		void	SetDoorSoundPosition	(ref_sound& snd, u16 bone_id)	;
@@ -627,7 +650,7 @@ private:
 	void				 LimitWheels						()	;
 	void				 Drive								()	;
 	void				 Starter							()	;
-	void				 StartEngine						()	;
+	void				 StartEngine						(bool restoring_running_state = false)	;
 	void				 StopEngine							()	;
 	void				 Stall								()	;
 	void				 Clutch								()	;
@@ -704,13 +727,25 @@ IC	size_t				CurrentTransmission					() const {return m_current_transmission_num
 			bool DoorHit								(float P,s16 element,ALife::EHitType hit_type);
 public:
 	void DoExit();
+	bool UsesServiceProfile() const { return m_service_use_box.m_halfsize.x > 0.f; }
+	bool ServiceDisabled() const { return UsesServiceProfile() && GetfHealth() <= 0.f; }
+	bool ServiceHoodReady();
+	bool ServiceHasModule(u8 slot) const;
+	float ServiceCondition(u8 slot) const;
+	Fvector ServiceCameraTarget() const;
+	bool ServiceApply(u8 slot, u16 item_id);
+	void ServiceApplyTravelWear(float game_minutes);
+	float ServiceTransferFuel(u16 item_id, float litres, bool drain);
+	static float ServiceCanisterLitres(u16 item_id);
+
 	bool IsDcpWhiteNivaProfile() const { return m_dcp_white_niva_profile; }
 	bool PlayProfileCollisionSound(const Fvector& position, float impact_volume, u16 material);
 	static bool PlayProfileCollisionSoundForHolder(
 		IPhysicsShellHolder* holder, const Fvector& position, float impact_volume, u16 material);
 	bool UsesProfileTrunkInteraction() const
 	{
-		return m_dcp_white_niva_profile && m_trunk_open_inventory && m_bone_trunk != BI_NONE;
+		return m_trunk_use_box.m_halfsize.x > 0.f ||
+			(m_dcp_white_niva_profile && m_trunk_open_inventory && m_bone_trunk != BI_NONE);
 	}
 	void CloseProfileTrunk();
 

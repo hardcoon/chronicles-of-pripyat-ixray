@@ -504,6 +504,7 @@ class_<CScriptGameObject> script_register_game_object2(class_<CScriptGameObject>
 		// For EatableItem
 		.def("set_remaining_uses",			&CScriptGameObject::SetRemainingUses)
 		.def("get_remaining_uses",			&CScriptGameObject::GetRemainingUses)
+		.def("fuel_canister_litres", &CScriptGameObject::GetFuelCanisterLitres)
 		.def("get_max_uses",				&CScriptGameObject::GetMaxUses)
 
 		//For Ammo

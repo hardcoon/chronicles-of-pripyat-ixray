@@ -137,6 +137,37 @@ void CUIActorMenu::SetInvBox(CInventoryBox* box)
 	}
 }
 
+void CUIActorMenu::ApplyCombinedSkin(EMenuMode mode)
+{
+	if (m_combinedSkin.empty() || mode == mmUndefined)
+		return;
+
+	bool vehicle = false;
+	if (mode == mmInventory && m_pActorInvOwner)
+	{
+		if (auto* actor = m_pActorInvOwner->cast_actor())
+			vehicle = smart_cast<CCar*>(actor->Holder()) != nullptr;
+	}
+	else if (mode == mmDeadBodySearch && !m_pInvBox && m_pPartnerInvOwner)
+	{
+		vehicle = m_pPartnerInvOwner->cast_car() != nullptr;
+	}
+
+	if (vehicle == m_usingVehicleSkin)
+		return;
+
+	m_usingVehicleSkin = vehicle;
+	for (const auto& texture : m_combinedSkin)
+	{
+		const auto& variant = vehicle ? texture.translucent : texture.opaque;
+		texture.item->SetShader(variant.shader);
+		if (variant.hasAtlasRect)
+			texture.item->SetTextureRect(variant.rect);
+		else
+			texture.item->ResetOriginalRect();
+	}
+}
+
 void CUIActorMenu::SetMenuMode(EMenuMode mode)
 {
 	// COP_ENGINE_PATCH: COP-ENG-189 - a reopened/switched menu starts a new hover visit.
@@ -171,6 +202,7 @@ void CUIActorMenu::SetMenuMode(EMenuMode mode)
 		CurrentGameUI()->UIMainIngameWnd->ShowZoneMap(false);
 
 		m_currMenuMode = mode;
+		ApplyCombinedSkin(mode);
 		switch(mode)
 		{
 		case mmUndefined:

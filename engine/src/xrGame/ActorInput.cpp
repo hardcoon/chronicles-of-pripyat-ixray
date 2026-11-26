@@ -853,13 +853,12 @@ void CActor::ActorUse()
 	if(character_physics_support()->movement()->PHCapture())
 		character_physics_support()->movement()->PHReleaseObject();
 
-	// COP_ENGINE_PATCH: COP-ENG-051 - the fallback hatch selector in Actor.cpp
-	// must dispatch through the same CCar::Use path even when the generic HUD
-	// ray missed the car's narrower physics primitive.
+	// COP_ENGINE_PATCH: COP-ENG-051 - dispatch visual interaction areas through
+	// CCar::Use even when the HUD ray missed the car's physics primitive.
 	if (m_pVehicleWeLookingAt != nullptr)
 	{
 		if (CCar* car = m_pVehicleWeLookingAt->cast_car();
-			car != nullptr && car->TryProfileTrunk(Device.vCameraPosition, Device.vCameraDirection))
+			car != nullptr && car->PickUseArea(Device.vCameraPosition, Device.vCameraDirection) != CCar::UseArea::None)
 		{
 			use_Holder(m_pVehicleWeLookingAt);
 			return;

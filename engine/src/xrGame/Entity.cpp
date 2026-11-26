@@ -5,6 +5,7 @@
 #include "StdAfx.h"
 #include "Entity.h"
 #include "Actor.h"
+#include "Car.h"
 #include "xrServer_Objects_ALife_Monsters.h"
 #include "Entity.h"
 #include "Level.h"
@@ -249,6 +250,9 @@ extern bool isGodMode();
 
 void CEntity::KillEntity(u16 whoID, bool bypass_actor_check /*AVO: added for actor_before_death callback*/)
 {
+	// COP_ENGINE_PATCH: COP-ENG-265 - a zero-hull service vehicle remains repairable.
+	if (CCar* car = cast_car(); car && car->UsesServiceProfile())
+		return;
 	if (IsGameTypeSingle() && (this->ID() == Actor()->ID()) && (bypass_actor_check != true))
 	{
 #ifndef MASTER_GOLD

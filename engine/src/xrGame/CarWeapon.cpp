@@ -117,7 +117,7 @@ CCarWeapon::~CCarWeapon()
 void CCarWeapon::Load(LPCSTR section)
 {
 	inheritedShooting::Load(section);
-    SoundsLayered.LoadSound(section, "snd_shoot", "m_sndShot", false);
+    SoundsLayered.LoadSound(section, "snd_shoot", "m_sndShot", false, SOUND_TYPE_WEAPON_SHOOTING);
 	m_Ammo->Load(pSettings->r_string(section, "ammo_class"), 0);
 	// COP_ENGINE_PATCH: COP-ENG-206 - legacy mounts remain unchanged unless opted in.
 	m_inventory_ammo = m_profile_input && xr_strcmp(READ_IF_EXISTS(pSettings, r_string,
@@ -331,7 +331,11 @@ void CCarWeapon::OnShot()
 	StartFlameParticles();
 	StartSmokeParticles(m_fire_pos, zero_vel);
 
-    SoundsLayered.PlaySound("m_sndShot", m_fire_pos, m_object, false);
+	// COP_ENGINE_PATCH: COP-ENG-276 - attribute the actual shot sound to the gunner.
+	CActor* shooter = Actor();
+	if (shooter && (shooter->Holder() != holder || !shooter->g_Alive()))
+		shooter = nullptr;
+	SoundsLayered.PlaySound("m_sndShot", m_fire_pos, shooter, false);
 }
 
 void CCarWeapon::Action				(u16 id, u32 flags)

@@ -13,6 +13,7 @@
 #include "xrServer_Objects.h"
 #include "alife_space.h"
 #include "vehicle_pose_snapshot.h"
+#include "vehicle_service_state.h"
 #include "game_graph_space.h"
 #ifdef XRGAME_EXPORTS
 #include "alife_smart_terrain_task.h"
@@ -535,6 +536,8 @@ SERVER_ENTITY_DECLARE_BEGIN2(CSE_ALifeCar,CSE_ALifeDynamicObjectVisual,CSE_PHSke
 	u8								vehicle_runtime_flags;
 	// COP_ENGINE_PATCH: COP-ENG-159 - kept through server save/online transitions.
 	SVehiclePoseSnapshot			vehicle_pose;
+	vehicle_service::State			service_state;
+	void seed_vehicle_service(bool active);
 
 	u8 Engine;
 	u8 Light;

@@ -53,12 +53,12 @@ CUIInventoryUpgradeWnd::~CUIInventoryUpgradeWnd()
 	delete_data(m_schemes);
 }
 
-void CUIInventoryUpgradeWnd::Init()
+void CUIInventoryUpgradeWnd::Init(bool translucent)
 {
 	CUIXml uiXml;
 	// COP_ENGINE_PATCH: COP-ENG-209 - use the matching optional repair-window copy.
 	uiXml.Load(CONFIG_PATH, UI_PATH, CUIActorMenu::SelectInterfaceXml(
-		g_inventory_upgrade_xml, "inventory_upgrade_transparent.xml"));
+		g_inventory_upgrade_xml, "inventory_upgrade_transparent.xml", translucent));
 
 	CUIXmlInit xml_init;
 	xml_init.InitWindow(uiXml, "main", 0, this);

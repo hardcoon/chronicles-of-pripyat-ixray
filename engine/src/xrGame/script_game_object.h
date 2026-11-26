@@ -926,6 +926,7 @@ public:
 			bool IsOnBelt(CScriptGameObject* obj) const;
 			void SetRemainingUses(u8 value);
 			u8 GetRemainingUses();
+			float GetFuelCanisterLitres() const;
 			u8 GetMaxUses();
 			bool IsAmmo() const;
 			bool ActorIsJump() const;

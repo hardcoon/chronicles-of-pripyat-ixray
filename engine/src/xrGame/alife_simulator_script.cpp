@@ -44,6 +44,16 @@ CSE_ALifeDynamicObject *alife_object		(const CALifeSimulator *self_, ALife::_OBJ
 	return			(self_->objects().object(object_id,true));
 }
 
+// COP_ENGINE_PATCH: COP-ENG-272 - Lua receives generic ALife handles for native cars.
+static bool seed_vehicle_service(CALifeSimulator* self, ALife::_OBJECT_ID id, bool active)
+{
+    auto* car = smart_cast<CSE_ALifeCar*>(self->objects().object(id, true));
+    if (!car)
+        return false;
+    car->seed_vehicle_service(active);
+    return true;
+}
+
 const CALifeObjectRegistry::OBJECT_REGISTRY& alife_objects(const CALifeSimulator* self)
 {
 	VERIFY(self);
@@ -509,6 +519,7 @@ void CALifeSimulator::script_register			(lua_State *L)
 			.def("set_switch_distance",		&CALifeSimulator::set_switch_distance)
 			// COP_ENGINE_PATCH: COP-ENG-158 - collect the owned registry snapshot.
 			.def("objects",					&alife_objects, return_alife_pair_iterator)
+			.def("seed_vehicle_service", &seed_vehicle_service)
 			.def("jump_to_level",			(void (CALifeSimulator::*) (LPCSTR))(&CALifeSimulator::jump_to_level))
 
 			.def("teleport_object", &::teleport_object)

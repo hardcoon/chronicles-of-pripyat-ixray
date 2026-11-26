@@ -322,9 +322,9 @@ BOOL CCar::net_Spawn(CSE_Abstract* DC)
 	PKinematics(Visual())->CalculateBones_Invalidate();
 	PKinematics(Visual())->CalculateBones(TRUE);
 
-	SetfHealth(co->health);
+	SetfHealth(UsesServiceProfile() ? _max(0.f, co->health) : co->health);
 
-	if (!g_Alive())					b_exploded = true;
+	if (!UsesServiceProfile() && !g_Alive())					b_exploded = true;
 	else							b_exploded = false;
 
 	// COP_ENGINE_PATCH: COP-ENG-057 - ParseDefinitions/Init must run before a
@@ -335,7 +335,7 @@ BOOL CCar::net_Spawn(CSE_Abstract* DC)
 	if (m_dcp_white_niva_profile && restore_dcp_runtime)
 	{
 		m_fuel = clampr(saved_vehicle_fuel, 0.f, m_fuel_tank);
-		if ((saved_vehicle_runtime_flags & 0x01) && m_fuel > EPS && g_Alive())
+		if ((saved_vehicle_runtime_flags & 0x01) && m_fuel > EPS && g_Alive() && CanRunServiceEngine())
 		{
 			b_engine_on = true;
 			b_starting = false;
@@ -743,6 +743,8 @@ void CCar::UpdateCL()
 {
 	inherited::UpdateCL();
 	CExplosive::UpdateCL();
+	if (UsesServiceProfile())
+		UpdateService();
     UpdateGrassSpheres();
 	if (m_car_weapon)
 	{
@@ -926,8 +928,10 @@ void CCar::SyncRead(NET_Packet& P)
 	{
 		bool e = !!engine;
 
-		if (e != b_engine_on)
-			SwitchEngine();
+		if (e && !b_engine_on)
+			StartEngine(true);
+		else if (!e && b_engine_on)
+			StopEngine();
 
 		bool l = !!light;
 
@@ -1054,8 +1058,14 @@ void	CCar::Hit(SHit* pHDS)
 		HDS.power /= m_durability_factor;
 	}
 
+	const float health_before = GetfHealth();
 	inherited::Hit(&HDS);
-	if (!CDelayedActionFuse::isActive())
+	if (UsesServiceProfile())
+	{
+		SetfHealth(_max(0.f, GetfHealth()));
+		ApplyServiceHit(health_before - GetfHealth());
+	}
+	if (!UsesServiceProfile() && !CDelayedActionFuse::isActive())
 	{
 		CDelayedActionFuse::CheckCondition(GetfHealth());
 	}
@@ -1065,7 +1075,10 @@ void	CCar::Hit(SHit* pHDS)
 void CCar::ChangeCondition(float fDeltaCondition)
 {
 
-	CEntity::CalcCondition(-fDeltaCondition);
+	if (UsesServiceProfile())
+		SetfHealth(clampr(GetfHealth() + fDeltaCondition, 0.f, CDamagableItem::MaxHealth()));
+	else
+		CEntity::CalcCondition(-fDeltaCondition);
 	CDamagableItem::HitEffect();
 	if (Local() && !g_Alive() && !AlreadyDie())
 		KillEntity(Initiator());
@@ -1075,6 +1088,15 @@ bool CCar::BuildProfileTrunkInteractionObb(u16 bone_id, Fobb& interaction_obb)
 {
 	if (!UsesProfileTrunkInteraction() || Visual() == nullptr)
 		return false;
+
+	// COP_ENGINE_PATCH: COP-ENG-266 - explicit cargo bounds replace the donor's aim volume.
+	if (m_trunk_use_box.m_halfsize.x > 0.f)
+	{
+		if (bone_id != m_bone_trunk)
+			return false;
+		interaction_obb.transform(m_trunk_use_box, XFORM());
+		return true;
+	}
 
 	IKinematics* kinematics = PKinematics(Visual());
 	if (kinematics == nullptr || bone_id == BI_NONE || bone_id >= kinematics->LL_BoneCount())
@@ -1143,8 +1165,17 @@ bool CCar::BuildProfileTrunkInteractionObb(u16 bone_id, Fobb& interaction_obb)
 
 bool CCar::TryProfileTrunk(const Fvector& ray_start, const Fvector& ray_direction, float* hit_distance)
 {
-	if (ray_direction.square_magnitude() <= EPS_S)
+	if (!UsesProfileTrunkInteraction() || ray_direction.square_magnitude() <= EPS_S)
 		return false;
+
+	if (m_trunk_use_box.m_halfsize.x > 0.f)
+	{
+		Fvector relative;
+		relative.sub(ray_start, XFORM().c);
+		if (relative.dotproduct(XFORM().k) > m_trunk_use_box.m_translate.z ||
+			ray_direction.dotproduct(XFORM().k) <= EPS_S)
+			return false;
+	}
 
 	// COP_ENGINE_PATCH: COP-ENG-081 - every physical leaf of a compound DCP
 	// trunk owns an equivalent interaction volume. Aiming at either rear door
@@ -1209,10 +1240,10 @@ bool CCar::IsProfileTrunkInRange(const Fvector& world_position)
 
 bool CCar::TryTrunk()
 {
-	if (m_bone_trunk == BI_NONE)
-		return false;
 	if (UsesProfileTrunkInteraction())
 		return TryProfileTrunk(Device.vCameraPosition, Device.vCameraDirection);
+	if (m_bone_trunk == BI_NONE)
+		return false;
 
 	RQR.r_clear();
 	const float trunk_query_distance = m_dcp_white_niva_profile ? m_trunk_use_distance : 3.f;
@@ -1326,6 +1357,7 @@ void CCar::detach_Actor()
 		m_car_weapon->Action(CCarWeapon::eWpnActivate, 0);
 	Owner()->setVisible(1);
 	CHolderCustom::detach_Actor();
+	m_car_sound->RefreshEngineSoundOwner();
 	PPhysicsShell()->remove_ObjectContactCallback(ActorObstacleCallback);
 	NeutralDrive();
 	Unclutch();
@@ -1389,6 +1421,7 @@ bool CCar::attach_Actor(CGameObject* actor)
 	OnCameraChange(ectFirst);
 	PPhysicsShell()->Enable();
 	PPhysicsShell()->add_ObjectContactCallback(ActorObstacleCallback);
+	m_car_sound->RefreshEngineSoundOwner();
 
 	processing_activate();
 	ReleaseHandBreak();
@@ -1945,6 +1978,7 @@ void CCar::ParseDefinitions()
 	}
 
 	InitLinkedDoorGroups(ini);
+	InitServiceProfile(*pKinematics);
 	if (m_dcp_white_niva_profile && ini->line_exist("car_definition", "doors_use_recursive"))
 		fill_bone_vector(ini->r_string("car_definition", "doors_use_recursive"), m_recursive_door_bones);
 
@@ -2374,14 +2408,18 @@ void CCar::Drive()
 
 }
 
-void CCar::StartEngine()
+void CCar::StartEngine(bool restoring_running_state)
 {
-	if (m_fuel < EPS || b_engine_on)
+	// COP_ENGINE_PATCH: COP-ENG-273 - restored engine state does not spend a start.
+	if (m_fuel < EPS || b_engine_on ||
+		!(restoring_running_state ? CanRunServiceEngine() : CanStartServiceEngine()))
 		return;
 
 	PlayExhausts();
 	m_car_sound->Start();
 	b_engine_on = true;
+	if (!restoring_running_state)
+		WearServiceSparkPlugs();
 	m_current_rpm = 0.f;
 	b_starting = true;
 	if (m_dcp_white_niva_profile)
@@ -2903,25 +2941,19 @@ void CCar::DoExit()
 
 bool CCar::Use(const Fvector& pos, const Fvector& dir, const Fvector& foot_pos)
 {
-	if (UsableBonesActive != BI_NONE)
+	const UseArea area = PickUseArea(pos, dir);
+	if (area == UseArea::Service)
 	{
-		luabind::functor<bool> Callback;
-		ai().script_engine().functor(UsableBones[UsableBonesActive].c_str(), Callback);
-		bool CheckComplete = Callback(this);
-
-		if (CheckComplete)
-		{
-			// FX: Если скрипт вернул true, то будем считать, 
-			// что Use был выполнен и посадка в машину не требуется 
-
-			return false;
-		}
+		luabind::functor<void> open;
+		if (ai().script_engine().functor("pf_vehicle_service.show", open))
+			open(ID());
+		return false;
 	}
 
 	// COP_ENGINE_PATCH: COP-ENG-051 - the prompt and F use the exact same
 	// bone-attached interaction volume. This prevents a visible prompt from
 	// dispatching the legacy enter-car path and avoids duplicate trunk sounds.
-	if (UsesProfileTrunkInteraction() && TryProfileTrunk(pos, dir))
+	if (area == UseArea::Trunk)
 	{
 		// COP_ENGINE_PATCH: COP-ENG-073 - compound donor trunks open every
 		// registered auxiliary panel with the primary inventory hatch.
@@ -2936,6 +2968,13 @@ bool CCar::Use(const Fvector& pos, const Fvector& dir, const Fvector& foot_pos)
 			trunk->second.Open();
 		CurrentGameUI()->StartCarBody(Actor(), this);
 		return false;
+	}
+
+	if (const auto action = UsableBones.find(UsableBonesActive); action != UsableBones.end())
+	{
+		luabind::functor<bool> callback;
+		if (ai().script_engine().functor(action->second.c_str(), callback) && callback(this))
+			return false;
 	}
 
 	// COP_ENGINE_PATCH: COP-ENG-060 - explicit panel use has priority in every
@@ -2966,7 +3005,7 @@ bool CCar::Use(const Fvector& pos, const Fvector& dir, const Fvector& foot_pos)
 			if (IsGameTypeSingleCompatible() && m_bone_trunk == (u16)I->element)
 			{
 				bool IsDoorBone = is_Door((u16)I->element, i);
-				if (m_dcp_white_niva_profile && m_trunk_open_inventory)
+				if (UsesProfileTrunkInteraction())
 				{
 					// The profile path was handled above by the shared volume. A direct
 					// collision hit outside that volume must not fall through to entry.
@@ -3800,7 +3839,7 @@ void CCar::OnBeforeExplosion()
 
 void CCar::CarExplode()
 {
-	if (b_exploded) 
+	if (UsesServiceProfile() || b_exploded)
 		return;
 
 	CPHSkeleton::SetNotNeedSave();
@@ -4022,6 +4061,11 @@ u32 CCar::ExplodeTime()
 
 void CCar::Die(CObject* who)
 {
+	if (UsesServiceProfile())
+	{
+		SetfHealth(0.f);
+		return;
+	}
 	inherited::Die(who);
 	CarExplode();
 }

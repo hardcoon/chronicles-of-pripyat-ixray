@@ -53,6 +53,7 @@ void CSE_ALifeCar::script_register(lua_State *L)
 			CSE_PHSkeleton
 		)
 		.def("set_yaw", &set_yaw_car)
+		.def("seed_vehicle_service", &CSE_ALifeCar::seed_vehicle_service)
 		// COP_ENGINE_PATCH: COP-ENG-094 - retain the native saved ignition state while offline.
 		.def_readonly("engine_running", &CSE_ALifeCar::Engine)
 	];

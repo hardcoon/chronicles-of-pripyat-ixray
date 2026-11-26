@@ -53,7 +53,7 @@ public:
 	CUIInventoryUpgradeWnd() = default;
 	virtual	~CUIInventoryUpgradeWnd();
 
-	void Init();
+	void Init(bool translucent);
 	void InitInventory(CUICellItem* item, bool can_upgrade);
 
 	IC CInventoryItem const* get_inventory() const { return m_inv_item; }

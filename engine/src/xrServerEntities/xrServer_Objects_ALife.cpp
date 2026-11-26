@@ -1838,6 +1838,7 @@ CSE_ALifeCar::~CSE_ALifeCar				()
 
 void CSE_ALifeCar::STATE_Read			(NET_Packet	&tNetPacket, u16 size)
 {
+	const u32 state_end = vehicle_service::state_end(tNetPacket, size);
 	inherited1::STATE_Read		(tNetPacket,size);
 
 	if(m_wVersion>65)
@@ -1847,6 +1848,8 @@ void CSE_ALifeCar::STATE_Read			(NET_Packet	&tNetPacket, u16 size)
 	if(m_wVersion>92)
 			health=tNetPacket.r_float();
 	if(health>1.0f) health/=100.0f;
+	// COP_ENGINE_PATCH: COP-ENG-265 - legacy records end at the existing health field.
+	service_state.read(tNetPacket, state_end);
 }
 
 void CSE_ALifeCar::STATE_Write			(NET_Packet	&tNetPacket)
@@ -1854,6 +1857,13 @@ void CSE_ALifeCar::STATE_Write			(NET_Packet	&tNetPacket)
 	inherited1::STATE_Write		(tNetPacket);
 	inherited2::STATE_Write		(tNetPacket);
 	tNetPacket.w_float(health);
+	service_state.write(tNetPacket);
+}
+
+void CSE_ALifeCar::seed_vehicle_service(bool active)
+{
+	if (pSettings->line_exist(s_name.c_str(), vehicle_service::profile_line))
+		service_state.seed(active);
 }
 
 void CSE_ALifeCar::SyncRead(NET_Packet& P)

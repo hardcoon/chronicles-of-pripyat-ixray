@@ -88,6 +88,7 @@ SERVER_ENTITY_DECLARE_END
 
 SERVER_ENTITY_DECLARE_BEGIN2(CSE_ALifeItem,CSE_ALifeDynamicObjectVisual,CSE_ALifeInventoryItem)
 	bool							m_physics_disabled;
+	float service_fuel_litres = vehicle_service::canister_capacity;
 
 									CSE_ALifeItem	(LPCSTR caSection);
 	virtual							~CSE_ALifeItem	();

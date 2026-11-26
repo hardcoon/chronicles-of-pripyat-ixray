@@ -18,6 +18,7 @@ class ui_actor_state_wnd;
 class CUIItemInfo;
 class CUIFrameLineWnd;
 class CUIStatic;
+class CUIStaticItem;
 class CUITextWnd;
 class CUI3tButton;
 class CInventoryOwner;
@@ -180,6 +181,25 @@ protected:
 	u32							m_trade_partner_inventory_state;
 
 private:
+	struct SkinTexture
+	{
+		struct Variant
+		{
+			ui_shader shader;
+			Frect rect{};
+			bool hasAtlasRect = false;
+		};
+
+		CUIStaticItem* item;
+		Variant opaque;
+		Variant translucent;
+	};
+
+	xr_vector<SkinTexture> m_combinedSkin;
+	bool m_usingVehicleSkin = false;
+	bool PrepareCombinedSkin(CUIXml& opaqueXml);
+	void ApplyCombinedSkin(EMenuMode mode);
+
 	const char* m_onItemDropped = {};
 	bool m_isItemDropped = false;
 
@@ -231,7 +251,7 @@ public:
 
 public:
 	// COP_ENGINE_PATCH: COP-ENG-209 - opt-in copies of the existing inventory layouts.
-	static LPCSTR SelectInterfaceXml(LPCSTR original, LPCSTR transparent);
+	static LPCSTR SelectInterfaceXml(LPCSTR original, LPCSTR transparent, bool translucent);
 	void						SetMenuMode					(EMenuMode mode);
 	EMenuMode					GetMenuMode					() {return m_currMenuMode;};
 	void						SetActor					(CInventoryOwner* io);

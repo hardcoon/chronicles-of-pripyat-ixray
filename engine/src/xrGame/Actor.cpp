@@ -2207,10 +2207,13 @@ void CActor::shedule_Update	(u32 DT)
 
 					if (CCar* pCar = m_pVehicleWeLookingAt->cast_car())
 					{
-						if (pCar->TryTrunk())
-						{
+						// COP_ENGINE_PATCH: COP-ENG-266 - use F's selector for the HUD prompt.
+						const auto area = pCar->PickUseArea(Device.vCameraPosition, Device.vCameraDirection);
+						if (area == CCar::UseArea::Service)
+							m_sDefaultObjAction = "pf_vehicle_service_use";
+						else if (area == CCar::UseArea::Trunk ||
+							(!pCar->UsesProfileTrunkInteraction() && pCar->TryTrunk()))
 							m_sDefaultObjAction = m_sCarTrunk;
-						}
 						else if (pCar->TryUsableBones())
 						{
 							m_sDefaultObjAction = m_sCarUse;
@@ -2238,16 +2241,15 @@ void CActor::shedule_Update	(u32 DT)
 		m_pInvBoxWeLookingAt	= nullptr;
 	}
 
-	// COP_ENGINE_PATCH: COP-ENG-051 - a visual hatch can extend beyond the
-	// physics pick shape used by the generic HUD ray. Query only nearby
-	// profile cars and let their bone-attached interaction OBB select the
-	// closest hatch under the crosshair. Non-profile vehicles are untouched.
+	// COP_ENGINE_PATCH: COP-ENG-051 - visual use areas can extend beyond physics.
+	// Search nearby cars when the HUD ray did not pick a vehicle.
 	if (!input_external_handler_installed() && IsGameTypeSingleCompatible() && m_pVehicleWeLookingAt == nullptr)
 	{
 		xr_vector<ISpatialShared> nearby_objects;
 		g_SpatialSpace->q_sphere(nearby_objects, 0, STYPE_COLLIDEABLE, Device.vCameraPosition, 8.f);
 
 		CCar* selected_car = nullptr;
+		auto selected_area = CCar::UseArea::None;
 		float selected_range = flt_max;
 		for (const ISpatialShared& spatial : nearby_objects)
 		{
@@ -2257,10 +2259,11 @@ void CActor::shedule_Update	(u32 DT)
 				continue;
 
 			float hit_range = flt_max;
-			if (car->TryProfileTrunk(Device.vCameraPosition, Device.vCameraDirection, &hit_range) &&
-				hit_range < selected_range)
+			const auto area = car->PickUseArea(Device.vCameraPosition, Device.vCameraDirection, &hit_range);
+			if (area != CCar::UseArea::None && hit_range < selected_range)
 			{
 				selected_car = car;
+				selected_area = area;
 				selected_range = hit_range;
 			}
 		}
@@ -2272,7 +2275,8 @@ void CActor::shedule_Update	(u32 DT)
 			m_pInvBoxWeLookingAt = nullptr;
 			m_pPersonWeLookingAt = nullptr;
 			m_pVehicleWeLookingAt = selected_car;
-			m_sDefaultObjAction = m_sCarTrunk;
+			m_sDefaultObjAction = selected_area == CCar::UseArea::Service ?
+				"pf_vehicle_service_use" : m_sCarTrunk.c_str();
 		}
 	}
 

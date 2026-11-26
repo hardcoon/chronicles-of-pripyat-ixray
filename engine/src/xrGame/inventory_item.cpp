@@ -12,6 +12,7 @@
 #include "inventory_item.h"
 #include "inventory_item_impl.h"
 #include "Inventory.h"
+#include "xrServer_Objects_ALife_Items.h"
 //#include "Physics.h"
 #include "PhysicsShellHolder.h"
 #include "entity_alive.h"
@@ -486,6 +487,13 @@ BOOL CInventoryItem::net_Spawn			(CSE_Abstract* DC)
 	if ( IsGameTypeSingle() )
 	{
 		net_Spawn_install_upgrades( pSE_InventoryItem->m_upgrades );
+	}
+
+	// COP_ENGINE_PATCH: COP-ENG-271 - initialize carrying weight from the saved litres.
+	if (e->s_name == vehicle_service::canister_section)
+	{
+		if (const auto* canister = smart_cast<CSE_ALifeItem*>(e))
+			setWeight(vehicle_service::bounded(canister->service_fuel_litres, vehicle_service::canister_capacity));
 	}
 
 	if (!IsGameTypeSingle())

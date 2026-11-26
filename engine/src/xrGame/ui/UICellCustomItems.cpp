@@ -2,6 +2,8 @@
 #include "UICellCustomItems.h"
 #include "UIInventoryUtilities.h"
 #include "../Weapon.h"
+#include "../Car.h"
+#include "../../xrEngine/string_table.h"
 #include "UIDragDropListEx.h"
 #include "../../xrUI/Widgets/UIProgressBar.h"
 
@@ -55,6 +57,10 @@ bool CUIInventoryCellItem::EqualTo(CUICellItem* itm)
 	{
 		return false;
 	}
+
+	// COP_ENGINE_PATCH: COP-ENG-265 - context use must target one canister ID.
+	if (object()->object().cNameSect() == vehicle_service::canister_section)
+		return false;
 
 	if (!fsimilar(object()->GetCondition(), ci->object()->GetCondition(), 0.01f))
 	{
@@ -119,6 +125,28 @@ void CUIInventoryCellItem::Update()
 void CUIInventoryCellItem::UpdateItemText()
 {
 	if (!m_text) return;
+
+	// COP_ENGINE_PATCH: COP-ENG-271 - reuse the stack badge for this canister's litres.
+	if (object()->object().cNameSect() == vehicle_service::canister_section)
+	{
+		const float saved = CCar::ServiceCanisterLitres(object()->object().ID());
+		const float litres = saved >= 0.f ? saved :
+			vehicle_service::bounded(object()->Weight(), vehicle_service::canister_capacity);
+		const int tenths = iFloor(litres * 10.f + .5f);
+		const shared_str unit = CStringTable().translate("pf_vehicle_service_litre");
+		string32 text;
+		if (litres > 0.f && tenths == 0)
+			xr_sprintf(text, "<0.1%s", unit.c_str());
+		else if (tenths % 10)
+			xr_sprintf(text, "%d.%d%s", tenths / 10, tenths % 10, unit.c_str());
+		else
+			xr_sprintf(text, "%d%s", tenths / 10, unit.c_str());
+
+		m_text->TextItemControl()->SetText(text);
+		m_text->Show(true);
+		return;
+	}
+
 	const u32	helper_count	=  	(u32)std::count_if(m_childs.begin(), m_childs.end(), ::detail::is_helper_pred()) 
 									+ IsHelper() ? 1 : 0;
 

@@ -13,6 +13,7 @@
 #include "alife_simulator.h"
 #include "../../xrEngine/string_table.h"
 #include "../inventory_item.h"
+#include "../Car.h"
 #include "UIInventoryUtilities.h"
 #include "../PhysicsShellHolder.h"
 #include "UIWpnParams.h"
@@ -223,7 +224,21 @@ void CUIItemInfo::InitItem(CUICellItem* pCellItem, CInventoryItem* pCompareItem,
 	string256				str;
 	if ( UIName )
 	{
-		UIName->SetText		(pInvItem->NameItem());
+		// COP_ENGINE_PATCH: COP-ENG-265 - show this physical canister's saved volume.
+		const float litres = pInvItem->object().cNameSect() == vehicle_service::canister_section
+			? CCar::ServiceCanisterLitres(pInvItem->object().ID()) : -1.f;
+		if (litres >= 0.f)
+		{
+			string256 name;
+			LPCSTR unit = g_pStringTable->translate("pf_vehicle_service_litre").c_str();
+			if (litres > 0.f && litres < .1f)
+				xr_sprintf(name, "%s  <0.1/20 %s", pInvItem->NameItem(), unit);
+			else
+				xr_sprintf(name, "%s  %.1f/20 %s", pInvItem->NameItem(), litres, unit);
+			UIName->SetText(name);
+		}
+		else
+			UIName->SetText(pInvItem->NameItem());
 		UIName->AdjustHeightToText();
 		pos.y = UIName->GetWndPos().y + UIName->GetHeight() + 4.0f;
 	}

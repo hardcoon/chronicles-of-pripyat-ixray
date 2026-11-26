@@ -6,6 +6,7 @@
 #include "Hit.h"
 #include "PHDestroyable.h"
 #include "Car.h"
+#include "Actor.h"
 #include "../xrEngine/GameMtlLib.h"
 #include "../Include/xrRender/Kinematics.h"
 #include "../xrPhysics/IPHWorld.h"
@@ -34,12 +35,12 @@ void CreateOptionalCarSound(CInifile* ini, LPCSTR key, ref_sound& sound)
 		sound.create(name, st_Effect, sg_SourceType);
 }
 
-void StartLoop(CCar* car, ref_sound& sound)
+void StartLoop(CObject* source, ref_sound& sound)
 {
 	if (!sound._handle() || sound._feedback())
 		return;
 
-	sound.play(car, sm_Looped);
+	sound.play(source, sm_Looped);
 	sound.set_volume(0.f);
 }
 
@@ -198,11 +199,24 @@ void CCar::SCarSound::SetSoundPosition(ref_sound& snd)
 	}
 }
 
+void CCar::SCarSound::RefreshEngineSoundOwner()
+{
+	// COP_ENGINE_PATCH: COP-ENG-276 - update running emitters on seat changes, including save restore.
+	// A null owner keeps the audio playing and suppresses its AI sound events.
+	CActor* driver = pcar->OwnerActor();
+	for (ref_sound* sound : {&snd_engine, &snd_idle, &snd_decel, &snd_engine_start, &snd_engine_stop})
+	{
+		if (sound->_feedback())
+			sound->_p->g_object = driver;
+	}
+}
+
 void CCar::SCarSound::StartDcpLoops()
 {
-	StartLoop(pcar, snd_engine);
-	StartLoop(pcar, snd_idle);
-	StartLoop(pcar, snd_decel);
+	CActor* driver = pcar->OwnerActor();
+	StartLoop(driver, snd_engine);
+	StartLoop(driver, snd_idle);
+	StartLoop(driver, snd_decel);
 	StartLoop(pcar, snd_whine);
 }
 
@@ -479,7 +493,7 @@ void CCar::SCarSound::UpdateStarting()
 	}
 	else if (time_state_start + engine_start_delay < Device.dwTimeGlobal)
 	{
-		snd_engine.play(pcar, sm_Looped);
+		snd_engine.play(pcar->OwnerActor(), sm_Looped);
 		UpdateDrive();
 	}
 
@@ -600,7 +614,7 @@ void CCar::SCarSound::Start()
 		SwitchOn();
 	SwitchState(sndStarting);
 	previous_rpm = 0.f;
-	snd_engine_start.play(pcar);
+	snd_engine_start.play(pcar->OwnerActor());
 	SetInteriorOneShotVolume(snd_engine_start);
 	SetSoundPosition(snd_engine_start);
 }
@@ -613,7 +627,7 @@ void CCar::SCarSound::Stall()
 	SwitchState(sndStalling);
 	if (!pcar->m_dcp_white_niva_profile)
 		snd_engine.stop_deffered();
-	snd_engine_stop.play(pcar);
+	snd_engine_stop.play(pcar->OwnerActor());
 	SetInteriorOneShotVolume(snd_engine_stop);
 	SetSoundPosition(snd_engine_stop);
 }
@@ -626,7 +640,7 @@ void CCar::SCarSound::Stop()
 	SwitchState(sndStoping);
 	if (!pcar->m_dcp_white_niva_profile)
 		snd_engine.stop_deffered();
-	snd_engine_stop.play(pcar);
+	snd_engine_stop.play(pcar->OwnerActor());
 	SetInteriorOneShotVolume(snd_engine_stop);
 	SetSoundPosition(snd_engine_stop);
 }
@@ -640,7 +654,7 @@ void CCar::SCarSound::Drive()
 	if (pcar->m_dcp_white_niva_profile)
 		StartDcpLoops();
 	else if (!snd_engine._feedback())
-		snd_engine.play(pcar, sm_Looped);
+		snd_engine.play(pcar->OwnerActor(), sm_Looped);
 	SetSoundPosition(snd_engine);
 }
 

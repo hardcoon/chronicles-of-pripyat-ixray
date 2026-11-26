@@ -344,10 +344,17 @@ void CSE_ALifeItem::STATE_Write				(NET_Packet &tNetPacket)
 {
 	inherited1::STATE_Write		(tNetPacket);
 	inherited2::STATE_Write		(tNetPacket);
+	// COP_ENGINE_PATCH: COP-ENG-265 - the existing canister keeps its own quantity.
+	if (!tNetPacket.inistream && s_name == vehicle_service::canister_section)
+	{
+		tNetPacket.w_u8(vehicle_service::save_version);
+		tNetPacket.w_float(service_fuel_litres);
+	}
 }
 
 void CSE_ALifeItem::STATE_Read				(NET_Packet &tNetPacket, u16 size)
 {
+	const u32 state_end = vehicle_service::state_end(tNetPacket, size);
 	inherited1::STATE_Read		(tNetPacket, size);
 	if ((m_tClassID == CLSID_OBJECT_W_BINOCULAR) && (m_wVersion < 37)) {
 		tNetPacket.r_u16		();
@@ -355,6 +362,13 @@ void CSE_ALifeItem::STATE_Read				(NET_Packet &tNetPacket, u16 size)
 		tNetPacket.r_u8			();
 	}
 	inherited2::STATE_Read		(tNetPacket, size);
+	if (s_name == vehicle_service::canister_section)
+	{
+		service_fuel_litres = vehicle_service::canister_capacity;
+		if (state_end && tNetPacket.r_tell() + sizeof(u8) + sizeof(float) == state_end &&
+			tNetPacket.r_u8() == vehicle_service::save_version)
+			service_fuel_litres = vehicle_service::bounded(tNetPacket.r_float(), vehicle_service::canister_capacity);
+	}
 }
 
 void CSE_ALifeItem::UPDATE_Write			(NET_Packet &tNetPacket)

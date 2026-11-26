@@ -125,7 +125,7 @@ void CCar::vfProcessInputKey	(int iCommand, bool bPressed)
 
 void CCar::OnKeyboardPress(int cmd)
 {
-	if (!IsMyCar() && !g_dedicated_server)
+	if (ServiceDisabled() || (!IsMyCar() && !g_dedicated_server))
 		return;
 	// COP_ENGINE_PATCH: COP-ENG-203 - reuse the user's native slot bindings.
 	if (cmd == kWPN_1 || cmd == kWPN_2)
@@ -186,7 +186,7 @@ void CCar::OnKeyboardPress(int cmd)
 
 void CCar::OnKeyboardRelease(int cmd)
 {
-	if (!IsMyCar() && !g_dedicated_server)
+	if (ServiceDisabled() || (!IsMyCar() && !g_dedicated_server))
 		return;
 	// COP_ENGINE_PATCH: COP-ENG-203 - a key held before role switching must
 	// not release the operator's parking brake after its press was discarded.

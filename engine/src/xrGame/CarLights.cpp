@@ -239,6 +239,14 @@ void CCarLights::UpdateAutomaticProfileLights()
 	if (!m_pcar->m_dcp_white_niva_profile)
 		return;
 
+	if (!m_pcar->ServiceElectricalPower())
+	{
+		SetGroupState(m_stop_lights, false);
+		SetGroupState(m_reverse_lights, false);
+		SetGroupState(m_indoor_lights, false);
+		return;
+	}
+
 	SetGroupState(m_stop_lights, m_pcar->b_breaks);
 	SetGroupState(m_reverse_lights, m_pcar->b_engine_on && m_pcar->CurrentTransmission() == 0);
 	bool door_open = false;
@@ -289,13 +297,13 @@ void CCarLights::SwitchHeadLights()
 	VERIFY(!physics_world()->Processing());
 	if (m_head_lights.empty())
 		return;
-	SetGroupState(m_head_lights, !m_head_lights.front()->isOn());
+	SetGroupState(m_head_lights, !m_head_lights.front()->isOn() && m_pcar->ServiceElectricalPower());
 }
 
 void CCarLights::TurnOnHeadLights()
 {
 	VERIFY(!physics_world()->Processing());
-	SetGroupState(m_head_lights, true);
+	SetGroupState(m_head_lights, m_pcar->ServiceElectricalPower());
 }
 
 void CCarLights::TurnOffHeadLights()
