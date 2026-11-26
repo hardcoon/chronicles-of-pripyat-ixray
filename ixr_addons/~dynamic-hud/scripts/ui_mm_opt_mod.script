@@ -13,6 +13,7 @@ function opt_mod:InitControls(x, y, xml, handler)
     self:SetAutoDelete(true)
     self.scroll_v = xml:InitScrollView("main_dialog:scroll_v", self)
     self.preferences = {}
+    self.interface_mode = nil
 
     local layout = CScriptXmlInit()
     layout:ParseFile("pf_mod_options.xml")
@@ -49,8 +50,15 @@ function opt_mod:InitControls(x, y, xml, handler)
     -- Keep the same console entry and COptionsManager group used in the old page.
     addRow("pf_mod_opt_shift_transfer", "check_shift_transfer")
     if getFS():exist("$game_scripts$", "pf_inventory_ui.script") then
-        addRow("pf_mod_opt_transparent_interface", "check", pf_inventory_ui.is_enabled,
-            pf_inventory_ui.set_enabled)
+        local row = layout:InitStatic("row_interface", nil)
+        local caption = layout:InitStatic("caption_interface", row)
+        caption:TextControl():SetTextST("pf_mod_opt_interface_layout")
+        self.interface_mode = layout:InitComboBox("list_interface_mode", row)
+        self.interface_mode:AddItem("pf_mod_opt_interface_opaque", 0)
+        self.interface_mode:AddItem("pf_mod_opt_interface_translucent", 1)
+        self.interface_mode:AddItem("pf_mod_opt_interface_combined", 2)
+        self.scroll_v:AddWindow(row, true)
+        row:SetAutoDelete(false)
     end
     if getFS():exist("$game_scripts$", "pf_irc_chat.script") then
         addRow("pf_mod_opt_game_chat", "check", pf_irc_chat.is_enabled, pf_irc_chat.set_enabled)
@@ -72,6 +80,10 @@ function opt_mod:SetValues()
         preference.backup = preference.get() == true
         preference.control:SetCheck(preference.backup)
     end
+    if self.interface_mode then
+        self.applied_interface_mode = pf_inventory_ui.get_mode()
+        self.interface_mode:SetCurrentIdx(self.applied_interface_mode)
+    end
 end
 
 function opt_mod:SaveValues()
@@ -80,6 +92,13 @@ function opt_mod:SaveValues()
         if value ~= preference.backup then
             if not preference.set(value) then return false end
             preference.backup = value
+        end
+    end
+    if self.interface_mode then
+        local mode = self.interface_mode:GetCurrentIdx()
+        if mode ~= self.applied_interface_mode then
+            if not pf_inventory_ui.set_mode(mode) then return false end
+            self.applied_interface_mode = mode
         end
     end
     return true

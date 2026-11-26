@@ -1,42 +1,52 @@
 -- Installation-local choice. Do not put this preference in actor save data.
-local cached_enabled = nil
+local opaque_mode, translucent_mode, combined_mode = 0, 1, 2
+local saved_modes = {["0"] = opaque_mode, ["1"] = translucent_mode, ["2"] = combined_mode}
+local cached_mode = nil
 
 local function setting_path()
     return getFS():update_path("$app_data_root$", "pf_transparent_interface.setting")
 end
 
-function is_enabled()
-    if cached_enabled ~= nil then return cached_enabled end
+function get_mode()
+    if cached_mode ~= nil then return cached_mode end
     local file = io.open(setting_path(), "r")
-    cached_enabled = false
+    cached_mode = combined_mode
     if file then
-        cached_enabled = file:read("*l") == "1"
+        local value = file:read("*l")
+        cached_mode = saved_modes[value] or combined_mode
         file:close()
     end
-    return cached_enabled
+    return cached_mode
 end
 
-function set_enabled(enabled)
-    enabled = enabled == true
-    if enabled == is_enabled() then return true end
+function set_mode(mode)
+    if mode ~= opaque_mode and mode ~= translucent_mode and mode ~= combined_mode then return false end
+    if mode == get_mode() then return true end
     local file = io.open(setting_path(), "w")
     if not file then
         printf("[PF TRANSPARENT UI] Unable to save client preference")
         return false
     end
-    local written = file:write(enabled and "1\n" or "0\n")
+    local written = file:write(mode, "\n")
     local closed = file:close()
     if not written or not closed then
         printf("[PF TRANSPARENT UI] Unable to finish saving client preference")
         return false
     end
-    cached_enabled = enabled
-    printf("[PF TRANSPARENT UI] Client preference saved: %s", enabled and "on" or "off")
-    -- The built-in UI reload recreates inventory/repair windows using the chosen
-    -- XML family. At startup they are created on the next game load instead.
+    cached_mode = mode
+    printf("[PF TRANSPARENT UI] Client interface mode saved: %d", mode)
+    -- The game UI picks up the saved layout when it is created or reloaded.
     if alife() ~= nil then
         get_console():execute("ui_reload")
         get_console():execute("flush")
     end
     return true
+end
+
+function is_enabled()
+    return get_mode() == translucent_mode
+end
+
+function set_enabled(enabled)
+    return set_mode(enabled == true and translucent_mode or opaque_mode)
 end
