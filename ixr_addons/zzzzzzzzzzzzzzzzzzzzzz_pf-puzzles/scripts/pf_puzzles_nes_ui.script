@@ -71,14 +71,14 @@ function Controller:initialize(owner)
     xml:InitStatic("nes:content:menu_separator", self.content)
     self.help = xml:InitTextWnd("nes:content:help", self.content)
     self.status = xml:InitTextWnd("nes:content:status", self.content)
-    self.screen = PfNesScreen(); self.screen:SetAutoDelete(false)
+    self.screen = PfNesScreen()
     self.screen:SetMuted(true)
     self:update_volume()
     self.bindings=button_map()
     self.input_guard=PfNesInputGuard(); self.input_guard:SetAutoDelete(false)
     for key in pairs(self.bindings) do self.input_guard:AddKey(key) end
     self.input_guard:SetActive(false)
-    self.content:AttachChild(self.screen)
+    self.screen:AttachTo(self.content)
     self.screen:SetWndRect(Frect():set(63,214,751,654))
     self.back = xml:Init3tButton("nes:content:back", self.content)
     self.save = xml:Init3tButton("nes:content:save", self.content)
@@ -156,6 +156,7 @@ function Controller:enter()
         if not ok then return self:show_error(id,detail) end
         self.last_frame=-1
     end
+    self.screen:SetFocusTracking(true)
     self:update(true)
     return true
 end
@@ -275,6 +276,7 @@ function Controller:update(force)
     self.sound_button:TextControl():SetText(tr(self.sound and "pf_nes_sound_on" or "pf_nes_sound_off"))
 end
 function Controller:leave()
+    self.screen:SetFocusTracking(false)
     self.active=false; self.pending_progress=false; self:hide_progress(); self:hide_rules(); self:update_visibility()
     self.root:Show(false)
 end
