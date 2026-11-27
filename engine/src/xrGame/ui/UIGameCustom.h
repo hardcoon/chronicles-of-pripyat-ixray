@@ -137,6 +137,8 @@ protected:
 
 	CUIActorMenu*		m_ActorMenu;
 	CUIPdaWnd*			m_PdaMenu;
+    CUIPdaWnd* m_desktopPdaMenu = nullptr;
+    CUIPdaWnd* m_devicePdaMenu = nullptr;
 
 	bool				m_bShowGameIndicators;
 public:
@@ -173,6 +175,7 @@ public:
 	virtual void _BCL	OnFrame					();
 	
 	IC CUIActorMenu&	ActorMenu				() const { return *m_ActorMenu; }
+	void SelectPdaLayout(bool physical);
 	IC CUIPdaWnd&		PdaMenu					() const { return *m_PdaMenu;   }
 			bool		ShowActorMenu			();
 			void		HideActorMenu			();

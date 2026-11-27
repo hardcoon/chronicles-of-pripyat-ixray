@@ -75,7 +75,10 @@ void CUIGameCustom::OnFrame()
 {
 	PROF_EVENT("CUIGameCustom::OnFrame");
 
-	CDialogHolder::OnFrame();
+    {
+        const PdaUiCanvasScope canvas(m_PdaMenu && m_PdaMenu->UsesPhysicalLayout() && HasPdaInput());
+        CDialogHolder::OnFrame();
+    }
 
 	xrCriticalSectionGuard guard(ui_lock);
 
@@ -322,6 +325,17 @@ void CUIGameCustom::ShowMessagesWindow()
 		m_pMessagesWnd->Show(true);
 }
 
+// COP_ENGINE_PATCH: COP-ENG-279 - keep the desktop and device views separate across holster/vehicle fallback.
+void CUIGameCustom::SelectPdaLayout(bool physical)
+{
+    if (!m_PdaMenu || m_PdaMenu->IsShown() || m_PdaMenu->UsesPhysicalLayout() == physical)
+        return;
+    ClosePdaPopups();
+    CUIPdaWnd*& view = physical ? m_devicePdaMenu : m_desktopPdaMenu;
+    if (!view) view = new CUIPdaWnd(physical);
+    m_PdaMenu = view;
+}
+
 bool CUIGameCustom::ShowPdaMenu()
 {
 	HideActorMenu();
@@ -338,6 +352,7 @@ bool CUIGameCustom::ShowPdaMenu()
         pda->Toggle3D();
         return true;
     }
+    SelectPdaLayout(false);
 	m_PdaMenu->ShowDialog(true);
 	return true;
 }
@@ -347,6 +362,10 @@ void CUIGameCustom::ResetPdaForScriptReload()
 {
     if (m_PdaMenu)
         m_PdaMenu->Reset();
+    // The dormant page has no pending dialog callbacks and may still own
+    // controls created by the outgoing Lua VM.
+    if (m_desktopPdaMenu != m_PdaMenu) xr_delete(m_desktopPdaMenu);
+    if (m_devicePdaMenu != m_PdaMenu) xr_delete(m_devicePdaMenu);
 }
 
 void CUIGameCustom::HidePdaMenu()
@@ -461,6 +480,7 @@ static bool SendPdaMouseAction(CUIDialogWnd* receiver, EUIMessages action)
 
 bool CUIGameCustom::IR_UIOnMouseMove(int dx, int dy)
 {
+    const PdaUiCanvasScope canvas(m_PdaMenu && m_PdaMenu->UsesPhysicalLayout() && HasPdaInput());
     if (!IsReadingPdaInput() || !TopInputReceiver()->IR_process() || !GetUICursor().IsVisible())
         return CDialogHolder::IR_UIOnMouseMove(dx, dy);
     GetUICursor().UpdateCursorPosition(dx, dy);
@@ -470,6 +490,7 @@ bool CUIGameCustom::IR_UIOnMouseMove(int dx, int dy)
 
 bool CUIGameCustom::IR_UIOnMouseWheel(int direction)
 {
+    const PdaUiCanvasScope canvas(m_PdaMenu && m_PdaMenu->UsesPhysicalLayout() && HasPdaInput());
     if (!IsReadingPdaInput() || !TopInputReceiver()->IR_process())
         return CDialogHolder::IR_UIOnMouseWheel(direction);
     SendPdaMouseAction(TopInputReceiver(), direction > 0 ? WINDOW_MOUSE_WHEEL_UP : WINDOW_MOUSE_WHEEL_DOWN);
@@ -502,16 +523,19 @@ bool CUIGameCustom::DispatchPdaMouseButton(int dik, bool pressed)
 
 bool CUIGameCustom::IR_UIOnKeyboardPress(int dik)
 {
+    const PdaUiCanvasScope canvas(m_PdaMenu && m_PdaMenu->UsesPhysicalLayout() && HasPdaInput());
     return DispatchPdaMouseButton(dik, true) || CDialogHolder::IR_UIOnKeyboardPress(dik);
 }
 
 bool CUIGameCustom::IR_UIOnKeyboardRelease(int dik)
 {
+    const PdaUiCanvasScope canvas(m_PdaMenu && m_PdaMenu->UsesPhysicalLayout() && HasPdaInput());
     return DispatchPdaMouseButton(dik, false) || CDialogHolder::IR_UIOnKeyboardRelease(dik);
 }
 
 bool CUIGameCustom::IR_UIOnKeyboardHold(int dik)
 {
+    const PdaUiCanvasScope canvas(m_PdaMenu && m_PdaMenu->UsesPhysicalLayout() && HasPdaInput());
     if (dik == MOUSE_1 && IsReadingPdaInput() && TopInputReceiver()->IR_process())
     {
         if (m_pdaLeftPressReceiver == TopInputReceiver()) TopInputReceiver()->OnKeyboardHold(dik);
@@ -539,6 +563,7 @@ void CUIGameCustom::StartDialog(CUIDialogWnd* dialog, bool hideIndicators)
 
 void CUIGameCustom::ShowPdaDialog(CUIDialogWnd* dialog, bool hideIndicators)
 {
+    const PdaUiCanvasScope canvas(m_PdaMenu && m_PdaMenu->UsesPhysicalLayout() && HasPdaInput());
     if (!dialog || dialog->IsShown()) return;
     const auto* pda = g_actor ? g_actor->GetPDA() : nullptr;
     if (pda && pda->Is3DActive())
@@ -638,7 +663,9 @@ void CUIGameCustom::UnLoad()
     ClosePdaPopups();
 	xr_delete					(m_msgs_xml);
 	xr_delete					(m_ActorMenu);
-	xr_delete					(m_PdaMenu);
+    m_PdaMenu = nullptr;
+    xr_delete(m_devicePdaMenu);
+    xr_delete(m_desktopPdaMenu);
 	xr_delete					(m_window);
 	xr_delete					(UIMainIngameWnd);
 	xr_delete					(m_pMessagesWnd);
@@ -660,7 +687,8 @@ void CUIGameCustom::Load()
 		m_ActorMenu				= new CUIActorMenu		();
 
 		R_ASSERT				(nullptr==m_PdaMenu);
-		m_PdaMenu				= new CUIPdaWnd			();
+        m_desktopPdaMenu = new CUIPdaWnd();
+        m_PdaMenu = m_desktopPdaMenu;
 		
 		R_ASSERT				(nullptr==m_window);
 		m_window				= new CUIWindow			();

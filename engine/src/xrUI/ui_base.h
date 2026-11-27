@@ -15,6 +15,25 @@ public:
 
 };
 
+// COP_ENGINE_PATCH: COP-ENG-279 - a fixed canvas for the physical device only.
+class UI_API PdaUiCanvasScope
+{
+public:
+    static constexpr u32 Width = 1536;
+    static constexpr u32 Height = 1024;
+    static u32 RenderWidth();
+    static u32 RenderHeight();
+
+    explicit PdaUiCanvasScope(bool physical);
+    ~PdaUiCanvasScope();
+    PdaUiCanvasScope(const PdaUiCanvasScope&) = delete;
+    PdaUiCanvasScope& operator=(const PdaUiCanvasScope&) = delete;
+    static bool Active();
+
+private:
+    bool m_previous;
+};
+
 class UI_API ui_core: 
 	public CDeviceResetNotifier
 {
@@ -29,6 +48,7 @@ class UI_API ui_core:
 	Fvector2		m_pp_scale_;
 	Fvector2		m_scale_;
 	Fvector2*		m_current_scale;
+    const Fvector2& ActiveScale() const;
 
 public:
 	xr_stack<Frect> m_Scissors;
@@ -38,15 +58,15 @@ public:
 	CFontManager&	Font							()								{return *g_FontManager;}
 	CUICursor&		GetUICursor						()								{return *m_pUICursor;}
 
-	IC float		ClientToScreenScaledX			(float left)	const			{return left * m_current_scale->x;};
-	IC float		ClientToScreenScaledY			(float top)		const			{return top * m_current_scale->y;};
+	IC float		ClientToScreenScaledX			(float left)	const			{return left * ActiveScale().x;};
+	IC float		ClientToScreenScaledY			(float top)		const			{return top * ActiveScale().y;};
 	void			ClientToScreenScaled			(Fvector2& dest, float left, float top)	const;
 	void			ClientToScreenScaled			(Fvector2& src_and_dest)const;
 	void			ClientToScreenScaledWidth		(float& src_and_dest)	const;
 	void			ClientToScreenScaledHeight		(float& src_and_dest)	const;
 	void			AlignPixel						(float& src_and_dest)	const;
 
-	const C2DFrustum& ScreenFrustum					()	const						{return (m_bPostprocess)?m_2DFrustumPP:m_2DFrustum;}
+    const C2DFrustum& ScreenFrustum() const;
 	C2DFrustum&		ScreenFrustumLIT				()								{return m_FrustumLIT;}
 	void			PushScissor						(const Frect& r, bool overlapped=false);
 	void			PopScissor						();

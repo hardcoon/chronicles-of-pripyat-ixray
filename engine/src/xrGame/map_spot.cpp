@@ -3,6 +3,7 @@
 #include "map_location.h"
 
 #include "../../xrUI/UIXmlInit.h"
+#include "../xrUI/ui_base.h"
 #include "ui/UIMapWnd.h"
 #include "Level.h"
 #include "ui/UIInventoryUtilities.h"
@@ -31,9 +32,12 @@ CMapSpot::~CMapSpot()
 void CMapSpot::Load(CUIXml* xml, LPCSTR path)
 {
 	CUIXmlInit::InitStatic(*xml,path,0,this);
+	m_loadedOnPhysicalPda = PdaUiCanvasScope::Active();
+	m_loadedAspect = UI().get_current_kx();
+	m_pdaWidthScale = 1.0f;
 	if(!Heading())
 	{
-		SetWidth			(GetWidth()*UI().get_current_kx());
+		SetWidth			(GetWidth()*m_loadedAspect);
 		SetStretchTexture	(true);
 	}
 
@@ -56,7 +60,7 @@ void CMapSpot::Load(CUIXml* xml, LPCSTR path)
 		m_border_static			= UIHelper::CreateStatic( *xml, str, this );
 		m_border_static->Show	( false );
 		if (!Heading()) {
-			m_border_static->SetWidth(m_border_static->GetWidth() * UI().get_current_kx());
+			m_border_static->SetWidth(m_border_static->GetWidth() * m_loadedAspect);
 			if (!UI().is_widescreen()) {
 				m_border_static->SetHeight(m_border_static->GetHeight() * UI().get_current_kx());
 			} else {
@@ -66,6 +70,35 @@ void CMapSpot::Load(CUIXml* xml, LPCSTR path)
 		}
 	}
 	m_mark_focused = false;
+}
+
+// COP_ENGINE_PATCH: COP-ENG-284 - PDA map locations are shared by both canvases.
+void CMapSpot::UpdatePdaMapAspect()
+{
+	// The rotating draw path already applies the active canvas aspect.
+	if (Heading())
+		return;
+
+	const float scale = (PdaUiCanvasScope::Active() || m_loadedOnPhysicalPda)
+		? UI().get_current_kx() / m_loadedAspect : 1.0f;
+	if (scale == m_pdaWidthScale)
+		return;
+
+	const float change = scale / m_pdaWidthScale;
+	SetWidth(m_bScale ? GetWidth() * change : m_originSize.x * scale);
+	if (m_border_static)
+	{
+		m_border_static->SetWidth(m_border_static->GetWidth() * change);
+		Fvector2 position = m_border_static->GetWndPos();
+		position.x *= change;
+		m_border_static->SetWndPos(position);
+	}
+	m_pdaWidthScale = scale;
+}
+
+Fvector2 CMapSpot::MapOriginSize() const
+{
+	return Fvector2().set(m_originSize.x * m_pdaWidthScale, m_originSize.y);
 }
 
 LPCSTR CMapSpot::GetHint() 
@@ -358,11 +391,12 @@ void CComplexMapSpot::SetWndSize( const Fvector2& size )
 {
 	inherited::SetWndSize( size );
 	
-	if ( m_originSize.x == 0.0f || m_originSize.y == 0.0f )
+	const Fvector2 origin = MapOriginSize();
+	if ( origin.x == 0.0f || origin.y == 0.0f )
 	{
 		return;
 	}
-	float k = size.x / m_originSize.x;
+	float k = size.x / origin.x;
 	xrCriticalSectionGuard guard(csUi);
 	for ( WINDOW_LIST_it it = m_ChildWndList.begin(); m_ChildWndList.end() != it; ++it )
 	{

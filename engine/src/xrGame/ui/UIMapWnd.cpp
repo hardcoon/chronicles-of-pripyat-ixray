@@ -64,7 +64,8 @@ CUIMapWnd::~CUIMapWnd()
 	delete_data( m_dbg_text_hint );
 	delete_data( m_dbg_info );
 #endif // DEBUG/**/
-	g_map_wnd				= nullptr;
+
+    if (g_map_wnd == this) g_map_wnd = nullptr;
 }
 
 
@@ -269,6 +270,7 @@ void CUIMapWnd::Show(bool status)
 
 void CUIMapWnd::Activated()
 {
+    g_map_wnd = this;
 	Fvector v					= Level().CurrentEntity()->Position();
 	Fvector2 v2;
 	v2.set						(v.x,v.z);

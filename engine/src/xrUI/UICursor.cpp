@@ -25,6 +25,7 @@ CUICursor::CUICursor()
 CUICursor::~CUICursor	()
 {
 	xr_delete				(m_static);
+    xr_delete(m_deviceStatic);
 	Device.seqRender.Remove	(this);
 	Device.seqResolutionChanged.Remove(this);
 }
@@ -51,18 +52,24 @@ void CUICursor::Show()
 
 void CUICursor::InitInternal()
 {
+    m_static = CreateCursor();
+}
+
+CUIStatic* CUICursor::CreateCursor()
+{
 	CUIXml xml_doc;
 	xml_doc.Load(CONFIG_PATH, UI_PATH, "backend\\cursor.xml");
-	m_static = UIHelper::CreateStatic(xml_doc, "cursor", nullptr);
+	auto* cursor = UIHelper::CreateStatic(xml_doc, "cursor", nullptr);
 
 	bool native_scale = xml_doc.ReadAttribBool("cursor", 0, "native_scale", false);
 	if (native_scale)
 	{
-		m_static->SetWidth(m_static->GetWidth() * UI().get_current_kx());
-		m_static->SetHeight(m_static->GetHeight() * UI().get_current_kx());
+		cursor->SetWidth(cursor->GetWidth() * UI().get_current_kx());
+		cursor->SetHeight(cursor->GetHeight() * UI().get_current_kx());
 	}
 
-	m_static->SetWidth(m_static->GetWidth() * UI().get_current_kx());
+	cursor->SetWidth(cursor->GetWidth() * UI().get_current_kx());
+    return cursor;
 }
 
 //--------------------------------------------------------------------
@@ -89,9 +96,15 @@ void CUICursor::OnRender	()
 	}
 #endif
 
-	m_static->SetWndPos	(vPos);
-	m_static->Update	();
-	m_static->Draw		();
+    CUIStatic* cursor = m_static;
+    if (PdaUiCanvasScope::Active())
+    {
+        if (!m_deviceStatic) m_deviceStatic = CreateCursor();
+        cursor = m_deviceStatic;
+    }
+    cursor->SetWndPos(vPos);
+    cursor->Update();
+    cursor->Draw();
 }
 
 Fvector2 CUICursor::GetCursorPosition()

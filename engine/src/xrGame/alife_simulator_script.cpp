@@ -23,6 +23,7 @@
 
 #include <luabind/iterator_policy.hpp>
 #include "alife_iterator_policy.h"
+#include "level_graph.h"
 
 using namespace luabind;
 
@@ -58,6 +59,26 @@ const CALifeObjectRegistry::OBJECT_REGISTRY& alife_objects(const CALifeSimulator
 {
 	VERIFY(self);
 	return self->objects().objects();
+}
+
+// COP_ENGINE_PATCH: COP-ENG-257 - filter vertex repair candidates without a registry copy.
+luabind::object alife_vertex_guard_candidates(const CALifeSimulator* self)
+{
+    luabind::object result = luabind::newtable(ai().script_engine().lua());
+    const auto* graph = ai().get_level_graph();
+    if (!self || !graph)
+        return result;
+
+    u32 index = 1;
+    // No Lua callbacks or object mutations occur while the registry is traversed.
+    for (const auto& entry : self->objects().objects())
+    {
+        const auto* object = entry.second;
+        if (object && object->m_bOnline && object->ID_Parent == ALife::_OBJECT_ID(-1) &&
+            !graph->valid_vertex_id(object->m_tNodeID))
+            result[index++] = u32(entry.first);
+    }
+    return result;
 }
 
 bool valid_object_id						(const CALifeSimulator *self_, ALife::_OBJECT_ID object_id)
@@ -517,6 +538,7 @@ void CALifeSimulator::script_register			(lua_State *L)
 			.def("disable_info",			&AlifeRemoveInfo)										   
 			.def("switch_distance",			&CALifeSimulator::switch_distance)
 			.def("set_switch_distance",		&CALifeSimulator::set_switch_distance)
+			.def("vertex_guard_candidates", &alife_vertex_guard_candidates)
 			// COP_ENGINE_PATCH: COP-ENG-158 - collect the owned registry snapshot.
 			.def("objects",					&alife_objects, return_alife_pair_iterator)
 			.def("seed_vehicle_service", &seed_vehicle_service)

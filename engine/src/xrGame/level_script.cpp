@@ -886,7 +886,8 @@ int g_get_general_goodwill_between ( u16 from, u16 to)
 		return (0);
 	}	
 	CHARACTER_GOODWILL community_to_obj_goodwill		= RELATION_REGISTRY().GetCommunityGoodwill	(from_obj->Community(), to					);
-	CHARACTER_GOODWILL community_to_community_goodwill	= RELATION_REGISTRY().GetCommunityRelation	(from_obj->Community(), to_obj->Community()	);
+	CHARACTER_GOODWILL community_to_community_goodwill	= RELATION_REGISTRY().GetObjectCommunityRelation(
+		from, from_obj->Community(), to, to_obj->Community());
 	
 	return presonal_goodwill + community_to_obj_goodwill + community_to_community_goodwill;
 }

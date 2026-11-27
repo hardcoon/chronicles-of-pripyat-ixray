@@ -79,7 +79,8 @@ CHARACTER_GOODWILL	 RELATION_REGISTRY::GetAttitude	(T from, T to) const
 	//отношение группировки from персонально к to
 	CHARACTER_GOODWILL community_goodwill		= GetCommunityGoodwill(from->Community(), to->object_id()); VERIFY(community_goodwill != NO_GOODWILL);
 	//отношение группировки from к группировки to
-	CHARACTER_GOODWILL community_to_community	= GetCommunityRelation(from->Community(), to->Community());
+	CHARACTER_GOODWILL community_to_community	= GetObjectCommunityRelation(
+		from->object_id(), from->Community(), to->object_id(), to->Community());
 
 	CHARACTER_GOODWILL attitude = presonal_goodwill + 
 		reputation_goodwill +

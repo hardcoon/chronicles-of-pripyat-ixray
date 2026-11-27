@@ -10,13 +10,14 @@ class UI_API CUIButtonHint :
 
 	CUITextWnd*			m_text;
 	bool				m_enabledOnFrame;
+    bool                m_frameOnDevice = false;
 public:
 					CUIButtonHint	();
 	virtual			~CUIButtonHint	();
 	CUIWindow*		Owner			()	{return m_ownerWnd;}
 	void			Discard			()	{m_ownerWnd=NULL;};
 	void			OnRender		();
-	void			Draw_			()	{m_enabledOnFrame = true;};
+	void			Draw_			();
 	void			SetHintText		(CUIWindow* w, LPCSTR text);
 
 	virtual CUIWindow* ui_cast_window() { return this; }

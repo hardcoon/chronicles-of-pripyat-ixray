@@ -76,13 +76,15 @@ extern "C" __declspec(dllexport) void __cdecl xrSetPdaBrightness(float brightnes
     pf_pda_params.x = _valid(brightness) ? clampr(brightness, 0.f, 1.f) : 0.f;
 }
 
-extern "C" __declspec(dllexport) BOOL __cdecl xrPdaBegin(float alpha)
+// COP_ENGINE_PATCH: COP-ENG-279 - keep the original renderer entry point for existing callers.
+static BOOL BeginPda(float alpha, u32 width, u32 height, bool physical)
 {
     auto* target = RImplementation.Target;
     if (!target || drawing || !RContext) return FALSE;
     xrSetPdaBrightness(alpha);
+    pf_pda_params.z = physical ? 1.f : 0.f;
     auto& texture = target->rt_pf_pda;
-    if (texture && (texture->dwWidth != Device.TargetWidth || texture->dwHeight != Device.TargetHeight)) texture.destroy();
+    if (texture && (texture->dwWidth != width || texture->dwHeight != height)) texture.destroy();
     // COP_ENGINE_PATCH: COP-ENG-216 - regenerate filtered levels for the live UI every frame.
     // CRT's generic reset recreates a single level; repair only this opt-in texture after reset.
     if (texture && texture->pSurface) {
@@ -90,7 +92,7 @@ extern "C" __declspec(dllexport) BOOL __cdecl xrPdaBegin(float alpha)
         texture->pSurface->GetDesc(&desc);
         if (!(desc.MiscFlags & D3D11_RESOURCE_MISC_GENERATE_MIPS)) texture.destroy();
     }
-    if (!texture) texture.create("$user$pf_pda", Device.TargetWidth, Device.TargetHeight,
+    if (!texture) texture.create("$user$pf_pda", width, height,
         DxgiFormat::DXGI_FORMAT_R8G8B8A8_UNORM, 1, CRT::AUTOGEN_MIPS_RT_FLAG);
     if (!texture) return FALSE;
     savedWidth = target->get_width(); savedHeight = target->get_height();
@@ -105,6 +107,21 @@ extern "C" __declspec(dllexport) BOOL __cdecl xrPdaBegin(float alpha)
     const FLOAT clear[4] = {0.f, 0.f, 0.f, 1.f};
     RContext->ClearRenderTargetView(texture->pRT, clear);
     return TRUE;
+}
+
+extern "C" __declspec(dllexport) BOOL __cdecl xrPdaBegin(float alpha)
+{
+    return BeginPda(alpha, Device.TargetWidth, Device.TargetHeight, false);
+}
+
+extern "C" __declspec(dllexport) BOOL __cdecl xrPdaBeginCanvas(float alpha, u32 width, u32 height)
+{
+    return BeginPda(alpha, width, height, true);
+}
+
+bool IsRenderingPhysicalPdaCanvas()
+{
+    return drawing && pf_pda_params.z > 0.f;
 }
 
 extern "C" __declspec(dllexport) void __cdecl xrPdaEnd()

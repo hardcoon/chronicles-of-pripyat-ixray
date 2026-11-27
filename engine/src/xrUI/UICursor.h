@@ -11,7 +11,9 @@ class UI_API CUICursor :
 	Fvector2		vPos;
 	Fvector2		vPrevPos;
 	CUIStatic*		m_static;
-	void			InitInternal				();
+    CUIStatic* m_deviceStatic = nullptr;
+    void InitInternal();
+    CUIStatic* CreateCursor();
 public:
 					CUICursor					();
 	virtual			~CUICursor					();

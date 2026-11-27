@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "ui_base.h"
 #include "../xrEngine/IGame_Persistent.h"
+#include "../xrCore/xr_ini.h"
 #include "UICursor.h"
+#include <algorithm>
 
 UI_API ui_core* m_pUI_core = nullptr;
 
@@ -116,6 +118,86 @@ void ui_core::OnDeviceReset()
 												));
 }
 
+namespace
+{
+    thread_local bool physical_pda_canvas = false;
+
+    bool uses_widescreen_pda_canvas()
+    {
+        static const bool widescreen = [] {
+            constexpr auto section = "pf_pda3d_canvas";
+            constexpr auto key = "aspect_ratio";
+            return pSettings && pSettings->line_exist(section, key) &&
+                xr_strcmp(pSettings->r_string(section, key), "16:9") == 0;
+        }();
+        return widescreen;
+    }
+
+    struct PdaCanvasMetrics
+    {
+        u32 width = 0;
+        u32 height = 0;
+        Fvector2 scale;
+        C2DFrustum frustum;
+    };
+
+    const PdaCanvasMetrics& pda_canvas_metrics()
+    {
+        static thread_local PdaCanvasMetrics metrics;
+        const u32 width = PdaUiCanvasScope::RenderWidth();
+        const u32 height = PdaUiCanvasScope::RenderHeight();
+        if (width != metrics.width || height != metrics.height)
+        {
+            metrics.width = width;
+            metrics.height = height;
+            metrics.scale.set(float(width) / UI_BASE_WIDTH, float(height) / UI_BASE_HEIGHT);
+            metrics.frustum.CreateFromRect(Frect().set(0.f, 0.f, float(width), float(height)));
+        }
+        return metrics;
+    }
+}
+
+PdaUiCanvasScope::PdaUiCanvasScope(bool physical) : m_previous(physical_pda_canvas)
+{
+    physical_pda_canvas = physical;
+}
+
+PdaUiCanvasScope::~PdaUiCanvasScope()
+{
+    physical_pda_canvas = m_previous;
+}
+
+bool PdaUiCanvasScope::Active()
+{
+    return physical_pda_canvas;
+}
+
+// COP_ENGINE_PATCH: COP-ENG-282 - the device profile can render a widescreen layout.
+// COP_ENGINE_PATCH: COP-ENG-283 - match the 2D text metrics at the output height.
+u32 PdaUiCanvasScope::RenderWidth()
+{
+    return uses_widescreen_pda_canvas() ? RenderHeight() / 9 * 16 : Width;
+}
+
+u32 PdaUiCanvasScope::RenderHeight()
+{
+    if (!uses_widescreen_pda_canvas()) return Height;
+    // Keep the viewport exactly 16:9 and within the D3D11 texture width limit.
+    constexpr u32 maxUnits = 16384 / 16;
+    return std::clamp((Device.TargetHeight + 4) / 9, 1u, maxUnits) * 9;
+}
+
+const Fvector2& ui_core::ActiveScale() const
+{
+    return PdaUiCanvasScope::Active() ? pda_canvas_metrics().scale : *m_current_scale;
+}
+
+const C2DFrustum& ui_core::ScreenFrustum() const
+{
+    if (PdaUiCanvasScope::Active()) return pda_canvas_metrics().frustum;
+    return m_bPostprocess ? m_2DFrustumPP : m_2DFrustum;
+}
+
 void ui_core::ClientToScreenScaled(Fvector2& dest, float left, float top)	const
 {
 	if(m_currentPointType!=IUIRender::pttLIT)
@@ -133,13 +215,13 @@ void ui_core::ClientToScreenScaled(Fvector2& src_and_dest)	const
 void ui_core::ClientToScreenScaledWidth(float& src_and_dest)	const
 {
 	if(m_currentPointType!=IUIRender::pttLIT)
-		src_and_dest		/= m_current_scale->x;
+		src_and_dest		/= ActiveScale().x;
 }
 
 void ui_core::ClientToScreenScaledHeight(float& src_and_dest)	const
 {
 	if(m_currentPointType!=IUIRender::pttLIT)
-		src_and_dest		/= m_current_scale->y;
+		src_and_dest		/= ActiveScale().y;
 }
 
 void ui_core::AlignPixel(float& src_and_dest)	const
@@ -249,6 +331,7 @@ void ui_core::RenderFont()
 
 bool ui_core::is_widescreen()
 {
+    if (PdaUiCanvasScope::Active()) return true;
 /*	if (is_ultrawide()) // St4lker0k765: if playing on ultrawide monitor, skip widescreen check 
 		return true;
 		*/
@@ -257,11 +340,16 @@ bool ui_core::is_widescreen()
 
 bool ui_core::is_ultrawide()
 {
+    if (PdaUiCanvasScope::Active()) return false;
 	return (Device.TargetWidth) / float(Device.TargetHeight) > (1366.0f / UI_BASE_HEIGHT + 0.01f);
 }
 
 float ui_core::get_current_kx()
 {
+    // The pda_overlay quad measures 0.101869 by 0.067685 in the current HUD model.
+    constexpr float glassAspect = 1.50504f;
+    if (PdaUiCanvasScope::Active())
+        return (1.f / glassAspect) / (UI_BASE_HEIGHT / UI_BASE_WIDTH);
 	float h		= float(Device.TargetHeight);
 	float w		= float(Device.TargetWidth);
 
@@ -272,6 +360,14 @@ float ui_core::get_current_kx()
 shared_str	ui_core::get_xml_name(LPCSTR fn)
 {
 	string_path				str;
+    if (PdaUiCanvasScope::Active())
+    {
+        const char* ext = strext(fn);
+        const int length = ext ? int(ext - fn) : int(xr_strlen(fn));
+        xr_sprintf(str, "%.*s_3d.xml", length, fn);
+        string_path actual;
+        if (FS.exist(actual, "$game_config$", "ui\\", str)) return str;
+    }
 	if(!is_widescreen())
 	{
 		xr_sprintf(str, "%s", fn);

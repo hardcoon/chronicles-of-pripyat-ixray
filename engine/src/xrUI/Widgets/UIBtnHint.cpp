@@ -3,6 +3,7 @@
 #include "UIFrameWindow.h"
 #include "UIStatic.h"
 #include "UIXmlInit.h"
+#include "../ui_base.h"
 
 UI_API CUIButtonHint* g_btnHint = nullptr; 
 UI_API CUIButtonHint* g_statHint = nullptr;
@@ -28,15 +29,22 @@ CUIButtonHint::~CUIButtonHint	()
 //	Device.seqRender.Remove		(this);
 }
 
-void CUIButtonHint::OnRender	()
+// COP_ENGINE_PATCH: COP-ENG-279 - consume each hint on the canvas that queued it.
+void CUIButtonHint::Draw_()
 {
-	if(m_enabledOnFrame)
-	{
-		m_text->Update		();
-		SetTextureColor		(color_rgba(255,255,255,color_get_A(m_text->GetTextColor())));
-		Draw				();
-		m_enabledOnFrame	= false;
-	}
+    m_enabledOnFrame = true;
+    m_frameOnDevice = PdaUiCanvasScope::Active();
+}
+
+void CUIButtonHint::OnRender()
+{
+    if (!m_enabledOnFrame) return;
+    m_enabledOnFrame = false;
+    if (!m_ownerWnd || m_frameOnDevice != PdaUiCanvasScope::Active()) return;
+
+    m_text->Update();
+    SetTextureColor(color_rgba(255, 255, 255, color_get_A(m_text->GetTextColor())));
+    Draw();
 }
 
 void CUIButtonHint::SetHintText	(CUIWindow* w, LPCSTR text)

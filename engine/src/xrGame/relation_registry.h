@@ -58,6 +58,8 @@ public:
 	void				 ClearRelations				(u16 person_id);
 
 	CHARACTER_GOODWILL	 GetCommunityRelation		(CHARACTER_COMMUNITY_INDEX, CHARACTER_COMMUNITY_INDEX) const;	
+	CHARACTER_GOODWILL GetObjectCommunityRelation(u16 from, CHARACTER_COMMUNITY_INDEX from_community,
+		u16 to, CHARACTER_COMMUNITY_INDEX to_community) const;
 	void				 SetCommunityRelation		(CHARACTER_COMMUNITY_INDEX index1, CHARACTER_COMMUNITY_INDEX index2, CHARACTER_GOODWILL goodwill);
 
 private:

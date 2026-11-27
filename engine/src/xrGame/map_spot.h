@@ -16,12 +16,14 @@ private:
 	CUIStatic*				m_border_static;
 	
 	bool					m_mark_focused;
+	bool m_loadedOnPhysicalPda = false;
+	float m_loadedAspect = 1.0f;
+	float m_pdaWidthScale = 1.0f;
+	Fvector2 m_originSize{};
 
 public:
 		bool				m_bScale;
 		Fvector2			m_scale_bounds;
-
-	Fvector2				m_originSize;
 
 public:
 							CMapSpot						(CMapLocation*);
@@ -37,6 +39,8 @@ public:
 
 				void		show_static_border				(bool status);
 				void		mark_focused					();
+	void UpdatePdaMapAspect();
+	Fvector2 MapOriginSize() const;
 };
 
 

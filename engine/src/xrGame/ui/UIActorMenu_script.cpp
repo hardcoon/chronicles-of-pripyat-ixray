@@ -486,6 +486,7 @@ void CUIActorMenu::script_register(lua_State *L)
 				.def("SetActiveDialog", &CUIPdaWnd::SetActiveDialog)
 				.def("GetActiveDialog", &CUIPdaWnd::GetActiveDialog)
 				.def("GetActiveSection", &CUIPdaWnd::GetActiveSection)
+                .def("UsesPhysicalLayout", &CUIPdaWnd::UsesPhysicalLayout)
 				// COP_ENGINE_PATCH: COP-ENG-153 - bounded existing-marker map focus.
 				.def("FocusMapSpot", &CUIPdaWnd::FocusMapSpot)
 				.def("GetTabControl", &CUIPdaWnd::GetTabControl),

@@ -394,8 +394,15 @@ bool CMapLocation::Update() //returns actual
 extern xr_vector<CLevelChanger*>	g_lchangers;
 xr_vector<u32> map_point_path;
 
-void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp )
+void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp, bool pdaMap)
 {
+	CMapSpotPointer* pointer = GetSpotPointer(sp);
+	if (pdaMap)
+	{
+		sp->UpdatePdaMapAspect();
+		if (pointer)
+			pointer->UpdatePdaMapAspect();
+	}
 	if( map->MapName() == GetLevelName() )
 	{
 		if (!IsUserDefined())
@@ -474,14 +481,16 @@ void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp )
 		CMapSpot* s = GetSpotBorder(sp);
 		if (s)
 		{
+			if (pdaMap)
+				s->UpdatePdaMapAspect();
 			s->SetWndPos(sp->GetWndPos());
 			map->AttachChild(s);
 		}
 
-		if(GetSpotPointer(sp) && map->NeedShowPointer(wnd_rect))
-			UpdateSpotPointer( map, GetSpotPointer(sp));
+		if (pointer && map->NeedShowPointer(wnd_rect))
+			UpdateSpotPointer(map, pointer);
 	}
-	else if ( Level().name() == map->MapName() && GetSpotPointer(sp) )
+	else if (Level().name() == map->MapName() && pointer)
 	{
 		GameGraph::_GRAPH_ID		dest_graph_id;
 
@@ -542,7 +551,7 @@ void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp )
 				Fvector2 position;
 				position.set			((*lit)->Position().x, (*lit)->Position().z);
 				m_position_on_map		= map->ConvertRealToLocal(position, false);
-				UpdateSpotPointer		(map, GetSpotPointer(sp));
+				UpdateSpotPointer		(map, pointer);
 			}
 			else
 			{
@@ -561,7 +570,7 @@ void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp )
 						Fvector2 position;
 						position.set			(p.x, p.z);
 						m_position_on_map		= map->ConvertRealToLocal(position, false);
-						UpdateSpotPointer		(map, GetSpotPointer(sp));
+						UpdateSpotPointer		(map, pointer);
 					}
 				}
 			}
@@ -631,7 +640,7 @@ void CMapLocation::UpdateMiniMap(CUICustomMap* map)
 	CMapSpot* sp = m_minimap_spot;
 	if(!sp) return;
 	if(SpotEnabled())
-		UpdateSpot(map, sp);
+		UpdateSpot(map, sp, false);
 
 }
 
@@ -640,14 +649,14 @@ void CMapLocation::UpdateLevelMap(CUICustomMap* map)
 	CComplexMapSpot* csp = m_complex_spot;
 	if ( csp && SpotEnabled() )
 	{
-		UpdateSpot(map, csp);
+		UpdateSpot(map, csp, true);
 		return;
 	}
 
 	CMapSpot* sp = m_level_spot;
 	if ( sp && SpotEnabled() )
 	{
-		UpdateSpot(map, sp);
+		UpdateSpot(map, sp, true);
 	}
 }
 

@@ -48,6 +48,8 @@ private:
 	const char* m_onSetActiveSubdialog = {};
 
     bool m_drawing3D = false;
+    const bool m_physicalLayout;
+    void DetachActiveSubdialog();
 public:
     bool NeedCursor() const override { return m_bIsEnabled; } // COP_ENGINE_PATCH: COP-ENG-220
     void Draw3D() { m_drawing3D = true; Draw(); m_drawing3D = false; }
@@ -64,7 +66,8 @@ public:
 	virtual CUIWindow* ui_cast_window() { return this; }
 
 public:
-							CUIPdaWnd			();
+    explicit CUIPdaWnd(bool physicalLayout = false);
+    bool UsesPhysicalLayout() const { return m_physicalLayout; }
 	virtual					~CUIPdaWnd			();
 
 	virtual void 			Init				();

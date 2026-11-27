@@ -60,7 +60,8 @@ u32 g_pda_info_state = 0;
 
 void RearrangeTabButtons(CUITabControl* pTab);
 
-CUIPdaWnd::CUIPdaWnd()
+// COP_ENGINE_PATCH: COP-ENG-279 - native and Lua pages share the device profile.
+CUIPdaWnd::CUIPdaWnd(bool physicalLayout) : m_physicalLayout(physicalLayout)
 {
 	LoadCallbackGlobals(m_isSetActiveSubdialog, m_onSetActiveSubdialog, "OnSetActiveSubdialog");
 
@@ -90,6 +91,7 @@ CUIPdaWnd::~CUIPdaWnd()
 
 void CUIPdaWnd::Init()
 {
+    const PdaUiCanvasScope canvas(m_physicalLayout);
 	CUIXml					uiXml;
 	uiXml.Load				(CONFIG_PATH, UI_PATH, PDA_XML);
 
@@ -99,8 +101,13 @@ void CUIPdaWnd::Init()
 	CUIXmlInit::InitWindow	(uiXml, "main", 0, this);
 
 	UIMainPdaFrame			= UIHelper::CreateStatic	( uiXml, "background_static", this );
-	m_caption				= UIHelper::CreateStatic	( uiXml, "caption_static", this );
-	m_caption_const			= ( m_caption->TextItemControl()->GetText() );
+	// COP_ENGINE_PATCH: COP-ENG-279 - the physical layout can omit the desktop header controls.
+	m_caption = nullptr;
+	if (!m_physicalLayout || uiXml.NavigateToNode("caption_static"))
+	{
+		m_caption = UIHelper::CreateStatic(uiXml, "caption_static", this);
+		m_caption_const = m_caption->TextItemControl()->GetText();
+	}
 	if (uiXml.NavigateToNode("clock_wnd"))
 	m_clock					= UIHelper::CreateTextWnd	( uiXml, "clock_wnd", this );
 
@@ -111,7 +118,9 @@ void CUIPdaWnd::Init()
 		m_anim_static->SetAutoDelete(true);
 		CUIXmlInit::InitAnimatedStatic(uiXml, "anim_static", 0, m_anim_static);
 	}
-	m_btn_close				= UIHelper::Create3tButton( uiXml, "close_button", this );
+	m_btn_close = nullptr;
+	if (!m_physicalLayout || uiXml.NavigateToNode("close_button"))
+		m_btn_close = UIHelper::Create3tButton(uiXml, "close_button", this);
 	m_hint_wnd				= UIHelper::CreateHint( uiXml, "hint_wnd" );
 
 	UITabControl					= new CUITabControl();
@@ -148,7 +157,7 @@ void CUIPdaWnd::Init()
 	CUIXmlInit::InitStatic	( uiXml, "noice_static", 0, UINoice );
 
 	const static bool rearrangeButtons = EngineExternal()[EEngineExternalUI::PdaRearrangeTabButtons];
-	if (rearrangeButtons)
+	if (rearrangeButtons && !m_physicalLayout)
 		RearrangeTabButtons		(UITabControl);
 }
 
@@ -166,7 +175,7 @@ void CUIPdaWnd::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
 		}
 	case BUTTON_CLICKED:
 		{
-			if ( pWnd == m_btn_close )
+			if (m_btn_close && pWnd == m_btn_close)
 			{
 				HideDialog();
 			}
@@ -182,6 +191,7 @@ void CUIPdaWnd::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
 
 void CUIPdaWnd::Show(bool status)
 {
+    const PdaUiCanvasScope canvas(m_physicalLayout);
     if (!status && Actor() && Actor()->GetPDA()) Actor()->GetPDA()->Close3D();
 	inherited::Show						(status);
 	if(status)
@@ -199,8 +209,7 @@ void CUIPdaWnd::Show(bool status)
 	{
 		InventoryUtilities::SendInfoToActor	("ui_pda_hide");
 		CurrentGameUI()->UIMainIngameWnd->SetFlashIconState_(CUIMainIngameWnd::efiPdaTask, false);
-		if (CUIWindow* active = GetActiveDialog())
-			active->Show(false);
+        DetachActiveSubdialog();
 		m_pActiveDialog = pUITaskWnd; // native fallback, including a released Lua page
 		g_btnHint->Discard					();
 		g_statHint->Discard					();
@@ -209,6 +218,7 @@ void CUIPdaWnd::Show(bool status)
 
 void CUIPdaWnd::Update()
 {
+    const PdaUiCanvasScope canvas(m_physicalLayout);
 	inherited::Update();
 	if (CUIWindow* active = GetActiveDialog())
 		active->Update();
@@ -232,7 +242,7 @@ CUIWindow* CUIPdaWnd::GetActiveDialog()
     return nullptr;
 }
 
-void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
+void CUIPdaWnd::DetachActiveSubdialog()
 {
     CUIWindow* previous = GetActiveDialog();
     m_pActiveDialog = nullptr;
@@ -243,6 +253,12 @@ void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
         if (UIMainPdaFrame->IsChild(previous))
             UIMainPdaFrame->DetachChild(previous);
     }
+}
+
+void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
+{
+    const PdaUiCanvasScope canvas(m_physicalLayout);
+    DetachActiveSubdialog();
 
     // COP_ENGINE_PATCH: COP-ENG-212 - script pages still need detaching during
     // actor net_destroy, but the map and task managers can no longer be refreshed.
@@ -314,6 +330,7 @@ void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
 
 void CUIPdaWnd::SetActiveCaption()
 {
+	if (!m_caption) return;
 	TABS_VECTOR*	btn_vec		= UITabControl->GetButtonsVector();
 	TABS_VECTOR::iterator it_b	= btn_vec->begin();
 	TABS_VECTOR::iterator it_e	= btn_vec->end();
@@ -415,6 +432,7 @@ bool CUIPdaWnd::FocusMapSpot(u16 object_id, LPCSTR spot_type)
 
 void CUIPdaWnd::UpdatePda()
 {
+    const PdaUiCanvasScope canvas(m_physicalLayout);
 	pUILogsWnd->UpdateNews();
 
 	if (m_sActiveSection == "eptTasks")
@@ -425,6 +443,7 @@ void CUIPdaWnd::UpdatePda()
 
 void CUIPdaWnd::UpdateRankingWnd()
 {
+    const PdaUiCanvasScope canvas(m_physicalLayout);
 	pUIRankingWnd->Update();
 }
 
@@ -447,7 +466,8 @@ void CUIPdaWnd::Reset()
 
 void CUIPdaWnd::SetCaption( LPCSTR text )
 {
-	m_caption->TextItemControl()->SetText( text );
+	if (m_caption)
+		m_caption->TextItemControl()->SetText(text);
 }
 
 void RearrangeTabButtons(CUITabControl* pTab)
@@ -477,6 +497,7 @@ void RearrangeTabButtons(CUITabControl* pTab)
 
 bool CUIPdaWnd::OnKeyboardAction(int dik, EUIMessages keyboard_action)
 {
+    const PdaUiCanvasScope canvas(m_physicalLayout);
     // COP_ENGINE_PATCH: COP-ENG-214 - leave reading without putting the PDA away.
     if (keyboard_action == WINDOW_KEY_PRESSED && Actor() && Actor()->GetPDA() && Actor()->GetPDA()->IsReading() &&
         (is_binded(kQUIT, dik) || is_binded(kWPN_RELOAD, dik))) {
@@ -511,6 +532,7 @@ bool CUIPdaWnd::OnKeyboardAction(int dik, EUIMessages keyboard_action)
 
 bool CUIPdaWnd::OnMouseAction(float x, float y, EUIMessages action)
 {
+    const PdaUiCanvasScope canvas(m_physicalLayout);
     if (Actor() && Actor()->GetPDA() && Actor()->GetPDA()->Is3DActive()) {
         const Fvector2 delta = GetUICursor().GetCursorPositionDelta();
         Actor()->GetPDA()->PdaMouse(action == WINDOW_MOUSE_MOVE ? delta.x : 0.f,

@@ -401,7 +401,7 @@ void CUILevelMap::Draw()
 			{
 				if(sp->m_bScale)
 				{
-					Fvector2 sz			= sp->m_originSize;
+					Fvector2 sz			= sp->MapOriginSize();
 					if (!legacySpotScaling)
 					{
 						float k				= gmz;

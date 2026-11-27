@@ -918,10 +918,23 @@ class cl_sky_color : public R_constant_setup {
 	}
 }; static cl_sky_color binder_sky_color;
 
+#if RENDER == R_R4
+extern bool IsRenderingPhysicalPdaCanvas();
+#endif
+
 static class cl_screen_res : public R_constant_setup		
 {	
 	virtual void setup	(R_constant* C)
 	{
+#if RENDER == R_R4
+        if (IsRenderingPhysicalPdaCanvas())
+        {
+            const float width = float(::Render->getTarget()->get_width());
+            const float height = float(::Render->getTarget()->get_height());
+            RCache.set_c(C, width, height, 1.f / width, 1.f / height);
+            return;
+        }
+#endif
 		RCache.set_c(C, RCache.get_target_width(), RCache.get_target_height(), 1.0f / RCache.get_target_width(), 1.0f / RCache.get_target_height());
 	}
 }	binder_screen_res;

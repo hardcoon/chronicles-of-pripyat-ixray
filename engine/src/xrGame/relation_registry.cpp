@@ -11,7 +11,9 @@
 #include "character_reputation.h"
 #include "character_rank.h"
 
+#include "alife_graph_registry.h"
 #include "alife_object_registry.h"
+#include "InfoPortionDefs.h"
 #include "xrServer_Objects_ALife_Monsters.h"
 #include "../xrScripts/script_engine.h"
 
@@ -165,7 +167,8 @@ void RELATION_REGISTRY::ForceSetGoodwill 	(u16 from, u16 to, CHARACTER_GOODWILL 
 		return;
 	}	
 	CHARACTER_GOODWILL community_to_obj_goodwill		= GetCommunityGoodwill	(from_obj->Community(), to					);
-	CHARACTER_GOODWILL community_to_community_goodwill	= GetCommunityRelation	(from_obj->Community(), to_obj->Community()	);
+	CHARACTER_GOODWILL community_to_community_goodwill	= GetObjectCommunityRelation(
+		from, from_obj->Community(), to, to_obj->Community());
 	
 	relation_data.personal[to].SetGoodwill(goodwill - community_to_obj_goodwill - community_to_community_goodwill);
 }
@@ -214,6 +217,32 @@ void RELATION_REGISTRY::ChangeCommunityGoodwill (CHARACTER_COMMUNITY_INDEX from_
 CHARACTER_GOODWILL	 RELATION_REGISTRY::GetCommunityRelation		(CHARACTER_COMMUNITY_INDEX index1, CHARACTER_COMMUNITY_INDEX index2) const
 {
 	return CHARACTER_COMMUNITY::relation(index1, index2);
+}
+
+// COP_ENGINE_PATCH: COP-ENG-278
+CHARACTER_GOODWILL RELATION_REGISTRY::GetObjectCommunityRelation(u16 from, CHARACTER_COMMUNITY_INDEX from_community,
+	u16 to, CHARACTER_COMMUNITY_INDEX to_community) const
+{
+	const auto goodwill = GetCommunityRelation(from_community, to_community);
+	if (goodwill >= NEUTRAL_GOODWILL)
+		return goodwill;
+
+	const auto* simulator = ai().get_alife();
+	const auto* actor = simulator ? simulator->graph().actor() : nullptr;
+	if (!actor || (from != actor->ID && to != actor->ID))
+		return goodwill;
+
+	const auto other_community = from == actor->ID ? to_community : from_community;
+	const auto community_id = CHARACTER_COMMUNITY::IndexToId(other_community);
+	if (xr_strcmp(*community_id, "monolith") != 0)
+		return goodwill;
+
+	const auto* known_info = simulator->registry().get<CInfoPortionRegistry>().object(actor->ID, true);
+	static const shared_str achievement("pf_story_path_continues_achievement_gained");
+	if (known_info && std::any_of(known_info->begin(), known_info->end(), CFindByIDPred(achievement)))
+		return NEUTRAL_GOODWILL;
+
+	return goodwill;
 }
 
 CHARACTER_GOODWILL	 RELATION_REGISTRY::GetRankRelation				(CHARACTER_RANK_VALUE rank1, CHARACTER_RANK_VALUE rank2) const

@@ -24,6 +24,8 @@ float psPdaReadZoom = 1.7f; // COP_ENGINE_PATCH: COP-ENG-217
 namespace
 {
     using BeginPda = BOOL (__cdecl*)(float);
+    using BeginPdaCanvas = BOOL (__cdecl*)(float, u32, u32);
+    BeginPdaCanvas begin_pda_canvas = nullptr;
     using EndPda = void (__cdecl*)();
     BeginPda begin_pda = nullptr;
     EndPda end_pda = nullptr;
@@ -40,6 +42,8 @@ namespace
             renderer_module = module;
             set_pda_hud_pose = module ? reinterpret_cast<SetPdaHudPose>(GetProcAddress(module, "xrSetPdaHudPose")) : nullptr;
             begin_pda = module ? reinterpret_cast<BeginPda>(GetProcAddress(module, "xrPdaBegin")) : nullptr;
+            begin_pda_canvas = module ?
+                reinterpret_cast<BeginPdaCanvas>(GetProcAddress(module, "xrPdaBeginCanvas")) : nullptr;
             end_pda = module ? reinterpret_cast<EndPda>(GetProcAddress(module, "xrPdaEnd")) : nullptr;
             set_pda_brightness = module ? reinterpret_cast<SetPdaBrightness>(GetProcAddress(module, "xrSetPdaBrightness")) : nullptr;
         }
@@ -146,6 +150,9 @@ void CPda::OnStateSwitch(u32 state)
         m_screenSwitchAt = Device.fTimeGlobal + m_screenOnDelay;
         PlaySound("sndShow", Position());
         if (CurrentGameUI() && !CurrentGameUI()->PdaMenu().IsShown()) {
+            string_path layout;
+            const bool physical = begin_pda_canvas && FS.exist(layout, "$game_config$", "ui\\", "pda_3d.xml");
+            CurrentGameUI()->SelectPdaLayout(physical);
             auto& menu = CurrentGameUI()->PdaMenu();
             menu.ShowDialog(false);
             // Pre-render the interface during draw with the camera still under player control.
@@ -315,7 +322,19 @@ float CPda::GetHudFov()
     // COP_ENGINE_PATCH: COP-ENG-217 - reading distance must not follow the near-wall ray.
     if (!m_has3D) return base;
     const float fixedBase = clampr(m_fHudFov ? m_fHudFov : psHUD_FOV_def, 5.f, 180.f) * m_fHudFovFactor;
-    return m_readZoom.fov(base + (fixedBase - base) * m_zoomFactor);
+    const float requested = m_readZoom.fov(base + (fixedBase - base) * m_zoomFactor);
+    auto* gameUI = CurrentGameUI();
+    if (!IsReading() || !gameUI || !gameUI->PdaMenu().UsesPhysicalLayout())
+        return requested;
+
+    // COP_ENGINE_PATCH: COP-ENG-279 - keep the complete glass inside the viewport.
+    // The settled HUD pose is offset from the center. These are outward-rounded
+    // maxima of abs(x/z) and abs(y/z) for the display corners in that pose.
+    constexpr float glassXOverZ = .37f;
+    constexpr float glassYOverZ = .24f;
+    constexpr float visibleClipLimit = .96f;
+    const float requiredTan = _max(glassXOverZ * Device.fASPECT, glassYOverZ) / visibleClipLimit;
+    return _max(requested, rad2deg(2.f * std::atan(requiredTan)));
 }
 
 void CPda::PdaMouse(float dx, float dy, bool pressed)
@@ -384,14 +403,27 @@ void CPda::Render3DUI()
         set_pda_brightness(brightness);
         return;
     }
-    if (!begin_pda(brightness)) return;
+    const bool physical = menu.UsesPhysicalLayout();
+    const PdaUiCanvasScope canvas(physical);
+    if (physical ? (!begin_pda_canvas || !begin_pda_canvas(brightness, PdaUiCanvasScope::RenderWidth(), PdaUiCanvasScope::RenderHeight())) :
+        !begin_pda(brightness))
+        return;
     // COP_ENGINE_PATCH: COP-ENG-216 - match the display's small border crop.
     // Cursor and controls share the same texture, hence hit coordinates stay native.
     // COP_ENGINE_PATCH: COP-ENG-223 - page, modals and cursor share one texture and coordinate system.
     const bool deviceCursor = m_cursorCaptured && CurrentGameUI()->HasPdaInput() && !Console->bVisible;
     if (deviceCursor) {
         Fvector2 cursor = GetUICursor().GetCursorPosition();
-        clamp(cursor.x, 14.f, 1010.f); clamp(cursor.y, 10.5f, 757.5f);
+        if (physical)
+        {
+            clamp(cursor.x, 0.f, UI_BASE_WIDTH);
+            clamp(cursor.y, 0.f, UI_BASE_HEIGHT);
+        }
+        else
+        {
+            clamp(cursor.x, 14.f, 1010.f);
+            clamp(cursor.y, 10.5f, 757.5f);
+        }
         GetUICursor().SetUICursorPosition(cursor);
     }
     menu.Draw3D();
