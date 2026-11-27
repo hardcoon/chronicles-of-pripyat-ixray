@@ -560,6 +560,8 @@ Files you add yourself may survive launcher updates. **Verify files** can report
 
 Special thanks to the **IX-Ray developers** and the author of **Living Zone 4.26**.
 
+Thank you to **Olivius74** for the French localization.
+
 Materials and work used in the project include:
 
 - Living Zone 4.26.
