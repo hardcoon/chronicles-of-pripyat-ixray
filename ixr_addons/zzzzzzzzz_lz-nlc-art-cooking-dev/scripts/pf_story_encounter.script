@@ -11,7 +11,6 @@ local STASH_MARKER = "pf_stash_orange"
 local STASH_HINT = "pf_story_legendary_stash_name"
 local PREACHER_IMPORTANT_MARKER = "ui_pda2_quest_npc_location"
 local PREACHER_IMPORTANT_HINT = "pf_story_preacher_name"
-local MONOLITH_NEUTRAL_APPLIED_INFO = "pf_story_monolith_neutral_doc12_v17"
 local CHECK_INTERVAL_MS = 1000
 local PREACHER_HIT_CHECK_INTERVAL_MS = 100
 local PREACHER_PRAYER_SOUND_THRESHOLD = 1000
@@ -73,14 +72,6 @@ local last_trace_section = nil
 local seated_state_applied_id = nil
 local reunion_seated_applied_id = nil
 local next_preacher_facing_retry = 0
--- relation_registry community relations are process-global rather than scoped
--- to the loaded save. Remember every value changed by this story so loading a
--- pre-document-12 save in the same xrEngine process can restore the matrix.
-local monolith_relation_baselines = {}
-local monolith_relations_neutralized = {}
-local monolith_story_reward_applied_this_load = false
-local monolith_online_relations_checked = {}
-local activate_monolith_story_reward
 
 local function info_value(info_id)
 	return db.actor and db.actor:has_info(info_id) and 1 or 0
@@ -1195,88 +1186,8 @@ function on_pendant_given_alive(npc)
 	printf("[PF STORY] Sergey handed over the pendant and remains alive")
 end
 
-local function remember_monolith_relation_baseline(actor_community)
-	local baseline = monolith_relation_baselines[actor_community]
-	if baseline then return baseline end
-	baseline = {
-		monolith_to_actor = relation_registry.community_relation(
-			"monolith", actor_community),
-		actor_to_monolith = relation_registry.community_relation(
-			actor_community, "monolith")
-	}
-	monolith_relation_baselines[actor_community] = baseline
-	return baseline
-end
-
-local function ensure_monolith_neutral_baseline()
-	local actor_community = db.actor and db.actor:character_community() or nil
-	if not actor_community then return end
-	remember_monolith_relation_baseline(actor_community)
-	relation_registry.set_community_relation("monolith", actor_community, 0)
-	relation_registry.set_community_relation(actor_community, "monolith", 0)
-	monolith_relations_neutralized[actor_community] = true
-end
-
-local function restore_monolith_relation_baselines()
-	for actor_community in pairs(monolith_relations_neutralized) do
-		local baseline = monolith_relation_baselines[actor_community]
-		if baseline then
-			relation_registry.set_community_relation(
-				"monolith", actor_community, baseline.monolith_to_actor)
-			relation_registry.set_community_relation(
-				actor_community, "monolith", baseline.actor_to_monolith)
-		end
-		monolith_relations_neutralized[actor_community] = nil
-	end
-end
-
-local function neutralize_new_online_monolith()
-	-- Scan only currently bound objects once per story tick. This catches
-	-- Monolith NPCs which come online after document twelve without repeatedly
-	-- walking the full ALife registry or erasing later player-caused hostility.
-	for object_id in pairs(db.storage) do
-		if not monolith_online_relations_checked[object_id] then
-			local client_npc = level.object_by_id(object_id)
-			if client_npc then
-				monolith_online_relations_checked[object_id] = true
-				if IsStalker(client_npc) and client_npc:alive() and
-					client_npc:character_community() == "monolith" then
-					client_npc:set_relation(game_object.neutral, db.actor)
-					client_npc:force_set_goodwill(0, db.actor)
-					db.actor:set_relation(game_object.neutral, client_npc)
-				end
-			end
-		end
-	end
-end
-
-
-activate_monolith_story_reward = function()
-	-- Document 12 is the single authoritative trigger for faction neutrality.
-	-- The saved baseline still lets an earlier save restore normal hostility
-	-- when both saves are loaded in the same xrEngine process.
-	ensure_monolith_neutral_baseline()
-	db.actor:set_community_goodwill("monolith", 0)
-	for _, server_npc in alife():objects() do
-		local client_npc = level.object_by_id(server_npc.id)
-		if client_npc and IsStalker(client_npc) and client_npc:alive() and
-			client_npc:character_community() == "monolith" then
-			client_npc:set_relation(game_object.neutral, db.actor)
-			client_npc:force_set_goodwill(0, db.actor)
-			db.actor:set_relation(game_object.neutral, client_npc)
-			monolith_online_relations_checked[server_npc.id] = true
-		end
-	end
-	monolith_story_reward_applied_this_load = true
-
-	if not db.actor:has_info(MONOLITH_NEUTRAL_APPLIED_INFO) then
-		db.actor:give_info_portion(MONOLITH_NEUTRAL_APPLIED_INFO)
-	end
-end
-
 local function enable_monolith_story_npcs()
-	-- Faction neutrality begins at document 12, but the Keeper and later story
-	-- content still require the reunion dialog to be completed.
+	-- The reunion unlocks the Keeper and the next part of the story.
 	if not db.actor:has_info("pf_monolith_story_npcs_enabled") then
 		db.actor:give_info_portion("pf_monolith_story_npcs_enabled")
 	end
@@ -1381,14 +1292,12 @@ end
 -- exact moment document twelve is unlocked.
 function on_final_document_found()
 	if not db.actor then return end
-	-- This faction change belongs to the document itself, not to Sergey's
-	-- survival, achievement #4 or the optional reunion dialog.
-	activate_monolith_story_reward()
 	if db.actor:has_info("pf_story_path_continues_achievement_gained") then return end
 	if not preacher_is_alive() then
 		printf("[PF STORY] achievement #4 failed: Sergey did not survive to document 12")
 		return
 	end
+	-- The engine derives the truce from this saved achievement.
 	db.actor:give_info_portion("pf_story_path_continues_achievement_gained")
 	local preacher = server_object(preacher_id) or find_server_object(PREACHER_SECTION)
 	if preacher then
@@ -1398,7 +1307,7 @@ function on_final_document_found()
 	news_manager.send_tip(
 		db.actor, "pf_story_path_continues_achievement_news",
 		nil, "friend_of_stalkers", nil, nil)
-	printf("[PF STORY] achievement #4 awarded; Monolith neutral since document 12")
+	printf("[PF STORY] achievement #4 awarded")
 end
 
 function path_continues_achievement_functor()
@@ -1462,17 +1371,6 @@ function update()
 	end
 	if now < next_check then return end
 	next_check = now + CHECK_INTERVAL_MS
-	if db.actor:has_info("pf_story_doc_12_found") then
-		ensure_monolith_neutral_baseline()
-		if not monolith_story_reward_applied_this_load then
-			activate_monolith_story_reward()
-		end
-		neutralize_new_online_monolith()
-	else
-		restore_monolith_relation_baselines()
-		monolith_story_reward_applied_this_load = false
-		monolith_online_relations_checked = {}
-	end
 	if level.name() ~= LEVEL_NAME then return end
 	-- The first two migrations are valid before this branch is revealed and need
 	-- one check per load. The remaining historical migrations become applicable
@@ -1583,8 +1481,6 @@ function reset()
 	seated_state_applied_id = nil
 	reunion_seated_applied_id = nil
 	next_preacher_facing_retry = 0
-	monolith_story_reward_applied_this_load = false
-	monolith_online_relations_checked = {}
 end
 
 -- QA shortcut: run_string pf_story_encounter.debug_reveal()

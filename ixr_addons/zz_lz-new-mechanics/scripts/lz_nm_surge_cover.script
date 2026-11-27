@@ -1,10 +1,25 @@
 -- Dynamic emission shelter detection for IX-Ray.
--- This is an original implementation based only on level CFORM ray queries.
+-- Samples level CFORM and the collision forms of approved building pieces.
 
 local CFG_PATH = "misc\\lz_dynamic_surge_cover.ltx"
 local DIRECTION_COUNT = 72
+local OBJECT_RAY_FLAGS = 1
 local STATIC_RAY_FLAGS = 2
 local RAY_EPSILON = 0.02
+
+local BUILDING_COVER_CLASSES = {
+	foundation = true,
+	foundation_tri = true,
+	wall = true,
+	wall_low = true,
+	wall_gable = true,
+	roof_flat = true,
+	roof_slope = true,
+	roof_triangle = true,
+	roof_hip = true,
+	roof_valley = true,
+	roof_pyramid = true
+}
 
 local cfg = nil
 local directions = nil
@@ -17,6 +32,7 @@ local scan_ready = false
 local dynamic_safe = false
 local loss_started_at = nil
 local movement_anchor = nil
+local nearby_building = nil
 local sleep_reference = nil
 local pending = nil
 local hud_window = nil
@@ -151,6 +167,7 @@ local function clear_scan(keep_dynamic_state)
 	completed_samples = 0
 	blocked_samples = 0
 	scan_ready = false
+	nearby_building = nil
 	pending = nil
 	if not keep_dynamic_state then
 		dynamic_safe = false
@@ -248,60 +265,113 @@ local function set_sample(index, blocked)
 	if completed_samples >= DIRECTION_COUNT then scan_ready = true end
 end
 
+local function is_cover_building(object)
+	local catalog = pf_hf_building_catalog
+	local piece = object and catalog and catalog.by_object[object:section()]
+	return piece and BUILDING_COVER_CLASSES[piece.snap_class] == true
+end
+
+local function has_nearby_building(settings)
+	if not pf_hf_building_catalog then return false end
+	-- Include any piece the camera can reach before the next movement reset.
+	nearest.set(settings.ray_range + settings.movement_reset_distance, movement_anchor)
+	for index = 0, nearest.size() - 1 do
+		if is_cover_building(nearest.get(index)) then return true end
+	end
+	return false
+end
+
 local function begin_direction(camera_position)
 	build_directions()
+	local settings = load_config()
 	local index = next_direction
+	if index == 1 or nearby_building == nil then
+		nearby_building = has_nearby_building(settings)
+	end
 	next_direction = next_direction + 1
 	if next_direction > DIRECTION_COUNT then next_direction = 1 end
+	local origin = copy_position(camera_position)
 	pending = {
 		index = index,
-		origin = copy_position(camera_position),
+		origin = origin,
+		object_origin = nearby_building and origin or nil,
 		direction = directions[index],
-		remaining = load_config().ray_range,
+		remaining = settings.ray_range,
+		flags = STATIC_RAY_FLAGS,
 		passes = 0
 	}
 end
 
+local function finish_direction(blocked)
+	-- Check buildings from the original position only if CFORM left the ray open.
+	if not blocked and pending.object_origin then
+		pending.flags = OBJECT_RAY_FLAGS
+		pending.origin = pending.object_origin
+		pending.object_origin = nil
+		pending.remaining = load_config().ray_range
+		return
+	end
+	set_sample(pending.index, blocked)
+	pending = nil
+end
+
 local function advance_ignored_hit(distance)
 	local step = math.max(0, distance) + RAY_EPSILON
+	pending.remaining = pending.remaining - step
+	if pending.remaining <= RAY_EPSILON then
+		finish_direction(false)
+		return
+	end
 	pending.origin = vector():set(
 		pending.origin.x + pending.direction.x * step,
 		pending.origin.y + pending.direction.y * step,
 		pending.origin.z + pending.direction.z * step
 	)
-	pending.remaining = pending.remaining - step
-	pending.passes = pending.passes + 1
 end
 
 local function query_pending()
 	if not cast then cast = ray_pick() end
-	cast:set_flags(STATIC_RAY_FLAGS)
+	cast:set_flags(pending.flags)
 	cast:set_range(pending.remaining)
 	cast:set_position(pending.origin)
 	cast:set_direction(pending.direction)
+	if pending.flags == OBJECT_RAY_FLAGS then
+		local ignored_id = pending.ignored_object_id
+		cast:set_ignore_object(ignored_id and level.object_by_id(ignored_id) or db.actor)
+	end
 	local hit_found = cast:query()
 	queries_total = queries_total + 1
 	queries_last_frame = queries_last_frame + 1
 	if not hit_found then
-		set_sample(pending.index, false)
-		pending = nil
+		finish_direction(false)
 		return
 	end
-	local material = tonumber(cast:get_material())
-	if material and load_config().ignored_materials[material] and pending.passes < load_config().max_passthrough then
-		advance_ignored_hit(cast:get_distance())
-		if pending.remaining <= RAY_EPSILON then
-			set_sample(pending.index, false)
-			pending = nil
+	if pending.flags == OBJECT_RAY_FLAGS then
+		local object = cast:get_object()
+		if is_cover_building(object) then
+			finish_direction(true)
+		elseif object and not pending.ignored_object_id then
+			-- Retry at the same origin to catch a wall flush with the ignored object.
+			pending.ignored_object_id = object:id()
+		else
+			-- A query can skip one object. Advance when another hit still blocks it.
+			pending.ignored_object_id = nil
+			advance_ignored_hit(cast:get_distance())
 		end
 		return
 	end
-	if material and load_config().ignored_materials[material] then
-		set_sample(pending.index, false)
+	local material = tonumber(cast:get_material())
+	local settings = load_config()
+	if material and settings.ignored_materials[material] then
+		if pending.passes < settings.max_passthrough then
+			pending.passes = pending.passes + 1
+			advance_ignored_hit(cast:get_distance())
+		else
+			finish_direction(false)
+		end
 	else
-		set_sample(pending.index, true)
+		finish_direction(true)
 	end
-	pending = nil
 end
 
 local function update_dynamic_state(now)
@@ -392,6 +462,7 @@ function update(now)
 			clear_scan(true)
 		end
 		movement_anchor = copy_position(camera_position)
+		nearby_building = nil
 	end
 
 	local budget = load_config().rays_per_frame

@@ -143,7 +143,6 @@ function pf_vehicle_service_window:__init() super()
         local icon = xml:InitStatic(part_path .. ":icon", root)
         icon:InitTexture("ui_pf_vs_icon_" .. row.key)
         local label = xml:InitTextWnd(part_path .. ":name", root)
-        label:SetText(tr(row.key))
         local value = xml:InitTextWnd(part_path .. ":percent", root)
         local track = xml:InitStatic(part_path .. ":track", root)
         local fill = xml:InitStatic(part_path .. ":fill", root)
@@ -152,7 +151,7 @@ function pf_vehicle_service_window:__init() super()
         for _, decoration in ipairs({ selected, icon, label, value, track, fill }) do
             decoration:Enable(false)
         end
-        self.parts[slot] = { root = root, value = value, selected = selected,
+        self.parts[slot] = { root = root, label = label, value = value, selected = selected,
             track = track, fill = fill, bar_width = track:GetWidth() }
         self:Register(button, row.key)
         self:AddCallback(row.key, ui_events.BUTTON_CLICKED, function() self:SelectPart(slot) end, self)
@@ -194,16 +193,14 @@ function pf_vehicle_service_window:__init() super()
     -- The XML aligns the rail. The input area covers the full 28-unit handle.
     self.amount:SetWndSize(vector2():set(self.amount:GetWidth(), 28))
     self.drain_button = xml:Init3tButton(fuel_path .. ":drain", self.fuel_panel)
-    self.drain_button:SetText(tr("amount"))
 
     self.action_button = xml:Init3tButton("main:apply", self)
-    local close = xml:Init3tButton("main:close", self)
-    close:SetText(tr("close"))
+    self.close_button = xml:Init3tButton("main:close", self)
 
     self:Register(self.action_button, "apply")
     self:Register(self.drain_button, "drain")
     self:Register(self.amount, "drain_amount")
-    self:Register(close, "close")
+    self:Register(self.close_button, "close")
     self:AddCallback("apply", ui_events.BUTTON_CLICKED, self.Apply, self)
     self:AddCallback("drain", ui_events.BUTTON_CLICKED, self.Drain, self)
     self:AddCallback("drain_amount", ui_events.BUTTON_CLICKED, self.ShowDrainAmount, self)
@@ -485,6 +482,11 @@ function pf_vehicle_service_window:Open(id)
     local hud = get_hud()
     if hud then hud:HideActorMenu() end
     level.show_weapon(false)
+    for index, row in ipairs(rows) do
+        self.parts[index].label:SetText(tr(row.key))
+    end
+    self.drain_button:SetText(tr("amount"))
+    self.close_button:SetText(tr("close"))
     self.fields.title:SetText(tr("title"))
     local section = level.object_by_id(self.id):section()
     local model_key = prefix .. "model_" .. section

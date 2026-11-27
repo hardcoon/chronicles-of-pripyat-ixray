@@ -1,0 +1,92 @@
+-- Diagnostic guard for an IX-Ray ALife crash in ILevelGraph::inside().
+-- The engine must never call synchronize_location() with vertex 0xffffffff,
+-- but the current switch manager only validates offline objects.
+
+local INVALID_PARENT_ID = 65535
+local SCAN_PERIOD_MS = 100
+
+local next_scan_time = 0
+local reported = {}
+
+-- COP-ENG-257: use native candidate IDs; keep compatibility with older engines.
+local function guard_candidates(simulator)
+    if type(simulator.vertex_guard_candidates) ~= "function" then
+        return simulator:objects()
+    end
+    local ids = simulator:vertex_guard_candidates()
+    if type(ids) ~= "table" then
+        return simulator:objects()
+    end
+    local index = 0
+    return function()
+        index = index + 1
+        local id = ids[index]
+        if id == nil then return end
+        return id, simulator:object(id, true)
+    end
+end
+
+
+local function position_to_string(position)
+	if not position then
+		return "<none>"
+	end
+	return string.format("%.3f, %.3f, %.3f", position.x, position.y, position.z)
+end
+
+local function valid_vertex(vertex_id)
+	return vertex_id ~= nil and level.valid_vertex_id(vertex_id)
+end
+
+function update()
+	local now = time_global()
+	if now < next_scan_time then
+		return
+	end
+	next_scan_time = now + SCAN_PERIOD_MS
+
+	if not db.actor then
+		return
+	end
+
+	local actor_vertex_id = db.actor:level_vertex_id()
+	if not valid_vertex(actor_vertex_id) then
+		return
+	end
+
+	for _, server_object in guard_candidates(alife()) do
+		if server_object and server_object.online and
+			server_object.parent_id == INVALID_PARENT_ID and
+			not valid_vertex(server_object.m_level_vertex_id)
+		then
+			local old_vertex_id = server_object.m_level_vertex_id
+			local replacement_vertex_id = actor_vertex_id
+			local client_object = level.object_by_id(server_object.id)
+
+			if client_object then
+				local client_vertex_id = client_object:level_vertex_id()
+				if valid_vertex(client_vertex_id) then
+					replacement_vertex_id = client_vertex_id
+				end
+			end
+
+			if not reported[server_object.id] then
+				reported[server_object.id] = true
+				printf(
+					"! [ALIFE_VERTEX_GUARD] invalid online object: id=%s section=%s name=%s parent=%s vertex=%s graph=%s pos=[%s] replacement=%s client=%s",
+					tostring(server_object.id),
+					tostring(server_object:section_name()),
+					tostring(server_object:name()),
+					tostring(server_object.parent_id),
+					tostring(old_vertex_id),
+					tostring(server_object.m_game_vertex_id),
+					position_to_string(server_object.position),
+					tostring(replacement_vertex_id),
+					tostring(client_object ~= nil)
+				)
+			end
+
+			server_object.m_level_vertex_id = replacement_vertex_id
+		end
+	end
+end

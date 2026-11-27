@@ -1,0 +1,52 @@
+local tab_ids = {
+    "eptTasks", "eptWeather", "eptBeaconLocator", "eptEncyclopedia",
+    "eptRanking", "eptLogs", "eptPuzzles", "eptChat",
+}
+
+function is_device(pda)
+    pda = pda or (ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu())
+    return pda and pda.UsesPhysicalLayout and pda:UsesPhysicalLayout() or false
+end
+
+function xml_name(base_name)
+    if not is_device() then return base_name end
+    local device = string.gsub(base_name, "%.xml$", "_3d.xml")
+    if getFS():exist("$game_config$", "ui\\" .. device) then return device end
+    local wide = string.gsub(base_name, "%.xml$", "_16.xml")
+    if getFS():exist("$game_config$", "ui\\" .. wide) then return wide end
+    return base_name
+end
+
+local function clamp_device_cursor()
+    local pda = db.actor and ActorMenu and ActorMenu.get_pda_menu and ActorMenu.get_pda_menu()
+    if not pda or not pda:IsShown() or not pda:IsEnabled() or not is_device(pda) then return end
+
+    -- The presentation crop in pf_pda_screen.ps.hlsl covers these logical bounds.
+    local position = GetCursorPosition()
+    local x = math.max(14, math.min(1009, position.x))
+    local y = math.max(10.5, math.min(756.5, position.y))
+    if x ~= position.x or y ~= position.y then
+        SetCursorPosition(vector2():set(x, y))
+    end
+end
+
+RegisterScriptCallback("update", clamp_device_cursor)
+
+function align_tabs(tabs)
+    local pos = tabs:GetWndPos()
+    local right = pos.x + tabs:GetWidth()
+    local gap = 2
+    local x = 0
+    for _, id in ipairs(tab_ids) do
+        local button = tabs:GetButtonById(id)
+        if button and button:IsShown() then
+            button:SetWndPos(vector2():set(x, button:GetWndPos().y))
+            x = x + button:GetWidth() + gap
+        end
+    end
+    if x == 0 then return false end
+    local width = x - gap
+    tabs:SetWidth(width)
+    tabs:SetWndPos(vector2():set(right - width, pos.y))
+    return true
+end
